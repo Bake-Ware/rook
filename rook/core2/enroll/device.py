@@ -1,14 +1,14 @@
 """The device's side of enrollment (spec 12): find the hub, sign in as a
 person, and write what the worker needs to start.
 
-    python -m rook.core2.worker --config worker.yaml enroll https://rook.example     # shows a code to approve
+    python -m rook.core2.worker --config worker.yaml enroll https://rook.example     # waits for a Join tap
     python -m rook.core2.worker --config worker.yaml enroll 'rook://enroll?url=…&code=…&hub=…'   # the QR's text
     python -m rook.core2.worker --config worker.yaml enroll --discover                # look on the local network
 
 Finding the hub, in the spec's order: the QR (address, one-time code and hub
 id), local network discovery (:mod:`.mdns`), a typed address. Without a
-one-time code the device asks for a device code and prints the short user
-code; the person approves it on their phone or the dashboard.
+one-time code the device asks to join and waits until someone lets it in on
+the hub's Workers page.
 
 The bundle travels over TLS only: plain ``http://`` is refused unless the hub
 is on this machine (loopback) or ``--insecure`` says so. The hub id from a
@@ -132,31 +132,27 @@ def sign_in(url: str, name: str, code: str | None = None, pinned: str | None = N
             key: str | None = None, say: Callable[[str], None] = print,
             sleep: Callable[[float], None] = time.sleep,
             clock: Callable[[], float] = time.monotonic) -> dict:
-    """Claim the one-time ``code``, or wait for the person to approve a
-    device code; returns the checked bundle. ``key`` is the worker's public
+    """Claim the one-time ``code``, or ask to join and wait to be let in;
+    returns the checked bundle. ``key`` is the worker's public
     key (:func:`signing_key`), recorded by the hub with the worker id."""
     who = {"name": name, **({"key": key} if key else {})}
     if code:
         got = _post(url, "/enroll/claim", {"code": code, **who})
     else:
-        start = _post(url, "/enroll/device", who)
+        start = _post(url, "/enroll/ask", who)
         if not start.get("ok"):
             raise EnrollError(f"the hub refused: {start.get('error')}")
-        if not (isinstance(start.get("device_code"), str) and isinstance(start.get("user_code"), str)):
-            raise EnrollError("the hub's answer has no device code")
+        if not isinstance(start.get("ticket"), str):
+            raise EnrollError("the hub's answer has no ticket")
         pinned = pinned or start.get("hub")
-        if start.get("approved"):            # a hub with security off approves at once
-            say(f"Adding {name} to hub {start.get('hub')} (approved at once: the hub's security is off).")
-        else:
-            say(f"To add {name}, approve code {start['user_code']} on hub {start.get('hub')} "
-                "(the Rook app, the dashboard, or POST /enroll/approve).")
+        say(f"{name} is waiting for someone to let this machine in on the Workers page of hub {start.get('hub')}.")
         deadline = clock() + CODE_SECS       # the hub's own expiry ends it sooner
         while True:
-            got = _post(url, "/enroll/poll", {"device_code": start["device_code"]})
+            got = _post(url, "/enroll/poll", {"ticket": start["ticket"]})
             if not got.get("pending"):
                 break
             if clock() > deadline:
-                raise EnrollError("the code expired before anyone approved it")
+                raise EnrollError("nobody let this machine in in time")
             interval = got.get("interval")
             sleep(min(max(interval if isinstance(interval, (int, float)) else 2, 1), 10))
     if not got.get("ok"):

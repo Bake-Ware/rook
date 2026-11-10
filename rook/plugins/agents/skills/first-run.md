@@ -140,8 +140,11 @@ feel is done.
    - Android: the Rook app; in its Settings > Band, switch Rook version to
      0.5 and sign in to this hub (the phone needs the hub at an https
      address, so this comes after "From anywhere").
-   Then `[[open: page hub/workers]]` so they see it join (`hub.workers`),
-   and tell them when it has.
+   Then `[[open: page hub/workers]]`: the machine shows there under "Wants
+   to join" (`hub.joins`) and they tap **Join** for it. Tell them when it has
+   joined (`hub.workers`). When you run the installer yourself (a shell on
+   that machine), add `--code <code>` from `hub.join_code` and it joins with
+   no tap.
 9. **Voice, the phone app, Telegram or Discord.** Offer each in one line,
    with choices; set up only what they want. Say plainly what isn't ready yet instead of
    guessing at steps.

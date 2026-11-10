@@ -50,9 +50,9 @@ python -m rook.core2.worker --config worker/worker.yaml enroll http://127.0.0.1:
 python -m rook.core2.worker --config worker/worker.yaml &
 ```
 
-`enroll` shows a short code; approve it as the owner (see
-[Adding machines](enrollment.md)). Then open `http://127.0.0.1:8740/` and
-paste the token `init` printed ([The hub site](dashboard.md)).
+`enroll` waits until someone lets it in: open `http://127.0.0.1:8740/`,
+paste the token `init` printed ([The hub site](dashboard.md)) and tap
+**Join** for `laptop` on the Workers page ([Adding machines](enrollment.md)).
 
 `init` options: `--owner` (your user name, lowercase), `--relay host:port`
 or `--ws-url` (the band's relay), `--url https://...` (where other devices

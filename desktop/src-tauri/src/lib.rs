@@ -1394,19 +1394,18 @@ async fn sign_in_token(app: AppHandle, hub: String, token: String) -> Result<UiS
     Ok(ui_state(&app).await)
 }
 
-/// 0.5: add this computer as a worker. Enrollment by device code, which the
-/// app approves as the signed-in person (they clicked Add), then start it.
+/// 0.5: add this computer as a worker with a one-time code the app gets as
+/// the signed-in person (they clicked Add), then start it.
 #[tauri::command]
 async fn worker_add(app: AppHandle) -> Result<UiState, String> {
     let h = hub05_client(&app)?;
+    let code = h.join_code().await.map_err(|e| e.to_string())?;
     let s = settings(&app);
     let a = app.clone();
     let said = tauri::async_runtime::spawn_blocking(move || {
         let layout = state(&a).worker05.lock().unwrap().layout.clone();
         let python = worker05::python(&s.worker_python);
-        worker05::enroll(&layout, &python, &h.origin, None, |code| {
-            tauri::async_runtime::block_on(h.approve_device(&code)).map_err(|e| e.to_string())
-        })
+        worker05::enroll(&layout, &python, &h.origin, &code, None)
     })
     .await
     .map_err(|_| "Adding this computer failed.".to_string())??;

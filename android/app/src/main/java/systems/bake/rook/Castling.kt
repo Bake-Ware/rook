@@ -12,7 +12,7 @@ import java.io.File
  *
  * 0.4 is the default: `worker_entry` with a hub address and band key from
  * pairing or Google sign-in. 0.5 runs `castling_entry`: the phone signs in to
- * its home hub (the QR, or a code the person approves on the dashboard) and
+ * its home hub (the QR, or one tap on the hub's Workers page) and
  * the hub's config bundle replaces the hand-copied address and keys. The
  * watch talks to the hub's `speech` plugin in 0.5 ([WatchSpeech], with the
  * person's hub token); the phone's own voice and the widgets still talk to the
@@ -47,7 +47,7 @@ object Castling {
     fun status(ctx: Context): JSONObject =
         JSONObject(entry(ctx).callAttr("status", filesDir(ctx)).toString())
 
-    /** Python calls [say] with the code to approve while it waits. */
+    /** Python calls [say] while it waits for someone to let the phone in. */
     interface Listener { fun say(text: String) }
 
     /** Sign in with [target] (the hub's address, or its QR's text); `{ok, error?, ...status}`. */
@@ -78,7 +78,7 @@ object Castling {
         }
     }
 
-    /** [ok] null: still working (e.g. a code waits for approval). */
+    /** [ok] null: still working (e.g. waiting to be let in). */
     fun switchResult(ctx: Context, ok: Boolean?, text: String) {
         Log.i("RookCastling", "switch: $text")
         runCatching {

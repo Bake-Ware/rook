@@ -12,9 +12,9 @@
 # unit, or a system unit when run as root (containers without a user bus).
 # Root installs default to /opt/rook05 and run_as root (ROOK_RUN_AS=<account>
 # for another), as the 0.4 worker runs there. Downloads use curl, else python.
-# Joining: the device-code enrollment; a hub in move-in approves it at once
-# (castling-switchover-decisions, "Usable first"). --code (or ROOK_JOIN_CODE)
-# joins with a one-time code from the hub (POST /enroll/code) instead.
+# Joining: the machine waits until someone taps Join on the hub's Workers page.
+# --code (or ROOK_JOIN_CODE) joins at once with a one-time code from the hub
+# (hub.join_code, or POST /enroll/code with a token).
 set -euo pipefail
 
 say() { printf '== %s\n' "$*"; }

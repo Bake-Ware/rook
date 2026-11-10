@@ -25,9 +25,9 @@ def rust_const(name: str, src: str = HUB05) -> str:
 
 def test_door_routes_the_app_uses():
     door = Path(http.__file__).read_text(encoding="utf-8")
-    for route in ('("POST", "/call")', '("GET", "/holds")', '("POST", "/enroll/approve")', '"/health"'):
+    for route in ('("POST", "/call")', '("GET", "/holds")', '("POST", "/enroll/code")', '"/health"'):
         assert route in door, route
-    for path in ('"/call"', '"/holds"', '"/enroll/approve"', "/health", "/login", "/web/api/me", "/logout"):
+    for path in ('"/call"', '"/holds"', '"/enroll/code"', "/health", "/login", "/web/api/me", "/logout"):
         assert path in HUB05, path
 
 
@@ -73,13 +73,13 @@ def test_dock_markup_for_ask_about_this_page():
     assert m and "dock-btn" in m.group(1) and "dock-text" in m.group(1) and "dock-open" in m.group(1)
 
 
-def test_enroll_line_and_worker_cli():
+def test_enroll_code_and_worker_cli():
     device = (ROOT / "rook/core2/enroll/device.py").read_text(encoding="utf-8")
-    # worker05::user_code reads the code out of this line.
-    assert 'say(f"To add {name}, approve code {start[\'user_code\']} on hub' in device
-    assert "approve code " in WORKER05
     main = (ROOT / "rook/core2/worker/__main__.py").read_text(encoding="utf-8")
     assert 'add_argument("--config"' in main and 'add_parser("enroll"' in main
+    # worker05::enroll passes the one-time code from POST /enroll/code (its answer's "code").
+    assert 'add_argument("--code"' in main and '"--code", code' in WORKER05
+    assert '"code": code' in (ROOT / "rook/core2/enroll/hub.py").read_text(encoding="utf-8")
     assert re.search(r'"rook\.core2\.worker", "--config"', WORKER05)
     for p in re.search(r"DESKTOP_PLUGINS: \[&str; \d\] = \[(.*?)\]", WORKER05).group(1).split(","):
         assert (ROOT / "rook/plugins" / p.strip().strip('"') / "plugin.yaml").is_file(), p

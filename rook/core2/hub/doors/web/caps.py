@@ -247,7 +247,8 @@ def install(hub) -> None:
                   "page.components": h.pages_components, "page.site": h.pages_site,
                   "page.start": h.pages_start, "page.public": h.pages_public},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
-                "hub.door": h.hub_door, "hub.sacred": h.hub_sacred},
+                "hub.door": h.hub_door, "hub.sacred": h.hub_sacred,
+                "hub.joins": h.hub_joins, "hub.join": h.hub_join, "hub.join_code": h.hub_join_code},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
                      "approval.ask": h.approval_ask, "approval.get": h.approval_get},
         "journal": {"journal.search": h.journal_search},
@@ -512,6 +513,15 @@ class _Handlers:
         return {"workers": (await hub.workers_view(_who(ctx)))["workers"], "now": hub.clock(),
                 "bands": {hub.band: (named.get("name") if isinstance(named, dict) else None) or "home"}}
 
+    async def hub_joins(self, ctx) -> dict:
+        return _or_raise(await self.hub.enroll.pending(_who(ctx)))
+
+    async def hub_join(self, ctx, request: str, refuse: bool = False) -> dict:
+        return _or_raise(await self.hub.enroll.approve(_who(ctx), request, refuse))
+
+    async def hub_join_code(self, ctx) -> dict:
+        return _or_raise(await self.hub.enroll.new_code(_who(ctx)))
+
     async def hub_manifests(self, ctx, section: str | None = None) -> dict:
         """Hub plugins first, then what workers announce. ``folder`` (where the
         hub holds the plugin: loaded, or in its library) only for owners and
@@ -603,6 +613,12 @@ class _Handlers:
         if not reply.get("ok"):
             raise KitError(str(reply.get("error") or "failed"))
         return reply.get("result") or {}
+
+
+def _or_raise(out: dict) -> dict:
+    if not out.pop("ok"):
+        raise KitError(out["error"])
+    return out
 
 
 def _save_sacred(cfg) -> str | None:

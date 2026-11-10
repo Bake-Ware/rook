@@ -6,11 +6,11 @@
 //! folder (`<config>/worker05/worker.yaml`), so it never touches a worker
 //! installed some other way.
 //!
-//! **Adding this computer** is 0.5 enrollment (spec 12) by device code: the
-//! worker's own `enroll` asks the hub for a code and waits; the app, signed
-//! in as the person who clicked "Add", approves that code with their token
-//! (`POST /enroll/approve`); the worker gets its config bundle and writes its
-//! anchor and home band. The person owns the machine (spec 9.1).
+//! **Adding this computer** is 0.5 enrollment (spec 12) with a one-time
+//! code: the app, signed in as the person who clicked "Add", gets one with
+//! their token (`POST /enroll/code`) and hands it to the worker's own
+//! `enroll`, which gets its config bundle and writes its anchor and home
+//! band. The person owns the machine (spec 9.1).
 //!
 //! The worker loads the desktop plugins from the Rook it runs with
 //! (`DESKTOP_PLUGINS`); what this machine can't serve it lists as
@@ -121,26 +121,8 @@ pub fn initial_config(plugins: &Path, name: Option<&str>) -> String {
     serde_json::to_string_pretty(&v).expect("json") + "\n"
 }
 
-/// The user code in the enroll command's line "To add <name>, approve code
-/// BCDF-GHJK on hub ..." (rook/core2/enroll/device.py `sign_in`).
-pub fn user_code(line: &str) -> Option<String> {
-    let rest = line.split("approve code ").nth(1)?;
-    let code: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_alphabetic() || *c == '-')
-        .collect();
-    (code.len() == 9 && code.as_bytes()[4] == b'-').then_some(code)
-}
-
-/// Run `enroll` for `origin` and hand its user code to `approve` (on
-/// another thread, so the hub can answer while the worker polls). Blocking.
-pub fn enroll(
-    layout: &Layout,
-    python: &Path,
-    origin: &str,
-    name: Option<&str>,
-    approve: impl Fn(String) -> Result<(), String>,
-) -> Result<String, String> {
+/// Run `enroll` for `origin` with the one-time `code`. Blocking.
+pub fn enroll(layout: &Layout, python: &Path, origin: &str, code: &str, name: Option<&str>) -> Result<String, String> {
     if layout.enrolled() {
         return Err("This computer is already added. Its worker keeps its home hub.".into());
     }
@@ -151,7 +133,7 @@ pub fn enroll(
     let mut child = quiet(&mut Command::new(python))
         .args(["-m", "rook.core2.worker", "--config"])
         .arg(layout.config())
-        .args(["enroll", origin])
+        .args(["enroll", origin, "--code", code])
         .env("PYTHONUNBUFFERED", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -164,7 +146,7 @@ pub fn enroll(
         let _ = std::io::Read::read_to_string(&mut BufReader::new(stderr), &mut s);
         s
     });
-    // Nobody waits ten minutes (the code's own life) for a stuck hub.
+    // Nobody waits on a stuck hub.
     let child = Arc::new(Mutex::new(child));
     let done = Arc::new(AtomicBool::new(false));
     let watchdog = {
@@ -181,16 +163,9 @@ pub fn enroll(
         })
     };
     let mut said = String::new();
-    let mut approved: Result<(), String> = Ok(());
     for line in BufReader::new(stdout).lines() {
         let Ok(line) = line else { break };
-        if let Some(code) = user_code(&line) {
-            approved = approve(code);
-            if approved.is_err() {
-                let _ = child.lock().unwrap().kill();
-                break;
-            }
-        } else if !line.trim().is_empty() {
+        if !line.trim().is_empty() {
             said = line;
         }
     }
@@ -199,7 +174,6 @@ pub fn enroll(
     let _ = watchdog.join();
     let status = status?;
     let errors = err_reader.join().unwrap_or_default();
-    approved?;
     if status.success() {
         return Ok(said);
     }
@@ -252,8 +226,7 @@ impl Controller {
             return Info {
                 mode: "core2",
                 status: "not-installed",
-                detail: "This computer isn't a worker on your 0.5 hub yet. Add it here: you approve it as yourself."
-                    .into(),
+                detail: "This computer isn't a worker on your 0.5 hub yet. Add it here: it joins as yours.".into(),
                 can_start: false,
                 can_stop: false,
             };
@@ -332,18 +305,6 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn user_code_from_the_enroll_line() {
-        let line =
-            "To add laptop, approve code BCDF-GHJK on hub 1a2b (the Rook app, the dashboard, or POST /enroll/approve).";
-        assert_eq!(user_code(line).as_deref(), Some("BCDF-GHJK"));
-        assert_eq!(
-            user_code("Enrolled laptop (3f0a) with hub 1a2b, owned by person:bake."),
-            None
-        );
-        assert_eq!(user_code("approve code BC"), None);
-    }
 
     #[test]
     fn initial_config_is_yaml_with_the_desktop_plugins() {

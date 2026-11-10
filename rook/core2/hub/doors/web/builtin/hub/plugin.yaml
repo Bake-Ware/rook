@@ -20,9 +20,8 @@ settings:
     where: hub
     doc: >-
       off: nothing waits on a person. No gate runs and no call is held (each journal entry says
-      security: off), elevation is not gated, device codes are approved at once (journaled with the
-      machine name). Rights still apply; the vault stays encrypted and secrets stay masked in the
-      journal. on: gates, holds and device-code approval apply.
+      security: off) and elevation is not gated. Rights still apply; the vault stays encrypted and
+      secrets stay masked in the journal. on: gates and holds apply.
 
 caps:
   status:
@@ -58,6 +57,29 @@ caps:
       worker: { type: str, required: true, doc: "The machine's name or id." }
       sacred: { type: bool, default: true, doc: "false: normal again." }
     result: { type: map }
+  joins:
+    doc: "Machines asking to join the band (the installer with no token), waiting for someone to let them in: devices, each with id, name, address and age."
+    on: hub
+    risk: read
+    scope: multi-machine
+    idempotent: true
+    result: { type: map }
+  join:
+    doc: "Let a machine that asked to join in (it becomes a worker owned by you), or refuse it."
+    on: hub
+    risk: write
+    scope: multi-machine
+    effects: [persists]
+    args:
+      request: { type: str, required: true, doc: "Its id from hub.joins." }
+      refuse: { type: bool, default: false, doc: "true: say no." }
+    result: { type: map }
+  join_code:
+    doc: "A one-time code (ten minutes) for a machine to join with no tap: run python -m rook.core2.worker enroll '<qr>' there. Also POST /enroll/code."
+    on: hub
+    risk: write
+    scope: multi-machine
+    result: { type: map }
   door:
     doc: "The kill switch: close a door (mcp, http, web) so it refuses everything, or open it again. Closing mcp also refuses agents' tokens on every door. Owners, or a hub component closing one (the security plugin); kept across restarts. Also POST /doors/<name>."
     on: hub
@@ -70,7 +92,7 @@ caps:
     result: { type: map }
 
 pages:
-  workers: { title: Workers, file: pages/workers.html, caps: [hub.workers], events: ["worker.*", "plugin.*"], nav: { section: Hub } }
+  workers: { title: Workers, file: pages/workers.html, caps: [hub.workers, hub.joins, hub.join], events: ["worker.*", "plugin.*"], nav: { section: Hub } }
 
 components:
   workers: { title: Workers, file: components/workers.js, doc: "The band's workers: online or not, last seen.", caps: [hub.workers], props: { only: { type: list, items: { type: str }, doc: "Worker names to show; blank: all." } } }
