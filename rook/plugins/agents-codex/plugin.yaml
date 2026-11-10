@@ -11,7 +11,7 @@ doc: Agent turns in the Codex CLI, for the agents package.
 package: agents
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-platforms: [linux, macos, windows]
+platforms: [linux, windows]
 settings:
   codex: { default: codex, doc: "The codex program: a name on PATH or a full path." }
   model: { doc: "System Two's model when the agent names none (a Codex model id); blank: Codex's own default." }

@@ -1,7 +1,7 @@
 # Rook on your desktop (preview)
 
 The Rook desktop app keeps your hub one keypress away. It sits in the tray
-(the menu bar on a Mac) and gives you:
+and gives you:
 
 - **your hub's site in a window**, signed in, and a tray **Dashboard** menu
   with the hub's own pages by section (they change as agents make pages);
@@ -17,7 +17,7 @@ The Rook desktop app keeps your hub one keypress away. It sits in the tray
 - **this computer's worker**: add this computer to your hub, and start or
   stop its worker from the tray.
 
-It works on Windows, macOS and Linux. The app is a preview: installers are
+It works on Windows and Linux. The app is a preview: installers are
 not signed yet, so your system may ask you to confirm before opening it.
 
 ## Getting started
@@ -133,7 +133,7 @@ The app asks your hub about once every six hours whether a newer desktop app
 is published (on the latest Rook release). When there is one, it tells you
 once, and Settings > This app shows **Download version ...**, which opens the
 installer for your system in your browser (the setup program on Windows,
-the disk image on macOS, the AppImage or .deb on Linux, matching how you
+the AppImage or .deb on Linux, matching how you
 installed it). Run it to update; your settings are kept. The app only offers
 installers published on Rook's GitHub releases, whatever the hub lists.
 

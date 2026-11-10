@@ -11,7 +11,7 @@ doc: Rules that block, add instructions to, or set the status line of Claude Cod
 package: agents
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-platforms: [linux, macos, windows]
+platforms: [linux, windows]
 uses: [claudecode.list]
 records:
   # One rule: when a Claude Code hook event matches (tool, text, project or

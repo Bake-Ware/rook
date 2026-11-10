@@ -72,7 +72,7 @@ class WorkerEnv:
 
     ``packages`` is every installed distribution (name -> version), so
     resolution never moves one; ``platform`` is uv's ``--python-platform``
-    (``x86_64-unknown-linux-gnu``, ``aarch64-apple-darwin``, ...), omitted =
+    (``x86_64-unknown-linux-gnu``, ``aarch64-unknown-linux-gnu``, ...), omitted =
     the hub's own."""
 
     worker_id: str
