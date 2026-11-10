@@ -14,3 +14,6 @@ elevate: for a file the worker can't reach, use `shell.exec` with elevation.
 
 Errors name the path: `not found: /x`, `permission denied: /x`,
 `is a directory: /x`.
+
+On a Rust worker (`worker/`), `encoding` is utf-8, latin-1, ascii or base64; any other name is an error.
+On a Rust worker, `file.search` patterns are Rust `regex` syntax: look-around and backreferences are an error, not a match.
