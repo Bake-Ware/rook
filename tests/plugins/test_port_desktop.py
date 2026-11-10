@@ -1,12 +1,13 @@
-"""notification-desktop and screen-desktop through the worker host, with fake
-notify-send / osascript / powershell and fake capture tools."""
+"""notification-desktop and screen-desktop, with fake notify-send /
+powershell and fake capture tools."""
 
 import base64
 
 import pytest
 
-from port_helpers import ME, PLUGINS, go
+from port_helpers import ME, PLUGINS, go, on_worker
 from rook.core2.worker.host import CallError, Host
+from rook.kit.ctx import KitError
 
 JPEG = b"\xff\xd8\xff\xe0fake-jpeg\xff\xd9"
 # A fake capture tool: writes JPEG to its last argument (or $ROOK_OUT).
@@ -27,48 +28,41 @@ def run(plugin, cap, args=None, os_name="linux", hardware=("display",)):
     return go(body)
 
 
-# -- notification-desktop -------------------------------------------------------
+# -- notification-desktop (on the hub, for a worker with only shell.exec) ------
 
 def notify(args, os_name="linux"):
-    return run("notification-desktop", "notification-desktop.notification.post", args, os_name)
+    return on_worker("notification-desktop", "notification-desktop.notification.post", args, os_name=os_name)
 
 
 def test_notify_send_takes_text_as_data(bins):
     bins.add("notify-send")
     notify({"text": "--urgency=critical $(reboot)\nline 2", "title": "-x"})
-    notify({"text": "plain"})
+    _, seen = notify({"text": "plain"})
     (one, two) = bins.calls("notify-send")
     assert one["argv"] == ["-a", "rook", "--", "-x", "--urgency=critical $(reboot)\nline 2"]
     assert two["argv"] == ["-a", "rook", "--", "Rook", "plain"]
+    assert [c for c, _ in seen] == ["shell.exec"]
 
 
 def test_unknown_args_are_refused(bins):
     bins.add("notify-send")
-    with pytest.raises(CallError, match="'sender' was unexpected"):
+    with pytest.raises(KitError, match="'sender' was unexpected"):
         notify({"text": "hi", "sender": "ops"})
 
 
-def test_macos_and_windows_read_the_text_from_the_environment(bins):
-    bins.add("osascript")
+def test_windows_reads_the_text_from_the_environment(bins):
     bins.add("powershell")
     msg = {"text": 'say "hi"; do shell script "rm -rf ~"', "title": "T'itle"}
-    notify(msg, "macos")
     notify(msg, "windows")
-    (mac,), (win,) = bins.calls("osascript"), bins.calls("powershell")
-    for call in (mac, win):
-        assert call["env"]["ROOK_TEXT"] == msg["text"]
-        assert call["env"]["ROOK_TITLE"] == msg["title"]
-        assert msg["text"] not in " ".join(call["argv"])
-    assert mac["argv"][0] == "-e" and 'system attribute "ROOK_TEXT"' in mac["argv"][1]
-    assert "$env:ROOK_TEXT" in win["argv"][-1]
+    (win,) = bins.calls("powershell")
+    assert win["env"]["ROOK_TEXT"] == msg["text"] and win["env"]["ROOK_TITLE"] == msg["title"]
+    assert msg["text"] not in " ".join(win["argv"]) and "$env:ROOK_TEXT" in win["argv"][-1]
 
 
-def test_notify_needs_a_display(bins):
-    bins.add("notify-send")
-    with pytest.raises(CallError, match="^unavailable: .*missing hardware: display"):
-        run("notification-desktop", "notification-desktop.notification.post", {"text": "x"},
-            hardware=())
-    assert bins.calls("notify-send") == []
+def test_no_desktop_is_the_tools_own_failure(bins):
+    bins.add("notify-send", "print('cannot open display', file=sys.stderr); sys.exit(1)")
+    with pytest.raises(KitError, match="^notify-send exited 1: cannot open display$"):
+        notify({"text": "x"})
 
 
 # -- screen-desktop ---------------------------------------------------------------

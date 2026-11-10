@@ -113,6 +113,6 @@ async fn add_this_computer(h: &Hub05, origin: &str, python: PathBuf) {
     let w = online.expect("the worker is listed");
     assert_eq!(w["online"], true, "{w}");
     let plugins = w["plugins"].to_string();
-    assert!(plugins.contains("notification-desktop"), "{plugins}");
+    assert!(plugins.contains("screen-desktop"), "{plugins}");
     std::fs::remove_dir_all(&dir).ok();
 }

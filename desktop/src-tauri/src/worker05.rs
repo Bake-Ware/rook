@@ -28,8 +28,9 @@ use std::time::{Duration, Instant};
 use crate::worker::{processes_naming, Info};
 
 /// Plugins from `rook/plugins` the desktop's worker loads: commands and
-/// terminals, files, notifications on this screen, screenshots.
-pub const DESKTOP_PLUGINS: [&str; 4] = ["shell", "file", "notification-desktop", "screen-desktop"];
+/// terminals, files, screenshots. Notifications on this screen run on the hub
+/// through shell.exec.
+pub const DESKTOP_PLUGINS: [&str; 3] = ["shell", "file", "screen-desktop"];
 /// How long "Add this computer" waits for the hub.
 pub const ENROLL_WAIT: Duration = Duration::from_secs(120);
 
@@ -320,7 +321,7 @@ mod tests {
             .map(|p| p.as_str().unwrap())
             .collect();
         assert_eq!(plugins.len(), DESKTOP_PLUGINS.len());
-        assert!(plugins[2].ends_with("notification-desktop"));
+        assert!(plugins[2].ends_with("screen-desktop"));
         assert!(initial_config(Path::new("/x"), None).find("\"name\"").is_none());
     }
 

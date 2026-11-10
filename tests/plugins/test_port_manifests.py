@@ -43,7 +43,7 @@ def test_every_cap_says_risk_scope_and_doc(name):
             assert "destructive" in spec["effects"], cap
 
 
-CONFIG_ONLY = {"cec", "notification-desktop", "screen-desktop", "torrent"}
+CONFIG_ONLY = {"cec", "screen-desktop", "torrent"}
 
 
 def test_only_config_plugins_are_data():
