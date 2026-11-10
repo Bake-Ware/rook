@@ -23,10 +23,11 @@ commit). Options: `--dir` (default `~/.rook`), `--name` (unit prefix, default
 What it does:
 
 1. Asks which level (`--level`): minimal (the plugins whose manifest says
-   `package: core`), assistant (plus `package: agents`) or team (plus
+   `package: core` or `package: devices`: a worker's caps, many of which run
+   on the hub), assistant (plus `package: agents`) or team (plus
    `package: workbench`, the default). Those plugin folders are linked into
-   the hub's library; this machine's worker runs `shell` and `file` (device
-   plugins) and, with agents, the engine. Minimal skips the next two steps
+   the hub's library; this machine's worker runs `shell` and `file` and, with
+   agents, the engine. Minimal skips the next two steps
    and the house agent.
    Then, with agents, what you use for AI now. "Claude Code" (1, `--ai claude`) and
    "none" (6) are built: the others say "coming soon" and fall back to none.
