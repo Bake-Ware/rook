@@ -8,7 +8,7 @@ that needs logic.
 ```
 myplugin/
   plugin.yaml      the manifest: required
-  scripts/*.py     code for run: caps, hooks and gates
+  scripts/*.py     code for run: caps and hooks
   docs/manual.md   the plugin's manual page
   pages/*          dashboard pages (hub plugins)
   skills/*.md  personas/*.md

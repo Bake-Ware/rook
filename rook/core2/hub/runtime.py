@@ -16,11 +16,11 @@ What it owns:
   overrides and plugin grants), agents with rights, bearer tokens (only their
   hashes are stored, in ``<data>/tokens.json``).
 - **Dispatch** (10): one :class:`~rook.core2.hub.dispatch.Dispatcher` every
-  door ends at, with the library's gates; the journal (11) in
+  door ends at; the journal (11) in
   ``<data>/journal.db``.
 - **Plugins**: the trusted library (one folder per plugin) is validated at
   start; the hub hosts the parts that run on it (:mod:`.plugins`: hub caps,
-  records in ``<data>/records.db``, hooks, gates, contract routing).
+  records in ``<data>/records.db``, hooks, contract routing).
 - **Workers** (5.3-5.6): announces and heartbeats keep a registry. Manifests
   are resolved from the library by hash, else fetched with ``core.manifests``
   and validated; caps stay known while a worker is offline (and across hub
@@ -440,7 +440,6 @@ class Hub:
         self.dispatcher.closed_doors = set(_read_doors(self.data))
         self._sync_hub()
         await self._load_library()
-        self.dispatcher.gates = self.plugins.gates()
         self._load_manifests()
         self._load_workers()
         self._sync_hub()
@@ -1494,7 +1493,7 @@ class Hub:
         if h is not None:
             self._emit("hold.created", {"hold": h.name, "cap": h.call.cap, "worker": h.worker.id,
                                         "person": h.caller.person, "agent": h.caller.agent, "why": h.call.why,
-                                        "session": h.session.id, "reasons": h.reasons()}, "core")
+                                        "session": h.session.id, "reasons": h.hard}, "core")
 
     async def start_session(self, caller: Caller, body: dict) -> dict:
         try:
@@ -1572,7 +1571,7 @@ class Hub:
         return {"ok": True, "holds": [
             {"hold": h.name, "kind": "call", "cap": h.call.cap, "worker": h.worker.name, "why": h.call.why,
              "args": h.entry.get("args", h.call.args),
-             "person": h.caller.person, "agent": h.caller.agent, "reasons": h.reasons()}
+             "person": h.caller.person, "agent": h.caller.agent, "reasons": h.hard}
             for h in self.dispatcher.holds.values()
             if owner or (caller.person and h.caller.person == caller.person) or h.caller == caller]
             + self.asks.view(caller)}

@@ -26,10 +26,6 @@ where you are there yourself: `POST /holds` with your own token. Not an agent ac
 - spending money (`spends`),
 - any change on a machine you marked **sacred** ([Workers](workers.md#sacred-machines)).
 
-**Other holds:**
-
-- A security gate may flag a call that looks out of place ([Security plugins](security.md)).
-
 What can't run at all is **denied**, not held: a call outside what the
 person, the agent, the session or the worker's ceiling allows comes back
 with the layer that refused it, for example `denied: person: risk`.

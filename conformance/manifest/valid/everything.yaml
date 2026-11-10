@@ -112,11 +112,6 @@ hooks:
   on: [ { event: worker.online, run: scripts/bot.py:warm } ]
 routes:
   webhook: { path: /webhook, methods: [POST], run: scripts/bot.py:webhook, auth: { hmac: "{{settings.webhook_secret}}" } }
-gate:
-  run: scripts/gate.py:check
-  match: { risk: [write, exec, admin] }
-  budget: 20ms
-  mode: shadow
 contracts:
   notify.send: { doc: Get a message to a person., args: { to: { type: str }, text: { type: str, required: true } } }
 provides:

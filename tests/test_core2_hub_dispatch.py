@@ -1,4 +1,4 @@
-"""Hub dispatch (rook/core2/hub): identity, sessions, why, rights, gates,
+"""Hub dispatch (rook/core2/hub): identity, sessions, why, rights,
 holds, tickets and the journal, per docs/spec/core-v2.md sections 8 and 10.
 Every async test runs under a hard timeout; the transport is a fake."""
 from __future__ import annotations
@@ -14,7 +14,6 @@ pytest.importorskip("nacl")
 from nacl.signing import SigningKey  # noqa: E402
 
 from rook.core2 import rights, wire  # noqa: E402
-from rook.core2.hub import gate as gates  # noqa: E402
 from rook.core2.hub.dispatch import Call, Dispatcher, Worker  # noqa: E402
 from rook.core2.hub.identity import Caller, Identities  # noqa: E402
 
@@ -158,7 +157,7 @@ def test_allowed_call_mints_a_ticket_the_worker_accepts(hub):
     [e] = calls(hub)
     assert e["decision"] == "allow" and e["ok"] is True and e["ticket"] == [t["nonce"]]
     for k in ("ts", "call", "hub", "band", "worker", "cap", "person", "agent", "session", "project",
-              "why", "args_hash", "risk", "scope", "effects", "gates", "ms"):
+              "why", "args_hash", "risk", "scope", "effects", "ms"):
         assert k in e, k
     assert e["project"] == "castling"
     start = hub.log[0]
@@ -183,14 +182,10 @@ def test_core_manifests_and_trust_set_ignore_the_ceiling(hub):
 
 def test_secrets_resolved_for_the_wire_only(hub):
     hub.secrets = lambda args, caller, cap, target=None: {**args, "pw": "hunter2"} if args else args
-    seen = []
-    hub.gates = [gates.Gate("spy", lambda inp: seen.append(inp) or
-                            {"verdict": "allow", "confidence": 1, "reason": "other"}, mode="enforce")]
     out, _ = call(hub, BAKE, "shell.exec", {"pw": "{{secret:pw}}"})
     assert out["ok"]
     assert hub.tx.requests[0]["args"]["pw"] == "hunter2"
     assert hub.tx.requests[0]["ticket"]["args_hash"] == wire.args_hash({"pw": "hunter2"})
-    assert seen[0]["args"] == {"pw": "{{secret:pw}}"}
     assert calls(hub)[0]["args"] == {"pw": "{{secret:pw}}"}
     assert "hunter2" not in json.dumps(hub.log)
 
@@ -369,7 +364,7 @@ def test_elevated_call_counts_as_admin(hub):
 
 
 def test_upfront_elevation_counts_as_admin(hub):
-    # It always runs elevated (7.1), so gates, the sacred hold and the journal see admin.
+    # It always runs elevated (7.1), so the sacred hold and the journal see admin.
     out, _ = call(hub, CLAUDE_FOR_BAKE, "pkg.fix")
     assert out["error"] == "denied: agent: risk"
     out, _ = call(hub, BAKE, "pkg.fix")
@@ -418,69 +413,12 @@ def elevations(d):
     return [e for e in d.log if e["kind"] == "elevation"]
 
 
-def test_elevation_goes_through_the_gates_as_admin(hub):
-    # castling-security: the gate hook sits before ticket minting on every
-    # door, and "elevation must pass" (drift #16).
-    seen = []
-    hub.gates = [gates.Gate("spy", lambda inp: seen.append(inp) or
-                            {"verdict": "allow", "confidence": 1, "reason": "other"}, mode="enforce")]
+def test_elevation_grants_a_lease_for_the_call_in_flight(hub):
     got = _elevating(hub)
     out, s = call(hub, BAKE, "file.read", {"path": "/etc/shadow"}, why="read the shadow file")
     assert out["ok"] and got[0]["ok"] and "lease" in got[0]["result"]
-    at_dispatch, at_elevation = seen
-    assert at_dispatch["risk"] == "read" and "elevation" not in at_dispatch
-    assert at_elevation["risk"] == "admin" and at_elevation["elevation"] == "access_denied"
-    assert (at_elevation["cap"], at_elevation["args"], at_elevation["why"], at_elevation["session"]["id"]) == (
-        "file.read", {"path": "/etc/shadow"}, "read the shadow file", s.id)
     [e] = elevations(hub)
-    assert e["decision"] == "allow" and e["gates"][0]["gate"] == "spy"
-
-
-@pytest.mark.parametrize("verdict", ["flag", "block"])
-def test_elevation_a_gate_does_not_pass_is_refused(hub, verdict):
-    # A flag can't wait for a person inside a running call: no lease.
-    hub.gates = [G("security", verdict, match={"risk": ["admin"]})]
-    got = _elevating(hub)
-    out, _ = call(hub, BAKE, "shell.exec")      # exec: the gate doesn't select it at dispatch
-    assert out["ok"] and got == [{"ok": False, "error": "elevation: denied"}]
-    [e] = elevations(hub)
-    assert e["decision"] == "deny" and e["layer"] == f"gate: {verdict} by security"
-    assert e["gates"][0]["verdict"] == verdict and not hub.leases
-
-
-def test_elevation_shadow_gates_are_recorded_only(hub):
-    hub.gates = [G("ml", "block", mode="shadow")]
-    got = _elevating(hub)
-    out, _ = call(hub, BAKE, "shell.exec")
-    assert out["ok"] and got[0]["ok"]
-    [e] = elevations(hub)
-    assert e["decision"] == "allow" and e["gates"][0]["verdict"] == "block"
-
-
-def test_elevation_of_an_admin_call_is_not_gated_twice(hub):
-    # Asked up front, the call met the gates as admin before its ticket, and
-    # a person may have released that hold; the elevation doesn't undo it.
-    hub.gates = [G("security", "flag", match={"risk": ["admin"]})]
-    got = _elevating(hub, "upfront")
-    out, _ = call(hub, BAKE, "pkg.fix")
-    assert out["held"]
-    rel = run(hub.release(out["hold"], "person:bake", present=True))
-    assert rel["ok"] and got[0]["ok"]
-    [e] = elevations(hub)
-    assert e["decision"] == "allow" and "gates" not in e
-
-
-def test_elevation_rechecks_rights_after_the_gates(hub):
-    async def slow(inp):
-        await asyncio.sleep(0.01)
-        hub.end_session(inp["session"]["id"])           # access changed while the gate ran
-        return {"verdict": "allow", "confidence": 1, "reason": "other"}
-
-    hub.gates = [gates.Gate("slow", slow, budget=1, mode="enforce", match={"risk": ["admin"]})]
-    got = _elevating(hub)
-    call(hub, BAKE, "shell.exec")
-    assert got == [{"ok": False, "error": "elevation: denied"}] and not hub.leases
-    assert elevations(hub)[0]["layer"] == "session: ended"
+    assert e["decision"] == "allow" and e["session"] == s.id and e["risk"] == "admin"
 
 
 def test_sub_call_keeps_the_parent_calls_layers(hub):
@@ -665,94 +603,24 @@ def test_release_rechecks_rights(hub):
 
 
 def test_release_sees_the_cap_and_worker_as_they_are_now(hub):
-    # Held for a gate flag only; meanwhile the worker re-announces the cap as
-    # destructive. Triage may release flags, never a hard stop.
-    hub.gates = [G("security", "flag")]
-    out, _ = call(hub, BAKE, "light.set")
+    # Held as destructive; meanwhile the worker re-announces the cap as
+    # also sending as the person: the approval was given for less.
+    out, _ = call(hub, BAKE, "file.delete")
     assert out["held"]
-    hub.worker.caps = {**hub.worker.caps, "light.set": {**CAPS["light.set"], "effects": ["destructive"]}}
-    rel = run(hub.release(out["hold"], "system:plugin.security"))
+    hub.worker.caps = {**hub.worker.caps, "file.delete": {**CAPS["file.delete"], "effects": ["destructive", "sends_as"]}}
+    rel = run(hub.release(out["hold"], "person:bake", present=True))
     assert "changed since it was held" in rel["error"] and not hub.tx.requests
     # the worker became sacred after the hold: same
     hub.worker.caps = dict(CAPS)
-    out, _ = call(hub, BAKE, "shell.exec")
+    out, _ = call(hub, BAKE, "mail.send")
     hub.worker.sacred = True
-    rel = run(hub.release(out["hold"], "system:plugin.security"))
+    rel = run(hub.release(out["hold"], "person:bake", present=True))
     assert "changed since it was held" in rel["error"] and not hub.tx.requests
-
-# -- gates (10.2) ------------------------------------------------------------
-
-def G(name, verdict="allow", mode="enforce", reason="anomaly", **kw):
-    return gates.Gate(name, lambda inp: {"verdict": verdict, "confidence": 0.9, "reason": reason},
-                      mode=mode, **kw)
-
-
-def test_gate_block_refuses_and_is_journaled(hub):
-    hub.gates = [G("ml", "flag"), G("canary", "block", reason="canary")]
-    out, _ = call(hub, BAKE, "shell.exec")
-    assert out["error"] == "denied: blocked by gate canary: canary" and not hub.tx.requests
-    e = calls(hub)[0]
-    assert e["decision"] == "deny" and e["layer"] == "gate"
-    assert e["gates"] == [{"gate": "ml", "mode": "enforce", "verdict": "flag", "confidence": 0.9,
-                           "reason": "anomaly"},
-                          {"gate": "canary", "mode": "enforce", "verdict": "block", "confidence": 0.9,
-                           "reason": "canary"}]
-
-
-def test_gate_flag_holds_and_triage_may_release(hub):
-    hub.gates = [G("security", "flag")]
-    out, _ = call(hub, CLAUDE_FOR_BAKE, "shell.exec")
-    assert out["held"] and "gate security" in out["error"]
-    assert not run(hub.release(out["hold"], "agent:claude"))["ok"]
-    assert run(hub.release(out["hold"], "system:plugin.security"))["ok"]
-
-
-def test_a_flag_on_a_read_is_journaled_not_held(hub):
-    # castling-security (Bake): "Tiering: reads log, writes/exec can hold,
-    # elevation must pass".
-    hub.gates = [G("security", "flag")]
-    out, _ = call(hub, CLAUDE_FOR_BAKE, "file.read")
-    assert out["ok"] and not out.get("held") and not hub.holds and len(hub.tx.requests) == 1
-    e = calls(hub)[0]
-    assert e["decision"] == "allow" and e["gates"][0]["verdict"] == "flag"
-
-
-def test_a_gate_error_on_a_read_is_journaled_not_held(hub):
-    # A gate that overruns its budget (a stalled loop, a swapping VM) counts
-    # as a gate_error flag; on a read it must not reach the person.
-    def boom(inp):
-        raise RuntimeError("gate broke")
-    hub.gates = [gates.Gate("security", boom, mode="enforce"), G("ml")]
-    out, _ = call(hub, BAKE, "file.read")
-    assert out["ok"] and not hub.holds
-    assert calls(hub)[0]["gates"][0]["reason"] == "gate_error"
-    out, _ = call(hub, BAKE, "light.set")              # a write still holds
-    assert out["held"] and "gate security" in out["error"]
-
-
-def test_a_block_on_a_read_still_refuses(hub):
-    hub.gates = [G("security", "flag"), G("canary", "block", reason="canary")]
-    out, _ = call(hub, BAKE, "file.read")
-    assert out["error"] == "denied: blocked by gate canary: canary" and not hub.tx.requests
-
-
-def test_only_the_security_triage_component_releases_flags_of_its_own_gate(hub):
-    # Any other system: component (a hook, a job's plugin) is not triage, and
-    # triage releases its own gate's flags only (review H7).
-    hub.gates = [G("security", "flag")]
-    out, _ = call(hub, CLAUDE_FOR_BAKE, "shell.exec")
-    for by in ("system:security", "system:hub", "system:plugin.jobs", "system:triage"):
-        assert "may not release" in run(hub.release(out["hold"], by))["error"]
-    hub.gates = [G("ml", "flag")]
-    out, _ = call(hub, CLAUDE_FOR_BAKE, "shell.exec")
-    assert "may not release" in run(hub.release(out["hold"], "system:plugin.security"))["error"]
-    assert run(hub.release(out["hold"], "person:bake"))["ok"]       # a flag needs no presence
-
 
 def test_hard_stops_are_never_released_by_automation(hub):
     # A person-only caller that isn't there (a job made by the person, a hub
-    # plugin's ctx.call_as) can't release or refuse the person's hard stop;
-    # the triage component never can (review H7, spec 10.3).
+    # plugin's ctx.call_as) can't release or refuse the person's hard stop
+    # (review H7, spec 10.3).
     out, _ = call(hub, BAKE, "mail.send")
     for by in ("person:bake", "system:plugin.security"):
         assert "may not release" in run(hub.release(out["hold"], by))["error"]
@@ -761,111 +629,7 @@ def test_hard_stops_are_never_released_by_automation(hub):
     assert run(hub.release(out["hold"], "person:bake", present=True))["ok"]
 
 
-def test_shadow_gates_are_recorded_but_never_count(hub):
-    hub.gates = [G("ml", "block", mode="shadow")]
-    out, _ = call(hub, BAKE, "shell.exec")
-    assert out["ok"] and calls(hub)[0]["gates"][0]["verdict"] == "block"
-
-
-def test_gate_only_sees_matching_calls(hub):
-    hub.gates = [G("writes", "block", match={"risk": ["write", "exec", "admin"]}),
-                 G("taint", "block", match={"effects": ["taints"]}),
-                 G("shellonly", "block", match={"caps": ["shell.*"]})]
-    assert call(hub, BAKE, "file.read")[0]["ok"]
-    assert calls(hub)[0]["gates"] == []
-    out, _ = call(hub, BAKE, "web.fetch")
-    assert out["error"] == "denied: blocked by gate taint: anomaly"
-    out, _ = call(hub, BAKE, "shell.exec")
-    assert [g["gate"] for g in calls(hub)[-1]["gates"]] == ["writes", "shellonly"]
-
-
-def test_gates_get_the_call_and_cannot_change_it(hub):
-    seen = []
-
-    def nosy(inp):
-        seen.append(json.loads(json.dumps(inp)))
-        inp["args"]["argv"] = ["rm", "-rf", "/"]
-        inp["cap"] = "evil"
-        return {"verdict": "allow", "confidence": 1, "reason": "other", "grant": "*", "verdict2": "allow"}
-
-    hub.gates = [gates.Gate("nosy", nosy, mode="enforce")]
-    out, s = call(hub, CLAUDE_FOR_BAKE, "shell.exec", {"argv": ["ls"]}, project="p", task="t_9")
-    assert out["ok"] and hub.tx.requests[0]["args"] == {"argv": ["ls"]}
-    assert hub.tx.requests[0]["cap"] == "shell.exec"
-    assert set(calls(hub)[0]["gates"][0]) == {"gate", "mode", "verdict", "confidence", "reason"}
-    assert seen[0] == {"cap": "shell.exec", "args": {"argv": ["ls"]},
-                       "caller": {"person": "person:bake", "agent": "agent:claude"},
-                       "worker": "kaiju", "appliance": None, "why": "because the test says so",
-                       "risk": "exec", "scope": "local", "effects": [],
-                       "session": {"id": s.id, "caps": ["*"], "project": "p", "task": "t_9",
-                                   "tainted": False},
-                       "band": BAND}
-
-
-@pytest.mark.parametrize("result", [
-    None, "allow", {"verdict": "maybe", "confidence": 1, "reason": "other"},
-    {"verdict": "allow", "confidence": 2, "reason": "other"},
-    {"verdict": "allow", "confidence": True, "reason": "other"},
-    {"verdict": "allow", "confidence": 0.5, "reason": "vibes"},
-])
-def test_malformed_gate_result_is_a_flag(hub, result):
-    hub.gates = [gates.Gate("bad", lambda inp: result, mode="enforce")]
-    out, _ = call(hub, BAKE, "shell.exec")
-    assert out["held"]
-    assert calls(hub)[0]["gates"][0]["reason"] == "gate_error"
-
-
-def test_gate_error_and_timeout_flag_within_the_wait_cap(hub):
-    def boom(inp):
-        raise RuntimeError("nope")
-
-    async def slow(inp):
-        await asyncio.sleep(5)
-
-    def slow_sync(inp):
-        time.sleep(1)
-
-    hub.gates = [gates.Gate("boom", boom, mode="enforce"),
-                 gates.Gate("slow", slow, budget=10, mode="enforce"),
-                 gates.Gate("slowsync", slow_sync, budget=0.05, mode="enforce")]
-    t0 = time.monotonic()
-    out, _ = call(hub, BAKE, "shell.exec")
-    assert time.monotonic() - t0 < 1.0          # never waits past 200 ms for a gate
-    assert out["held"]
-    assert [g["reason"] for g in calls(hub)[0]["gates"]] == ["gate_error"] * 3
-
-
-def test_gate_vectors_through_run():
-    v = json.loads((VECTORS / "gate.json").read_text())
-    for c in v["cases"]:
-        gs = []
-        for r in c["results"]:
-            def check(inp, r=r):
-                if r.get("error"):
-                    raise RuntimeError("gate failed")
-                return {k: r[k] for k in ("verdict", "confidence", "reason") if k in r}
-            gs.append(gates.Gate(r["gate"], check, mode=r.get("mode", "enforce")))
-        inp = {"cap": "shell.exec", "risk": c.get("risk") or "exec", "effects": []}
-        results = run(gates.run(gs, inp))
-        assert rights.gate_decision(results, c.get("risk")) == c["expect"], c["name"]
-
-
-def test_gate_from_manifest():
-    g = gates.Gate.from_manifest("ml", {"run": "scripts/gate.py:check", "budget": "50ms",
-                                        "match": {"risk": ["exec"]}}, lambda i: None)
-    assert (g.name, g.mode, g.budget, g.match) == ("ml", "shadow", 0.05, {"risk": ["exec"]})
-    assert gates.Gate.from_manifest("x", {"run": "a.py:f"}, lambda i: None).budget == gates.DEFAULT_BUDGET
-    with pytest.raises(ValueError):
-        gates.Gate.from_manifest("x", {"run": "a.py:f", "mode": "loud"}, lambda i: None)
-
-
-def test_changing_gates_and_doors_is_an_owner_action(hub):
-    for by in ("agent:claude", "system:security", "person:ann"):
-        with pytest.raises(PermissionError):
-            hub.set_gates([], by)
-    hub.set_gates([G("ml")], "person:bake")
-    assert hub.log[-1] == {"kind": "gates", "ts": NOW, "hub": hub.hub_id, "by": "person:bake",
-                           "gates": [["ml", "enforce"]]}
+def test_changing_doors_is_an_owner_action(hub):
     with pytest.raises(PermissionError):
         hub.close_door("mcp", "person:ann")
     hub.close_door("mcp", "system:security")
@@ -892,13 +656,11 @@ def test_a_closed_mcp_door_refuses_agents_on_every_door(hub):
 # -- taint (8.4) -------------------------------------------------------------
 
 def test_taints_cap_marks_the_session_for_good(hub):
-    seen = []
-    hub.gates = [gates.Gate("t", lambda i: seen.append(i["session"]["tainted"]) or
-                            {"verdict": "allow", "confidence": 1, "reason": "taint"}, mode="enforce")]
     s = hub.start_session(BAKE, ["*"])
-    for cap in ("file.read", "web.fetch", "file.read"):
-        run(hub.dispatch(BAKE, Call(cap=cap, target="kaiju", why="x", session=s.id)))
-    assert seen == [False, False, True] and s.tainted
+    run(hub.dispatch(BAKE, Call(cap="file.read", target="kaiju", why="x", session=s.id)))
+    assert not s.tainted
+    run(hub.dispatch(BAKE, Call(cap="web.fetch", target="kaiju", why="x", session=s.id)))
+    assert s.tainted
     s2 = hub.start_session(BAKE, ["*"])
     hub.taint(s2.id)
     assert s2.tainted
@@ -1057,51 +819,6 @@ def test_sub_call_runs_as_the_parent_with_uses(hub):
     assert after["error"] == "denied: core.call: no such call in flight"
 
 
-def test_gate_result_check_withholds_a_result_it_blocks(hub):
-    """A gate's result check (canaries) sees what came back; block turns the
-    reply into a refusal, journaled with stage: result. Flags only count as
-    journal entries: the call already ran."""
-    seen = []
-
-    def result(inp):
-        seen.append(inp)
-        bad = "AKIAFAKE" in json.dumps(inp["result"])
-        return {"verdict": "block" if bad else "flag", "confidence": 1.0, "reason": "canary"}
-
-    hub.gates = [gates.Gate("canary", lambda inp: {"verdict": "allow", "confidence": 1.0, "reason": "other"},
-                            mode="enforce", result=result),
-                 G("other", "allow")]
-    out, s = call(hub, BAKE, "file.read", {"path": "/x"})
-    assert out["ok"] and out["result"] == {"cap": "file.read"}           # a flag doesn't withhold
-    assert seen[0]["result"] == {"cap": "file.read"} and seen[0]["session"]["id"] == s.id
-    e = calls(hub)[-1]
-    assert [(g["gate"], g.get("stage")) for g in e["gates"]] == [("canary", None), ("other", None),
-                                                                  ("canary", "result")]
-    assert e["ok"] is True
-    hub.tx.answer = lambda req, n: {"id": req["id"], "from": WID, "ok": True, "result": {"key": "AKIAFAKE1"}}
-    out, _ = call(hub, BAKE, "file.read", {"path": "/y"})
-    assert out == {"id": out["id"], "ok": False, "error": "denied: blocked by gate canary: canary"}
-    e = calls(hub)[-1]
-    assert e["ok"] is False and e["error"] == out["error"] and e["gates"][-1]["verdict"] == "block"
-
-
-def test_gate_result_check_shadow_and_failed_calls(hub):
-    hub.gates = [gates.Gate("ml", lambda inp: {"verdict": "allow", "confidence": 1.0, "reason": "other"},
-                            mode="shadow",
-                            result=lambda inp: {"verdict": "block", "confidence": 1.0, "reason": "canary"})]
-    out, _ = call(hub, BAKE, "file.read", {"path": "/x"})
-    assert out["ok"] and calls(hub)[-1]["gates"][-1]["stage"] == "result"    # shadow: journaled only
-    hub.gates[0].mode = "enforce"
-    hub.tx.answer = lambda req, n: {"id": req["id"], "from": WID, "ok": False, "error": "nope"}
-    out, _ = call(hub, BAKE, "file.read", {"path": "/x"})
-    assert out["error"] == "nope" and "stage" not in calls(hub)[-1]["gates"][-1]    # nothing came back
-
-
-def test_gate_from_manifest_with_a_result_check():
-    g = gates.Gate.from_manifest("canary", {"run": "s.py:a", "result": "s.py:b"}, len, str)
-    assert g.check is len and g.result is str
-
-
 # -- crash guard (review H11) --------------------------------------------------
 
 def test_a_crash_inside_dispatch_is_an_error_reply_and_still_journaled(hub):
@@ -1127,13 +844,12 @@ def test_a_failing_journal_never_hides_a_result_that_ran(hub):
 
 
 def test_a_crash_while_releasing_is_journaled(hub):
-    hub.gates = [G("ml", "flag")]
-    out, _ = call(hub, BAKE, "shell.exec")
+    out, _ = call(hub, BAKE, "mail.send")
 
     def boom(*a):
         raise RuntimeError("mint broke")
     hub._mint = boom
-    rel = run(hub.release(out["hold"], "person:bake"))
+    rel = run(hub.release(out["hold"], "person:bake", present=True))
     assert rel == {"id": out["id"], "ok": False, "error": "internal error"}
     e = calls(hub)[-1]
     assert (e["decision"], e["ok"], e["error"]) == ("released", False, "internal")
@@ -1267,45 +983,25 @@ def test_a_delegate_can_be_pinned_and_only_a_delegate(hub):
 
 # -- security off (castling-switchover-decisions: "no approvals for right now") --------
 
-def _security_off(hub):
-    hub.security_off = lambda: True
-    seen = []
-    hub.gates = [gates.Gate("canary", lambda inp: seen.append(inp) or
-                            {"verdict": "block", "confidence": 1.0, "reason": "canary"}, mode="enforce",
-                            result=lambda inp: seen.append(inp) or
-                            {"verdict": "block", "confidence": 1.0, "reason": "canary"})]
-    return seen
-
-
-def test_security_off_runs_no_gate_and_holds_nothing(hub):
+def test_security_off_holds_nothing(hub):
     """Bake, Oct 31 21:10: "Security gates, holds, approvals ...: off / not on
     the path". Rights still apply; what would have held is journaled."""
-    seen = _security_off(hub)
+    hub.security_off = lambda: True
     out, _ = call(hub, CLAUDE_FOR_BAKE, "file.delete", {"path": "/tmp/x"})
-    assert out["ok"] and "held" not in out and not hub.holds and seen == []
+    assert out["ok"] and "held" not in out and not hub.holds
     [e] = calls(hub)
     assert e["decision"] == "allow" and e["security"] == "off" and e["would_hold"] == ["destructive"]
-    assert "gates" not in e and e["ok"] is True
+    assert e["ok"] is True
     out, _ = call(hub, CLAUDE_FOR_BAKE, "shell.exec", {"argv": ["true"]})
     assert out["ok"] and "would_hold" not in calls(hub)[-1]
     out, _ = call(hub, KID, "light.set")                    # rights still refuse
     assert not out["ok"] and out["error"].startswith("denied")
 
 
-def test_security_off_off_again_restores_gates_and_holds(hub):
-    seen = _security_off(hub)
-    hub.security_off = lambda: False
-    out, _ = call(hub, BAKE, "shell.exec")
-    assert out["error"] == "denied: blocked by gate canary: canary" and seen
-    hub.gates = []
-    out, _ = call(hub, CLAUDE_FOR_BAKE, "file.delete", {"path": "/tmp/x"})
-    assert out["held"] is True
-
-
-def test_security_off_elevation_is_not_gated(hub):
-    seen = _security_off(hub)
+def test_security_off_elevation_is_journaled_as_off(hub):
+    hub.security_off = lambda: True
     got = _elevating(hub)
     out, _ = call(hub, BAKE, "shell.exec")
-    assert out["ok"] and got[0]["ok"] and "lease" in got[0]["result"] and seen == []
+    assert out["ok"] and got[0]["ok"] and "lease" in got[0]["result"]
     [e] = elevations(hub)
-    assert e["decision"] == "allow" and e["security"] == "off" and "gates" not in e
+    assert e["decision"] == "allow" and e["security"] == "off"

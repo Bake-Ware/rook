@@ -508,7 +508,7 @@ emits:
       agent: { type: str }
       why: { type: str }
       session: { type: str }
-      reasons: { type: list, items: { type: str }, doc: "Why it waits: hard stops, \"gate <name>\"." }
+      reasons: { type: list, items: { type: str }, doc: The hard stops it waits on. }
   hold.decided:
     doc: A person answered a hold.
     payload:
@@ -530,13 +530,6 @@ emits:
       session: { type: str, required: true }
       agent: { type: str }
       tainted: { type: bool }
-  gate.blocked:
-    doc: A gate blocked a call (a security event, for triage).
-    payload:
-      cap: { type: str, required: true }
-      worker: { type: str }
-      session: { type: str }
-      reason: { type: str }
 
 presets:
   owner: { grants: ["*"] }

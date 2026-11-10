@@ -153,12 +153,6 @@ def test_hard_stops():
     assert not rights.hard_stop(["physical", "persists"]) and not rights.hard_stop([])
 
 
-def test_gate():
-    v = vec("gate")
-    for c in v["cases"]:
-        assert rights.gate_decision(c["results"], c.get("risk")) == c["expect"], c["name"]
-
-
 def test_journal():
     v = vec("journal")
     chain = v["chain"]

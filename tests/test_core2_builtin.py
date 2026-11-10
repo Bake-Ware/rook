@@ -64,7 +64,7 @@ def test_presets_match_the_spec(core):
 def test_events(core):
     emits = core.data["emits"]
     assert {"worker.online", "worker.offline", "plugin.installed", "hold.created",
-            "session.started", "gate.blocked"} <= set(emits)
+            "session.started"} <= set(emits)
     for name, ev in emits.items():
         assert ev.get("doc") and ev["payload"], name
         assert not ev["taints"], name

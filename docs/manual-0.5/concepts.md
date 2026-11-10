@@ -27,7 +27,7 @@
 ## What happens on a call
 
 ```
- agent or person ──door──▶ hub: who is it? why? rights? gates? holds?
+ agent or person ──door──▶ hub: who is it? why? rights? holds?
                              │   signs one ticket for this exact call
                              ▼
                   relay (sees only encrypted frames)
@@ -38,7 +38,7 @@
 1. The caller names a worker, a cap, its arguments and a **why**: one plain
    sentence saying why. No why, no call.
 2. The hub checks what every layer allows (the person, the agent, the
-   session, the worker's ceiling), asks the security gates, and **holds**
+   session, the worker's ceiling) and **holds**
    the call for a person when it must ([Holds](holds.md)).
 3. It signs a ticket bound to that call: the cap, the exact arguments, the
    worker, who it is for, and the why. A ticket lives about a minute and

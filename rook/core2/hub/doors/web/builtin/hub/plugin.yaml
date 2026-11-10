@@ -19,9 +19,9 @@ settings:
     default: "off"
     where: hub
     doc: >-
-      off: nothing waits on a person. No gate runs and no call is held (each journal entry says
-      security: off) and elevation is not gated. Rights still apply; the vault stays encrypted and
-      secrets stay masked in the journal. on: gates and holds apply.
+      off: nothing waits on a person. No call is held (each journal entry says security: off).
+      Rights still apply; the vault stays encrypted and secrets stay masked in the journal.
+      on: the hard stops hold.
 
 caps:
   status:

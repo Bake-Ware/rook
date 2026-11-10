@@ -93,7 +93,7 @@ class Plan:
     python: list[str]           # pins the worker installs before loading
     sig: dict | None            # plugin.sig, None without a worker part
     content: dict               # hub content to seed (see hub_content)
-    hub_runs: bool              # the hub hosts caps, hooks, routes, records or a gate
+    hub_runs: bool              # the hub hosts caps, hooks, routes or records
 
 
 class Transport(Protocol):
@@ -131,7 +131,7 @@ def needs_worker(data: dict) -> bool:
 def hub_runs(data: dict) -> bool:
     if any(c.get("on") == "hub" for c in data["caps"].values()):
         return True
-    if data.get("routes") or data.get("gate") or data.get("records"):
+    if data.get("routes") or data.get("records"):
         return True
     return data["runs_on"] == "hub" and bool(data["caps"] or data.get("hooks"))
 

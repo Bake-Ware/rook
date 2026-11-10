@@ -2,7 +2,7 @@
 # lives in a hub plugin script cap the job calls; there is no workflow here.
 # Triggers: cron, every, on an event (+ filter), manual. A job runs as its
 # creator or as a persona (owners only); its call goes through dispatch (why,
-# rights, gates, journal). A call fired by an event gets event: {name,
+# rights, journal). A call fired by an event gets event: {name,
 # payload} when its cap takes an event arg. Runs are records. No
 # checkpointing: a run cut off by a hub restart is marked failed.
 #

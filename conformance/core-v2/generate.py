@@ -545,44 +545,6 @@ def gen_presets() -> dict:
     return {"presets": rights.PRESETS, "cases": cases}
 
 
-# -- gate -----------------------------------------------------------------------
-
-def g(gate, verdict, mode="enforce", **kw):
-    return {"gate": gate, "mode": mode, "verdict": verdict, "confidence": 0.9, "reason": "anomaly", **kw}
-
-
-GATES = [
-    ("no gates", [], {"verdict": "allow", "by": []}),
-    ("all allow", [g("ml", "allow"), g("canary", "allow")], {"verdict": "allow", "by": []}),
-    ("flag", [g("ml", "flag"), g("canary", "allow")], {"verdict": "flag", "by": ["ml"]}),
-    ("block wins over flag", [g("ml", "flag"), g("canary", "block")], {"verdict": "block", "by": ["canary"]}),
-    ("two blocks", [g("ml", "block"), g("canary", "block")], {"verdict": "block", "by": ["ml", "canary"]}),
-    ("shadow never counts", [g("ml", "block", "shadow")], {"verdict": "allow", "by": []}),
-    ("error counts as flag", [{"gate": "ml", "mode": "enforce", "error": "timeout"}], {"verdict": "flag", "by": ["ml"]}),
-    ("unknown verdict counts as flag", [g("ml", "grant")], {"verdict": "flag", "by": ["ml"]}),
-    ("allow can't undo a block", [g("ml", "block"), g("allowlist", "allow", confidence=1.0)],
-     {"verdict": "block", "by": ["ml"]}),
-    # Tiering (castling-security): "reads log, writes/exec can hold, elevation must pass".
-    ("a flag on a read is logged, not held", [g("ml", "flag"), g("canary", "allow")],
-     {"verdict": "allow", "by": [], "logged": ["ml"]}, "read"),
-    ("a gate error on a read is logged, not held", [{"gate": "ml", "mode": "enforce", "error": "timeout"}],
-     {"verdict": "allow", "by": [], "logged": ["ml"]}, "read"),
-    ("a block on a read still refuses", [g("ml", "flag"), g("canary", "block")],
-     {"verdict": "block", "by": ["canary"]}, "read"),
-    ("a flag on a write holds", [g("ml", "flag")], {"verdict": "flag", "by": ["ml"]}, "write"),
-]
-
-
-def gen_gate() -> dict:
-    cases = []
-    for name, results, expect, *risk in GATES:
-        risk = risk[0] if risk else None
-        got = rights.gate_decision(results, risk)
-        check(got == expect, f"gate {name}: {got}")
-        cases.append({"name": name, "results": results, **({"risk": risk} if risk else {}), "expect": expect})
-    return {"verdicts": list(rights.VERDICTS), "reasons": list(rights.GATE_REASONS), "cases": cases}
-
-
 # -- journal --------------------------------------------------------------------
 
 def gen_journal() -> dict:
@@ -612,7 +574,7 @@ def gen_journal() -> dict:
 VECTORS = {
     "canonical": gen_canonical, "signatures": gen_signatures, "tickets": gen_tickets, "leases": gen_leases,
     "memberships": gen_memberships, "requests": gen_requests, "version": gen_version, "rights": gen_rights, "presets": gen_presets,
-    "gate": gen_gate, "journal": gen_journal,
+    "journal": gen_journal,
 }
 
 
