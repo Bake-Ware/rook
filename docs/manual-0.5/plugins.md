@@ -14,7 +14,7 @@ A hub plugin can also serve a worker's caps: its scripts run on the hub
 and reach the machine through the worker's primitives (`shell.exec`,
 `file.*`, streams). An agent still calls `worker=kaiju cap=battery.status`
 and finds it in kaiju's caps; nothing is installed on kaiju
-([Writing a plugin](authoring.md#the-smallest-plugin-a-workers-cap)).
+([Writing a plugin](authoring.md#on-worker-caps)).
 
 ## The hub's library
 
@@ -134,4 +134,6 @@ runs where and what the phone app needs):
 
 ## Writing your own
 
-Most plugins are a page of YAML: [Writing a plugin](authoring.md).
+How to write one, with two worked examples: the agents' skill
+[plugins](../../rook/plugins/agents/skills/plugins.md). Every manifest key:
+[Writing a plugin](authoring.md).
