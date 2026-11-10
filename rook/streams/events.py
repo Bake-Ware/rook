@@ -67,7 +67,7 @@ class StreamSpec:
 
 # The decided defaults per kind (castling-streams, "Durability"): rooms,
 # huddles and agent sessions keep everything; terminals and processes keep a
-# bounded buffer. voice and inbox follow sessions and rooms. Any other kind is
+# bounded buffer. voice follows sessions and rooms. Any other kind is
 # allowed but must say what it carries.
 KINDS: dict[str, StreamSpec] = {
     "terminal": StreamSpec(("bytes",), input=True, durable=False),
@@ -76,7 +76,6 @@ KINDS: dict[str, StreamSpec] = {
     "huddle": StreamSpec(("text",), durable=True),
     "session": StreamSpec(("turn", "text"), input=True, durable=True),
     "voice": StreamSpec(("turn",), input=True, durable=True),
-    "inbox": StreamSpec(("text",), durable=True),
 }
 
 
