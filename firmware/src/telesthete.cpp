@@ -17,10 +17,6 @@
 //     AAD   = { channel_type, channel_id_hi, channel_id_lo }
 //     ciphertext_wire = ciphertext || tag(16)      (tag TRAILING)
 //
-// NOTE: the legacy XSalsa20-Poly1305/secretbox code below (Salsa20 core,
-// HSalsa20, Poly1305, secretbox_*) is retained but DEAD — the fleet migrated
-// off it. See aead_encrypt/aead_decrypt for the live path.
-
 #include "telesthete.h"
 #include "config.h"
 #include "settings.h"
@@ -55,7 +51,7 @@ static String g_worker_name;
 static String g_hub_host_cached;
 static bool g_inited = false;
 
-// Forward decls for endian helpers defined below in the Salsa20 section.
+// Forward decls for endian helpers defined below.
 static inline uint32_t load32_le(const uint8_t* s);
 static inline void store32_le(uint8_t* d, uint32_t v);
 
@@ -169,7 +165,7 @@ static void poly1305_mac(const uint8_t key[32],
     store32_le(out_tag + 12, h3);
 }
 
-// ---- Salsa20 / HSalsa20 ------------------------------------------------
+// ---- little-endian helpers ---------------------------------------------
 
 static inline uint32_t load32_le(const uint8_t *s) {
     return (uint32_t)s[0]
@@ -184,164 +180,6 @@ static inline void store32_le(uint8_t *d, uint32_t v) {
     d[3] = (uint8_t)(v >> 24);
 }
 #define ROTL32(v, n) (((v) << (n)) | ((v) >> (32 - (n))))
-
-// Salsa20 quarter-round (NOT ChaCha20's). 4 ops, single statement-expr.
-#define QR_S(a, b, c, d) do { \
-    b ^= ROTL32((uint32_t)((a) + (d)),  7); \
-    c ^= ROTL32((uint32_t)((b) + (a)),  9); \
-    d ^= ROTL32((uint32_t)((c) + (b)), 13); \
-    a ^= ROTL32((uint32_t)((d) + (c)), 18); \
-} while (0)
-
-static void salsa20_block(uint8_t out[64], const uint32_t in_[16]) {
-    uint32_t x[16];
-    memcpy(x, in_, 64);
-    for (int i = 0; i < 10; i++) {
-        // column round
-        QR_S(x[0],  x[4],  x[8],  x[12]);
-        QR_S(x[5],  x[9],  x[13], x[1]);
-        QR_S(x[10], x[14], x[2],  x[6]);
-        QR_S(x[15], x[3],  x[7],  x[11]);
-        // row round
-        QR_S(x[0],  x[1],  x[2],  x[3]);
-        QR_S(x[5],  x[6],  x[7],  x[4]);
-        QR_S(x[10], x[11], x[8],  x[9]);
-        QR_S(x[15], x[12], x[13], x[14]);
-    }
-    for (int i = 0; i < 16; i++) {
-        store32_le(out + i * 4, x[i] + in_[i]);
-    }
-}
-
-// HSalsa20 = same rounds, no input add, special output word selection.
-static void hsalsa20(uint8_t out[32], const uint8_t key[32], const uint8_t nonce16[16]) {
-    static const uint32_t sigma[4] = {
-        0x61707865u, 0x3320646eu, 0x79622d32u, 0x6b206574u
-    };
-    uint32_t x[16];
-    x[0]  = sigma[0];
-    x[1]  = load32_le(key + 0);
-    x[2]  = load32_le(key + 4);
-    x[3]  = load32_le(key + 8);
-    x[4]  = load32_le(key + 12);
-    x[5]  = sigma[1];
-    x[6]  = load32_le(nonce16 + 0);
-    x[7]  = load32_le(nonce16 + 4);
-    x[8]  = load32_le(nonce16 + 8);
-    x[9]  = load32_le(nonce16 + 12);
-    x[10] = sigma[2];
-    x[11] = load32_le(key + 16);
-    x[12] = load32_le(key + 20);
-    x[13] = load32_le(key + 24);
-    x[14] = load32_le(key + 28);
-    x[15] = sigma[3];
-
-    for (int i = 0; i < 10; i++) {
-        QR_S(x[0],  x[4],  x[8],  x[12]);
-        QR_S(x[5],  x[9],  x[13], x[1]);
-        QR_S(x[10], x[14], x[2],  x[6]);
-        QR_S(x[15], x[3],  x[7],  x[11]);
-        QR_S(x[0],  x[1],  x[2],  x[3]);
-        QR_S(x[5],  x[6],  x[7],  x[4]);
-        QR_S(x[10], x[11], x[8],  x[9]);
-        QR_S(x[15], x[12], x[13], x[14]);
-    }
-    store32_le(out +  0, x[0]);
-    store32_le(out +  4, x[5]);
-    store32_le(out +  8, x[10]);
-    store32_le(out + 12, x[15]);
-    store32_le(out + 16, x[6]);
-    store32_le(out + 20, x[7]);
-    store32_le(out + 24, x[8]);
-    store32_le(out + 28, x[9]);
-}
-
-// Generate `nblocks` of XSalsa20 keystream into `out` (out must hold nblocks*64 bytes).
-static void xsalsa20_stream(uint8_t* out, size_t nblocks,
-                            const uint8_t key[32], const uint8_t nonce24[24]) {
-    uint8_t subkey[32];
-    hsalsa20(subkey, key, nonce24);
-
-    static const uint32_t sigma[4] = {
-        0x61707865u, 0x3320646eu, 0x79622d32u, 0x6b206574u
-    };
-    uint32_t st[16];
-    st[0]  = sigma[0];
-    st[1]  = load32_le(subkey + 0);
-    st[2]  = load32_le(subkey + 4);
-    st[3]  = load32_le(subkey + 8);
-    st[4]  = load32_le(subkey + 12);
-    st[5]  = sigma[1];
-    st[6]  = load32_le(nonce24 + 16);
-    st[7]  = load32_le(nonce24 + 20);
-    // st[8], st[9] = block counter, set per-block
-    st[10] = sigma[2];
-    st[11] = load32_le(subkey + 16);
-    st[12] = load32_le(subkey + 20);
-    st[13] = load32_le(subkey + 24);
-    st[14] = load32_le(subkey + 28);
-    st[15] = sigma[3];
-
-    // 32-bit block counter — plaintexts on this device fit well under 2^31 blocks.
-    for (size_t b = 0; b < nblocks; b++) {
-        st[8] = (uint32_t)b;
-        st[9] = 0;
-        salsa20_block(out + b * 64, st);
-    }
-}
-
-// ---- XSalsa20-Poly1305 (NaCl secretbox) --------------------------------
-
-// out_wire must have room for plaintext_len + 16 bytes (tag prefix).
-// Returns true on success.
-static bool secretbox_encrypt(uint8_t* out_wire,
-                              const uint8_t key[32], const uint8_t nonce24[24],
-                              const uint8_t* plaintext, size_t pt_len) {
-    size_t nblocks = (32 + pt_len + 63) / 64;
-    if (nblocks == 0) nblocks = 1;
-    uint8_t* stream = (uint8_t*)malloc(nblocks * 64);
-    if (!stream) return false;
-    xsalsa20_stream(stream, nblocks, key, nonce24);
-
-    // wire = tag(16) || ciphertext
-    uint8_t* ct = out_wire + 16;
-    for (size_t i = 0; i < pt_len; i++) {
-        ct[i] = plaintext[i] ^ stream[32 + i];
-    }
-
-    // Poly1305 over ciphertext using stream[0..32] as key.
-    poly1305_mac(stream, ct, pt_len, out_wire);
-    free(stream);
-    return true;
-}
-
-// Returns true and writes pt_len plaintext bytes if MAC verifies.
-static bool secretbox_decrypt(uint8_t* out_pt,
-                              const uint8_t key[32], const uint8_t nonce24[24],
-                              const uint8_t* wire, size_t wire_len) {
-    if (wire_len < 16) return false;
-    size_t ct_len = wire_len - 16;
-    size_t nblocks = (32 + ct_len + 63) / 64;
-    if (nblocks == 0) nblocks = 1;
-    uint8_t* stream = (uint8_t*)malloc(nblocks * 64);
-    if (!stream) return false;
-    xsalsa20_stream(stream, nblocks, key, nonce24);
-
-    uint8_t want_tag[16];
-    poly1305_mac(stream, wire + 16, ct_len, want_tag);
-    // constant-time compare
-    uint8_t diff = 0;
-    for (int i = 0; i < 16; i++) diff |= wire[i] ^ want_tag[i];
-    if (diff != 0) {
-        free(stream);
-        return false;
-    }
-    for (size_t i = 0; i < ct_len; i++) {
-        out_pt[i] = wire[16 + i] ^ stream[32 + i];
-    }
-    free(stream);
-    return true;
-}
 
 // ---- key derivation -----------------------------------------------------
 
@@ -410,24 +248,9 @@ static void pack_header(uint8_t out[WIRE_HEADER], uint64_t sequence) {
     out[26] = (uint8_t)(sequence);
 }
 
-static void make_xchacha_nonce(uint8_t nonce[24], uint64_t sequence) {
-    // 16 zero bytes || sequence (8 bytes BE) — matches reference impl.
-    memset(nonce, 0, 16);
-    nonce[16] = (uint8_t)(sequence >> 56);
-    nonce[17] = (uint8_t)(sequence >> 48);
-    nonce[18] = (uint8_t)(sequence >> 40);
-    nonce[19] = (uint8_t)(sequence >> 32);
-    nonce[20] = (uint8_t)(sequence >> 24);
-    nonce[21] = (uint8_t)(sequence >> 16);
-    nonce[22] = (uint8_t)(sequence >> 8);
-    nonce[23] = (uint8_t)(sequence);
-}
-
 // ---- ChaCha20-Poly1305 (IETF, RFC 8439) — active AEAD suite -------------
 //
-// This is the current Telesthete baseline (SPEC §3.2), replacing the legacy
-// XSalsa20-Poly1305/secretbox stack above (now dead code). The deployed hub
-// and band-mcp speak ONLY this suite, so the dongle must too.
+// The Telesthete baseline (SPEC §3.2); hubs and workers speak only this suite.
 //
 //     nonce = 4 zero bytes || 8-byte BE sequence          (96-bit, SPEC §3.2)
 //     AAD   = EMPTY (b"")                                  (see note below)
