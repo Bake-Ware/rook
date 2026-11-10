@@ -148,9 +148,6 @@ class Identities:
         hits = [c for d, c in self._tokens.items() if d.startswith(token_id)]
         return hits[0] if len(hits) == 1 else None
 
-    def revoke_token(self, token: str) -> None:
-        self._tokens.pop(digest(token), None)
-
     def add_turn_token(self, caller: Caller, expires: float, now: float) -> str:
         """A door token for one turn of a Rook-run agent (``caller.agent``),
         for the person behind it if any, returned by its name: a

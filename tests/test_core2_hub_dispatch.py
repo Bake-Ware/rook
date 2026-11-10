@@ -504,7 +504,7 @@ def test_tokens_authenticate_to_a_caller():
     tok = ids.add_token(CLAUDE_FOR_BAKE)
     assert ids.authenticate(tok) == CLAUDE_FOR_BAKE and ids.authenticate("nope") is None
     assert tok not in json.dumps(list(ids._tokens))
-    ids.revoke_token(tok)
+    ids.keep_tokens([])                       # taken out of tokens.json
     assert ids.authenticate(tok) is None
     with pytest.raises(ValueError):
         ids.add_token(Caller())
