@@ -36,9 +36,7 @@ What happens:
 2. It signs the list of the plugin's file hashes **for that worker**
    (`plugin.sig`) and sends the bundle with the cap `core.plugin.install`,
    dispatched and journaled like any call; `core.plugin.rollback` is the way
-   back. With the [change](../../rook/plugins/changes/docs/manual.md) plugin
-   installed the push also leaves a change record (the reply names it:
-   `"change": "r_…"`); without it the journal is the trail.
+   back. Its journaled why names the plugin and the version.
 3. The worker installs it only when the signature is from a hub that may
    approve plugins there (its home hub or a co-owner) and every file
    matches. It loads the new version **without restarting** (nothing

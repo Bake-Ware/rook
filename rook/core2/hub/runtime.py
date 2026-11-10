@@ -1601,32 +1601,14 @@ class Hub:
         log.warning("door " + ("opened" if open else "closed"), extra={"fields": {"door": door, "by": by}})
         return {"ok": True, "closed": sorted(self.dispatcher.closed_doors)}
 
-    async def note_change(self, who: KitCaller, record: dict) -> str | None:
-        """Write a change record (castling-changes) when the change plugin is
-        installed, as ``who``; the record's id, or None. Core never needs the
-        plugin: without it, or when the record can't be written, the change
-        goes ahead and the journal is its trail."""
-        if "change" not in self.plugins.plugins:
-            return None
-        try:
-            reply = await self.call_as(who, "change.create", record, target=self.node)
-        except Exception as e:          # never let the record undo a change that went ahead
-            reply = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        rec = reply.get("result") if reply.get("ok") else None
-        if isinstance(rec, dict) and rec.get("id"):
-            return rec["id"]
-        log.warning("change record not written", extra={"fields": {"what": record.get("what"),
-                                                                    "error": reply.get("error")}})
-        return None
-
     async def push_plugin(self, caller: Caller, body: dict, door: str) -> dict:
         """``{worker, plugin, why}``: sign the library's copy of ``plugin``
         for that worker (plugin.sig, spec 13) and send it with
         ``core.plugin.install``, which dispatch checks and journals like any
         call. Approving code for a machine is an owner's act. The worker
         installs, runs the plugin's checks and rolls back on a failure; the
-        reply carries its report, or why it refused. With the change plugin
-        installed the push also leaves a change record (its id in the reply)."""
+        reply carries its report, or why it refused. The journaled why names
+        the plugin and the version."""
         if not self.identities.is_owner(caller.person):
             return {"ok": False, "error": "denied: only an owner pushes plugins"}
         name, target = body.get("plugin"), body.get("worker")
@@ -1660,25 +1642,13 @@ class Hub:
             desc = self.transport.offer(w.band, blob, to=w.id)
         except Exception as e:      # no band (Loopback), too large
             return {"ok": False, "error": f"bundle not offered: {e}"}
-        reply = await self.dispatcher.dispatch(caller, Call(
+        was = (current or {}).get("version")
+        if why:
+            what = f" (installs {name} {plan.version}" + (f" over {was})" if was else ")")
+            why = why[:wire.WHY_MAX - len(what)] + what
+        return await self.dispatcher.dispatch(caller, Call(
             cap="core.plugin.install", target=w.id, args={"bundle": desc}, why=why,
             session=self._door_session(caller), door=door))
-        if reply.get("held"):
-            return reply                  # the person answers the exact call; nothing to record yet
-        was = (current or {}).get("version")
-        cid = await self.note_change(KitCaller(person=caller.person, agent=caller.agent,
-                                               why=f"Record the push of {name} to {w.name}"), {
-            "what": f"Install plugin {name} {plan.version} on {w.name}" + (f" (was {was})" if was else ""),
-            "why": why or f"An owner pushed {name}.", "category": "plugin", "workers": [w.name],
-            "caps": ["core.plugin.install"],
-            "risk": f"{name}'s caps on {w.name} change; a version that breaks them stays until it is rolled back.",
-            "testing": "The worker runs the plugin's checks after installing and puts the previous version "
-                       "back when they fail.",
-            "rollback": f"core.plugin.rollback {{plugin: {name}}} on {w.name}.",
-            "steps": f"The hub signs {name} {plan.version} ({plan.trust}) for {w.name} and sends it with "
-                     "core.plugin.install.",
-            "outcome": "installed" if reply.get("ok") else f"not installed: {reply.get('error')}"[:500]})
-        return {**reply, "change": cid} if cid else reply
 
     def _library_folder(self, name: str) -> Path | None:
         """The library folder whose plugin.yaml names ``name``, read now: a
