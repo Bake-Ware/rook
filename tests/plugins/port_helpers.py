@@ -77,7 +77,7 @@ def bins(tmp_path, monkeypatch):
 def on_worker(plugin: str, cap: str, args: dict | None = None, *, os_name: str = "linux",
               appliance: dict | None = None):
     """Run a hub plugin's ``on: worker`` cap as the hub does, for a worker that
-    serves only the real shell plugin: ``ctx.worker`` names it and
+    serves only the real shell and file plugins (the primitives): ``ctx.worker`` names it and
     ``ctx.call_on`` reaches it. Returns (result, [(cap, args)] it called);
     a failure raises KitError."""
     from rook.core2.hub.plugins import HubPlugins
@@ -88,6 +88,7 @@ def on_worker(plugin: str, cap: str, args: dict | None = None, *, os_name: str =
     async def body():
         worker = Host(os_name=os_name)
         await worker.load(PLUGINS / "shell")
+        await worker.load(PLUGINS / "file")
         seen = []
 
         async def call(who, cap_, args_, uses=None, target=None, contract=None):

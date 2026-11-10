@@ -28,9 +28,9 @@ use std::time::{Duration, Instant};
 use crate::worker::{processes_naming, Info};
 
 /// Plugins from `rook/plugins` the desktop's worker loads: commands and
-/// terminals, files, screenshots. Notifications on this screen run on the hub
-/// through shell.exec.
-pub const DESKTOP_PLUGINS: [&str; 3] = ["shell", "file", "screen-desktop"];
+/// terminals, files. Notifications and screenshots on this screen run on the
+/// hub through these.
+pub const DESKTOP_PLUGINS: [&str; 2] = ["shell", "file"];
 /// How long "Add this computer" waits for the hub.
 pub const ENROLL_WAIT: Duration = Duration::from_secs(120);
 
@@ -114,8 +114,7 @@ pub fn initial_config(plugins: &Path, name: Option<&str>) -> String {
         .iter()
         .map(|p| plugins.join(p).display().to_string())
         .collect();
-    let mut v = json!({"data": "data", "plugins": list, "hardware": ["display"],
-                       "log": {"level": "info", "format": "text"}});
+    let mut v = json!({"data": "data", "plugins": list, "log": {"level": "info", "format": "text"}});
     if let Some(n) = name {
         v["name"] = json!(n);
     }
@@ -313,7 +312,6 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["data"], "data");
         assert_eq!(v["name"], "my-laptop");
-        assert_eq!(v["hardware"][0], "display");
         let plugins: Vec<&str> = v["plugins"]
             .as_array()
             .unwrap()
@@ -321,7 +319,7 @@ mod tests {
             .map(|p| p.as_str().unwrap())
             .collect();
         assert_eq!(plugins.len(), DESKTOP_PLUGINS.len());
-        assert!(plugins[2].ends_with("screen-desktop"));
+        assert!(plugins[1].ends_with("file"));
         assert!(initial_config(Path::new("/x"), None).find("\"name\"").is_none());
     }
 
