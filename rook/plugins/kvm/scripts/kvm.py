@@ -53,7 +53,7 @@ def api_post(ctx, path: str, query=None, body: str | None = None, body_b64: str 
 # -- helpers ----------------------------------------------------------------------
 
 def _appliance(ctx) -> dict:
-    # The instance the hub carried with the call (spec 5.7): {name, host,
+    # The instance the hub carried with the call (spec 10.8): {name, host,
     # port, user, password, verify_tls}, the password resolved from the vault.
     a = getattr(ctx, "appliance", None) or {}
     if not _HOST.fullmatch(str(a.get("host") or "")):

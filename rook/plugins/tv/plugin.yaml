@@ -1,6 +1,6 @@
 # LG webOS TVs as appliances: a delegate worker on the TV's network carries
 # each call; the host, the pairing key and the MAC belong to the instance
-# (spec 5.7). SSAP is a stateful websocket (register, then request/response),
+# (spec 10.8). SSAP is a stateful websocket (register, then request/response),
 # so every cap is scripts/tv.py, which keeps one connection per TV.
 manifest: 1
 plugin: tv

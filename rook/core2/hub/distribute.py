@@ -11,7 +11,7 @@ or all of it at once: ``await install(folder, env, transport, signer=..., hub=..
 ``requires.python`` with uv against the target worker's environment (a
 conflict refuses with uv's reason instead of breaking the worker), fetches
 ``assets`` with their sha256 checked, and signs the file-hash list for that
-worker (``plugin.sig``, a ``rook-plugin`` signed object, spec 13). ``push``
+worker (``plugin.sig``, a ``rook-plugin`` signed object, spec 10.7). ``push``
 builds the bundle (a tar of the plugin folder, the assets under
 ``assets/<name>`` and ``plugin.sig``) and hands it to a :class:`Transport`.
 The worker side is :mod:`rook.core2.worker.install`.

@@ -1,5 +1,5 @@
 """Core v2 rights: the risk/scope/effects enums, grant patterns, the
-intersection rule and user presets. Spec sections 4 and 8 of
+intersection rule and user presets. Spec sections 3 and 6 of
 docs/spec/core-v2.md.
 
 A *rights* object is {"grants": [pattern, ...], "max_risk"?: risk,
@@ -14,7 +14,7 @@ from typing import Any
 RISKS = ("read", "write", "exec", "admin")
 SCOPES = ("self", "local", "multi-machine", "multi-user", "external")
 EFFECTS = ("destructive", "sensitive", "physical", "sends_as")
-# Effects that always hold a call for the person (spec 4.3). Unknown effect
+# Effects that always hold a call for the person (spec 3.5). Unknown effect
 # flags count as destructive.
 HARD_STOP_EFFECTS = ("destructive", "sends_as")
 

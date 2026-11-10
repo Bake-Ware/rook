@@ -60,9 +60,7 @@ The values live in the hub's vault, `<data>/vault.db` (owners only):
 - in the args of a call to a worker, `{{secret:NAME}}` (alone or inside a
   string) becomes the value for that call only; the journal keeps the
   reference, and the value comes back as `[redacted]`. Calls to the hub's
-  own caps keep the reference as text. Band keys
-  (`{{secret:band-psk-<band>}}`) travel only in an owner's own
-  `core.trust.set`.
+  own caps keep the reference as text.
 
 Worker-side secret settings (a worker plugin's `secret: true` setting) have
 no path from the vault yet: pass the secret as a reference in the call.

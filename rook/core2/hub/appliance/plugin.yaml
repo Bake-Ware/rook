@@ -1,4 +1,4 @@
-# The hub's appliance registry (spec 5.7; castling-workers-appliances).
+# The hub's appliance registry (spec 10.8; castling-workers-appliances).
 # An appliance runs no worker: each instance has a name, the plugin whose
 # caps it answers, its delegate workers (the first is the known-good route)
 # and its instance settings. Agents call it by name, like a worker; dispatch

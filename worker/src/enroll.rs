@@ -1,4 +1,4 @@
-//! Joining a hub (spec 12), as `python -m rook.core2.worker enroll` does
+//! Joining a hub (spec 8), as `python -m rook.core2.worker enroll` does
 //! (rook/core2/enroll/device.py): claim a one-time code, or ask to join and
 //! wait until someone lets this machine in on the Workers page; then write
 //! the same files: anchor.json, `<data>/bands.json`, `<data>/services.json`

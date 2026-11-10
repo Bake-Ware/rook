@@ -110,7 +110,7 @@ def normalize(data: dict) -> dict:
                       "elevation": "never", "aliases": [], **c}
     out["caps"] = caps
     # provides as {contract: full cap name}; each such cap lists the
-    # contracts it answers to (a call by a contract's name, spec 4.1).
+    # contracts it answers to (a call by a contract's name, spec 3.3).
     out["provides"] = provided(out)
     for contract, cap in out["provides"].items():
         if cap in caps:

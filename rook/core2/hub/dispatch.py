@@ -1,5 +1,5 @@
 """Hub dispatch: the one path every door ends at before a ticket exists
-(spec 10 of docs/spec/core-v2.md).
+(spec 6 of docs/spec/core-v2.md).
 
     d = Dispatcher(hub_id=..., op_key=SigningKey, identities=Identities(),
                    workers={worker_id: Worker(...)}, send=transport, journal=store.append)
@@ -9,7 +9,7 @@
     # {"id", "ok", "result" | "error"}; a held call: {"held": True, "hold": name}
     await d.release(name, by="person:bake", present=True)   # runs the exact held call
 
-Order (10.1): door, caller, session, target and cap, why, rights (the
+Order (6.1): door, caller, session, target and cap, why, rights (the
 intersection of person, agent, session, extra layers such as plugin ``uses``
 or a page's caps, and the target's ceiling), holds, ticket, journal.
 Every call that reaches dispatch gets one journal entry; a held call gets a
@@ -28,15 +28,15 @@ database:
 - ``send(band, request) -> reply``: async; delivers a request to its target
   and returns the reply. TODO(castling:wiring): the band connection.
 - ``journal(entry)``: stores an entry; the store assigns ``id``, ``chain``,
-  ``prev`` and ``hash`` (11.3). TODO(castling:journal): journal_store.append.
-- ``secrets(args, caller, cap, target) -> args``: substitutes secret
+  ``prev`` and ``hash`` (7.3). TODO(castling:journal): journal_store.append.
+- ``secrets(args, caller, target) -> args``: substitutes secret
   references for the wire; the journal only ever sees the
   unresolved args, and values come back as ``[redacted]`` in the call's
   error and result. The journal also redacts args the cap declares
   ``type: secret`` (:func:`.vault.journal_args`).
 - ``appliances``: the hub's appliance registry (``get(name)``,
   ``worked(name, worker_id)``). A call whose target is an appliance's name
-  (or that names ``appliance``) goes to one of its delegates (5.7).
+  (or that names ``appliance``) goes to one of its delegates (10.8).
 - ``carry(worker, cap, appliance) -> (carry, secret values)``: what the hub
   sends beside the args, bound by the ticket's ``carry_hash``: the plugin's
   hub-kept settings and the appliance instance, secrets resolved per call.
@@ -67,7 +67,7 @@ TICKET_SECS = 60
 DEFAULT_TIMEOUT = 15.0
 TIMEOUT_GRACE = 5.0
 MAX_WAIT = 3600.0       # the longest dispatch waits on one call, whatever a cap's timeout argument asks
-SUB_CALLS = 32         # core.call sub-calls one call in flight may make (13.1)
+SUB_CALLS = 32         # core.call sub-calls one call in flight may make (10.2)
 REMINT = ("denied by worker: expired", "denied by worker: not_yet_valid")
 NO_RETRY = {"destructive", "physical"}
 
@@ -110,7 +110,7 @@ class Call:
     elevate: bool = False
     door: str | None = None
     layers: list = field(default_factory=list)  # extra [[name, rights]]: plugin uses, page caps
-    contract: str | None = None                 # the contract the call is made by (4.1); dispatch sets it
+    contract: str | None = None                 # the contract the call is made by (3.3); dispatch sets it
     parent: str | None = None                   # a core.call sub-call: the call id it runs inside
     id: str | None = None                       # the call id, when the door handed it out first (Hub.call_or_follow)
 
@@ -157,7 +157,7 @@ class Dispatcher:
         self.leases: dict[str, tuple[str, str, int]] = {}   # lease id -> (worker id, session id, exp)
         self.sub_calls: dict[str, int] = {}     # call id in flight -> core.call sub-calls it made
 
-    # -- sessions (8.4) ----------------------------------------------------
+    # -- sessions (6.3) ----------------------------------------------------
 
     def start_session(self, caller: Caller, caps: list, project: str | None = None,
                       task: str | None = None) -> Session:
@@ -194,7 +194,7 @@ class Dispatcher:
 
     def lease_holders(self, sid: str) -> list[str]:
         """Workers holding a live lease for session ``sid``, forgotten here:
-        the hub drops them there when the session ends (7.4)."""
+        the hub drops them there when the session ends (10.9)."""
         now = self.clock()
         for lid in [lid for lid, v in self.leases.items() if v[2] < now]:
             del self.leases[lid]
@@ -297,7 +297,7 @@ class Dispatcher:
         if (s.person, s.agent) != (caller.person, caller.agent):
             return deny("denied: session: belongs to another caller", "session")
         entry["project"] = s.project
-        # 3. target and cap: a worker, or an appliance by name (5.7)
+        # 3. target and cap: a worker, or an appliance by name (10.8)
         routes, inst = [], None
         if call.appliance is None and self.resolve(call.target) is None and self._appliance(call.target):
             call.appliance = call.target
@@ -321,7 +321,7 @@ class Dispatcher:
             return deny(err or f"unknown capability: {call.cap}")
         call.cap, call.contract = name, contract
         # The journal keeps the args (and their hash) with secret values
-        # redacted (11.1): a hash of a short PIN would give it away.
+        # redacted (7.1): a hash of a short PIN would give it away.
         kept = journal_args(call.args, meta.get("args"))
         entry.update(cap=name, worker=w.id, band=w.band, args_hash=_args_hash(kept), args=kept,
                      **_call_facts(meta, call.elevate))
@@ -343,7 +343,7 @@ class Dispatcher:
         if refused:
             return deny(f"denied: {refused['layer']}: {refused['reason']}",
                         f"{refused['layer']}: {refused['reason']}")
-        # 6. holds (10.3). Security off: nothing is held; what a hold would have waited on is journaled.
+        # 6. holds (6.4). Security off: nothing is held; what a hold would have waited on is journaled.
         hard = _hard_stops(meta, w, entry["risk"])
         if self.security_off():
             entry.update(decision="allow", security="off")
@@ -368,7 +368,7 @@ class Dispatcher:
         named = [w for w in self.workers.values() if w.name == target]
         return named[0] if len(named) == 1 else None
 
-    # -- appliances (5.7) --------------------------------------------------
+    # -- appliances (10.8) --------------------------------------------------
 
     def _appliance(self, name: str | None) -> dict | None:
         return self.appliances.get(name) if self.appliances is not None and isinstance(name, str) else None
@@ -407,7 +407,7 @@ class Dispatcher:
         if caller.person and self.identities.expired(caller.person, self.clock()):
             return {"layer": "person", "reason": "expired"}
         layers = self.identities.layers(caller) + [["session", {"grants": s.caps}]] + list(call.layers)
-        # The worker's two exceptions (6.3): ALWAYS caps are within every
+        # The worker's two exceptions (10.10): ALWAYS caps are within every
         # ceiling; core.trust.set goes by role, so a narrowed home ceiling
         # can be widened again.
         if call.cap not in wire.ALWAYS + wire.HOME_ONLY:
@@ -419,7 +419,7 @@ class Dispatcher:
         out = rights.check(layers, facts)
         return None if out["ok"] else out
 
-    # -- run: mint, send, wait (6.2, 6.5) ----------------------------------
+    # -- run: mint, send, wait (10.1, 5.3) ----------------------------------
 
     async def _run(self, caller: Caller, s: Session, w: Worker, call: Call, meta: dict,
                    entry: dict, alternates: list | None = None) -> dict:
@@ -429,7 +429,7 @@ class Dispatcher:
         answers becomes the known-good route."""
         cid = entry["call"]
         try:
-            args = self.secrets(call.args, caller, call.cap, w.id) if self.secrets else call.args
+            args = self.secrets(call.args, caller, w.id) if self.secrets else call.args
             ahash = wire.args_hash(args)
         except Exception as e:
             entry.update(ok=False, error=f"secret: {e}")
@@ -476,7 +476,7 @@ class Dispatcher:
             # ``echo`` of it, a reply that quotes its input).
             out["result"] = _redact_all(reply.get("result"), shown) if shown else reply.get("result")
         else:
-            # Secret values never come back in error text (6.4): a schema
+            # Secret values never come back in error text (5.2): a schema
             # error quotes the argument, and only the hub knows what it resolved.
             out["error"] = _redact(str(reply.get("error", "failed")),
                                    shown + secret_values(call.args, meta.get("args")))
@@ -559,7 +559,7 @@ class Dispatcher:
         """Hard stops: only the person the call is for (an owner when it is
         for no person), and only from a door where that person is there
         (``present``: the site, a phone card, ``POST /holds`` with their own
-        token), never from a dispatched cap a job or plugin can make (10.3)."""
+        token), never from a dispatched cap a job or plugin can make (6.4)."""
         if not isinstance(by, str):
             return False
         person, owner = hold.caller.person, self.identities.is_owner(by)
@@ -623,7 +623,7 @@ class Dispatcher:
         an outer plugin's ``uses``) plus the calling plugin's ``uses``, and
         through the parent's door (closing it stops the work started there).
         The parent ticket must be one this hub minted for that worker and
-        still in flight; ``from_worker`` is who signed the request (13.1).
+        still in flight; ``from_worker`` is who signed the request (10.2).
         One call makes at most ``SUB_CALLS`` sub-calls; each is journaled
         with ``parent`` = the call it runs inside."""
         nonce = ticket.get("nonce") if isinstance(ticket, dict) else None
@@ -644,7 +644,7 @@ class Dispatcher:
                                                 layers=[*layers, ["uses", uses]], door=door,
                                                 parent=parent["call"]))
 
-    # -- core.elevate (7.2, 13): a lease for a call in flight -------------
+    # -- core.elevate (10.9, 9): a lease for a call in flight -------------
 
     async def elevate(self, from_worker: str, ticket: dict, reason: str) -> dict:
         """Answer a worker's ``core.elevate``: the ticket must be one this hub
@@ -664,7 +664,7 @@ class Dispatcher:
         elif caller.person and self.identities.expired(caller.person, self.clock()):
             out = {"ok": False, "layer": "person", "reason": "expired"}
         else:
-            # Every layer the call itself ran under (8.3): a page's caps, a plugin's uses.
+            # Every layer the call itself ran under (6.2): a page's caps, a plugin's uses.
             layers = self.identities.layers(caller) + [["session", {"grants": s.caps}], *held[3],
                                                        ["ceiling", w.ceiling]]
             out = rights.check(layers, {"cap": "core.elevate", "risk": "admin", "effects": [], "target": target})
@@ -707,7 +707,7 @@ def _plugin_caps(w: Worker, plugin: str) -> dict:
 
 
 def _resolve(caps: dict, cap: str, contract: str | None = None) -> tuple[str, str | None, str | None]:
-    """(cap, contract, error): an alias resolves to its cap (4.1); a contract's
+    """(cap, contract, error): an alias resolves to its cap (3.3); a contract's
     name to the one cap here that provides it, the contract kept so rights
     can match it. ``contract`` given (a provider-routed contract's call) must
     be one the cap provides."""
@@ -753,7 +753,7 @@ def _timeout(meta: dict, args: Any = None) -> float:
 
 def _call_facts(meta: dict, elevate: bool) -> dict:
     """risk, scope and effects as dispatch sees them: unknown risk is admin,
-    unknown scope external, an elevated call admin (4.2, 4.4, 7.1), and so is
+    unknown scope external, an elevated call admin (3.4, 3.6, 10.9), and so is
     a cap declared ``elevation: upfront`` (it always runs elevated)."""
     risk = meta.get("risk")
     scope = meta.get("scope")

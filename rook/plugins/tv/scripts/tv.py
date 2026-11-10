@@ -245,7 +245,7 @@ class Client:
 
 class _TV:
     def __init__(self, ctx):
-        # The instance the hub carried with the call (spec 5.7): {name, host,
+        # The instance the hub carried with the call (spec 10.8): {name, host,
         # port, client_key, mac}, the key resolved from the vault.
         a = getattr(ctx, "appliance", None) or {}
         self.host = str(a.get("host") or "")

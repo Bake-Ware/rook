@@ -1,7 +1,7 @@
 # Core's own manifest (castling-manifest-builtin): implemented inside the hub
 # and worker binaries, announced, never pushed. It defines the base contracts
 # every provider plugin is checked against, the events core emits and the four
-# user presets (castling-manifest-presets; spec core-v2 8.5).
+# user presets (castling-manifest-presets; spec core-v2 6.2).
 #
 # Contracts route one of two ways (coverage gap B2):
 #   route: provider  the hub's service cap goes to the chosen provider (a hub
@@ -23,7 +23,7 @@ runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 
-# Every worker serves these (spec core-v2 13); the hub knows them for any
+# Every worker serves these (spec core-v2 9); the hub knows them for any
 # worker before its own manifests arrive. core.elevate and core.call are the
 # hub's answers to band requests, not dispatched caps.
 caps:
@@ -65,7 +65,7 @@ caps:
     idempotent: true
     result: { type: map }
   # A push is a ticketed call whose args carry the bundle's Drop descriptor,
-  # so the ticket's args_hash binds the bundle's hash (spec 13: plugin.sig).
+  # so the ticket's args_hash binds the bundle's hash (spec 10.7: plugin.sig).
   plugin.install:
     doc: Pull a hub-signed plugin bundle over Drop, install it, run its checks; a failure rolls back.
     on: worker

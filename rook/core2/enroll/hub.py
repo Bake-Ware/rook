@@ -1,6 +1,5 @@
-"""The hub's side of enrollment (spec 12) and of adding an enrolled worker
-to another hub's band (9.1, 9.3). The HTTP door calls these; each returns a
-JSON-able dict with ``ok``.
+"""The hub's side of enrollment (spec 8). The HTTP door calls these; each
+returns a JSON-able dict with ``ok``.
 
 Signing a device in, two ways, both ending in the same config bundle:
 
@@ -14,26 +13,16 @@ Signing a device in, two ways, both ending in the same config bundle:
   the ``hub.join`` cap); the device polls (:meth:`poll`) and gets the
   bundle once.
 
-The person the token is for owns the device (9.1).
+The person the token is for owns the device.
 
-Other bands **invite, never pull** (9.1): an owner of the other hub makes an
-invite (:meth:`invite`: its hub id, root key, band, connection details and a
-suggested role and ceiling); an owner of the home hub brings it here and
-picks the role and ceiling (:meth:`membership`), which signs a
-``rook-membership`` with the root key and sends it with ``core.trust.set``
-like any call. The same route narrows the home band's ceiling (role
-``home``) or takes a worker off a band (``removed``).
-
-The device sends its public key (``key``, spec 5.8) with the claim or its
+The device sends its public key (``key``, spec 10.2) with the claim or its
 request to join; the hub records it with the worker id it issues, and
 from then on takes only requests that key signed from that worker. A
 device enrolled without one (before worker keys) gets its key pinned at
 its first announce that carries one.
 
 State: pending codes live in memory (a restart drops them; the device asks
-again). In ``<data>``: ``enrolled.json`` (each enrolled device: name, owner, key),
-``bands.json`` (other hubs' bands from accepted invites, with their PSKs:
-private), ``memberships.json`` (the documents this hub signed).
+again). In ``<data>``: ``enrolled.json`` (each enrolled device: name, owner, key).
 """
 from __future__ import annotations
 
@@ -48,7 +37,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from .. import CORE_VERSION, rights, wire
+from .. import CORE_VERSION, wire
 
 log = logging.getLogger("rook.hub.enroll")
 
@@ -56,11 +45,7 @@ CODE_SECS = 600               # one-time codes and requests to join
 POLL_EVERY = 2                # seconds between a device's polls
 UNPOLLED_SECS = 30            # a request nobody polls for this long is gone (a real device polls every 2 s)
 MAX_PENDING = 32              # of codes, and of requests; the device routes take no token
-FULL = {"grants": ["*"]}
-INVITE_ROLES = ("guest", "co-owner")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}")
-HEX32 = re.compile(r"[0-9a-f]{32}")
-PSK_REF = re.compile(r"\{\{secret:band-psk-([0-9a-f]{32})\}\}")
 OPTIONS = ("url", "relay", "ws_url", "discover", "services")
 
 
@@ -119,31 +104,6 @@ def check_options(opts: Any) -> None:
         raise ValueError("enroll.services: each service is {url, key | key_env, presets?}")
 
 
-def check_invite(inv: Any) -> str | None:
-    """Why ``inv`` isn't a usable invite, or None."""
-    if not isinstance(inv, dict) or inv.get("typ") != "rook-invite" or inv.get("v") != 2:
-        return "not a rook-invite"
-    try:
-        if inv.get("hub") != wire.key_id(inv.get("root")):
-            return "its hub is not key_id(root)"
-    except (AttributeError, TypeError, ValueError, IndexError):
-        return "bad root key"
-    band, connect = inv.get("band"), inv.get("connect")
-    if not (isinstance(band, str) and HEX32.fullmatch(band)):
-        return "bad band"
-    if not (isinstance(connect, dict) and isinstance(connect.get("psk"), str)
-            and (connect.get("relay") or connect.get("ws_url"))):
-        return "connect needs psk and relay or ws_url"
-    from rook.core2.transport import band_of
-    if band_of(connect["psk"]) != band:
-        return "its PSK is for another band"
-    if inv.get("role") not in INVITE_ROLES:
-        return "role must be guest or co-owner"
-    if inv.get("ceiling") is not None and not rights.valid_rights(inv["ceiling"]):
-        return "bad ceiling"
-    return None
-
-
 class Enrollment:
     """One per hub (``hub.enroll``). ``hub`` is the running
     :class:`~rook.core2.hub.runtime.Hub`; ``options`` its ``enroll:`` block."""
@@ -154,8 +114,6 @@ class Enrollment:
         self.codes: dict[str, dict] = {}      # digest(code) -> {person, exp}
         self.devices: dict[str, dict] = {}    # digest(ticket) -> {name, exp, address, key, by?, refused?}
         self.enrolled = _load(hub.data / "enrolled.json")       # worker_id -> {name, owner, at, via, key?}
-        self.bands = _load(hub.data / "bands.json")             # band -> {hub, root, psk, relay?, ws_url?}
-        self.issued = _load(hub.data / "memberships.json")      # worker_id -> {"<hub> <band>": doc}
 
     # -- who may ------------------------------------------------------------------
 
@@ -168,8 +126,7 @@ class Enrollment:
         return None
 
     def _owner_alone(self, caller) -> str | None:
-        """Things that reveal a secret (the recovery key, a band's PSK) are
-        for an owner in person, not an agent with their token."""
+        """The recovery key is for an owner in person, not an agent with their token."""
         if caller.agent or not self.hub.identities.is_owner(caller.person):
             return "denied: only an owner, signed in as themselves"
         return None
@@ -274,7 +231,7 @@ class Enrollment:
                                                                "by": caller.person}})
         return {"ok": True, "name": d["name"], "joined": not refuse}
 
-    # -- the config bundle (12) --------------------------------------------------------------
+    # -- the config bundle (8) --------------------------------------------------------------
 
     def _band(self) -> dict:
         """The home band as a device joins it: id, PSK, the relay or WebSocket
@@ -325,114 +282,3 @@ class Enrollment:
         if (err := self._owner_alone(caller)):
             return {"ok": False, "error": err}
         return {"ok": True, "recovery_key": recovery_key(self.hub.data)}
-
-    # -- other bands (9.1, 9.3) ---------------------------------------------------------------
-
-    async def invite(self, caller, body: dict) -> dict:
-        """``{role?: guest | co-owner, ceiling?}``: an invite to this hub's
-        band, for an owner of a worker's home hub to accept there. It carries
-        the band's PSK: treat it like one."""
-        if (err := self._owner_alone(caller)):
-            return {"ok": False, "error": err}
-        role = body.get("role", "guest")
-        ceiling = body.get("ceiling", FULL if role == "co-owner" else None)
-        if role not in INVITE_ROLES:
-            return {"ok": False, "error": "bad request: role is guest or co-owner"}
-        if not rights.valid_rights(ceiling):
-            return {"ok": False, "error": "bad request: a ceiling (rights: {grants, max_risk?, effects?}) is required"}
-        try:
-            band = self._band()
-        except ValueError as e:
-            return {"ok": False, "error": str(e)}
-        connect = {k: band[k] for k in ("psk", "relay", "ws_url") if k in band}
-        return {"ok": True, "invite": {"typ": "rook-invite", "v": 2, "hub": self.hub.hub_id,
-                                       "root": wire.pub_text(self.hub.root), "band": band["id"],
-                                       "connect": connect, "role": role, "ceiling": ceiling}}
-
-    async def membership(self, caller, body: dict, door: str) -> dict:
-        """``{worker, why, invite? | band?, role?, ceiling?}`` (owners): add
-        the worker to an invite's band, change its role or ceiling there, take
-        it off (``role: removed``), or narrow its home band (``role: home``).
-        Signs the membership and sends it with ``core.trust.set``."""
-        hub = self.hub
-        if not hub.identities.is_owner(caller.person):
-            return {"ok": False, "error": "denied: only an owner changes a worker's bands"}
-        w = hub.dispatcher.resolve(body.get("worker")) if isinstance(body.get("worker"), str) else None
-        if w is None or w.id == hub.node:
-            return {"ok": False, "error": f"unknown worker: {body.get('worker')}"}
-        invite, role, ceiling = body.get("invite"), body.get("role"), body.get("ceiling")
-        if invite is not None:
-            if (err := check_invite(invite)):
-                return {"ok": False, "error": f"bad invite: {err}"}
-            if invite["hub"] == hub.hub_id or invite["band"] == hub.band:
-                return {"ok": False, "error": "bad invite: it is for this hub's own band"}
-            band, role = invite["band"], role or invite["role"]
-            if ceiling is None and role == invite["role"]:
-                ceiling = invite.get("ceiling")
-            self.bands[band] = {"hub": invite["hub"], "root": invite["root"], **invite["connect"]}
-            _write_private(hub.data / "bands.json", json.dumps(self.bands, indent=1))
-        else:
-            band = body.get("band", hub.band)
-            if not isinstance(band, str):
-                return {"ok": False, "error": "bad request: band is a band id"}
-        if band == hub.band:
-            member_hub, root = hub.hub_id, wire.pub_text(hub.root)
-            if role != "home":
-                return {"ok": False, "error": "bad request: on the home band the role is home"}
-        elif band in self.bands:
-            member_hub, root = self.bands[band]["hub"], self.bands[band]["root"]
-            if role not in (*INVITE_ROLES, "removed"):
-                return {"ok": False, "error": "bad request: role is guest, co-owner or removed"}
-        else:
-            return {"ok": False, "error": "unknown band: bring an invite from its hub"}
-        if role in ("home", "co-owner") and ceiling is None:
-            ceiling = FULL
-        if role != "removed" and not rights.valid_rights(ceiling):
-            return {"ok": False, "error": "bad request: a ceiling (rights: {grants, max_risk?, effects?}) is required"}
-
-        key = f"{member_hub} {band}"
-        held = self.issued.get(w.id, {})
-        iat = max(int(hub.clock()), int((held.get(key) or {}).get("iat", 0)) + 1)   # always newer (9.3)
-        doc = {"typ": "rook-membership", "v": 2, "serial": secrets.token_hex(16), "worker": w.id,
-               "hub": member_hub, "root": root, "band": band, "role": role, "by": caller.person, "iat": iat}
-        if role != "removed":
-            doc["ceiling"] = ceiling
-        doc = wire.sign(hub.root, doc)
-        self.issued.setdefault(w.id, {})[key] = doc
-        _write_private(hub.data / "memberships.json", json.dumps(self.issued, indent=1))
-        args: dict = {"membership": doc}
-        if role in INVITE_ROLES:
-            b = self.bands[band]
-            args["connect"] = {**{k: b[k] for k in ("relay", "ws_url") if b.get(k)},
-                               "psk": "{{secret:band-psk-%s}}" % band}
-        from ..hub.dispatch import Call
-        return await hub.dispatcher.dispatch(caller, Call(
-            cap="core.trust.set", target=w.id, args=args, why=body.get("why") if isinstance(body.get("why"), str)
-            else "", session=hub._door_session(caller), door=door))
-
-    def resolve(self, args: Any, caller, cap: str | None = None) -> Any:
-        """Dispatch's secret step: ``{{secret:band-psk-<band>}}`` becomes the
-        PSK of a band this hub accepted an invite for, only in
-        ``core.trust.set`` made by an owner in person (the membership flow;
-        the journal keeps the reference). Anywhere else the key would reach
-        whoever reads the call's output: an agent acting for the owner could
-        ``shell.exec echo`` it. Every other reference is the vault's
-        (:meth:`rook.core2.hub.runtime.Hub._secret_step`)."""
-        def walk(v: Any) -> Any:
-            if isinstance(v, str):
-                m = PSK_REF.fullmatch(v)
-                if not m:
-                    return v
-                if not self.hub.identities.is_owner(caller.person) or caller.agent:
-                    raise ValueError("only an owner's own calls carry band keys")
-                if cap != "core.trust.set":
-                    raise ValueError("band keys travel only in core.trust.set")
-                if m[1] not in self.bands:
-                    raise ValueError(f"no key for band {m[1][:8]}")
-                return self.bands[m[1]]["psk"]
-            if isinstance(v, dict):
-                return {k: walk(x) for k, x in v.items()}
-            if isinstance(v, list):
-                return [walk(x) for x in v]
-            return v
-        return walk(args)

@@ -1,11 +1,11 @@
-"""Core v2 journal hash chains (spec 11 of docs/spec/core-v2.md).
+"""Core v2 journal hash chains (spec 7 of docs/spec/core-v2.md).
 
 Each entry names its chain and carries ``prev``, the hash of the entry
 before it in that chain (GENESIS for the first). ``hash`` is SHA-256 over
 the canonical entry without ``hash``, so it covers ``prev`` too.
 
 Chains: one per session project label (``project:<name>``) plus
-``general`` for sessions with none. Retention (11.4) prunes the general
+``general`` for sessions with none. Retention (7.4) prunes the general
 chain from its start one UTC day at a time, never with gaps, each day kept
 ``RETENTION_DAYS`` after it ends.
 """

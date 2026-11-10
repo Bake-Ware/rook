@@ -83,8 +83,6 @@ says why.
 | `POST /enroll/ask` | `{name}` | no token: ask to join (it waits for Join on the Workers page); a ticket to poll with |
 | `POST /enroll/poll` | `{ticket}` | no token: pending, refused, or the config, once |
 | `GET /recovery-key` | | owners: the recovery key |
-| `POST /bands/invite` | `{role?, ceiling?}` | owners: an invite to this hub's band |
-| `POST /memberships` | `{worker, why, invite? \| band?, role?, ceiling?}` | owners: a worker's other bands |
 | `GET /health` | | no token: the hub answers |
 | `GET /updates/desktop.json` | | no token: the desktop app's files in Rook's latest release, for its update check |
 

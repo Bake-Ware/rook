@@ -1,4 +1,4 @@
-"""appliance.*: the worker side of appliances (spec 5.7): find what is on
+"""appliance.*: the worker side of appliances (spec 10.8): find what is on
 this worker's network, and try a draft config plugin's cap against a device
 before it ships.
 

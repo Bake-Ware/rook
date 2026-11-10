@@ -20,7 +20,7 @@ HTTP door.
   frame URL. The page talks to the shell with ``postMessage``
   (``window.rook.call``/``rook.on``, from ``static/bridge.js``); the shell
   forwards each call with the page token, and the hub runs it as the signed-in
-  person with the page's declared ``caps`` as an extra layer (spec 8.3), plus
+  person with the page's declared ``caps`` as an extra layer (spec 6.2), plus
   the author's rights for a page an agent made. Events reach a page only when
   its ``events`` and the viewer's rights both allow them.
 

@@ -1,4 +1,4 @@
-"""The device's side of enrollment (spec 12): find the hub, sign in as a
+"""The device's side of enrollment (spec 8): find the hub, sign in as a
 person, and write what the worker needs to start.
 
     python -m rook.core2.worker --config worker.yaml enroll https://rook.example     # waits for a Join tap
@@ -15,15 +15,15 @@ is on this machine (loopback) or ``--insecure`` says so. The hub id from a
 QR is pinned: a bundle from any other hub is refused.
 
 What it writes, beside the config (paths from the config when it has them):
-``anchor.json`` (the home hub's ``{hub, root, band}``, spec 9.2),
+``anchor.json`` (the home hub's ``{hub, root, band}``, spec 10.10),
 ``<data>/bands.json`` (the home band's PSK and relay; the worker joins every
 band listed there), ``<data>/services.json`` (service endpoints and keys, when
 the bundle has any), ``<data>/enrollment.json`` (the hub's address, the
-owner) and ``<data>/worker.key`` (the worker's own key, spec 5.8: the hub
+owner) and ``<data>/worker.key`` (the worker's own key, spec 10.2: the hub
 recorded its public half at sign-in; enrolling again with ``force`` makes a
 new one). The config gets ``data``, ``anchor``, ``name`` and ``worker_id``;
 everything else in it is kept. Enrolling again needs ``force``, which
-re-anchors the worker and drops every other band (9.5).
+re-anchors the worker and drops every other band (10.10).
 """
 from __future__ import annotations
 
@@ -236,7 +236,7 @@ def install(config: Path, bundle: dict, url: str, force: bool = False, key: Sign
         anchor.unlink()
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
     band, hub = bundle["band"], bundle["hub"]
-    # The worker only reads it. A service install makes it root's (spec 9.2);
+    # The worker only reads it. A service install makes it root's (spec 10.10);
     # a user install can't protect it from the worker's own account, and the
     # worker says so when it starts.
     _write(anchor, json.dumps({"hub": hub["hub_id"], "root": hub["root"], "band": band["id"]}) + "\n", 0o644)

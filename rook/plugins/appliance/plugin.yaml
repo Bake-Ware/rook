@@ -1,4 +1,4 @@
-# The worker side of appliances (spec 5.7; castling-caps rows devkit.*):
+# The worker side of appliances (spec 10.8; castling-caps rows devkit.*):
 # discovery on this worker's network and trying a draft config plugin's cap
 # against a device before it ships. The appliance registry itself (define,
 # list, remove: instances, delegates, routes) is hub state, not here.

@@ -2,7 +2,7 @@
 certificate, like a real PiKVM.
 
 TODO(castling:worker-host): the host can't run appliance caps yet (no
-instance values reach Host.call or ctx; spec 5.7), so ``call`` below does
+instance values reach Host.call or ctx; spec 10.8), so ``call`` below does
 what it will: the loader's bound cap, the host's arg check and defaults, then
 the action with the instance's appliance values, or the script with
 ``ctx.appliance`` set. Switch to host.call once it takes an appliance.
