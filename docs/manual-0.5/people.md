@@ -39,7 +39,7 @@ A grant is a pattern: `deluge.*` (every cap of a plugin), `light.set@downstairs-
 (a cap on matching machines or devices). `*` is the only wildcard. Give a
 guest a `created` time: without one, the 7 days have long passed.
 
-Restart the hub after editing people, then give the person a sign-in
+Restart the hub after editing people in the file, then give the person a sign-in
 password (`python -m rook.core2.hub --config hub/hub.yaml passwd autumn`; they
 can change it on their Account page). For their apps and scripts, mint a
 token:
@@ -54,7 +54,10 @@ revoke one, delete its entry (find it by `label`) from `tokens.json` and
 restart the hub. Taking a person out of `users:` ends all their tokens.
 
 Owners see the people and agents the hub knows, with their presets and
-grants, on the site's **Settings** page.
+grants, on the site's **Settings** page. There they add a person (name,
+preset, and a password if you like), set or reset anyone's password, and
+remove a person; the cap is `hub.person`, it writes `users:` in `hub.yaml`
+and applies at once, no restart.
 
 ## Agents
 

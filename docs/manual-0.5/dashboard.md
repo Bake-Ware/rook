@@ -40,7 +40,7 @@ phone, the dock is a sheet behind the Chat button.
   ([the vault's manual](../../rook/core2/hub/vault/docs/manual.md)).
 - **Settings**: the hub (its band, and the relay machines join at), its
   people and agents, the plugin settings and your own ([Settings](settings.md)).
-  People are added and removed in `hub.yaml` (`users:`), see [People](people.md).
+  Owners add and remove people and set their passwords there ([People](people.md)).
 
 ## Pages agents make
 

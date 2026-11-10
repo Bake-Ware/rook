@@ -57,6 +57,18 @@ caps:
       worker: { type: str, required: true, doc: "The machine's name or id." }
       sacred: { type: bool, default: true, doc: "false: normal again." }
     result: { type: map }
+  person:
+    doc: "Add a person (name and preset), set or reset a person's password, or remove a person. Kept in hub.yaml's users; applies at once."
+    on: hub
+    risk: admin
+    scope: multi-machine
+    effects: []
+    args:
+      name: { type: str, required: true, doc: "The person's user name." }
+      preset: { type: str, doc: "owner, adult, child, guest (or one of this hub's presets): adds the person, or changes their preset." }
+      password: { type: secret, doc: "Their new sign-in password." }
+      remove: { type: bool, default: false, doc: "true: take the person off the hub." }
+    result: { type: map }
   joins:
     doc: "Machines asking to join the band (the installer with no token), waiting for someone to let them in: devices, each with id, name, address and age."
     on: hub

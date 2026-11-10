@@ -17,6 +17,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytest.importorskip("nacl")
 pytest.importorskip("jsonschema")
@@ -813,6 +814,38 @@ def test_the_hub_status_gives_the_band_address(site):
     run(go())
 
 
+def test_people_are_added_given_passwords_and_removed_on_the_settings_page(site, tmp_path):
+    async def go():
+        conf = tmp_path / "hub.yaml"
+        conf.write_text("# head\nusers: {bake: {preset: owner}}\n")
+        hub, tokens = await site(settings={"hub": {"security": "off"}})
+        hub.cfg.file = conf
+        try:
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            page = next(p for p in (await c.call("page.list"))["result"]["pages"] if p["page"] == "setting/settings")
+            assert set(page["caps"]) - {"setting.*"} <= set(hub.dispatcher.workers[hub.node].caps)
+            t = (await c.open("setting/settings"))["token"]
+            # the calls the page makes, with its args
+            out = await c.page(t, "hub.person", {"name": "autumn", "preset": "adult", "password": "a-pw"})
+            assert out["ok"] and out["result"]["preset"] == "adult", out
+            assert hub.identities.user("person:autumn").preset == "adult"
+            assert passwords.check(hub.data, "autumn", "a-pw")
+            assert "a-pw" not in json.dumps(hub.journal.query(cap="hub.person", limit=5))
+            assert yaml.safe_load(conf.read_text())["users"]["autumn"]["preset"] == "adult"
+            assert conf.read_text().startswith("# head\n")
+            people = (await c.page(t, "hub.status"))["result"]["people"]
+            assert "autumn" in [u["name"] for u in people]
+            assert (await c.page(t, "hub.person", {"name": "autumn", "password": "b-pw"}))["ok"]
+            assert passwords.check(hub.data, "autumn", "b-pw")
+            assert (await c.page(t, "hub.person", {"name": "autumn", "remove": True}))["ok"]
+            assert hub.identities.user("person:autumn") is None
+            assert "autumn" not in yaml.safe_load(conf.read_text())["users"]
+        finally:
+            await hub.stop()
+    run(go())
+
+
 def test_the_vault_page_calls_only_what_the_vault_serves(site):
     async def go():
         hub, tokens = await site(settings={"hub": {"security": "off"}})
@@ -910,7 +943,7 @@ def test_every_builtin_cap_is_known():
         "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore", "page.public",
         "page.components", "page.site", "page.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.joins", "hub.join", "hub.join_code", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke",
-        "hub.sacred"}
+        "hub.sacred", "hub.person"}
 
 
 def test_a_sacred_machine_survives_a_restart(tmp_path):
@@ -919,7 +952,7 @@ def test_a_sacred_machine_survives_a_restart(tmp_path):
     conf.write_text("# head\ndata: data\nband: " + "a" * 32 + "\nusers: {bake: {preset: owner}}\n")
     cfg = load_config(conf)
     cfg.sacred = ["kaiju"]
-    assert web_caps._save_sacred(cfg) == str(conf)
+    assert web_caps._save_config(cfg, "sacred") == str(conf)
     again = load_config(conf)
     assert again.sacred == ["kaiju"] and conf.read_text().startswith("# head\n")
 
