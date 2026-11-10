@@ -452,3 +452,24 @@ def test_restart_fails_open_runs_and_catches_up(cfg):
         finally:
             await rig.stop()
     run(body)
+
+
+def test_the_jobs_page_calls_only_what_the_plugin_serves(cfg):
+    async def body():
+        rig = await Rig(cfg).start()
+        try:
+            page = next(p for p in (await rig.bake.ok("page.list"))["pages"] if p["page"] == "job/jobs")
+            assert page["section"] == "Hub"
+            served = rig.hub.dispatcher.workers[rig.hub.node].caps
+            assert set(page["caps"]) <= set(served), set(page["caps"]) - set(served)
+            job = await rig.bake.ok("job.create", name="nightly", trigger={"manual": True}, call="probe.echo")
+            await rig.bake.ok("job.run", job="nightly", wait=True)
+            # the calls the page makes, with its args
+            assert "nightly" in [j["name"] for j in await rig.bake.ok("job.list", order="name", limit=500)]
+            last = await rig.bake.ok("job.run.list", where={"job": job["id"]}, order="-started", limit=1)
+            assert last[0]["state"] == "ok"
+            await rig.bake.ok("job.update", id=job["id"], revision=job["revision"], enabled=False)
+            assert any(t["template"] == "probe/offered" for t in await rig.bake.ok("job.templates"))
+        finally:
+            await rig.stop()
+    run(body)
