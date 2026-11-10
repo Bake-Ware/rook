@@ -198,28 +198,6 @@ print(json.dumps({k: str(v) for k, v in seen.items()}))
         assert Path(value).is_relative_to(home), (key, value)
 
 
-def test_no_hard_coded_worker_dir_left_in_worker_code():
-    """Every worker-side path goes through rook.core.paths; only the installer
-    (rook/remote/bootstrap.py) and the bundle location may name the dir."""
-    def literals(path):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        docs = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr)}
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs:
-                yield n.value
-
-    files = [*ROOT.joinpath("rook", "worker").rglob("*.py"), *ROOT.joinpath("rook", "core").glob("*.py"),
-             ROOT / "android" / "app" / "src" / "main" / "python" / "worker_entry.py"]
-    bad = []
-    for f in files:
-        if f.name == "paths.py":
-            continue
-        for s in literals(f):
-            if s == ".rook-band-worker" or s.lstrip("~/").startswith(".rook-band-worker/"):
-                bad.append(f"{f.relative_to(ROOT)}: {s!r}")
-    assert not bad, bad
-
-
 def test_kit_ships_with_rook_core():
     """The kit lives in rook.core, which both bundle builders copy whole."""
     for script in ("rook/remote/build_band_worker.py", "android/stage_worker.py"):

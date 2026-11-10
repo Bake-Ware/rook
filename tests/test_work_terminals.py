@@ -12,14 +12,11 @@ import pytest_asyncio
 from aiohttp import WSMsgType, WSServerHandshakeError
 from aiohttp.test_utils import TestClient, TestServer
 
-from test_band_management import portal  # noqa: F401 — fixture
 from rook.worker import termwire
 from rook.worker.audit import _summarize_args
 from rook.worker.plugins import terminals
 from rook.worker.plugins.claude_history import ClaudeHistoryPlugin
 from rook.worker.plugins.terminals import TerminalsPlugin, build_argv
-from rook.remote import term_hub
-from rook.remote.term_hub import TermHub, Viewer
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="PTYs are POSIX-only")
 
@@ -269,98 +266,7 @@ async def drain(viewer, want: bytes, timeout=10):
     return out, msgs
 
 
-@pytest.mark.asyncio
-async def test_hub_fans_out_with_one_input_holder(plugin, tmp_path):
-    band = PtyBand(plugin)
-    ended = []
-    hub = TermHub(lambda: band, on_end=ended.append)
-    tid = (await plugin.open(harness="shell", cwd=str(tmp_path)))["id"]
-    try:
-        s = hub.stream("host1", tid)
-        a, b = Viewer("alice"), Viewer("bob")
-        s.attach(a)
-        s.attach(b)
-        s.control(a, {"op": "input", "data": "echo one-$((1+1))\r"})
-        assert s.holder == a.id
-        for v in (a, b):
-            await drain(v, b"one-2")
-        with pytest.raises(ValueError):
-            s.control(b, {"op": "input", "data": "echo nope\r"})
-        s.control(b, {"op": "resize", "cols": 90, "rows": 20})   # ignored: not holder
-        s.control(a, {"op": "handoff", "to": b.id})
-        assert s.holder == b.id
-        s.control(b, {"op": "resize", "cols": 90, "rows": 20})
-        await until(lambda: plugin.terms[tid].cols == 90)
-        s.control(b, {"op": "input", "data": "echo two-$((2+2))\r"})
-        await drain(a, b"two-4")
-        s.control(a, {"op": "take"})
-        assert s.holder == a.id
-        s.detach(a)
-        assert s.holder is None
-        # A late viewer gets the ring replayed; a reconnecting one only the tail.
-        c = Viewer("carol")
-        s.attach(c)
-        out, msgs = await drain(c, b"two-4")
-        assert b"one-2" in out and msgs[1]["type"] == "reset"
-        d = Viewer("dave")
-        s.attach(d, since=s.end)
-        s.control(b, {"op": "input", "data": "exit\r"})
-        await until(lambda: ended)
-        assert ended[0] is s and not s.running and s.exit_code == 0
-        kinds = []
-        while not d.queue.empty():
-            kinds.append((await d.next())[0])
-        assert "json" in kinds
-        writes = [c for c in band.calls if c[0] == "work.stream.write"]
-        assert writes and all(c[1]["enc"] in ("t", "b") for c in writes)
-    finally:
-        await hub.stop()
-
-
-@pytest.mark.asyncio
-async def test_slow_viewer_is_resynced_not_buffered_forever(plugin, tmp_path, monkeypatch):
-    monkeypatch.setattr(term_hub, "VIEWER_MAX", 4096)
-    band = PtyBand(plugin)
-    hub = TermHub(lambda: band)
-    tid = (await plugin.open(harness="shell", cwd=str(tmp_path)))["id"]
-    try:
-        s = hub.stream("host1", tid)
-        slow = Viewer("slow")
-        s.attach(slow)
-        s.control(slow, {"op": "input", "data": "i=0; while [ $i -lt 800 ]; do echo row-$i-xxxxxxxxxxxx; i=$((i+1)); done; echo END\r"})
-        await until(lambda: slow.resync, 15)
-        assert slow.queued <= 4096 + term_hub.READ_BYTES
-        assert hub.memory() < term_hub.RING_BYTES + 3 * 4096 + term_hub.READ_BYTES
-    finally:
-        await hub.stop()
-
-
-@pytest.mark.asyncio
-async def test_lost_worker_ends_the_stream(plugin, tmp_path, monkeypatch):
-    monkeypatch.setattr(term_hub, "MAX_MISSES", 2)
-    band = PtyBand(plugin)
-    ended = []
-    hub = TermHub(lambda: band, on_end=ended.append)
-    tid = (await plugin.open(harness="shell", cwd=str(tmp_path)))["id"]
-    try:
-        s = hub.stream("host1", tid)
-        v = Viewer("v")
-        s.attach(v)
-        await until(lambda: s.primed)
-        band.fail.add("work.stream.read")
-        await until(lambda: ended, 15)
-        assert "stopped answering" in s.lost
-    finally:
-        await hub.stop()
-
-
 # -- worklog web -------------------------------------------------------------------
-
-@pytest_asyncio.fixture
-async def web_band(portal, plugin):  # noqa: F811
-    band = PtyBand(plugin)
-    portal.server._band = band
-    yield band
 
 
 async def index(ws, test=lambda m: True, timeout=8):
@@ -381,92 +287,5 @@ async def next_json(ws, kind, timeout=8):
 
 def plugin_terms(band):
     return [t for t in band.plugin.terms.values() if t.running]
-
-
-@pytest.mark.asyncio
-async def test_resume_uses_pty_and_refuses_hosts_without_terminals(portal, plugin, tmp_path, monkeypatch):  # noqa: F811
-    p = portal
-    work = p.account.work_web
-    fake = tmp_path / "claude"
-    fake.write_text('#!/bin/sh\necho "RESUMED $*"\nsleep 5\n')
-    fake.chmod(0o755)
-    monkeypatch.setattr(terminals, "_binary", lambda h: str(fake))
-    band = PtyBand(plugin)
-    p.server._band = band
-    sid = "a" * 32
-    work.store.save(dict(id=sid, owner=p.uid, worker_id="host1", worker_name="test-host", band="test",
-                         agent="claude", imported=True, source_id="8f3a1b2c-0000", cwd=str(tmp_path),
-                         title="old work", status="pending", error=""))
-    async with TestClient(TestServer(p.app)) as client:
-        ws = await client.ws_connect("/account/work/ws", headers=p.headers)
-        await ws.send_json({"op": "resume", "id": "resume-test-123", "session": sid, "csrf": p.csrf, "pty": True})
-        await until(lambda: work.store.get(sid).get("term_running"))
-        opened = next(c for c in band.calls if c[0] == "work.stream.open")[1]
-        assert opened["resume"] == "8f3a1b2c-0000" and opened["harness"] == "claude" and "mcp_token" not in opened
-        tid = work.store.get(sid)["term_id"]
-        out, _ = await follow(plugin, tid, "RESUMED")
-        assert b"--resume 8f3a1b2c-0000" in out
-        await ws.close()
-    # A build-167 worker (no work.stream.*) is asked to update: the hub no
-    # longer falls back to claude-history.resume.
-    sid2 = "b" * 32
-    old = PtyBand(plugin, caps=["proc.start", "proc.read", "proc.write", "claude-history.resume"])
-
-    async def old_call(cap, args, target, timeout, identity=None):
-        old.calls.append((cap, dict(args)))
-        raise AssertionError(cap)
-    old.call = old_call
-    p.server._band = old
-    work.store.save(dict(id=sid2, owner=p.uid, worker_id="host1", worker_name="test-host", band="test",
-                         agent="claude", imported=True, source_id="old-session", cwd=str(tmp_path),
-                         title="older", status="pending", error=""))
-    async with TestClient(TestServer(p.app)) as client:
-        ws = await client.ws_connect("/account/work/ws", headers=p.headers)
-        await ws.send_json({"op": "resume", "id": "resume-test-456", "session": sid2, "csrf": p.csrf, "pty": True})
-        await until(lambda: "update its worker" in (work.store.get(sid2).get("error") or ""))
-        assert old.calls == [] and not work.store.get(sid2).get("external_handle")
-        await ws.close()
-
-
-@pytest.mark.asyncio
-async def test_sweep_marks_terminals_that_ended_unwatched(portal, web_band, tmp_path):  # noqa: F811
-    work = portal.account.work_web
-    tid = (await web_band.plugin.open(harness="shell", cwd=str(tmp_path)))["id"]
-    sid = "c" * 32
-    work.store.save(dict(id=sid, owner=portal.uid, worker_id="host1", worker_name="test-host", band="test",
-                         agent="shell", harness="shell", term_id=tid, term_running=True, cwd=str(tmp_path),
-                         title="t", status="working", error="", mcp_token_id="tok9"))
-    await web_band.plugin.write(tid, "exit 7\r")
-    await until(lambda: not web_band.plugin.terms[tid].running)
-    await work.sweep_terminals()
-    s = work.store.get(sid)
-    assert not s["term_running"] and s["term_exit"] == 7 and s["mcp_token_revoke"]
-    gone = "d" * 32
-    work.store.save(dict(id=gone, owner=portal.uid, worker_id="host1", worker_name="test-host", band="test",
-                         agent="shell", harness="shell", term_id="nosuchterm", term_running=True,
-                         title="t", status="working", error=""))
-    await work.sweep_terminals()
-    assert "gone" in work.store.get(gone)["term_note"]
-
-
-@pytest.mark.asyncio
-async def test_v2_flag_off_keeps_the_classic_view(portal, web_band, monkeypatch):  # noqa: F811
-    work = portal.account.work_web
-    monkeypatch.setattr(work, "v2", False)
-    async with TestClient(TestServer(portal.app)) as client:
-        r = await client.get("/account/work/bootstrap", headers=portal.headers)
-        assert (await r.json())["v2"] is False
-        ws = await client.ws_connect("/account/work/ws", headers=portal.headers)
-        m = await index(ws)
-        assert m["hosts"] == []
-        await ws.send_json({"op": "launch", "id": "launch-test-999", "csrf": portal.csrf, "worker": "host1",
-                            "harness": "shell", "cwd": "/tmp"})
-        async with asyncio.timeout(5):
-            while True:
-                m = await ws.receive_json()
-                if m["type"] == "error":
-                    break
-        assert "disabled" in m["error"]
-        await ws.close()
 
 

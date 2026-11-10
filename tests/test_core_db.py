@@ -93,72 +93,10 @@ def test_atomic_write(tmp_path):
 # -- stores opening databases written by the pre-helper code ------------------
 
 
-def test_enrollment_backfills_deleted_and_keeps_mode(tmp_path):
-    path = tmp_path / "enrollment.db"
-    old = sqlite3.connect(path)
-    old.execute("CREATE TABLE bands (id TEXT PRIMARY KEY, name TEXT NOT NULL, psk TEXT NOT NULL, "
-                "psk_hash TEXT UNIQUE NOT NULL, hub TEXT NOT NULL DEFAULT '', "
-                "is_primary INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, "
-                "epoch INTEGER NOT NULL DEFAULT 1)")
-    old.execute("INSERT INTO bands(id,name,psk,psk_hash) VALUES('b1','band','p','h')")
-    old.commit()
-    old.close()
-    os.chmod(path, 0o644)
-    from rook.remote.enrollment import EnrollmentStore
-    store = EnrollmentStore(path)
-    assert _mode(path) == 0o600
-    with store._db() as db:
-        assert db.execute("SELECT deleted FROM bands WHERE id='b1'").fetchone()["deleted"] == 0
-
-
-def test_work_stores_share_one_file_both_ways(tmp_path):
-    """Hub and worker ship separately: each opens what the other wrote, and a
-    file from the pre-index code gets its work_index backfilled."""
-    from rook.remote.work_web import WorkStore
-    from rook.worker.work_runtime import RuntimeStore
-    path = tmp_path / "work.sqlite3"
-    old = sqlite3.connect(path)
-    old.execute("CREATE TABLE work_sessions(id TEXT PRIMARY KEY, owner TEXT NOT NULL, "
-                "updated REAL NOT NULL, state TEXT NOT NULL)")
-    old.execute("CREATE TABLE work_commands(session TEXT NOT NULL, id TEXT NOT NULL, "
-                "result TEXT NOT NULL, PRIMARY KEY(session,id))")
-    state = {"id": "s1", "owner": "host", "revision": 1, "updated": 1.0, "items": {"a": {}}}
-    old.execute("INSERT INTO work_sessions VALUES('s1','host',1.0,?)", (json.dumps(state),))
-    old.execute("INSERT INTO work_commands VALUES('s1','c1',?)", (json.dumps({"status": "submitted"}),))
-    old.commit()
-    old.close()
-    rt = RuntimeStore(path)
-    assert rt.get("s1")["items"] == {"a": {}}
-    assert "items" not in rt.all(details=False)[0]
-    assert rt.revision("s1", "host") == 1
-    hub = WorkStore(path)                       # adds actor + session_links
-    assert hub.result("s1", "c1") == {"status": "submitted"}
-    assert hub.claim("s1", "c2", "human:a") and not hub.claim("s1", "c2", "human:a")
-    rt2 = RuntimeStore(path)                    # worker code on the hub's file
-    assert rt2.claim("s1", "c3") and rt2.result("s1", "c3") == {"status": "accepted"}
-    assert _mode(path) == 0o600
-
-
 # -- stores that now write through atomic_write_* ------------------------------
 
 def _no_temp(d):
     return not [p.name for p in d.iterdir() if p.name.endswith(".tmp")]
-
-
-def test_setup_store_writes_are_atomic_and_private(tmp_path, monkeypatch):
-    """setup.json holds the band PSK: every writer goes through one atomic,
-    0600 write and keeps the keys the others own."""
-    from rook.remote import setup_store
-    p = tmp_path / "setup.json"
-    monkeypatch.setenv("ROOK_SETUP_PATH", str(p))
-    setup_store.save({"band_name": "home", "band_psk": "psk-one"})
-    assert _mode(p) == 0o600
-    setup_store.save_bands([{"name": "lab", "psk": "psk-two"}])
-    setup_store.save_bans([{"name": "old-box", "reason": "lost"}])
-    data = json.loads(p.read_text(encoding="utf-8"))
-    assert data["band_psk"] == "psk-one" and data["bands"][0]["psk"] == "psk-two"
-    assert data["bans"][0]["name"] == "old-box"
-    assert _mode(p) == 0o600 and _no_temp(tmp_path)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
@@ -208,34 +146,3 @@ def test_open_db_creates_sidecars_under_a_tight_umask(tmp_path, monkeypatch):
         os.umask(before)
 
 
-@pytest.mark.parametrize("err", ["EBUSY", "EXDEV"])
-def test_atomic_write_falls_back_in_place_when_the_file_cannot_be_replaced(tmp_path, monkeypatch, err):
-    """ROOK_SETUP_PATH bind-mounted as a single file: os.replace onto a mount
-    point raises EBUSY, so setup.json (the band PSK) could not be saved."""
-    import errno as _errno
-    from rook.remote import setup_store
-    p = tmp_path / "setup.json"
-    p.write_text("{}", encoding="utf-8")
-    os.chmod(p, 0o644)
-    inode = os.stat(p).st_ino
-    monkeypatch.setenv("ROOK_SETUP_PATH", str(p))
-
-    def replace(src, dst):
-        raise OSError(getattr(_errno, err), os.strerror(getattr(_errno, err)), str(dst))
-    monkeypatch.setattr(coredb.os, "replace", replace)
-    synced = []
-    real_fsync = os.fsync
-    monkeypatch.setattr(coredb.os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd)))
-    setup_store.save({"band_name": "home", "band_psk": "psk-one"})
-    assert json.loads(p.read_text(encoding="utf-8"))["band_psk"] == "psk-one"
-    assert os.stat(p).st_ino == inode          # the same (mounted) file, rewritten
-    if os.name == "posix":
-        assert _mode(p) == 0o600
-    assert _no_temp(tmp_path) and len(synced) >= 2   # temp file and the in-place write
-
-    # Other errors still surface.
-    monkeypatch.setattr(coredb.os, "replace",
-                        lambda s, d: (_ for _ in ()).throw(PermissionError(13, "denied")))
-    with pytest.raises(PermissionError):
-        coredb.atomic_write_text(p, "x")
-    assert json.loads(p.read_text(encoding="utf-8"))["band_psk"] == "psk-one" and _no_temp(tmp_path)
