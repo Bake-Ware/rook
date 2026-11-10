@@ -246,17 +246,18 @@ class Ctx:
         self._people.run_agent(self.plugin, name, None if grants is None else list(grants))
 
     def turn_token(self, agent: str, seconds: float) -> str:
-        """Hub only: a door token for one turn of ``agent`` (one this plugin
-        runs), acting for this call's person, or alone when it has none.
-        It dies after ``seconds``; end it sooner
-        with :meth:`end_turn_token`."""
+        """Hub only: the NAME of a door token for one turn of ``agent`` (one
+        this plugin runs), acting for this call's person, or alone when it
+        has none. Pass ``"{{secret:<name>}}"`` in a call to a worker and the
+        hub puts the token there; the plugin never holds it. It dies after
+        ``seconds``; end it sooner with :meth:`end_turn_token`."""
         if self._people is None or not hasattr(self._people, "turn_token"):
             raise KitError("no turn tokens here: the hub mints them")
         return self._people.turn_token(self.plugin, self.caller.person, agent, seconds)
 
-    def end_turn_token(self, token: str) -> None:
+    def end_turn_token(self, name: str) -> None:
         if self._people is not None and hasattr(self._people, "end_turn_token"):
-            self._people.end_turn_token(token)
+            self._people.end_turn_token(name)
 
     # -- calls ----------------------------------------------------------------
 

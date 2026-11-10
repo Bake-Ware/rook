@@ -118,7 +118,9 @@ Each agent is `agent:<name>` on the hub, with its own grants plus
 whose message it answers, so it gets only what both may; with no person
 behind the message (a persona job, another agent acting alone) it acts
 alone, with its own grants. The backend gets a token for that same pair,
-good for that turn only (the `door` arg), so every Rook call the agent makes
-from its harness is journaled as the agent and checked the same way. Dreams
+good for that turn only (the `door` arg, passed as `{{secret:turn-...}}`:
+the hub puts the token in on the way to the worker, so the journal keeps
+only the name), so every Rook call the agent makes from its harness is
+journaled as the agent and checked the same way. Dreams
 run as the agent alone, without a token. Archiving an agent takes its
 identity off the hub; a name hub.yaml already uses is refused.

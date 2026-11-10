@@ -1175,8 +1175,10 @@ def test_rook_run_agents_have_their_own_identity_and_turn_tokens(hubs, tmp_path)
             # Only the plugin that runs it mints its turn tokens.
             with pytest.raises(runtime.KitError, match="doesn't run agent scribe"):
                 hub.turn_token("notes", "person:bake", "scribe", 60)
-            # A turn token: the agent, for the person whose call it came from.
-            token = (await call(owner, "crew.token", name="scribe"))["result"]
+            # A turn token, by name: the agent, for the person whose call it came from.
+            name = (await call(owner, "crew.token", name="scribe"))["result"]
+            assert name.startswith("turn-")
+            token = hub.identities.turn_token(name)
             assert hub.authenticate(token) == runtime.Caller("person:bake", "agent:scribe")
             out = await call(token, "crew.count")
             assert out["result"] == {"person": "person:bake", "agent": "agent:scribe"}, out
@@ -1185,10 +1187,11 @@ def test_rook_run_agents_have_their_own_identity_and_turn_tokens(hubs, tmp_path)
             out = await call(token, "crew.hire", name="scribe", grants=["*"])     # its own grants hold
             assert out["error"] == "denied: agent: grants", out
             # For a child, only what both may (the child's preset refuses crew.count).
-            kid = hub.turn_token("crew", "person:kid", "scribe", 60)
+            kid_name = hub.turn_token("crew", "person:kid", "scribe", 60)
+            kid = hub.identities.turn_token(kid_name)
             assert (await call(kid, "crew.count"))["error"] == "denied: person: grants"
             # Alone: its own grants only.
-            alone = hub.turn_token("crew", None, "scribe", 60)
+            alone = hub.identities.turn_token(hub.turn_token("crew", None, "scribe", 60))
             assert (await call(alone, "crew.count"))["result"] == {"person": None, "agent": "agent:scribe"}
             # A contract through one chosen provider: rights match the contract.
             out = await call(owner, "crew.think", name="scribe", provider="notes.tell")
@@ -1199,8 +1202,8 @@ def test_rook_run_agents_have_their_own_identity_and_turn_tokens(hubs, tmp_path)
             out = await call(owner, "crew.think", name="scribe", provider="notes.count")
             assert "doesn't provide notify.send" in out["error"], out
             # Tokens end with the turn, expire, and die with the agent.
-            hub.end_turn_token(kid)
-            assert hub.authenticate(kid) is None
+            hub.end_turn_token(kid_name)
+            assert hub.authenticate(kid) is None and hub.identities.turn_token(kid_name) is None
             assert (await http(hub, "GET", "/workers", token=alone))[0] == 200
             now[0] += 61
             assert hub.authenticate(alone) is None and hub.authenticate(token) is None

@@ -580,12 +580,13 @@ class Hub:
                 log.warning("bad token entry", extra={"fields": {"error": str(e)}})
 
     def _secret_step(self, args: Any, caller: Caller, target: str | None = None) -> Any:
-        """Dispatch's secret step: ``{{secret:NAME}}`` is the vault's, and only
-        in a call to a worker: the hub's own caps keep the reference as text,
-        so a page, task or record never stores a value."""
+        """Dispatch's secret step: ``{{secret:NAME}}`` is the vault's (or a
+        live turn token's), and only in a call to a worker: the hub's own caps
+        keep the reference as text, so a page, task or record never stores a
+        value."""
         if target == self.node:
             return args
-        return resolver(self.vault, self.identities.is_owner)(args, caller)
+        return resolver(self.vault, self.identities.is_owner, self.identities.turn_token)(args, caller)
 
     def add_token(self, caller: Caller, label: str = "") -> str:
         """A new door token for ``caller``, stored by hash. Returned once."""
@@ -640,7 +641,9 @@ class Hub:
 
     def turn_token(self, plugin: str, person: str | None, name: str, seconds: float) -> str:
         """A door token for one turn of Rook-run agent ``name``, acting for
-        ``person`` (the caller whose message it answers) or alone. Only the
+        ``person`` (the caller whose message it answers) or alone, returned
+        by name: ``{{secret:<that name>}}`` in a call to a worker carries the
+        token, so no hub script or journal entry ever holds it. Only the
         plugin that runs the agent gets one; it lives ``seconds`` at most, in
         memory, and :meth:`end_turn_token` kills it when the turn ends."""
         if self.identities.run_by.get(name) != plugin:
@@ -651,8 +654,8 @@ class Hub:
         except ValueError as e:
             raise KitError(str(e)) from None
 
-    def end_turn_token(self, token: str) -> None:
-        self.identities.revoke_token(token)
+    def end_turn_token(self, name: str) -> None:
+        self.identities.end_turn(name)
 
     # -- the library and manifests --------------------------------------------------
 

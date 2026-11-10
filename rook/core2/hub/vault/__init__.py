@@ -11,7 +11,8 @@ data key. The data key is random and kept twice, sealed:
 
 Names, descriptions, times and who set them are plain (they show in
 ``secret.list``). Values are only decrypted for one use: a ``{{secret:NAME}}``
-reference in a call to a worker (:func:`resolver`), a hub plugin's secret
+reference in a call to a worker (:func:`resolver`, which also resolves a
+turn token by its name), a hub plugin's secret
 setting (:meth:`Vault.setting`), or ``secret.reveal``, a hard stop. Nothing
 here caches a value, so the CLI can change the file while the hub runs.
 
@@ -282,12 +283,17 @@ def substitute(value: Any, lookup: Callable[[str], str]) -> Any:
     return value
 
 
-def resolver(vault: Vault, is_owner: Callable[[str | None], bool]) -> Callable[..., Any]:
+def resolver(vault: Vault, is_owner: Callable[[str | None], bool],
+             turn: Callable[[str], str | None]) -> Callable[..., Any]:
     """Dispatch's step for vault references, as ``resolve(args, caller)``:
-    only an owner's calls (in person or through their agents) use the vault;
-    an unknown name or a locked vault fails the call."""
+    a live turn's name is its door token (``turn``); otherwise only an
+    owner's calls (in person or through their agents) use the vault; an
+    unknown name or a locked vault fails the call."""
     def resolve(args: Any, caller) -> Any:
         def lookup(name: str) -> str:
+            token = turn(name)
+            if token is not None:
+                return token
             if not is_owner(caller.person):
                 raise ValueError("only an owner's calls use vault secrets")
             try:

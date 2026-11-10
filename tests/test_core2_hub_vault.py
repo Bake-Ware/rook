@@ -98,10 +98,10 @@ def test_wraps_are_rows_not_keys_on_disk(tmp_path):
 
 
 
-def test_references_resolve_for_owners_only(tmp_path):
+def test_vault_references_resolve_for_owners_only(tmp_path):
     v = Vault(hub_data(tmp_path)).unlock()
     v.set("gh", "ghp_x", by="t")
-    resolve = resolver(v, lambda p: p in OWNERS)
+    resolve = resolver(v, lambda p: p in OWNERS, {"turn-1": "tok"}.get)
     args = {"argv": ["curl", "-H", "Authorization: Bearer {{secret:gh}}"], "n": 3, "k": {"t": "{{ secret: gh }}"}}
     out = resolve(args, who("person:bake"))
     assert out == {"argv": ["curl", "-H", "Authorization: Bearer ghp_x"], "n": 3, "k": {"t": "ghp_x"}}
@@ -114,9 +114,12 @@ def test_references_resolve_for_owners_only(tmp_path):
         resolve(args, who(None, "agent:x"))
     with pytest.raises(ValueError, match="nope is not in the vault"):
         resolve({"t": "{{secret:nope}}"}, who("person:bake"))
+    # A live turn's name is its token, whoever the turn acts for.
+    assert resolve({"door": "{{secret:turn-1}}"}, who("person:ann", "agent:pm")) == {"door": "tok"}
+    assert resolve({"door": "{{secret:turn-1}}"}, who(None, "agent:pm")) == {"door": "tok"}
     locked = Vault(tmp_path / "data")
     with pytest.raises(ValueError, match="locked"):
-        resolver(locked, lambda p: True)({"t": "{{secret:gh}}"}, who("person:bake"))
+        resolver(locked, lambda p: True, {}.get)({"t": "{{secret:gh}}"}, who("person:bake"))
     assert substitute(["{{secret:a}}{{secret:b}}"], {"a": "1", "b": "2"}.get) == ["12"]
 
 

@@ -691,8 +691,8 @@ class Settings:
     def turn_token(self, plugin: str, person: str | None, name: str, seconds: float) -> str:
         return self.hub.turn_token(plugin, person, name, seconds)
 
-    def end_turn_token(self, token: str) -> None:
-        self.hub.end_turn_token(token)
+    def end_turn_token(self, name: str) -> None:
+        self.hub.end_turn_token(name)
 
     # -- caps -------------------------------------------------------------------
 

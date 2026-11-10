@@ -138,14 +138,14 @@ def test_agents_on_the_hub(tmp_path):
             assert out["ok"] and out["result"]["text"] == "brain: good morning", out
             turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
             # The agent itself, for the person who sent the message; its turn
-            # token is never journaled.
+            # token travels by name (a hub provider gets the reference).
             assert (turn["person"], turn["agent"], turn["ok"]) == ("person:bake", "agent:house", True)
-            assert turn["contract"] == "agent.backend" and turn["args"]["door"] == "[redacted]"
+            assert turn["contract"] == "agent.backend" and turn["args"]["door"].startswith("{{secret:turn-")
             outer = hub.journal.query(cap="agent.backend", limit=1)[0]
-            assert outer["args"]["door"] == "[redacted]" and outer["agent"] == "agent:house"
+            assert outer["args"]["door"] == turn["args"]["door"] and outer["agent"] == "agent:house"
             assert hub.identities.run_by["house"] == "agent" and hub.identities.agents["archivist"]["grants"][-1] \
                 == "agent.backend"
-            assert hub.identities._turns == {}                                # ended with the turn
+            assert hub.identities._turns == hub.identities._turn_names == {}   # ended with the turn
 
             # A guest may chat (agent.chat.*), but the turn runs with the
             # guest's rights, and core's guest preset grants no backend.
