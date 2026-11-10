@@ -103,9 +103,9 @@ class People:
     def turn_token(self, plugin, person, name, seconds):
         if name not in self.agents:
             raise KitError(f"{plugin} doesn't run agent {name}")
-        token = f"tok{len(self.tokens)}"
-        self.tokens[token] = (person, f"agent:{name}")
-        return token
+        turn = f"turn-{len(self.tokens)}"
+        self.tokens["{{secret:%s}}" % turn] = (person, f"agent:{name}")
+        return turn
 
     def end_turn_token(self, token):
         self.ended.append(token)
@@ -358,7 +358,7 @@ def test_turns_resume_the_backend_session_with_the_agents_system_prompt(rig):
         assert (c1.person, c1.agent) == ("person:bake", "agent:pm") and c1.why == "agent pm answers person:bake"
         # Its harness reaches the hub with a token for that pair, ended after the turn.
         assert rig.people.tokens[a1["door"]] == ("person:bake", "agent:pm")
-        assert rig.people.ended == [a1["door"], a2["door"]]
+        assert rig.people.ended == ["turn-0", "turn-1"] and a1["door"] == "{{secret:turn-0}}"   # by name
         system = a1["system"]
         assert system.startswith('You are Project manager, the agent "pm"')
         assert "keep the work moving" in system                         # the persona

@@ -23,6 +23,15 @@ On Windows `argv[0]` is found the way a shell finds it: PATHEXT (`npm` is
 `npm.cmd`), npm shims run their real target, and `python3` that only finds
 the Microsoft Store stub runs a real Python.
 
+## Secrets
+
+A secret reaches a command through `env` with a vault reference:
+`shell.exec {argv: [...], env: {GH_TOKEN: "{{secret:gh-token}}"}}` (and the
+same on `shell.open`). The hub puts the value in at dispatch; the journal
+keeps the reference, and a reply that prints the value shows `[redacted]`.
+A stream's output is not a reply: what a `shell.open` process prints is not
+redacted. An unknown name fails the call and nothing runs.
+
 ## Elevation
 
 Every process starts through the worker's launch path: as the worker's

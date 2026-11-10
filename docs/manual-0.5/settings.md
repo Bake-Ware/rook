@@ -60,7 +60,13 @@ The values live in the hub's vault, `<data>/vault.db` (owners only):
 - in the args of a call to a worker, `{{secret:NAME}}` (alone or inside a
   string) becomes the value for that call only; the journal keeps the
   reference, and the value comes back as `[redacted]`. Calls to the hub's
-  own caps keep the reference as text.
+  own caps keep the reference as text. A command gets a secret in its
+  environment this way: `shell.exec` with
+  `env: {GH_TOKEN: "{{secret:gh-token}}"}`;
+- an agent turn's door token is a reference too: `ctx.turn_token` returns a
+  name (`turn-...`), and `{{secret:<that name>}}` in a call to a worker is
+  the token until the turn ends, for whoever the turn acts for. The token
+  stays in the hub's memory; no script or journal entry holds it.
 
 Worker-side secret settings (a worker plugin's `secret: true` setting) have
 no path from the vault yet: pass the secret as a reference in the call.

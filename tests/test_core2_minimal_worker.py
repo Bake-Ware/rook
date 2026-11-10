@@ -9,8 +9,10 @@ import asyncio
 import hashlib
 import json
 import secrets
+import tempfile
 import time
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -125,6 +127,31 @@ async def until(cond, seconds: float = 15.0):
         assert time.monotonic() < deadline, "condition not met in time"
         await asyncio.sleep(0.05)
     return got
+
+
+async def secret_env(hub: Hub, call) -> str:
+    """shell.exec with a vault reference in ``env`` on a worker: the hub
+    resolves it at dispatch, the command sees the value, the journal keeps
+    the name, a reply that prints it is redacted, and an unknown name fails
+    the call before anything runs. ``call(cap, **args)`` reaches the worker
+    as an owner. Returns the value, for the caller's own checks."""
+    value = "s3cr3t-" + secrets.token_hex(12)
+    hub.vault.set("env-test", value, by="test")
+    env = {"ROOK_T": "{{secret:env-test}}"}
+    out = await call("shell.exec", argv=["sh", "-c", 'printf %s "$ROOK_T" | sha256sum'], env=env)
+    assert out["ok"] and out["result"]["stdout"].split()[0] == hashlib.sha256(value.encode()).hexdigest(), out
+    out = await call("shell.exec", argv=["sh", "-c", 'echo "token=$ROOK_T"'], env=env)
+    assert out["ok"] and out["result"]["stdout"] == "token=[redacted]\n", out
+    marker = Path(tempfile.mkdtemp()) / "ran"
+    out = await call("shell.exec", argv=["touch", str(marker)], env={"ROOK_T": "{{secret:no-such-name}}"})
+    assert out == {"id": out["id"], "ok": False, "error": "secret: no-such-name is not in the vault"}, out
+    assert not marker.exists()
+    marker.parent.rmdir()
+    ran = hub.journal.query(cap="shell.exec", limit=3)
+    assert [e["args"]["env"] for e in ran] == [{"ROOK_T": "{{secret:no-such-name}}"}, env, env]
+    assert [e["ok"] for e in ran] == [False, True, True]
+    assert value not in json.dumps(hub.journal.query(limit=1000))
+    return value
 
 
 @pytest.mark.parametrize("in_library", [False, True], ids=["sends-manifests", "fixed-device"])

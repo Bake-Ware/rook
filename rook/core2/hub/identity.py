@@ -72,6 +72,7 @@ class Identities:
         self.components: dict[str, dict] = {}                 # system:<name> -> rights beyond core.*
         self._tokens: dict[str, Caller] = {}                  # sha256(token) -> caller
         self._turns: dict[str, tuple[Caller, float]] = {}    # sha256(turn token) -> (caller, expiry)
+        self._turn_names: dict[str, str] = {}                 # turn name -> turn token
 
     # -- setup -----------------------------------------------------------
 
@@ -101,6 +102,7 @@ class Identities:
         del self.agents[name], self.run_by[name]
         for d in [d for d, (c, _) in self._turns.items() if c.agent == f"agent:{name}"]:
             del self._turns[d]
+        self._turn_names = {n: t for n, t in self._turn_names.items() if digest(t) in self._turns}
 
     def add_component(self, name: str, r: dict) -> None:
         """Rights for ``system:<name>``, a hub component acting on its own (a
@@ -146,23 +148,32 @@ class Identities:
         hits = [c for d, c in self._tokens.items() if d.startswith(token_id)]
         return hits[0] if len(hits) == 1 else None
 
-    def revoke_token(self, token: str) -> None:
-        self._tokens.pop(digest(token), None)
-        self._turns.pop(digest(token), None)
-
     def add_turn_token(self, caller: Caller, expires: float, now: float) -> str:
         """A door token for one turn of a Rook-run agent (``caller.agent``),
-        for the person behind it if any. In memory only; expired ones are
-        dropped as new ones are made."""
+        for the person behind it if any, returned by its name: a
+        ``{{secret:<name>}}`` reference in a call to a worker resolves to it
+        (:meth:`turn_token`). In memory only; expired ones are dropped as new
+        ones are made."""
         if caller.problem():
             raise ValueError(caller.problem())
         if (caller.agent or "").partition(":")[2] not in self.run_by:
             raise ValueError("turn tokens are for Rook-run agents")
         for d in [d for d, (_, exp) in self._turns.items() if exp <= now]:
             del self._turns[d]
-        token = secrets.token_urlsafe(32)
+        self._turn_names = {n: t for n, t in self._turn_names.items() if digest(t) in self._turns}
+        token, name = secrets.token_urlsafe(32), f"turn-{secrets.token_hex(16)}"
         self._turns[digest(token)] = (caller, expires)
-        return token
+        self._turn_names[name] = token
+        return name
+
+    def turn_token(self, name: str) -> str | None:
+        """The token a turn name stands for, until the turn ends."""
+        return self._turn_names.get(name)
+
+    def end_turn(self, name: str) -> None:
+        token = self._turn_names.pop(name, None)
+        if token is not None:
+            self._turns.pop(digest(token), None)
 
     def authenticate(self, token: str, now: float | None = None) -> Caller | None:
         if not isinstance(token, str):

@@ -421,7 +421,8 @@ class Runtime:
         """One ``agent.backend`` turn as the agent: for ``ctx``'s person, or
         alone when it has none. The backend setting's provider, or the
         provider cap the agent is pinned to. ``door``: hand the harness a turn token
-        for the same pair, ended when the turn returns."""
+        for the same pair, by name (the hub resolves it on the way to the
+        worker), ended when the turn returns."""
         name, kind = a["name"], a.get("backend") or "default"
         if kind == "default":
             kind = self.settings.get("backend") or "default"
@@ -433,14 +434,14 @@ class Runtime:
         for key, value in (("session", session), ("cwd", a.get("cwd"))):
             if value:
                 args[key] = value
-        token = ctx.turn_token(name, self.seconds("turn_timeout") + 60) if door else None
-        if token:
-            args["door"] = token
+        turn = ctx.turn_token(name, self.seconds("turn_timeout") + 60) if door else None
+        if turn:
+            args["door"] = "{{secret:%s}}" % turn
         try:
             return await ctx.call_as(who, BACKEND, args, provider=None if kind == "default" else kind)
         finally:
-            if token:
-                ctx.end_turn_token(token)
+            if turn:
+                ctx.end_turn_token(turn)
 
     def lock(self, name: str) -> asyncio.Lock:
         return self.locks.setdefault(name, asyncio.Lock())

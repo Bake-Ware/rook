@@ -22,7 +22,7 @@ from rook.core2 import wire  # noqa: E402
 from rook.core2.hub.runtime import Config, Hub  # noqa: E402
 from rook.core2.transport import TelestheteLink, band_of  # noqa: E402
 
-from test_core2_minimal_worker import Relay, door, until  # noqa: E402
+from test_core2_minimal_worker import Relay, door, secret_env, until  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFESTS = {"worker": ROOT / "rook/core2/builtin/worker.yaml", "stream": ROOT / "rook/core2/builtin/stream.yaml",
@@ -149,6 +149,8 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
             assert out["result"] == {"ok": False, "code": 3, "stdout": "", "stderr": "42\n"}, out
             out = await call("shell.which", name="sh")
             assert out["result"] and out["result"].endswith("/sh"), out
+            # A secret reaches a command's environment by name.
+            value = await secret_env(hub, call)
 
             target = tmp_path / "files" / "note.txt"
             out = await call("file.write", path=str(target), content="héllo\nworld\n", create_parents=True)
@@ -203,14 +205,21 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
             out = await call("shell.open", cmd="echo out; echo err >&2; exit 4", pty=False)
             pid = out["result"]["stream"]
 
-            async def finished():
-                got = (await call("stream.read", stream=pid, wait=5))["result"]
+            async def finished_on(stream):
+                got = (await call("stream.read", stream=stream, wait=5))["result"]
                 return got if got["closed"] else None
-            got = await until(finished)
+            got = await until(lambda: finished_on(pid))
             assert b"".join(base64.b64decode(e["b64"]) for e in got["events"] if e["type"] == "bytes") == b"out\nerr\n"
             assert got["events"][-1]["data"] == {"exit": 4, "state": "closed"}, got
             listed_here = (await call("stream.list"))["result"]["streams"]
             assert {r["id"]: r["kind"] for r in listed_here} == {sid: "terminal", pid: "process"}
+            # A process's env takes a vault reference too; what it prints on its
+            # stream is its output, not a reply: the hub does not redact it.
+            out = await call("shell.open", argv=["sh", "-c", 'printf %s "$ROOK_T"'], pty=False,
+                             env={"ROOK_T": "{{secret:env-test}}"})
+            printed = (await until(lambda: finished_on(out["result"]["stream"])))["events"]
+            assert b"".join(base64.b64decode(e["b64"]) for e in printed if e["type"] == "bytes") == value.encode()
+            assert value not in json.dumps(hub.journal.query(limit=1000))
 
             async def output(stream, want: bytes):
                 seen, after = b"", 0

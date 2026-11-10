@@ -92,7 +92,7 @@ def test_the_script_worker_on_a_real_hub(tmp_path):
     from rook.core2 import wire
     from rook.core2.hub.runtime import Config, Hub
     from rook.core2.transport import TelestheteLink
-    from test_core2_minimal_worker import Relay, door, until
+    from test_core2_minimal_worker import Relay, door, secret_env, until
 
     now = [time.time()]
     env = {**os.environ, "HOME": str(tmp_path / "home"), "USERPROFILE": str(tmp_path / "home")}
@@ -159,6 +159,7 @@ def test_the_script_worker_on_a_real_hub(tmp_path):
             assert out["result"] == {"ok": True, "code": 0, "stdout": "hello\n", "stderr": ""}, out
             out = await call("shell.exec", cmd="echo $((40+2)) >&2; exit 3")
             assert out["result"] == {"ok": False, "code": 3, "stdout": "", "stderr": "42\n"}, out
+            await secret_env(hub, call)          # a secret reaches a command's environment by name
             target = tmp_path / "files" / "note.txt"
             out = await call("file.write", path=str(target), content="héllo\nworld\n", create_parents=True)
             assert out["result"] == {"path": str(target), "written": 13}, out
