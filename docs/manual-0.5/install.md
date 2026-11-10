@@ -54,6 +54,24 @@ python -m rook.core2.worker --config worker/worker.yaml &
 paste the token `init` printed ([The hub site](dashboard.md)) and tap
 **Join** for `laptop` on the Workers page ([Adding machines](enrollment.md)).
 
+## Another machine: one file
+
+`deploy/castling-worker/install.sh` installs the `rook-worker` binary (no
+Python) as a service that starts at boot and restarts when it exits, and
+joins it to your hub:
+
+```sh
+install.sh --binary ./rook-worker-linux-x86_64 --hub https://rook.example --name kaiju   # waits for a Join tap
+install.sh --binary https://…/rook-worker-linux-x86_64 --hub https://rook.example --code <one-time code>
+install.sh --upgrade --binary ./rook-worker-linux-x86_64     # a newer file, same data and keys
+```
+
+It lives in `~/.rook05` (`/opt/rook05` as root) under the systemd unit
+`rook05-worker`. Without the installer: `rook-worker --config worker.yaml
+enroll <hub>`, then `rook-worker --config worker.yaml` under any service
+manager that restarts it. Linux and Windows builds only; Windows has no
+installer yet.
+
 `init` options: `--owner` (your user name, lowercase), `--relay host:port`
 or `--ws-url` (the band's relay), `--url https://...` (where other devices
 reach this hub, for enrollment) and `--bind` (the HTTP door, default
