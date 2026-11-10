@@ -248,7 +248,7 @@ def install(hub) -> None:
                   "page.start": h.pages_start, "page.public": h.pages_public},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
                 "hub.door": h.hub_door, "hub.sacred": h.hub_sacred, "hub.person": h.hub_person,
-                "hub.joins": h.hub_joins, "hub.join": h.hub_join, "hub.join_code": h.hub_join_code},
+                "hub.load": h.hub_load, "hub.joins": h.hub_joins, "hub.join": h.hub_join, "hub.join_code": h.hub_join_code},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
                      "approval.ask": h.approval_ask, "approval.get": h.approval_get},
         "journal": {"journal.search": h.journal_search},
@@ -483,6 +483,15 @@ class _Handlers:
             passwords.set_password(hub.data, name, password, by=ctx.caller.person or "site")
         return {"person": name, "removed": bool(remove), "preset": (hub.cfg.users.get(name) or {}).get("preset"),
                 "password": bool(password and not remove), "saved": _save_config(hub.cfg, "users")}
+
+    async def hub_load(self, ctx, plugin: str) -> dict:
+        hub = self.hub
+        folder = hub._library_folder(plugin)
+        if folder is None:
+            raise KitError(f"{plugin} is not in the hub's library ({hub.cfg.library})")
+        out = await hub.load_plugin(folder)
+        hub._emit("hub.loaded", {k: out[k] for k in ("plugin", "version", "was")}, "hub")
+        return out
 
     async def hub_workers(self, ctx) -> dict:
         """The workers, the hub first; ``now`` is the hub's clock (heartbeat

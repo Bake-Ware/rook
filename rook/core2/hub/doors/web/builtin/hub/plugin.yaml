@@ -69,6 +69,15 @@ caps:
       password: { type: secret, doc: "Their new sign-in password." }
       remove: { type: bool, default: false, doc: "true: take the person off the hub." }
     result: { type: map }
+  load:
+    doc: "Load a plugin from the hub's library into the running hub, no restart: write its folder there first (file.write on the hub machine's worker). A loaded version is replaced (its hooks stop); one that fails the check or the load is refused with the reasons and the old version runs on. Its caps, pages, records, jobs and the caps it gives workers apply at once."
+    on: hub
+    risk: admin
+    scope: multi-machine
+    effects: []
+    args:
+      plugin: { type: str, required: true, doc: "The plugin's name (plugin: in its plugin.yaml)." }
+    result: { type: map }
   joins:
     doc: "Machines asking to join the band (the installer with no token), waiting for someone to let them in: devices, each with id, name, address and age."
     on: hub
@@ -102,6 +111,11 @@ caps:
       door: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,31}$" }
       open: { type: bool, required: true, doc: "false closes the door, true opens it." }
     result: { type: map }
+
+emits:
+  hub.loaded:
+    doc: A plugin was loaded into the running hub (hub.load).
+    payload: { plugin: { type: str, required: true }, version: { type: str }, was: { type: str, doc: "The version it replaced." } }
 
 pages:
   workers: { title: Workers, file: pages/workers.html, caps: [hub.workers, hub.joins, hub.join], events: ["worker.*"], nav: { section: Hub } }

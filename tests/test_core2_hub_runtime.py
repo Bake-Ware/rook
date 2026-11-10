@@ -1462,3 +1462,113 @@ def test_a_hub_plugin_serves_a_workers_cap_and_an_appliances(hubs, tmp_path):
         finally:
             await hub.stop()
     run(go())
+
+
+GREET = """\
+manifest: 1
+plugin: greet
+version: {version}
+doc: Says which version answers.
+runs_on: hub
+uses: [shell.exec]
+caps:
+  hello:
+    doc: Which version answers.
+    risk: read
+    scope: self
+    run: scripts/greet.py:hello
+  ping:
+    doc: A worker's cap, run on the hub.
+    on: worker
+    risk: read
+    scope: local
+    run: scripts/greet.py:hello
+hooks:
+  start: scripts/greet.py:start
+  stop: scripts/greet.py:stop
+pages:
+  board: {{ title: Board, file: pages/board.html, caps: [greet.hello], nav: {{ section: Greet }} }}
+"""
+
+GREET_PY = """\
+from pathlib import Path
+MARKS = Path({marks!r})
+
+def hello(ctx):
+    return {version!r}
+
+def start(ctx):
+    (MARKS / "started-{version}").touch()
+
+def stop(ctx):
+    (MARKS / "stopped-{version}").touch()
+"""
+
+
+def test_hub_load_brings_a_library_plugin_to_life_without_a_restart(hubs, tmp_path):
+    """castling-design, Plugins: "One skill teaches agents to write plugins,
+    since agents will write most of them." The plugin an agent just wrote
+    serves its caps, page and worker caps at once, and a new version replaces
+    the old one in place."""
+    lib, marks = tmp_path / "lib", tmp_path / "marks"
+    lib.mkdir()
+    marks.mkdir()
+    bake = runtime.Caller(person="person:bake")
+
+    def write(version, script=None, manifest=None):
+        d = lib / "greet"
+        (d / "scripts").mkdir(parents=True, exist_ok=True)
+        (d / "pages").mkdir(exist_ok=True)
+        (d / "pages" / "board.html").write_text("<p>board</p>")
+        (d / "plugin.yaml").write_text(manifest or GREET.format(version=version))
+        (d / "scripts" / "greet.py").write_text(script or GREET_PY.format(marks=str(marks), version=version))
+
+    cfg = config(tmp_path, library=lib, settings={"hub": {"security": "off"}})
+
+    async def go():
+        hub, w, _ = await hubs(cfg, extra={SHELL: {"shell.exec": lambda msg: {"ok": True}}})
+
+        async def call(cap, worker="rook", **args):
+            return await hub.call(bake, {"worker": worker, "cap": cap, "args": args, "why": WHY}, "web")
+        try:
+            await w.announce(facts={"os": "linux"})
+            await until(lambda: "shell.exec" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+            out = await call("hub.load", plugin="greet")
+            assert not out["ok"] and "not in the hub's library" in out["error"], out
+
+            write("1.0.0")
+            out = await call("hub.load", plugin="greet")
+            assert out["ok"], out
+            assert (out["result"]["version"], out["result"]["was"], out["result"]["hooks"]) == ("1.0.0", None, True)
+            assert (await call("greet.hello"))["result"] == "1.0.0"
+            assert (await call("greet.ping", worker="kaiju"))["result"] == "1.0.0"     # the worker's new cap
+            _, caps = await http(hub, "GET", "/caps?worker=kaiju", token=(hub.data / "owner.token").read_text().strip())
+            assert "greet.ping" in caps["workers"]["kaiju"]["caps"]
+            pages = (await call("page.list"))["result"]["pages"]
+            assert any(p["page"] == "greet/board" for p in pages), pages
+            assert (marks / "started-1.0.0").exists()
+
+            write("2.0.0")
+            out = await call("hub.load", plugin="greet")
+            assert out["ok"] and (out["result"]["version"], out["result"]["was"]) == ("2.0.0", "1.0.0"), out
+            assert (await call("greet.hello"))["result"] == "2.0.0"
+            assert (await call("greet.ping", worker="kaiju"))["result"] == "2.0.0"
+            assert (marks / "stopped-1.0.0").exists() and (marks / "started-2.0.0").exists()
+            assert [e for e in hub.journal.query(cap="hub.load") if e["ok"]]
+
+            # A folder that fails the check: refused with the validator's words, 2.0.0 runs on.
+            write("3.0.0", manifest=GREET.format(version="3.0.0").replace("    risk: read\n", "", 1))
+            out = await call("hub.load", plugin="greet")
+            assert not out["ok"] and "risk" in out["error"], out
+            assert (await call("greet.hello"))["result"] == "2.0.0"
+            # One that passes the check but fails to load (its script doesn't compile): the same.
+            write("3.0.0", script="def hello(ctx:\n")
+            out = await call("hub.load", plugin="greet")
+            assert not out["ok"] and "SyntaxError" in out["error"], out
+            assert (await call("greet.hello"))["result"] == "2.0.0"
+            assert (await call("greet.ping", worker="kaiju"))["result"] == "2.0.0"
+            assert "greet" in hub.plugins.scheduler.plugins and not (marks / "started-3.0.0").exists()
+            assert hub.plugins.plugins["greet"].manifest["version"] == "2.0.0"
+        finally:
+            await hub.stop()
+    run(go())
