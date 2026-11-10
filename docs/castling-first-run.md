@@ -40,8 +40,9 @@ What it does:
    recovery key, at the end with one plain sentence; the owner's first API
    token stays in the script and enrolls this machine (more tokens: the
    Tokens page), and init's developer lines ("Start it", "Add a machine")
-   aren't shown. The site's address is printed once, at the end. The install facts go to `hub/data/setup.json`
-   (`install`), which `hub.setup` returns to the house agent.
+   aren't shown. The site's address is printed once, at the end. The install facts go to the agents plugin's
+   `hub/data/plugins/agent/setup.json` (`install`), which `agent.setup`
+   returns to the house agent.
 5. Writes and starts `NAME-relay`, `NAME-hub`, `NAME-worker` (systemd user
    units; enabled at login unless `--no-boot`). The worker runs `shell`,
    `file` and the backend: `agents-claude-code` (`claude` = the tested
@@ -50,11 +51,13 @@ What it does:
    `agents-opencode` with the tested model (its own tools on); security is
    off. The site, MCP door and relay listen on every interface
    (0.0.0.0).
-6. Opens the browser on the hub's address. While setup isn't completed the
-   site needs no sign-in (Bake, Nov 6: "It is simple. If configuration
-   isn't completed assume we are still in setup mode"): `/` signs the
-   browser in as the (first) owner and opens the setup chat; `/login` sends
-   it there too. Normal sign-in starts once `hub.setup {done: true}`.
+6. Opens the browser on the hub's address. A new hub is open until it is
+   claimed (castling-design, Agents: "creating the first user claims it"):
+   while no owner has a password, `/` signs the browser in as the (first)
+   owner and `/login` sends it there too. This is core's sign-in, with or
+   without the agents package. Once the owner sets a password (step 5 of
+   the walk-through) a new browser gets the sign-in page, even while guided
+   setup carries on; the browser that set it stays signed in.
    After that, `hub login-link` (and `--open`) makes a sign-in link that
    keeps working: no time limit, any number of uses (Bake, Nov 6: "This
    security shit nobody asked for. Why is there a secure only 15 min thing
@@ -67,13 +70,14 @@ the chat and rookie are on one side and the left is like stuff we're setting
 up. Have the rookie avatar move to things it's talking about on the page."
 and "I want it to guide the setup entirely".
 
-While `hub.setup` says setup isn't done, the site is two panes, no page
+While `agent.setup` says setup isn't done, the site is two panes, no page
 list: the **work pane** on the left (what is being set up right now) and the
 house agent's chat on the right, with Rookie at its head. After setup the
 same chat is the right column beside every page (Rookie in the corner
-opens it, its X closes it), and pages fill the left. Until setup is done nobody
-signs in: opening the site is being the owner. Hubs set up before this (no
-`setup.json`) count as done.
+opens it, its X closes it), and pages fill the left. The agents plugin
+keeps the state in its own data (`setup.json`); with none yet setup isn't
+done, so any hub that gets the agents package opens on the walk-through
+once (the owner can skip it).
 
 The house agent follows the `first-run` skill
 (rook/plugins/agents/skills/first-run.md): look and feel (sound, Rookie's
@@ -81,23 +85,23 @@ style, theme, name), the person's name and a password (account view), what
 the hub is for, reaching this site (with the firewall directive below),
 other machines (what a worker is first), voice / phone / Telegram / Discord,
 backups, then a knowledge page "How this hub is set up and why", and
-`hub.setup {done: true}`.
+`agent.setup {done: true}`.
 
 ### Right after an install
 
 The worker joins a few seconds after the installer starts it, and until it
-serves `agent.backend` no turn can run. `page.site` says `ready` (some
+serves `agent.backend` no turn can run. `agent.site` says `ready` (some
 provider of `agent.backend` installed and its worker online); the site
 shows "Getting ready..." and starts the walk-through only when it is true
 (after the look and feel, which the site asks itself; see Rookie below).
 A turn that fails because nothing serves the backend yet is never shown as
 a message: the site waits and sends the kickoff again, and on a reload it
 starts again when the agent never got to answer. The installer waits for
-the same `ready` (through `page.site`) before it says Done.
+the same `ready` (through `agent.site`) before it says Done.
 
 While setup isn't done, every turn of the house agent carries the first-run
 skill in its message (`setup_brief` in the agents runtime, from
-`hub.setup`): OpenCode keeps only a session's first instructions, and
+`agent.setup`'s state): OpenCode keeps only a session's first instructions, and
 without this the agent drifted into a generic assistant after a failed
 start.
 
@@ -253,7 +257,7 @@ pickers (the look steps and Your account) draw still thumbnails with `Rookie.bak
   the person's answer (off until they give one).
 - Look and feel = `page.look {sound, rookie, theme, name}`; it returns
   `{sound, rookie, theme, name, chosen, next, styles, themes}` (also in
-  `page.site` and `hub.setup` as `look`). Sound, style and theme are the
+  `agent.site` as `look`). Sound, style and theme are the
   person's own settings (`page.sound`, `page.rookie`, `page.rookie_theme`);
   the name is the hub setting `agent.house_name` (default Rookie): the
   house agent's name. Anyone (a person, or an agent alone) may set any of
@@ -338,7 +342,7 @@ Bake, Nov 6: "Remove all restrictions and gates. Stop adding complexity to
 the process. We will do a hardening pass once everything is stable". These
 were built on this branch and taken out again; nothing replaces them now:
 
-1. Who may mark first-run setup done (`hub.setup {done}`): was owners only;
+1. Who may mark first-run setup done (`agent.setup {done}`): was owners only;
    now anyone.
 2. Who may rename the house agent and set sound / style / theme
    (`page.look`): was owners only for the name and a person for the rest;
@@ -377,13 +381,12 @@ were built on this branch and taken out again; nothing replaces them now:
     the page sees every agent's grants and every project's level. Consider:
     owners only for `trust.sacred`, and grants shown only to owners.
 
-13. Setup mode and the network step (review pass, Nov 9; for Bake to
-    decide, nothing built): while setup is unfinished anyone who opens the
-    site is the owner. Step 7 can open the hub to the home network or the
-    internet before setup is marked done, and it stays that way if the
-    person wanders off mid-setup. Consider: no setup-mode sign-in from
-    anything but this computer, or marking setup done before step 7 opens
-    the hub up.
+13. ~~Setup mode and the network step: while setup is unfinished anyone who
+    opens the site is the owner, and step 7 can open the hub up before then.~~
+    Obsolete: the site is open only until the owner sets a password (step 5,
+    before step 7), not until setup is done. Left: a person who skips the
+    password and still opens the hub to the network leaves it open; consider
+    no open sign-in from anything but this computer.
 
 ### Open questions for Bake
 
