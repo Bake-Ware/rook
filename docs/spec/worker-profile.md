@@ -9,7 +9,9 @@ module talking to its local worker speaks these same messages.
 The example implementation is `tests/test_core2_minimal_worker.py` (about
 70 lines of worker), run against a real hub. `worker/rook_worker.py` is
 the profile with the carrier written out too (standard library Python, no
-Telesthete library), a worker people run.
+Telesthete library), a worker people run. The ESP32-S3 dongle's firmware
+speaks it in C++ (`firmware/src/profile.cpp`; `firmware/DEVLOG.md`, "Joins a
+0.5 band").
 
 The key words MUST, MAY and SHOULD are as in RFC 2119.
 

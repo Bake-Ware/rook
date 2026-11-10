@@ -1,8 +1,8 @@
-// Telesthete band worker — UDP, ChaCha20-Poly1305 AEAD (IETF/RFC 8439, the
-// current Telesthete baseline suite per SPEC §3.2), 27-byte header + 21-byte
-// fragmentation envelope per SPEC §6.4. We only emit single-fragment messages
-// (all our replies fit comfortably under 1003 B plaintext); inbound
-// multi-fragment frames are dropped with a debug log.
+// Telesthete band worker: the minimal worker profile (profile.cpp,
+// docs/spec/worker-profile.md) over UDP to the band's relay, ChaCha20-Poly1305
+// AEAD (IETF/RFC 8439, the Telesthete baseline suite per SPEC §3.2), 27-byte
+// header + 21-byte fragmentation envelope per SPEC §6.4. Everything we send
+// fits one fragment; what we receive is reassembled (profile.h: FRAG_MAX).
 //
 // Crypto stack:
 //     - SHA-256 (mbedtls) for band_id = SHA256(psk)[:16]
@@ -14,12 +14,8 @@
 //
 // Wire shape per frame (SPEC §3.2):
 //     nonce = 4 zero bytes || 8-byte BE sequence   (96-bit)
-//     AAD   = { channel_type, channel_id_hi, channel_id_lo }
+//     AAD   = empty
 //     ciphertext_wire = ciphertext || tag(16)      (tag TRAILING)
-//
-// NOTE: the legacy XSalsa20-Poly1305/secretbox code below (Salsa20 core,
-// HSalsa20, Poly1305, secretbox_*) is retained but DEAD — the fleet migrated
-// off it. See aead_encrypt/aead_decrypt for the live path.
 
 #include "telesthete.h"
 #include "config.h"
@@ -28,6 +24,8 @@
 #include "ble_hid.h"
 #include "device_mode.h"
 #include "serial_buf.h"
+#include "profile.h"
+#include "manifest.h"
 
 #include <mbedtls/base64.h>
 
@@ -55,7 +53,7 @@ static String g_worker_name;
 static String g_hub_host_cached;
 static bool g_inited = false;
 
-// Forward decls for endian helpers defined below in the Salsa20 section.
+// Forward decls for endian helpers defined below.
 static inline uint32_t load32_le(const uint8_t* s);
 static inline void store32_le(uint8_t* d, uint32_t v);
 
@@ -169,7 +167,7 @@ static void poly1305_mac(const uint8_t key[32],
     store32_le(out_tag + 12, h3);
 }
 
-// ---- Salsa20 / HSalsa20 ------------------------------------------------
+// ---- little-endian helpers ---------------------------------------------
 
 static inline uint32_t load32_le(const uint8_t *s) {
     return (uint32_t)s[0]
@@ -184,164 +182,6 @@ static inline void store32_le(uint8_t *d, uint32_t v) {
     d[3] = (uint8_t)(v >> 24);
 }
 #define ROTL32(v, n) (((v) << (n)) | ((v) >> (32 - (n))))
-
-// Salsa20 quarter-round (NOT ChaCha20's). 4 ops, single statement-expr.
-#define QR_S(a, b, c, d) do { \
-    b ^= ROTL32((uint32_t)((a) + (d)),  7); \
-    c ^= ROTL32((uint32_t)((b) + (a)),  9); \
-    d ^= ROTL32((uint32_t)((c) + (b)), 13); \
-    a ^= ROTL32((uint32_t)((d) + (c)), 18); \
-} while (0)
-
-static void salsa20_block(uint8_t out[64], const uint32_t in_[16]) {
-    uint32_t x[16];
-    memcpy(x, in_, 64);
-    for (int i = 0; i < 10; i++) {
-        // column round
-        QR_S(x[0],  x[4],  x[8],  x[12]);
-        QR_S(x[5],  x[9],  x[13], x[1]);
-        QR_S(x[10], x[14], x[2],  x[6]);
-        QR_S(x[15], x[3],  x[7],  x[11]);
-        // row round
-        QR_S(x[0],  x[1],  x[2],  x[3]);
-        QR_S(x[5],  x[6],  x[7],  x[4]);
-        QR_S(x[10], x[11], x[8],  x[9]);
-        QR_S(x[15], x[12], x[13], x[14]);
-    }
-    for (int i = 0; i < 16; i++) {
-        store32_le(out + i * 4, x[i] + in_[i]);
-    }
-}
-
-// HSalsa20 = same rounds, no input add, special output word selection.
-static void hsalsa20(uint8_t out[32], const uint8_t key[32], const uint8_t nonce16[16]) {
-    static const uint32_t sigma[4] = {
-        0x61707865u, 0x3320646eu, 0x79622d32u, 0x6b206574u
-    };
-    uint32_t x[16];
-    x[0]  = sigma[0];
-    x[1]  = load32_le(key + 0);
-    x[2]  = load32_le(key + 4);
-    x[3]  = load32_le(key + 8);
-    x[4]  = load32_le(key + 12);
-    x[5]  = sigma[1];
-    x[6]  = load32_le(nonce16 + 0);
-    x[7]  = load32_le(nonce16 + 4);
-    x[8]  = load32_le(nonce16 + 8);
-    x[9]  = load32_le(nonce16 + 12);
-    x[10] = sigma[2];
-    x[11] = load32_le(key + 16);
-    x[12] = load32_le(key + 20);
-    x[13] = load32_le(key + 24);
-    x[14] = load32_le(key + 28);
-    x[15] = sigma[3];
-
-    for (int i = 0; i < 10; i++) {
-        QR_S(x[0],  x[4],  x[8],  x[12]);
-        QR_S(x[5],  x[9],  x[13], x[1]);
-        QR_S(x[10], x[14], x[2],  x[6]);
-        QR_S(x[15], x[3],  x[7],  x[11]);
-        QR_S(x[0],  x[1],  x[2],  x[3]);
-        QR_S(x[5],  x[6],  x[7],  x[4]);
-        QR_S(x[10], x[11], x[8],  x[9]);
-        QR_S(x[15], x[12], x[13], x[14]);
-    }
-    store32_le(out +  0, x[0]);
-    store32_le(out +  4, x[5]);
-    store32_le(out +  8, x[10]);
-    store32_le(out + 12, x[15]);
-    store32_le(out + 16, x[6]);
-    store32_le(out + 20, x[7]);
-    store32_le(out + 24, x[8]);
-    store32_le(out + 28, x[9]);
-}
-
-// Generate `nblocks` of XSalsa20 keystream into `out` (out must hold nblocks*64 bytes).
-static void xsalsa20_stream(uint8_t* out, size_t nblocks,
-                            const uint8_t key[32], const uint8_t nonce24[24]) {
-    uint8_t subkey[32];
-    hsalsa20(subkey, key, nonce24);
-
-    static const uint32_t sigma[4] = {
-        0x61707865u, 0x3320646eu, 0x79622d32u, 0x6b206574u
-    };
-    uint32_t st[16];
-    st[0]  = sigma[0];
-    st[1]  = load32_le(subkey + 0);
-    st[2]  = load32_le(subkey + 4);
-    st[3]  = load32_le(subkey + 8);
-    st[4]  = load32_le(subkey + 12);
-    st[5]  = sigma[1];
-    st[6]  = load32_le(nonce24 + 16);
-    st[7]  = load32_le(nonce24 + 20);
-    // st[8], st[9] = block counter, set per-block
-    st[10] = sigma[2];
-    st[11] = load32_le(subkey + 16);
-    st[12] = load32_le(subkey + 20);
-    st[13] = load32_le(subkey + 24);
-    st[14] = load32_le(subkey + 28);
-    st[15] = sigma[3];
-
-    // 32-bit block counter — plaintexts on this device fit well under 2^31 blocks.
-    for (size_t b = 0; b < nblocks; b++) {
-        st[8] = (uint32_t)b;
-        st[9] = 0;
-        salsa20_block(out + b * 64, st);
-    }
-}
-
-// ---- XSalsa20-Poly1305 (NaCl secretbox) --------------------------------
-
-// out_wire must have room for plaintext_len + 16 bytes (tag prefix).
-// Returns true on success.
-static bool secretbox_encrypt(uint8_t* out_wire,
-                              const uint8_t key[32], const uint8_t nonce24[24],
-                              const uint8_t* plaintext, size_t pt_len) {
-    size_t nblocks = (32 + pt_len + 63) / 64;
-    if (nblocks == 0) nblocks = 1;
-    uint8_t* stream = (uint8_t*)malloc(nblocks * 64);
-    if (!stream) return false;
-    xsalsa20_stream(stream, nblocks, key, nonce24);
-
-    // wire = tag(16) || ciphertext
-    uint8_t* ct = out_wire + 16;
-    for (size_t i = 0; i < pt_len; i++) {
-        ct[i] = plaintext[i] ^ stream[32 + i];
-    }
-
-    // Poly1305 over ciphertext using stream[0..32] as key.
-    poly1305_mac(stream, ct, pt_len, out_wire);
-    free(stream);
-    return true;
-}
-
-// Returns true and writes pt_len plaintext bytes if MAC verifies.
-static bool secretbox_decrypt(uint8_t* out_pt,
-                              const uint8_t key[32], const uint8_t nonce24[24],
-                              const uint8_t* wire, size_t wire_len) {
-    if (wire_len < 16) return false;
-    size_t ct_len = wire_len - 16;
-    size_t nblocks = (32 + ct_len + 63) / 64;
-    if (nblocks == 0) nblocks = 1;
-    uint8_t* stream = (uint8_t*)malloc(nblocks * 64);
-    if (!stream) return false;
-    xsalsa20_stream(stream, nblocks, key, nonce24);
-
-    uint8_t want_tag[16];
-    poly1305_mac(stream, wire + 16, ct_len, want_tag);
-    // constant-time compare
-    uint8_t diff = 0;
-    for (int i = 0; i < 16; i++) diff |= wire[i] ^ want_tag[i];
-    if (diff != 0) {
-        free(stream);
-        return false;
-    }
-    for (size_t i = 0; i < ct_len; i++) {
-        out_pt[i] = wire[16 + i] ^ stream[32 + i];
-    }
-    free(stream);
-    return true;
-}
 
 // ---- key derivation -----------------------------------------------------
 
@@ -393,7 +233,6 @@ static const size_t  WIRE_HEADER = 27;
 // 21-byte fragmentation envelope per SPEC §6.4
 //     version[1] || fragment_id[16] || seq[2 BE] || total[2 BE]
 static const uint8_t FRAG_VERSION = 0x01;
-static const size_t  FRAG_HEADER = 21;
 
 static void pack_header(uint8_t out[WIRE_HEADER], uint64_t sequence) {
     memcpy(out, g_band_id, 16);
@@ -410,24 +249,9 @@ static void pack_header(uint8_t out[WIRE_HEADER], uint64_t sequence) {
     out[26] = (uint8_t)(sequence);
 }
 
-static void make_xchacha_nonce(uint8_t nonce[24], uint64_t sequence) {
-    // 16 zero bytes || sequence (8 bytes BE) — matches reference impl.
-    memset(nonce, 0, 16);
-    nonce[16] = (uint8_t)(sequence >> 56);
-    nonce[17] = (uint8_t)(sequence >> 48);
-    nonce[18] = (uint8_t)(sequence >> 40);
-    nonce[19] = (uint8_t)(sequence >> 32);
-    nonce[20] = (uint8_t)(sequence >> 24);
-    nonce[21] = (uint8_t)(sequence >> 16);
-    nonce[22] = (uint8_t)(sequence >> 8);
-    nonce[23] = (uint8_t)(sequence);
-}
-
 // ---- ChaCha20-Poly1305 (IETF, RFC 8439) — active AEAD suite -------------
 //
-// This is the current Telesthete baseline (SPEC §3.2), replacing the legacy
-// XSalsa20-Poly1305/secretbox stack above (now dead code). The deployed hub
-// and band-mcp speak ONLY this suite, so the dongle must too.
+// The Telesthete baseline (SPEC §3.2); hubs and workers speak only this suite.
 //
 //     nonce = 4 zero bytes || 8-byte BE sequence          (96-bit, SPEC §3.2)
 //     AAD   = EMPTY (b"")                                  (see note below)
@@ -573,24 +397,6 @@ static void wrap_fragment(uint8_t* out, const uint8_t* payload, size_t pt_len,
     if (pt_len) memcpy(out + 21, payload, pt_len);
 }
 
-// Returns assembled payload length (writes into out), or 0 if multi-fragment
-// or malformed.
-static size_t unwrap_fragment(uint8_t* out, const uint8_t* frag, size_t frag_len) {
-    if (frag_len < FRAG_HEADER) return 0;
-    if (frag[0] != FRAG_VERSION) return 0;
-    uint16_t seq   = ((uint16_t)frag[17] << 8) | frag[18];
-    uint16_t total = ((uint16_t)frag[19] << 8) | frag[20];
-    if (total != 1 || seq != 0) {
-        // multi-fragment not supported in v1 — log + drop
-        Serial.printf("telesthete: dropping multi-fragment frame (seq=%u total=%u)\n",
-                      (unsigned)seq, (unsigned)total);
-        return 0;
-    }
-    size_t payload_len = frag_len - FRAG_HEADER;
-    if (payload_len) memcpy(out, frag + FRAG_HEADER, payload_len);
-    return payload_len ? payload_len : 1;  // keepalive=0-length not used; we send 1-byte sentinel
-}
-
 // ---- send + receive -----------------------------------------------------
 
 static void send_payload(const uint8_t* payload, size_t pt_len) {
@@ -624,7 +430,9 @@ static void send_payload(const uint8_t* payload, size_t pt_len) {
     free(wire);
 }
 
-static void send_string(const String& s) {
+static void send_doc(const JsonDocument& doc) {
+    String s;
+    serializeJson(doc, s);
     send_payload((const uint8_t*)s.c_str(), s.length());
 }
 
@@ -633,63 +441,9 @@ static void send_keepalive() {
     send_payload(&one, 1);
 }
 
-// ---- announce ----------------------------------------------------------
+// ---- caps (rook/plugins/dongle-s3/plugin.yaml) -------------------------
 
-static const char* CAPS_LIST[] = {
-    "info.host", "info.uptime", "info.ping",
-    "kvm.type", "kvm.key", "kvm.consumer",
-    "kvm.hid.set", "kvm.hid.get",
-    "bthid.type", "bthid.key", "bthid.consumer", "bthid.status",
-    "serial.write", "serial.read", "serial.status",
-};
-static const size_t CAPS_LIST_N = sizeof(CAPS_LIST) / sizeof(CAPS_LIST[0]);
-
-static void announce() {
-    JsonDocument doc;
-    doc["kind"] = "announce";
-    doc["worker_id"] = g_worker_id;
-    doc["name"] = g_worker_name;
-    doc["version"] = ROOK_FW_VERSION;   // shown in the dashboard card (firmware version)
-    JsonArray caps = doc["caps"].to<JsonArray>();
-    for (size_t i = 0; i < CAPS_LIST_N; i++) caps.add(CAPS_LIST[i]);
-    JsonArray plugins = doc["plugins"].to<JsonArray>();
-    plugins.add("info");
-    plugins.add("kvm");
-    plugins.add("bthid");
-    plugins.add("serial");
-    String out;
-    serializeJson(doc, out);
-    send_string(out);
-}
-
-// ---- reply ------------------------------------------------------------
-
-static void reply_ok(const char* msg_id, JsonDocument& body) {
-    JsonDocument out;
-    if (msg_id) out["id"] = msg_id;
-    out["from"] = g_worker_id;
-    out["ok"] = true;
-    out["result"] = body;
-    String s;
-    serializeJson(out, s);
-    send_string(s);
-}
-
-static void reply_err(const char* msg_id, const char* err) {
-    JsonDocument out;
-    if (msg_id) out["id"] = msg_id;
-    out["from"] = g_worker_id;
-    out["ok"] = false;
-    out["error"] = err;
-    String s;
-    serializeJson(out, s);
-    send_string(s);
-}
-
-// ---- capability dispatch ----------------------------------------------
-
-static void cap_info_host(const char* msg_id) {
-    JsonDocument r;
+static const char* cap_info_host(JsonVariantConst, JsonObject r) {
     r["device"] = TELESTHETE_NAME;
     r["version"] = ROOK_FW_VERSION;
     r["chip"] = ESP.getChipModel();
@@ -697,46 +451,41 @@ static void cap_info_host(const char* msg_id) {
     r["ssid"] = WiFi.SSID();
     r["ip"] = WiFi.localIP().toString();
     r["free_heap"] = ESP.getFreeHeap();
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_info_uptime(const char* msg_id) {
-    JsonDocument r;
+static const char* cap_info_uptime(JsonVariantConst, JsonObject r) {
     r["uptime_ms"] = (uint64_t)millis();
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_info_ping(const char* msg_id, JsonVariant args) {
-    JsonDocument r;
+static const char* cap_info_ping(JsonVariantConst args, JsonObject r) {
     const char* echo = args["echo"];
     if (echo) r["echo"] = echo;
     r["ts_ms"] = (uint64_t)millis();
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_kvm_type(const char* msg_id, JsonVariant args) {
-    if (!hidEnabled()) { reply_err(msg_id, "hid_disabled"); return; }
+static const char* cap_hid_type(JsonVariantConst args, JsonObject r) {
+    if (!hidEnabled()) return "hid_disabled";
     const char* text = args["text"];
-    if (!text) { reply_err(msg_id, "missing 'text'"); return; }
+    if (!text) return "missing 'text'";
     int delay_ms = args["delay_ms"] | DEFAULT_KEY_DELAY_MS;
     size_t len = strlen(text);
     for (size_t i = 0; i < len; i++) {
         Keyboard.write((uint8_t)text[i]);
         if (delay_ms > 0) delay(delay_ms);
     }
-    JsonDocument r;
+    if (args["enter"] | false) Keyboard.write(KEY_RETURN);
     r["typed"] = (uint32_t)len;
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_kvm_key(const char* msg_id, JsonVariant args) {
-    if (!hidEnabled()) { reply_err(msg_id, "hid_disabled"); return; }
-    JsonArray mods = args["modifiers"].as<JsonArray>();
-    if (mods) {
-        for (JsonVariant m : mods) {
-            uint8_t k = lookupModifierKey(m.as<const char*>());
-            if (k) Keyboard.press(k);
-        }
+static const char* cap_hid_key(JsonVariantConst args, JsonObject r) {
+    if (!hidEnabled()) return "hid_disabled";
+    for (JsonVariantConst m : args["mods"].as<JsonArrayConst>()) {
+        uint8_t k = lookupModifierKey(m.as<const char*>());
+        if (k) Keyboard.press(k);
     }
     const char* key = args["key"];
     if (key) {
@@ -749,92 +498,70 @@ static void cap_kvm_key(const char* msg_id, JsonVariant args) {
     }
     delay(50);
     Keyboard.releaseAll();
-    JsonDocument r;
     r["ok"] = true;
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_kvm_consumer(const char* msg_id, JsonVariant args) {
-    if (!hidEnabled()) { reply_err(msg_id, "hid_disabled"); return; }
+static const char* cap_hid_consumer(JsonVariantConst args, JsonObject r) {
+    if (!hidEnabled()) return "hid_disabled";
     uint16_t code = 0;
     const char* name = args["key"];
     if (name) code = lookupConsumerKey(name);
     if (!code && args["code"].is<uint16_t>()) code = args["code"].as<uint16_t>();
-    if (!code) { reply_err(msg_id, "unknown consumer key"); return; }
+    if (!code) return "unknown consumer key";
     Consumer.press(code);
     delay(50);
     Consumer.release();
-    JsonDocument r;
     r["code"] = code;
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_kvm_hid_set(const char* msg_id, JsonVariant args) {
-    if (!args["enabled"].is<bool>()) { reply_err(msg_id, "missing 'enabled' bool"); return; }
+static const char* cap_hid_set(JsonVariantConst args, JsonObject r) {
+    if (!args["enabled"].is<bool>()) return "missing 'enabled' bool";
     setHidEnabled(args["enabled"].as<bool>());
-    JsonDocument r;
     r["enabled"] = hidEnabled();
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_kvm_hid_get(const char* msg_id) {
-    JsonDocument r;
+static const char* cap_hid_status(JsonVariantConst, JsonObject r) {
     r["enabled"] = hidEnabled();
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-// ---- BT HID caps ----
-
-static void cap_bthid_status(const char* msg_id) {
-    JsonDocument r;
+static const char* cap_bt_status(JsonVariantConst, JsonObject r) {
     r["connected"] = bleHidConnected();
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_bthid_type(const char* msg_id, JsonVariant args) {
+static const char* cap_bt_type(JsonVariantConst args, JsonObject r) {
     const char* text = args["text"];
-    if (!text) { reply_err(msg_id, "missing 'text'"); return; }
+    if (!text) return "missing 'text'";
     int delay_ms = args["delay_ms"] | DEFAULT_KEY_DELAY_MS;
     size_t typed = bleHidType(text, delay_ms);
-    if (typed == 0 && strlen(text) > 0) {
-        reply_err(msg_id, "no BLE host connected");
-        return;
-    }
-    JsonDocument r;
+    if (typed == 0 && strlen(text) > 0) return "no BLE host connected";
     r["typed"] = (uint32_t)typed;
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_bthid_key(const char* msg_id, JsonVariant args) {
+static const char* cap_bt_key(JsonVariantConst args, JsonObject r) {
     const char* key = args["key"];
-    JsonArray mods_arr = args["modifiers"].as<JsonArray>();
     const char* mods[8] = {nullptr};
     size_t mods_n = 0;
-    if (mods_arr) {
-        for (JsonVariant m : mods_arr) {
-            if (mods_n >= 8) break;
-            mods[mods_n++] = m.as<const char*>();
-        }
+    for (JsonVariantConst m : args["mods"].as<JsonArrayConst>()) {
+        if (mods_n >= 8) break;
+        mods[mods_n++] = m.as<const char*>();
     }
-    if (!bleHidKey(key, mods, mods_n)) {
-        reply_err(msg_id, "no BLE host connected");
-        return;
-    }
-    JsonDocument r;
+    if (!bleHidKey(key, mods, mods_n)) return "no BLE host connected";
     r["ok"] = true;
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_bthid_consumer(const char* msg_id, JsonVariant args) {
+static const char* cap_bt_consumer(JsonVariantConst args, JsonObject r) {
     const char* name = args["key"];
-    if (!name) { reply_err(msg_id, "missing 'key'"); return; }
-    if (!bleHidConsumer(name, 0)) {
-        reply_err(msg_id, "unknown consumer key or BLE not connected");
-        return;
-    }
-    JsonDocument r;
+    if (!name) return "missing 'key'";
+    if (!bleHidConsumer(name, 0)) return "unknown consumer key or BLE not connected";
     r["ok"] = true;
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
 // ---- serial (CDC console bridge) ---------------------------------------
@@ -843,18 +570,16 @@ static void cap_bthid_consumer(const char* msg_id, JsonVariant args) {
 // serial.read drains the same ring the /telesthete/stream WebSocket uses —
 // whichever consumer drains first wins (fine for a single operator).
 
-static void cap_serial_write(const char* msg_id, JsonVariant args) {
+static const char* cap_serial_write(JsonVariantConst args, JsonObject r) {
     const char* data = args["data"];
-    if (!data) { reply_err(msg_id, "missing 'data'"); return; }
+    if (!data) return "missing 'data'";
     size_t n = CDCSerial.write((const uint8_t*)data, strlen(data));
-    JsonDocument r;
     r["written"] = (uint32_t)n;
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_serial_read(const char* msg_id, JsonVariant args) {
-    // 600 raw -> 800 b64 keeps the reply inside the single-fragment
-    // plaintext budget (1003 B) with envelope headroom.
+static const char* cap_serial_read(JsonVariantConst args, JsonObject r) {
+    // 600 raw -> 800 b64 keeps the reply inside one fragment (FRAG_DATA).
     size_t maxN = args["max"] | 512;
     if (maxN > 600) maxN = 600;
 
@@ -872,60 +597,52 @@ static void cap_serial_read(const char* msg_id, JsonVariant args) {
     mbedtls_base64_encode(b64, sizeof(b64) - 1, &b64len, raw, n);
     b64[b64len] = '\0';
 
-    JsonDocument r;
     r["b64"] = (const char*)b64;
     r["n"] = (uint32_t)n;
     r["remaining"] = (uint32_t)remaining;
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void cap_serial_status(const char* msg_id) {
-    JsonDocument r;
+static const char* cap_serial_status(JsonVariantConst, JsonObject r) {
     r["buffered"] = (uint32_t)serialBufLen;
     r["file_transfer"] = (bool)fileTransferActive;
-    reply_ok(msg_id, r);
+    return nullptr;
 }
 
-static void dispatch(const uint8_t* payload, size_t len) {
-    if (len == 1 && payload[0] == 0x00) {
-        // keepalive sentinel — ignore
-        return;
-    }
+static const Cap CAPS[] = {
+    {"info.host",      cap_info_host},
+    {"info.uptime",    cap_info_uptime},
+    {"info.ping",      cap_info_ping},
+    {"hid.type",       cap_hid_type},
+    {"hid.key",        cap_hid_key},
+    {"hid.consumer",   cap_hid_consumer},
+    {"hid.status",     cap_hid_status},
+    {"hid.set",        cap_hid_set},
+    {"bt.type",        cap_bt_type},
+    {"bt.key",         cap_bt_key},
+    {"bt.consumer",    cap_bt_consumer},
+    {"bt.status",      cap_bt_status},
+    {"serial.write",   cap_serial_write},
+    {"serial.read",    cap_serial_read},
+    {"serial.status",  cap_serial_status},
+    {nullptr, nullptr},
+};
+
+// ---- the profile ---------------------------------------------------------
+
+static Profile g_profile;
+static Reassembler g_frags;
+
+static void announce() {
     JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, payload, len);
-    if (err) return;
-    if (!doc.is<JsonObject>()) return;
+    profileAnnounce(g_profile, doc);
+    send_doc(doc);
+}
 
-    const char* cap = doc["cap"];
-    if (!cap) return;  // announce/reply chatter — drop
-
-    const char* target = doc["target"];
-    if (target && strcmp(target, g_worker_id.c_str()) != 0) return;
-
-    const char* msg_id = doc["id"];
-    JsonVariant args = doc["args"];
-
-    if      (strcmp(cap, "info.host")     == 0) cap_info_host(msg_id);
-    else if (strcmp(cap, "info.uptime")   == 0) cap_info_uptime(msg_id);
-    else if (strcmp(cap, "info.ping")     == 0) cap_info_ping(msg_id, args);
-    else if (strcmp(cap, "kvm.type")      == 0) cap_kvm_type(msg_id, args);
-    else if (strcmp(cap, "kvm.key")       == 0) cap_kvm_key(msg_id, args);
-    else if (strcmp(cap, "kvm.consumer")  == 0) cap_kvm_consumer(msg_id, args);
-    else if (strcmp(cap, "kvm.hid.set")   == 0) cap_kvm_hid_set(msg_id, args);
-    else if (strcmp(cap, "kvm.hid.get")   == 0) cap_kvm_hid_get(msg_id);
-    else if (strcmp(cap, "bthid.status")  == 0) cap_bthid_status(msg_id);
-    else if (strcmp(cap, "bthid.type")    == 0) cap_bthid_type(msg_id, args);
-    else if (strcmp(cap, "bthid.key")     == 0) cap_bthid_key(msg_id, args);
-    else if (strcmp(cap, "bthid.consumer")== 0) cap_bthid_consumer(msg_id, args);
-    else if (strcmp(cap, "serial.write")  == 0) cap_serial_write(msg_id, args);
-    else if (strcmp(cap, "serial.read")   == 0) cap_serial_read(msg_id, args);
-    else if (strcmp(cap, "serial.status") == 0) cap_serial_status(msg_id);
-    else if (target) {
-        // only reply with "unknown" when addressed directly, to avoid
-        // spamming the band when peers issue open calls.
-        String e = String("unknown capability: ") + cap;
-        reply_err(msg_id, e.c_str());
-    }
+static void heartbeat() {
+    JsonDocument doc;
+    profileHeartbeat(g_profile, doc);
+    send_doc(doc);
 }
 
 static void recv_one(uint8_t* udp_buf, size_t udp_len) {
@@ -936,9 +653,8 @@ static void recv_one(uint8_t* udp_buf, size_t udp_len) {
 
     const uint8_t* wire = udp_buf + WIRE_HEADER;
     size_t wire_len = udp_len - WIRE_HEADER;
-    if (wire_len < 16) return;
     size_t pt_len = wire_len - 16;
-    uint8_t* plain = (uint8_t*)malloc(pt_len);
+    uint8_t* plain = (uint8_t*)malloc(pt_len ? pt_len : 1);
     if (!plain) return;
 
     if (!aead_decrypt(plain, g_aead_key, sequence, wire, wire_len)) {
@@ -948,13 +664,30 @@ static void recv_one(uint8_t* udp_buf, size_t udp_len) {
 
     g_last_recv_ms = millis();
 
-    uint8_t* assembled = (uint8_t*)malloc(pt_len);  // pt_len always >= FRAG_HEADER
-    if (!assembled) { free(plain); return; }
-    size_t app_len = unwrap_fragment(assembled, plain, pt_len);
+    uint8_t* msg = nullptr;
+    size_t msg_len = reassemble(g_frags, plain, pt_len, millis(), &msg);
     free(plain);
-    if (app_len == 0) { free(assembled); return; }
-    dispatch(assembled, app_len);
-    free(assembled);
+    if (!msg_len) return;
+    JsonDocument out;
+    Heard heard = profileHear(g_profile, msg, msg_len, millis(), out);
+    free(msg);
+    if (heard == HEARD_REPLY) send_doc(out);
+    else if (heard == HEARD_NEW_HUB) announce();
+}
+
+// The same after every restart (profile section 1): from the chip's MAC.
+static String make_worker_id() {
+    uint8_t mac[6], hash[32];
+    esp_efuse_mac_get_default(mac);
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    mbedtls_sha256_starts(&sha, 0);
+    mbedtls_sha256_update(&sha, mac, sizeof(mac));
+    mbedtls_sha256_finish(&sha, hash);
+    mbedtls_sha256_free(&sha);
+    char hex[33];
+    for (int i = 0; i < 16; i++) snprintf(hex + i * 2, 3, "%02x", hash[i]);
+    return String(hex);
 }
 
 // ---- task --------------------------------------------------------------
@@ -962,13 +695,11 @@ static void recv_one(uint8_t* udp_buf, size_t udp_len) {
 static void telestheteTask(void* arg) {
     const auto& s = getSettings();
     g_worker_name = s.worker_name.length() ? s.worker_name : String("rookdongle");
-
-    // Generate worker_id: 16 random bytes as hex.
-    uint8_t wid[16];
-    esp_fill_random(wid, 16);
-    char hex[33];
-    for (int i = 0; i < 16; i++) snprintf(hex + i * 2, 3, "%02x", wid[i]);
-    g_worker_id = String(hex);
+    g_worker_id = make_worker_id();
+    g_profile = Profile{g_worker_id.c_str(), g_worker_name.c_str(), ROOK_FW_VERSION,
+                        ROOK_MANIFEST_PLUGIN, ROOK_MANIFEST_VERSION, ROOK_MANIFEST_HASH,
+                        ROOK_MANIFESTS_HASH, CAPS, {0}, 0};
+    reassemblerInit(g_frags);
 
     derive_band_id_and_key(s.band_psk);
     g_hub_port = s.hub_port;
@@ -996,13 +727,13 @@ static void telestheteTask(void* arg) {
     g_udp.begin(0);  // ephemeral port
     g_inited = true;
 
-    // Implicit registration: keepalive frame teaches the hub our (NAT'd) addr.
+    // Implicit registration: keepalive frame teaches the relay our (NAT'd) addr.
     send_keepalive();
     delay(100);
     announce();
 
     uint32_t next_keepalive = millis() + 20000;
-    uint32_t next_announce  = millis() + 30000;
+    uint32_t next_heartbeat = millis() + 30000;
 
     uint8_t buf[1600];
     for (;;) {
@@ -1017,9 +748,9 @@ static void telestheteTask(void* arg) {
             send_keepalive();
             next_keepalive = now + 20000;
         }
-        if ((int32_t)(now - next_announce) >= 0) {
-            announce();
-            next_announce = now + 30000;
+        if ((int32_t)(now - next_heartbeat) >= 0) {
+            heartbeat();
+            next_heartbeat = now + 30000;
         }
 
         vTaskDelay(pdMS_TO_TICKS(20));

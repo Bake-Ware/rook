@@ -201,6 +201,42 @@ LCD: added a single-char hub indicator `H` / `h` (lime / red) on the
 top-row metadata strip — solid lime means the dongle has heard from any
 band peer within the last 60s.
 
+## Joins a 0.5 band — 2026-11-09
+
+The dongle speaks the minimal worker profile (`docs/spec/worker-profile.md`)
+and nothing else: the 0.4 announce (`caps` and `plugins` lists) is gone.
+
+- **Join**: the Telesthete carrier as before (ChaCha20-Poly1305, empty
+  associated data, 27-byte header, 21-byte fragment envelope, UDP to the
+  band's relay, a keepalive every 20 s). Its `worker_id` is 32 hex from a
+  SHA-256 of the chip's MAC, so it is the same after every restart.
+- **Announce** at boot and whenever a hub it hasn't heard from in 90 s (or
+  a new one) announces: `core` "2.0", the firmware `version`, and one
+  `manifests` entry for the builtin plugin `dongle-s3`
+  (`rook/plugins/dongle-s3/plugin.yaml`). It never sends the manifest, so
+  the hub's library must carry that plugin (every install level does).
+- **Heartbeat** every 30 s.
+- **Calls**: it reads `target`, `id`, `cap` and `args` and parses past the
+  rest (the ticket included) without storing it. It answers `{id, from, ok,
+  result}` or `{id, from, ok: false, error}`; any cap it doesn't serve,
+  `core.manifests` too, gets `unknown capability: <cap>`. The caps are
+  `dongle-s3.*`: `info.*`, `hid.*` (USB keyboard, the `hid.type`, `hid.key`
+  and `hid.status` contracts), `bt.*` (Bluetooth keyboard) and `serial.*`.
+  The old `kvm.*`/`bthid.*` names are gone.
+
+The two hashes it announces are computed from the plugin.yaml at build time
+(`scripts/manifest_header.py`, run by PlatformIO, writes the git-ignored
+`include/manifest.h`); `tests/test_firmware_profile.py` checks them against
+the hub's own hashing and runs `src/profile.cpp`, compiled for the PC,
+against a real hub.
+
+Limits: a message it receives may be up to 8 fragments (8,024 bytes; a
+hub's call with its ticket is about 1.1 KB, two fragments), with up to 4
+being reassembled at once and each dropped after 30 s; anything bigger is
+dropped unread. A UDP datagram up to 1,600 bytes is read (a full fragment
+is 1,067). Everything it sends fits one fragment (1,003 bytes):
+`serial.read` returns at most 600 bytes for that reason.
+
 ## TODO — Future Ideas
 
 - **BT tether to phone for internet** — let the dongle pair with a phone over

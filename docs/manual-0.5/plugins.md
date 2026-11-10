@@ -120,6 +120,7 @@ runs where and what the phone app needs):
 - [camera](../../rook/plugins/camera/docs/manual.md), [battery](../../rook/plugins/battery/docs/manual.md).
 - [torrent](../../rook/plugins/torrent/docs/manual.md): Deluge.
 - [dongle](../../rook/plugins/dongle/docs/manual.md): the Rook RP2040 USB dongle.
+- [dongle-s3](../../rook/plugins/dongle-s3/docs/manual.md): the Rook ESP32-S3 dongle, its own worker on the band (firmware; nothing runs on the hub).
 - Appliances ([what that means](workers.md#appliances)): [kvm](../../rook/plugins/kvm/docs/manual.md) (PiKVM), [tv](../../rook/plugins/tv/docs/manual.md) (LG webOS), [tv-roku](../../rook/plugins/tv-roku/docs/manual.md) (Roku over ECP), [adb](../../rook/plugins/adb/docs/manual.md) (Android over adb), [cec](../../rook/plugins/cec/docs/manual.md) (Pico-CEC); [appliance](../../rook/plugins/appliance/docs/manual.md) is the delegate worker's side.
 
 **Phone** (in the Rook Android app, which runs the worker under Chaquopy;

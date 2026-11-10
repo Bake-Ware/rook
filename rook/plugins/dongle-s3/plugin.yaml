@@ -1,0 +1,109 @@
+# The Rook ESP32-S3 dongle (firmware/): a USB keyboard, media keys and a
+# serial console for the machine it is plugged into, plus a Bluetooth
+# keyboard, on the band as its own worker. A builtin manifest: the firmware
+# serves these caps and announces this manifest's hash without ever sending
+# it, so the hub's library must carry this file. Written as JSON (which is
+# YAML) because the firmware build hashes it with PlatformIO's Python, which
+# has no YAML (firmware/scripts/manifest_header.py).
+{
+  "manifest": 1,
+  "plugin": "dongle-s3",
+  "version": "0.5.0",
+  "title": "Rook ESP32-S3 dongle",
+  "doc": "Keyboard, media keys and a serial console on the machine the Rook ESP32-S3 dongle is plugged into, and a Bluetooth keyboard.",
+  "package": "devices",
+  "builtin": true,
+  "runs_on": "worker",
+  "license": "Apache-2.0",
+  "source": "https://github.com/Bake-Ware/rook",
+  "caps": {
+    "info.host": {
+      "doc": "The dongle itself: {device, version, chip, mac, ssid, ip, free_heap}.",
+      "risk": "read", "scope": "local", "idempotent": true
+    },
+    "info.uptime": {
+      "doc": "Milliseconds since the dongle started: {uptime_ms}.",
+      "risk": "read", "scope": "local", "idempotent": true
+    },
+    "info.ping": {
+      "doc": "Answer at once: {echo, ts_ms}.",
+      "risk": "read", "scope": "local", "idempotent": true,
+      "args": {"echo": {"type": "str"}}
+    },
+    "hid.type": {
+      "doc": "Type text on the USB host as a keyboard would (US layout).",
+      "risk": "exec", "scope": "local", "effects": ["physical"], "timeout": "60s",
+      "args": {
+        "text": {"type": "str", "required": true},
+        "enter": {"type": "bool", "default": false, "doc": "Press Enter after the text."},
+        "delay_ms": {"type": "int", "default": 10, "min": 0, "doc": "Pause between keys."}
+      }
+    },
+    "hid.key": {
+      "doc": "Tap a key with modifiers held on the USB host.",
+      "risk": "exec", "scope": "local", "effects": ["physical"],
+      "args": {
+        "key": {"type": "str", "required": true, "doc": "enter, escape, tab, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, capslock, f1..f12, or one character."},
+        "mods": {"type": "list", "items": {"type": "str", "enum": ["ctrl", "shift", "alt", "meta"]}}
+      }
+    },
+    "hid.consumer": {
+      "doc": "Tap a media key on the USB host: volume_up, volume_down, mute, play_pause, next, previous, stop, power, brightness_up, brightness_down, home, back; or a raw consumer usage code.",
+      "risk": "exec", "scope": "local", "effects": ["physical"],
+      "args": {
+        "key": {"type": "str"},
+        "code": {"type": "int", "min": 1, "max": 65535}
+      }
+    },
+    "hid.status": {
+      "doc": "Whether the USB keyboard is switched on: {enabled}.",
+      "risk": "read", "scope": "local", "idempotent": true
+    },
+    "hid.set": {
+      "doc": "Switch the USB keyboard on or off (off: the hid caps refuse).",
+      "risk": "write", "scope": "local", "idempotent": true,
+      "args": {"enabled": {"type": "bool", "required": true}}
+    },
+    "bt.type": {
+      "doc": "Type text on the paired Bluetooth host.",
+      "risk": "exec", "scope": "local", "effects": ["physical"], "timeout": "60s",
+      "args": {
+        "text": {"type": "str", "required": true},
+        "delay_ms": {"type": "int", "default": 10, "min": 0}
+      }
+    },
+    "bt.key": {
+      "doc": "Tap a key with modifiers held on the paired Bluetooth host.",
+      "risk": "exec", "scope": "local", "effects": ["physical"],
+      "args": {
+        "key": {"type": "str", "required": true},
+        "mods": {"type": "list", "items": {"type": "str", "enum": ["ctrl", "shift", "alt", "meta"]}}
+      }
+    },
+    "bt.consumer": {
+      "doc": "Tap a media key on the paired Bluetooth host.",
+      "risk": "exec", "scope": "local", "effects": ["physical"],
+      "args": {"key": {"type": "str", "required": true}}
+    },
+    "bt.status": {
+      "doc": "Whether a Bluetooth host is connected: {connected}.",
+      "risk": "read", "scope": "local", "idempotent": true
+    },
+    "serial.write": {
+      "doc": "Write text to the USB serial port the host sees (with a getty on it, a login console).",
+      "risk": "exec", "scope": "local",
+      "args": {"data": {"type": "str", "required": true}}
+    },
+    "serial.read": {
+      "doc": "Take up to max bytes the host wrote to the serial port: {b64, n, remaining}.",
+      "risk": "read", "scope": "local",
+      "args": {"max": {"type": "int", "default": 512, "min": 1, "max": 600}}
+    },
+    "serial.status": {
+      "doc": "Bytes waiting from the host and whether a file transfer is running: {buffered, file_transfer}.",
+      "risk": "read", "scope": "local", "idempotent": true
+    }
+  },
+  "provides": ["hid.type", "hid.key", "hid.status"],
+  "docs": {"manual": "docs/manual.md"}
+}
