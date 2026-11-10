@@ -86,7 +86,7 @@ caps:
     result: { type: map }
   read:
     doc: >-
-      Events of a stream on the hub (a room, huddle, agent or voice session) after the cursor
+      Events of a stream on the hub (a room, or a stream a plugin keeps there) after the cursor
       `after` (start at 0, pass back `next`): {events, next, dropped, closed}. wait > 0 holds an
       empty read up to that many seconds (long-poll): call it in a loop to follow the stream.
       A terminal or process is read on its worker (stream.get says which).

@@ -38,7 +38,7 @@ def test_spec_refuses_bad_blocks(block):
 
 
 def test_kind_defaults_follow_the_durability_decision():
-    for k in ("room", "huddle", "session"):
+    for k in ("room", "session", "inbox"):
         assert KINDS[k].durable
     for k in ("terminal", "process"):
         assert not KINDS[k].durable and KINDS[k].input
@@ -181,7 +181,7 @@ def test_metadata_and_list(hub):
 
 
 def test_close_keeps_history_and_refuses_writes(hub):
-    m = hub.open("huddle")
+    m = hub.open("room")
     hub.append(m.id, "text", {"text": "ship it?"})
     hub.close(m.id, by="human:bake", reason="archived")
     hub.close(m.id)                                 # idempotent
@@ -237,9 +237,9 @@ def test_search_across_stores(hub):
     assert [h["seq"] for h in hub.search("5_pm%")] == [1]     # LIKE wildcards are literal
     assert hub.search("5xpm") == []
     # the kind filter applies before the limit, so other kinds can't crowd it out
-    huddle = hub.open("huddle")             # same (durable) store as the room
+    inbox = hub.open("inbox")               # same (durable) store as the room
     for i in range(5):
-        hub.append(huddle.id, "text", {"text": "deploy again %d" % i})
+        hub.append(inbox.id, "text", {"text": "deploy again %d" % i})
     assert [h["stream"] for h in hub.search("deploy", limit=1, kind="room")] == [room.id]
     with pytest.raises(StreamError):
         hub.search("")
