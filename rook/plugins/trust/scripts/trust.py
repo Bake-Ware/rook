@@ -5,10 +5,10 @@ from rook.core2.rights import HARD_STOP_EFFECTS
 
 LEVELS = [
     {"level": "sacred", "text": "Changes only on your say-so: every call that isn't a read waits on you (with security on). "
-                                "A sacred project's changes get the full record and your sign-off."},
+                                "A sacred project's work lands only with a reviewer's sign-off and yours."},
     {"level": "normal", "text": "Agents go ahead; hard stops still wait on you (with security on). "
-                                "A normal project's changes get the full record."},
-    {"level": "ship-it", "text": "Agents just go. A ship-it project's changes get a one-line note."},
+                                "A normal project's work lands with one reviewer's sign-off."},
+    {"level": "ship-it", "text": "Agents just go. A ship-it project's work needs no sign-off."},
 ]
 
 
