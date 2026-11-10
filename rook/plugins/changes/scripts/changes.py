@@ -24,7 +24,7 @@ def lacks(rec: dict, level: str) -> list[str]:
 
 
 async def level(ctx, project: str | None) -> str:
-    """The project's trust level (project.trust); normal without a project,
+    """The project's trust level (the trust plugin's trust.level); normal without a project,
     without a level, or without the workbench. A project that the workbench
     doesn't know is refused."""
     if not project:
@@ -41,7 +41,7 @@ async def level(ctx, project: str | None) -> str:
             if not found:
                 raise KitError(f"bad args: no project {project}") from None
             p = found[0]
-        trust = await ctx.call_as(me, "project.trust.list", {"where": {"project": p["id"]}, "limit": 1})
+        trust = await ctx.call_as(me, "trust.level.list", {"where": {"project": p["id"]}, "limit": 1})
     except KitError as e:
         if e.message.startswith(("unknown capability", "no single worker")):
             return "normal"           # no workbench on this hub: every change is normal

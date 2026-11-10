@@ -42,7 +42,7 @@ def record(**kw):
 def cfg(tmp_path):
     lib = tmp_path / "lib"
     lib.mkdir()
-    for name in ("changes", "projects"):
+    for name in ("changes", "projects", "trust"):
         (lib / name).symlink_to(PLUGINS / name, target_is_directory=True)
     return Config(data=tmp_path / "data", band=BAND, library=lib,
                   users={"bake": {"preset": "owner"}, "amy": {"preset": "adult"}},
@@ -132,8 +132,8 @@ def test_ceremony_follows_the_projects_trust_level(cfg):
     async def body(hub, bake, amy, helper):
         quick = await bake.ok("project.create", title="Quick", slug="quick")
         careful = await bake.ok("project.create", title="Careful", slug="careful")
-        await bake.ok("project.trust.create", project=quick["id"], level="ship-it")
-        await bake.ok("project.trust.create", project=careful["id"], level="sacred")
+        await bake.ok("trust.level.create", project=quick["id"], level="ship-it")
+        await bake.ok("trust.level.create", project=careful["id"], level="sacred")
         note = await amy.ok("change.create", what="Rebooted the router", why="It hung.", project="quick")
         assert note["level"] == "ship-it" and note["project"] == "quick"
         out = await amy.call("change.create", what="Rebooted the router", why="It hung.", project=careful["id"])

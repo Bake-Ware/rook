@@ -10,11 +10,11 @@ same way you do.
 
 ## Tasks and projects
 
-- A **project** is ongoing work with a goal. Its **trust level**
-  (`project.trust.*`, admin caps, so an agent allowed to edit the project
-  can't loosen it) says how much ceremony a change gets: `sacred`
-  (a full change record, and the owner signs off), `normal` (the record),
-  `ship-it` (a one-line note).
+- A **project** is ongoing work with a goal. Its **trust level** lives in
+  the agents package's trust plugin (`trust.level.*`, admin caps; without
+  that plugin every project is `normal`) and says how much ceremony a
+  change gets: `sacred` (a full change record, and the owner signs off),
+  `normal` (the record), `ship-it` (a one-line note).
 - A **task** is one piece of work. Its title says the result, not the
   activity; its `criteria` say what done means.
 

@@ -413,7 +413,7 @@ def _trust(source: Source, cfg, dest: Dest) -> list:
     have = set(cfg.sacred or ())
     miss = [s for s in sacred if s not in have]
     rows = [_row("trust: sacred machines", len(sacred), len(sacred) - len(miss), missing=miss)]
-    trusted = len(dest.records("project.trust"))
+    trusted = len(dest.records("trust.level"))
     rows.append(_row("trust: project levels", len(levels), min(trusted, len(levels)),
                      missing=[] if trusted >= len(levels) else sorted(levels)))
     entries = len(t.get("entries") or ()) - len(levels) - len(sacred)

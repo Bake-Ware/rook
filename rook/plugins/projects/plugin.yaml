@@ -1,6 +1,5 @@
 # Projects are the parents of tasks. Concepts are tags (a project can carry
-# several); the trust level is its own admin-only record, so an agent that
-# may edit a project can't loosen how carefully it is changed.
+# several). A project's trust level is the trust plugin's (agents package).
 manifest: 1
 plugin: project
 version: 0.5.0
@@ -22,19 +21,6 @@ records:
     index: [state]
     search: [title, body]
     history: true
-  trust:
-    fields:
-      project: { type: ref, to: project.project, required: true, unique: true }
-      level:
-        type: str
-        enum: [sacred, normal, ship-it]
-        required: true
-        doc: "How much ceremony a change gets: sacred = full change record and the owner signs off; normal = full record, proceeds; ship-it = a one-line note."
-      note: { type: str, doc: Why this level. }
-    index: [project]
-    history: true
-    caps: [list, get, create, update]
-    risk: { create: admin, update: admin }
 docs: { manual: docs/manual.md }
 
 pages:

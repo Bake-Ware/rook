@@ -27,8 +27,8 @@ Sign-off replaces merge votes (castling-workbench):
 
 `github.merge` refuses, with every reason at once, unless both of these hold.
 
-**Sign-off is satisfied** for the project's trust level (`project.trust`;
-normal without a project or a level). When the `repos` setting names a
+**Sign-off is satisfied** for the project's trust level (`trust.level`
+from the trust plugin; normal without a project, a level or that plugin). When the `repos` setting names a
 project for the repo, the stricter of the two applies, so a task in a
 ship-it project can't land work in a sacred project's repo:
 

@@ -31,17 +31,19 @@ def test_manifest_is_clean_and_hub_only(folder):
     m = load(PLUGINS / folder, CONTRACTS)
     assert (m.plugin, data["package"], data["runs_on"]) == (FOLDERS[folder], "workbench", "hub")
     workbench = ("task.", "project.", "concept.", "knowledge.", "whiteboard.")
-    assert all(u.startswith(workbench) for u in data.get("uses") or []), \
-        "the workbench needs no other package (agents, core caps)"
+    assert all(u.startswith(workbench) or u == "trust.level.list" for u in data.get("uses") or []), \
+        "the workbench needs no other package (core caps), only reads the agents package's trust levels"
     for cap, spec in m.caps.items():
         assert spec["on"] == "hub" and spec["doc"] and spec["risk"], cap
     assert (PLUGINS / folder / "docs" / "manual.md").read_text().strip()
 
 
 class Bench:
-    """The five plugins loaded in one HubPlugins; ``run`` raises KitError."""
+    """The five plugins (and the agents package's trust levels) loaded in one
+    HubPlugins; ``run`` raises KitError."""
 
-    def __init__(self):
+    def __init__(self, trust=True):
+        self.trust = trust
         self.events = []
         emit = lambda e, p, s: self.events.append((e, p))  # noqa: E731
         self.plugins = HubPlugins(records=RecordStore(emit=emit), contracts=Contracts(), call=self._call, emit=emit,
@@ -54,7 +56,7 @@ class Bench:
             return {"ok": False, "error": e.message}
 
     async def load(self):
-        for folder in sorted(FOLDERS):
+        for folder in sorted(FOLDERS) + (["trust"] if self.trust else []):
             await self.plugins.load(PLUGINS / folder)
         return self
 
@@ -62,9 +64,9 @@ class Bench:
         return await self.plugins.run(cap, args, who)
 
 
-def bench(body, timeout=20):
+def bench(body, timeout=20, trust=True):
     async def main():
-        b = await Bench().load()
+        b = await Bench(trust).load()
         try:
             await body(b)
         finally:
@@ -79,14 +81,14 @@ def test_caps_are_the_decided_names():
                                     "release", "link", "comment", "handoff", "request_signoff", "signoff",
                                     "comment.list", "signoff.list")),
             *(f"project.{v}" for v in ("list", "get", "search", "create", "update", "archive", "history")),
-            *(f"project.trust.{v}" for v in ("list", "get", "create", "update")),
+            *(f"trust.level.{v}" for v in ("list", "get", "create", "update")), "trust.map",
             *(f"concept.{v}" for v in ("list", "get", "search", "create", "update", "archive", "history", "pool")),
             *(f"knowledge.{v}" for v in ("list", "get", "search", "create", "update", "archive", "history", "link",
                                                      "review")),
             "whiteboard.read", "whiteboard.write", "whiteboard.clear"}
         caps = b.plugins.caps()
         # an agent that may edit a project can't loosen its trust level
-        assert caps["project.trust.update"]["risk"] == caps["project.trust.create"]["risk"] == "admin"
+        assert caps["trust.level.update"]["risk"] == caps["trust.level.create"]["risk"] == "admin"
         assert caps["project.update"]["risk"] == "write"
     bench(body)
 
@@ -273,7 +275,7 @@ def test_signoff_goes_to_the_pool_and_sacred_adds_the_owner():
         out = await b("task.request_signoff", id=t["id"], note="PR #333")      # no reviewers: the pool
         assert [s["reviewer"] for s in out["signoff"]] == ["role:lead", "role:qa"]
         assert b.events[-1][1]["person"] == "person:bake" and b.events[-1][1]["by"] == "agent:ann"
-        await b("project.trust.create", BAKE, project=p["id"], level="sacred")
+        await b("trust.level.create", BAKE, project=p["id"], level="sacred")
         t2 = await b("task.create", title="Vault", project=p["id"])
         out = await b("task.request_signoff", id=t2["id"], reviewers=["agent:bob"])
         assert [s["reviewer"] for s in out["signoff"]] == ["agent:bob", "person:bake"]   # the trust level decides
@@ -281,6 +283,15 @@ def test_signoff_goes_to_the_pool_and_sacred_adds_the_owner():
         with pytest.raises(KitError, match="name reviewers"):
             await b("task.request_signoff", id=lone["id"])
     bench(body)
+
+
+def test_without_the_trust_plugin_every_project_is_normal():
+    async def body(b):
+        p = await b("project.create", title="Rook", slug="rook")
+        t = await b("task.create", title="Vault", project=p["id"])
+        out = await b("task.request_signoff", id=t["id"], reviewers=["agent:bob"])
+        assert [s["reviewer"] for s in out["signoff"]] == ["agent:bob"]
+    bench(body, trust=False)
 
 
 def test_concept_pool_and_project_tags():
@@ -294,10 +305,10 @@ def test_concept_pool_and_project_tags():
             (["lead", "qa", "hardware-review"], ["git-flow"], "experts", "sacred", ["crochet"])
         assert (await b("concept.pool", concepts=["hardware"]))["signoff"] == "none"
         assert (await b("concept.pool", concepts=["crochet"]))["signoff"] is None
-        trust = await b("project.trust.create", BAKE, project=p["id"], level="ship-it", note="no users yet")
+        trust = await b("trust.level.create", BAKE, project=p["id"], level="ship-it", note="no users yet")
         assert trust["level"] == "ship-it"
         with pytest.raises(KitError, match="already used"):
-            await b("project.trust.create", BAKE, project=p["id"], level="normal")
+            await b("trust.level.create", BAKE, project=p["id"], level="normal")
     bench(body)
 
 

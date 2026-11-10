@@ -15,7 +15,7 @@ caps on worker `rook`; put `changes` in the hub's library.
 
 ## How much a record says
 
-It follows the project's trust level (`project.trust`, set by an owner):
+It follows the project's trust level (`trust.level`, from the trust plugin, set by an owner):
 
 | Level | The record needs |
 |---|---|
