@@ -1,0 +1,23 @@
+# TCP connections as streams, served by the Rust worker (worker/src/caps/net.rs).
+manifest: 1
+plugin: net
+version: 0.5.0
+title: Network
+doc: Open a TCP connection from this worker as a live stream.
+package: core
+builtin: true
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+caps:
+  open:
+    doc: >-
+      Connect to host:port over TCP and return {stream}. What arrives comes as bytes events
+      (stream.read); stream.write {text} sends; stream.close (or any signal) closes the
+      connection. The stream closes when the far end does.
+    risk: exec
+    scope: local
+    timeout: 30s
+    stream: { types: [bytes], input: true, durable: false }
+    args:
+      host: { type: str, required: true }
+      port: { type: int, required: true }

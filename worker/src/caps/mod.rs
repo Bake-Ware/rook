@@ -4,6 +4,7 @@
 use serde_json::{Map, Value};
 
 pub mod file;
+pub mod net;
 pub mod shell;
 
 pub type Reply = Result<Value, String>;

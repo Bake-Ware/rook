@@ -17,7 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{json, Map, Value};
 use tokio::sync::{oneshot, Notify};
 
-use caps::{file, shell, Args, Reply};
+use caps::{file, net, shell, Args, Reply};
 use config::Config;
 use link::Link;
 use manifests::Manifest;
@@ -297,12 +297,17 @@ impl Worker {
             "shell.exec" => shell::exec(a).await,
             "shell.which" => shell::which(a),
             "shell.env" => shell::env(a),
-            "shell.open" => {
-                let (args, streams, band) = (a.0.clone(), self.streams.clone(), self.band.clone());
+            "shell.open" | "net.open" | "serial.open" => {
+                let (cap, args, streams) = (cap.to_string(), a.0.clone(), self.streams.clone());
+                let mut attrs = Map::new();
+                attrs.insert("band".into(), json!(self.band)); // the hub whose index lists it
                 blocking(move || {
-                    let mut attrs = Map::new();
-                    attrs.insert("band".into(), json!(band));
-                    shell::open(Args(&args), &streams, who, attrs)
+                    let a = Args(&args);
+                    match cap.as_str() {
+                        "shell.open" => shell::open(a, &streams, who, attrs),
+                        "net.open" => net::tcp(a, &streams, who, attrs),
+                        _ => net::serial(a, &streams, who, attrs),
+                    }
                 })
                 .await
             }

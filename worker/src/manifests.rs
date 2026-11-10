@@ -7,11 +7,13 @@ use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
 use yaml_rust2::{Yaml, YamlLoader};
 
-pub const FILES: [(&str, &str); 4] = [
+pub const FILES: [(&str, &str); 6] = [
     ("worker", include_str!("../../rook/core2/builtin/worker.yaml")),
     ("stream", include_str!("../../rook/core2/builtin/stream.yaml")),
     ("shell", include_str!("../../rook/plugins/shell/plugin.yaml")),
     ("file", include_str!("../../rook/plugins/file/plugin.yaml")),
+    ("net", include_str!("../manifests/net.yaml")),
+    ("serial", include_str!("../manifests/serial.yaml")),
 ];
 
 pub struct Manifest {
@@ -146,7 +148,7 @@ mod tests {
         for (name, text) in FILES {
             let m = load(text);
             assert_eq!(m.plugin, name);
-            assert_eq!(m.raw["builtin"].as_bool(), if matches!(name, "worker" | "stream") { Some(true) } else { None });
+            assert_eq!(m.raw["builtin"].as_bool(), if matches!(name, "shell" | "file") { None } else { Some(true) });
         }
     }
 }

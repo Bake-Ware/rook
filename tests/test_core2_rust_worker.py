@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import secrets
 import shutil
 import subprocess
@@ -25,7 +26,8 @@ from test_core2_minimal_worker import Relay, door, until  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFESTS = {"worker": ROOT / "rook/core2/builtin/worker.yaml", "stream": ROOT / "rook/core2/builtin/stream.yaml",
-             "shell": ROOT / "rook/plugins/shell/plugin.yaml", "file": ROOT / "rook/plugins/file/plugin.yaml"}
+             "shell": ROOT / "rook/plugins/shell/plugin.yaml", "file": ROOT / "rook/plugins/file/plugin.yaml",
+             "net": ROOT / "worker/manifests/net.yaml", "serial": ROOT / "worker/manifests/serial.yaml"}
 
 
 @pytest.fixture(scope="module")
@@ -98,7 +100,7 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
 
             async def learned():        # the hub has fetched its manifests (core.manifests)
                 caps = (await door(hub, token, "/caps?worker=rusty"))["workers"].get("rusty", {}).get("caps", {})
-                return {"worker.ping", "shell.exec", "file.read"} <= set(caps)
+                return {"worker.ping", "shell.exec", "file.read", "net.open", "serial.open"} <= set(caps)
             await until(learned)
             out = await call("worker.ping")
             assert out["ok"] and out["result"]["pong"] is True, out
@@ -170,6 +172,48 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
             assert got["events"][-1]["data"] == {"exit": 4, "state": "closed"}, got
             listed_here = (await call("stream.list"))["result"]["streams"]
             assert {r["id"]: r["kind"] for r in listed_here} == {sid: "terminal", pid: "process"}
+
+            async def output(stream, want: bytes):
+                seen, after = b"", 0
+                while want not in seen:
+                    got = (await call("stream.read", stream=stream, after=after, wait=5))["result"]
+                    seen += b"".join(base64.b64decode(e["b64"]) for e in got["events"] if e["type"] == "bytes")
+                    after = got["next"]
+
+            # TCP: a local echo server, through the hub.
+            async def echo(reader, writer):
+                while data := await reader.read(1024):
+                    writer.write(data)
+                    await writer.drain()
+                writer.close()
+            server = await asyncio.start_server(echo, "127.0.0.1", 0)
+            port = server.sockets[0].getsockname()[1]
+            out = await call("net.open", host="127.0.0.1", port=port)
+            assert out["ok"], out
+            tcp = out["result"]["stream"]
+            await call("stream.write", stream=tcp, body={"text": "ping\n"})
+            await output(tcp, b"ping\n")
+            assert (await call("stream.close", stream=tcp))["result"]["closed"]
+            server.close()
+            out = await call("net.open", host="127.0.0.1", port=port)
+            assert not out["ok"] and "refused" in out["error"].lower(), out
+
+            # Serial: one end of a pty pair is the "device".
+            device, port_fd = os.openpty()
+            try:
+                out = await call("serial.open", port=os.ttyname(port_fd), baud=9600)
+                assert out["ok"], out
+                ser = out["result"]["stream"]
+                await call("stream.write", stream=ser, body={"text": "AT\r"})
+                got = b""
+                while b"AT\r" not in got:
+                    got += await asyncio.to_thread(os.read, device, 64)
+                os.write(device, b"OK\r\n")
+                await output(ser, b"OK\r\n")
+                assert (await call("stream.close", stream=ser))["result"]["closed"]
+            finally:
+                os.close(device)
+                os.close(port_fd)
 
             async def answered_hub():   # its announce on first hearing the hub's, so what comes next is a heartbeat
                 return len(heard) >= 2
