@@ -149,9 +149,9 @@ The work views are drawn by the shell (same page), so the agent can fill
 and focus a field and Rookie can point at it; hub pages stay sandboxed
 frames (Rookie points at the page as a whole).
 
-- **Secrets:** the Vault view lists names (`GET /web/api/secrets`, never
-  values) and saves with `POST /web/api/secret {name, value, description}`
-  into the hub's vault. A password is never typed in the chat.
+- **Secrets:** the Vault view lists names (`secret.list`, never values)
+  and saves with `secret.set {name, value, description}` into the hub's
+  vault. A password is never typed in the chat.
 - **Root:** the agent opens the vault with `new=host_password`, then runs
   `shell.exec` with `argv: [sudo, -S, -p, "", ...]` and `stdin` = the vault
   reference (secret:host_password in double braces) plus a newline; the hub

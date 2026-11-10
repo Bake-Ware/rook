@@ -16,7 +16,7 @@ import yaml
 
 from rook.core2.hub.doors.web import caps as web_caps
 from rook.core2.hub.doors.web.site import SHELL_CSP
-from tests.test_core2_dashboard import Client, run, site  # noqa: F401 - the fixture
+from tests.test_core2_dashboard import Client
 from tests.test_core2_worksurface import bearer as ws_bearer, serve as ws_serve
 
 STATIC = Path(web_caps.__file__).with_name("static")
@@ -92,22 +92,17 @@ def test_one_live_rookie_per_page():
     assert point.count("travel(") == 2                                          # there and back
 
 
-def test_the_vault_view_saves_secrets_and_lists_only_names(site):
-    async def go():
-        hub, tokens = await site()
-        try:
-            c = Client(hub)
-            await c.sign_in(tokens["bake"])
-            out = (await c.json("POST", "/web/api/secret", {"name": "host_password", "value": "hunter2",
-                                                            "description": "sudo on box"}))[1]
-            assert out == {"ok": True, "name": "host_password"}
-            assert hub.vault.get("host_password") == "hunter2"
-            listed = (await c.json("GET", "/web/api/secrets"))[1]
-            assert [s["name"] for s in listed["secrets"]] == ["host_password"]
-            assert "hunter2" not in json.dumps(listed)                         # names, never values
-        finally:
-            await hub.stop()
-    run(go())
+def test_the_vault_view_saves_secrets_and_lists_only_names(tmp_path):
+    async def go(hub, tokens):
+        c = Client(hub)
+        await c.sign_in(tokens["bake"])
+        out = await c.call("secret.set", {"name": "host_password", "value": "hunter2", "description": "sudo on box"})
+        assert out["ok"] and out["result"]["name"] == "host_password", out
+        assert hub.vault.get("host_password") == "hunter2"
+        listed = await c.call("secret.list")
+        assert [s["name"] for s in listed["result"]["secrets"]] == ["host_password"]
+        assert "hunter2" not in json.dumps(listed)                         # names, never values
+    ws_serve(tmp_path, go, ("agents",))
 
 
 def test_the_first_run_skill_guides_and_makes_the_site_reachable():
