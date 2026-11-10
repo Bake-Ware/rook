@@ -7,7 +7,9 @@ Python script, the Rust worker and the phone app all speak it. A native
 module talking to its local worker speaks these same messages.
 
 The example implementation is `tests/test_core2_minimal_worker.py` (about
-70 lines of worker), run against a real hub.
+70 lines of worker), run against a real hub. `worker/rook_worker.py` is
+the profile with the carrier written out too (standard library Python, no
+Telesthete library), a worker people run.
 
 The key words MUST, MAY and SHOULD are as in RFC 2119.
 
