@@ -33,7 +33,7 @@ and `job.run.list` manage them.
 
 ## Who a job runs as
 
-A job's call goes through dispatch like any other (why, rights, gates,
+A job's call goes through dispatch like any other (why, rights,
 holds, journal). By default it runs as **its creator**, with their rights as
 they are at each run. Owners can run a job as a **persona** (`as: persona,
 persona: archivist`): the agent's own, narrower grants. `on` jobs and

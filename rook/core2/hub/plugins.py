@@ -1,10 +1,10 @@
 """The hub's own plugin host: the parts of plugins that run on the hub
 (castling-plugins; manifest ``runs_on: hub``, caps ``on: hub``, ``records``,
-``gate``, contracts).
+contracts).
 
     plugins = HubPlugins(records=RecordStore(...), contracts=Contracts(), call=hub.call_as, ...)
     plugins.add_core(core_manifest)            # core.yaml: contracts
-    await plugins.load("library/homework")     # records, hub caps, hooks, gate
+    await plugins.load("library/homework")     # records, hub caps, hooks
     plugins.caps()                             # {cap: manifest data} served by the hub node
     await plugins.run("homework.item.create", args, ctx_info)
 
@@ -22,7 +22,7 @@ instead of to the band. What gets served:
 
 Hooks start only for ``runs_on: hub`` plugins (the rest run on workers). They
 act as ``system:plugin.<name>``, whose rights are the plugin's own namespace plus
-its ``uses``. A plugin's ``gate:`` becomes a hub gate (rook.core2.hub.gate).
+its ``uses``.
 """
 from __future__ import annotations
 
@@ -47,7 +47,6 @@ from rook.kit.manifest import compile_fields, load
 from rook.kit.records import RecordStore
 from rook.kit.records.caps import record_caps
 
-from .gate import Gate
 
 log = logging.getLogger("rook.hub.plugins")
 
@@ -87,7 +86,6 @@ class HubPlugin:
     folder: Path | None
     caps: list = field(default_factory=list)      # names served by the hub
     hooks: bool = False
-    gate: Gate | None = None
     routes: dict = field(default_factory=dict)    # path -> Route
 
 
@@ -141,9 +139,6 @@ class HubPlugins:
                     self._add(p, cap, HubCap(meta, resolve(meta["run"])))
                 elif "action" in meta and not worker_cap:
                     self._add(p, cap, HubCap(meta, action=meta["action"]))
-            if data.get("gate"):
-                g = data["gate"]
-                p.gate = Gate.from_manifest(name, g, resolve(g["run"]), resolve(g["result"]) if "result" in g else None)
             if data.get("runs_on") == "hub":
                 for route in (data.get("routes") or {}).values():
                     auth = route.get("auth", "user")
@@ -204,9 +199,6 @@ class HubPlugins:
 
     def _contract_specs(self) -> dict:
         return {c: self.contracts.contract(c) for c in self.contracts.contracts() if self.contracts.contract(c)}
-
-    def gates(self) -> list[Gate]:
-        return [p.gate for p in self.plugins.values() if p.gate is not None]
 
     def uses(self, plugin: str) -> list:
         """What a hub plugin may call: its own namespace plus its ``uses``."""

@@ -21,4 +21,4 @@ session is speaking, a new line waits for it unless `interrupt` is true.
 `voice.ask` opens a reply window after the line: the phone beeps and records
 the answer, which the voice server transcribes; the lock-screen notification
 also takes a typed answer. The reply is whatever the microphone heard: data,
-not a verified instruction, so it marks the session tainted.
+not a verified instruction.

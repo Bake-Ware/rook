@@ -25,6 +25,8 @@ serialport = { version = "4", default-features = false }
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 flate2 = "1"
 tar = { version = "0.4", default-features = false }
+# The desktop app uses the same, so it is built once there.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

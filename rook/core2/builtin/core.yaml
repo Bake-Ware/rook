@@ -52,7 +52,7 @@ caps:
     on: worker
     risk: admin
     scope: self
-    effects: [persists]
+    effects: []
     args:
       membership: { type: map, required: true }
       connect: { type: map, doc: "The band's relay or ws_url and PSK (a secret reference)." }
@@ -71,7 +71,7 @@ caps:
     on: worker
     risk: admin
     scope: self
-    effects: [persists]
+    effects: []
     timeout: 20m
     args:
       bundle: { type: map, required: true, doc: "The bundle's Drop descriptor: id, size, sha256." }
@@ -81,7 +81,7 @@ caps:
     on: worker
     risk: admin
     scope: self
-    effects: [persists]
+    effects: []
     args:
       plugin: { type: str, required: true }
     result: { type: map }
@@ -479,25 +479,6 @@ emits:
       name: { type: str }
       from: { type: str }
       to: { type: str, required: true }
-  plugin.installed:
-    doc: A plugin was installed on the hub or a worker.
-    payload:
-      plugin: { type: str, required: true }
-      version: { type: str, required: true }
-      worker: { type: str, doc: "blank: the hub." }
-  plugin.updated:
-    doc: A plugin moved to another version (an update or a rollback).
-    payload:
-      plugin: { type: str, required: true }
-      from: { type: str }
-      to: { type: str, required: true }
-      worker: { type: str }
-  plugin.removed:
-    doc: A plugin was uninstalled.
-    payload:
-      plugin: { type: str, required: true }
-      version: { type: str }
-      worker: { type: str }
   hold.created:
     doc: A call is waiting for a person's approval.
     payload:
@@ -508,7 +489,7 @@ emits:
       agent: { type: str }
       why: { type: str }
       session: { type: str }
-      reasons: { type: list, items: { type: str }, doc: "Why it waits: hard stops, \"gate <name>\"." }
+      reasons: { type: list, items: { type: str }, doc: The hard stops it waits on. }
   hold.decided:
     doc: A person answered a hold.
     payload:
@@ -518,28 +499,9 @@ emits:
       person: { type: str, doc: "Who the held call was for (a page shows it to them and owners only)." }
       ok: { type: bool, doc: "Approved: whether the call then ran and succeeded (its result goes to whoever approved)." }
       error: { type: str, doc: "Approved but it failed: why." }
-  session.started:
-    doc: An agent session began.
-    payload:
-      session: { type: str, required: true }
-      agent: { type: str }
-      person: { type: str }
-  session.ended:
-    doc: An agent session ended.
-    payload:
-      session: { type: str, required: true }
-      agent: { type: str }
-      tainted: { type: bool }
-  gate.blocked:
-    doc: A gate blocked a call (a security event, for triage).
-    payload:
-      cap: { type: str, required: true }
-      worker: { type: str }
-      session: { type: str }
-      reason: { type: str }
 
 presets:
   owner: { grants: ["*"] }
   adult: { grants: ["*"], max_risk: admin }
-  child: { grants: ["agent.chat.*", page.view], max_risk: write, effects: [] }
-  guest: { grants: ["agent.chat.*"], max_risk: write, effects: [], expires: 7d }
+  child: { grants: [page.view], max_risk: write, effects: [] }
+  guest: { grants: [], max_risk: write, effects: [], expires: 7d }

@@ -318,8 +318,8 @@ class Web:
         return {"ok": True}
 
     def _secret(self, person: str, body: dict) -> dict:
-        """The Vault work view's Save (the house agent opens it with the key
-        filled in for a sudo password or an API key): straight into the
+        """The Vault work view's Save (opened with the key filled in for a
+        sudo password or an API key): straight into the
         hub's vault; the chat only hears that it was saved (Bake, Nov 9:
         "this chat interface needs to be able to pull in other aspects like
         add a secret")."""
@@ -550,8 +550,6 @@ class Web:
                 got = visible() if page.events else []
                 left = deadline - time.monotonic()
                 if got or left <= 0:
-                    if any(self.hub.taints(e["event"]) for e in got):
-                        self.hub.dispatcher.taint(t.dispatch)    # the page's calls now act on outside content (8.4)
                     return {"ok": True, "seq": self._seq, "events": got}
                 self._cond.wait(left)
 

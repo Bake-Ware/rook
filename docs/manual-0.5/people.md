@@ -10,8 +10,8 @@ their own. An agent working for a person can do only what **both** may.
 |---|---|---|---|---|
 | `owner` | everything | no limit | all | owns every band of the hub; manages people, plugins, bands and ceilings; the only one who pushes plugins |
 | `adult` | everything | `admin` | all | |
-| `child` | talking to agents (`agent.chat.*`) and viewing pages (`page.view`) | `write` | none | a child gets more only when an owner adds a grant |
-| `guest` | talking to agents | `write` | none | the account stops working 7 days after it was made |
+| `child` | viewing pages (`page.view`), and talking to agents (`agent.chat.*`) with the agents package | `write` | none | a child gets more only when a plugin or an owner adds a grant |
+| `guest` | talking to agents, with the agents package | `write` | none | the account stops working 7 days after it was made |
 
 "Effects allowed: none" means a child or guest can never use a cap that
 touches the physical world, personal data, money or secrets, even if a
@@ -82,6 +82,4 @@ Every call belongs to a **session**, which is one more layer that can only
 narrow. An agent may start one that declares the caps it will use and the
 project or task the work is for; calls in it can't reach other caps, and
 their journal entries carry that project ([MCP for agents](mcp.md#sessions)).
-Sessions end after 12 hours. A session that has read outside content (a web
-page, an email) is marked tainted for good, and the security gate treats
-its risky calls with more care ([Security plugins](security.md)).
+Sessions end after 12 hours.

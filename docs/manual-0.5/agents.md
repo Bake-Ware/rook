@@ -38,7 +38,6 @@ The agents package makes these:
 | Agent | Role |
 |---|---|
 | `house` | your personal assistant and the guardian of the house; knows how and when to reach you, and offers to set up a project when something has become real work. Always on |
-| `security` | triages security events, proposes safer ways. Always on |
 
 With the workbench installed, its team roles come too (the workbench's
 plugins ship them as personas):
@@ -96,7 +95,7 @@ everything (and takes its identity off the hub until you restore it).
 Owners curate an agent's memory with `agent.memory.*`. A persona's
 **grants** are its own rights, checked on every call it makes; every agent
 may also run its own turns (`agent.backend`). `backend` is `default` (the
-hub's chosen provider) or one provider's cap, e.g.
+agents plugin's `backend` setting) or one provider's cap, e.g.
 `agents-claude-code.turn`. Skills are markdown playbooks an agent follows
 (`agent.skill {name}` reads one). Any plugin can ship personas and skills
 in its manifest; each installed plugin's personas become agents. With the

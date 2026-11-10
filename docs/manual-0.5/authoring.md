@@ -8,7 +8,7 @@ that needs logic.
 ```
 myplugin/
   plugin.yaml      the manifest: required
-  scripts/*.py     code for run: caps, hooks and gates
+  scripts/*.py     code for run: caps and hooks
   docs/manual.md   the plugin's manual page
   pages/*          dashboard pages (hub plugins)
   skills/*.md  personas/*.md
@@ -349,13 +349,10 @@ the payload: an event from a machine is its owner's data, and a hook (or a
 cap a job hands the event to) can answer on the same machine with
 `ctx.call_on(payload["worker"], ...)`.
 While the hub is away the worker keeps the newest 1000 events and sends
-them when it is back. Mark outside content (an inbound message, another
-app's notification) `taints: true`: hooks and jobs that act on it run their
-calls in a tainted session, which the security gate watches more closely.
+them when it is back.
 
 ## Other sections
 
-`gate` (a security check at dispatch, [Security](security.md#writing-a-gate)),
 `contracts`/`provides` (answering a shared cap like `screen.capture` or
 `llm.complete`: declare the cap under the contract's name and list it,
 `provides: [screen.capture]`; a grant on `screen.capture` then covers your

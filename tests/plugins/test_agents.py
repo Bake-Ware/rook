@@ -16,8 +16,8 @@ from rook.kit.records import RecordStore
 from rook.streams import SqliteStore, Streams
 
 AGENTS = PLUGINS / "agents"
-ROLES = ["archivist", "house", "lead", "pm", "producer", "qa", "security", "writer"]
-OWN = ["house", "security"]                     # the agents package's own; the rest ship with the workbench
+ROLES = ["archivist", "house", "lead", "pm", "producer", "qa", "writer"]
+OWN = ["house"]                     # the agents package's own; the rest ship with the workbench
 WORKBENCH = {"task": "tasks", "knowledge": "knowledge", "concept": "concepts"}    # plugin -> folder
 BAKE = Caller(person="person:bake", band="b1", why="talk to my agents", owner=True)
 GUEST = Caller(person="person:guest", band="b1", why="say hi")
@@ -100,7 +100,7 @@ class People:
         else:
             self.agents[name] = grants
 
-    def turn_token(self, plugin, person, name, seconds, tainted=False):
+    def turn_token(self, plugin, person, name, seconds):
         if name not in self.agents:
             raise KitError(f"{plugin} doesn't run agent {name}")
         token = f"tok{len(self.tokens)}"
@@ -204,7 +204,7 @@ def test_manifests_are_clean(folder):
 
 
 def test_every_role_has_a_prompt_and_its_skills():
-    """The agents package ships the house agent and security triage; the
+    """The agents package ships the house agent; the
     workbench's plugins ship its team roles (castling-dashboard). Every
     persona's skills exist in some installed manifest."""
     found, skills = {}, {}
@@ -223,7 +223,7 @@ def test_every_role_has_a_prompt_and_its_skills():
     for name, p in found.items():
         assert set(p["skills"]) <= set(skills), name
         assert "consult" in p["skills"] and "notepad" in p["skills"], name
-    assert {n for n, p in found.items() if p.get("always_on")} == {"house", "security"}
+    assert {n for n, p in found.items() if p.get("always_on")} == {"house"}
     assert {skills[s] for s in ("ticket-sweep", "handoff", "verify", "wiki-sweep")} == {"tasks", "knowledge"}
 
 
@@ -249,7 +249,7 @@ def test_install_makes_the_ready_made_roles_and_edits_win(rig):
     async def body():
         listed = rig.rec("agent", "list", order="name")
         assert [a["name"] for a in listed] == ROLES
-        assert {a["name"] for a in listed if a["always_on"]} == {"house", "security"}
+        assert {a["name"] for a in listed if a["always_on"]} == {"house"}
         assert not any(a["awake"] for a in listed)
         pm = rig.agent("pm")
         assert pm["persona"] == "pm" and "keep the work moving" in pm["prompt"] and pm["creator"] == "plugin:agent"
@@ -330,6 +330,16 @@ def test_create_update_archive(rig):
         assert "claude-code" not in rig.people.agents
         with pytest.raises(KitError, match="doesn't run agent claude-code"):
             await rig.call("chat_send", agent="claude-code", text="hi")
+    run(rig, body)
+
+
+def test_the_backend_setting_picks_the_engine_for_default_agents(tmp_path):
+    rig = Rig(tmp_path, backend="agents-opencode.turn")       # the installer's choice
+
+    async def body():
+        await rig.call("chat_send", agent="pm", text="hi")
+        assert rig.backend.turns()[-1][0] == "agents-opencode.turn"
+        assert rig.backend.contracts[-1] == "agent.backend"
     run(rig, body)
 
 
@@ -588,12 +598,12 @@ def test_always_on_agents_wake_with_the_hub(tmp_path):
 
     async def body():
         await rig.start()
-        await rig.call("chat_send", agent="security", text="anything odd?")
+        await rig.call("chat_send", agent="house", text="anything odd?")
         await rig.call("chat_send", agent="qa", text="tests?")
         await rig.stop()
         await rig.start()
         try:
-            assert rig.rt.awake("security") and not rig.rt.awake("qa")
+            assert rig.rt.awake("house") and not rig.rt.awake("qa")
         finally:
             await rig.stop()
     go(body)
@@ -630,8 +640,8 @@ def test_a_question_for_the_person_goes_through_the_house_agent(rig):
         await rig.call("on_asked", hook, event="approval.asked", payload=payload)
         cap, args, who = rig.backend.calls[-1]
         assert cap == "agent.chat.send" and args["agent"] == "house" and args["wait"] is False
-        # For the person it's for, tainted: house never acts alone on another agent's words.
-        assert (who.person, who.agent, who.tainted) == ("person:bake", None, True)
+        # For the person it's for: house never acts alone on another agent's words.
+        assert (who.person, who.agent) == ("person:bake", None)
         assert "approval.decide" in args["text"] and "q_1" in args["text"] and "Ship the docs today?" in args["text"]
         assert "one of: yes, no" in args["text"] and "never answer it yourself" in args["text"]
         n = len(rig.backend.calls)

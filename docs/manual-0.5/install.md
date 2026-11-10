@@ -54,6 +54,26 @@ python -m rook.core2.worker --config worker/worker.yaml &
 paste the token `init` printed ([The hub site](dashboard.md)) and tap
 **Join** for `laptop` on the Workers page ([Adding machines](enrollment.md)).
 
+## Another machine
+
+`deploy/castling-worker/install.sh` installs a worker as a service that
+starts at boot and restarts when it exits, and joins it to your hub:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/castling/deploy/castling-worker/install.sh \
+  | bash -s -- --hub https://rook.example --name kaiju        # waits for a Join tap; --code <one-time code> for none
+```
+
+That installs the Python worker (it needs Python 3.11+ or `uv`, and git).
+Where a release provides the one-file worker, `--binary
+<path or URL of rook-worker-linux-x86_64>` installs that instead, with no
+Python; `install.sh --upgrade --binary …` turns a Python install into it,
+keeping its data and identity. Either way it lives in `~/.rook05`
+(`/opt/rook05` as root) under the systemd unit `rook05-worker`. Without the
+installer: `rook-worker --config worker.yaml enroll <hub>`, then
+`rook-worker --config worker.yaml` under any service manager that restarts
+it. Windows has no installer yet.
+
 `init` options: `--owner` (your user name, lowercase), `--relay host:port`
 or `--ws-url` (the band's relay), `--url https://...` (where other devices
 reach this hub, for enrollment) and `--bind` (the HTTP door, default
@@ -71,7 +91,6 @@ symlinks into `rook/plugins/`:
 - `tasks`, `projects`, `knowledge`, `concepts`, `whiteboard`: the workbench
   ([The workbench](workbench.md)).
 - `notify`, `telegram`, `discord`: reaching people.
-- `security`: the gate ([Security plugins](security.md)).
 
 The library also holds worker plugins: the hub pushes them, signed, to the
 workers you choose ([Plugins](plugins.md)).

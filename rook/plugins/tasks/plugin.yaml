@@ -126,6 +126,11 @@ caps:
       reviewer: { type: str, doc: "The request you answer (a role you were asked as); default you." }
     result: { type: map }
     run: scripts/task.py:signoff
+# A page someone makes is a task for the person to review (castling-dashboard, provenance).
+hooks:
+  on:
+    - { event: page.created, run: scripts/task.py:on_page_created }
+    - { event: page.updated, run: scripts/task.py:on_page_updated }
 emits:
   task.handed_off:
     doc: A task was handed to someone.

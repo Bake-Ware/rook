@@ -144,6 +144,6 @@ call worker=kaiju cap=shell.exec args={...} why="..." session=9f2c…
 ```
 
 Calls in it can't reach other caps, their journal entries go on that
-project's chain, and the security gate compares risky calls with the task.
+project's chain.
 A session lasts up to 12 hours and never grows: start a new one for more.
 `session end=<id>` ends it.

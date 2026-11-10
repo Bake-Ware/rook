@@ -27,7 +27,6 @@ reference passes them in `tests/test_core2_vectors.py`.
 | `version.json` | `negotiate(mine, theirs)` → `speak` (`null` = no common version); symmetric | 2.2 |
 | `rights.json` | the enums (`risks`, `scopes`, `effects`, `hard_stop_effects`) and the intersection rule: `layers` (`[name, rights]`, in order) and a `call` → `{ok}` or `{ok: false, layer, reason}` | 4, 8.2, 8.3 |
 | `presets.json` | the four core `presets` and, per case, the person's computed `rights` (preset + `plugin_grants` as `{plugin: [pattern]}`, kept only inside that plugin's namespace + owner grants) and the decision for a `call` | 8.5 |
-| `gate.json` | combining gate results into one dispatch verdict | 10.2 |
 | `journal.json` | a three-entry hash chain and tamper `checks` (`first_break` = index of the first entry that doesn't follow, or `null`) | 11.3 |
 
 Conventions: every file has `"spec"` (`"2.0"`) and `"vector"` (its name).

@@ -158,7 +158,7 @@ CAPS = {
     "shell.exec": {"risk": "exec", "effects": []},
     "light.set": {"risk": "write", "effects": ["physical"]},
     "core.manifests": {"risk": "read", "effects": []},
-    "core.trust.set": {"risk": "admin", "effects": ["persists"]},
+    "core.trust.set": {"risk": "admin", "effects": []},
     "kvm.screen.capture": {"risk": "read", "effects": [], "contracts": ["screen.capture"]},
 }
 WORKER_STATE = {
@@ -443,7 +443,7 @@ def call(cap, risk="read", effects=(), target="kaiju"):
 
 ALL = {"grants": ["*"]}
 RIGHTS = [
-    ("star grants everything", [["person", ALL]], call("shell.exec", "exec", ["persists"]), {"ok": True}),
+    ("star grants everything", [["person", ALL]], call("shell.exec", "exec", ["destructive"]), {"ok": True}),
     ("glob crosses dots", [["agent", {"grants": ["phone.*"]}]], call("phone.motion.started"), {"ok": True}),
     ("glob must match the whole name", [["agent", {"grants": ["phone"]}]], call("phone.sms.send"),
      {"ok": False, "layer": "agent", "reason": "grants"}),
@@ -461,12 +461,12 @@ RIGHTS = [
      {"ok": True}),
     ("unknown risk counts as admin", [["person", {"grants": ["*"], "max_risk": "exec"}]], call("x.y", "sudo"),
      {"ok": False, "layer": "person", "reason": "risk"}),
-    ("effects absent allows all", [["person", {"grants": ["*"]}]], call("bank.pay", "write", ["spends"]),
+    ("effects absent allows all", [["person", {"grants": ["*"]}]], call("mail.send", "write", ["sends_as"]),
      {"ok": True}),
     ("effects [] allows none", [["person", {"grants": ["*"], "effects": []}]], call("tv.power", "write", ["physical"]),
      {"ok": False, "layer": "person", "reason": "effects"}),
     ("every effect must be allowed", [["person", {"grants": ["*"], "effects": ["physical"]}]],
-     call("lock.open", "write", ["physical", "persists"]), {"ok": False, "layer": "person", "reason": "effects"}),
+     call("lock.open", "write", ["physical", "destructive"]), {"ok": False, "layer": "person", "reason": "effects"}),
     ("unknown effect is outside a listed set", [["person", {"grants": ["*"], "effects": ["physical"]}]],
      call("x.y", "write", ["teleports"]), {"ok": False, "layer": "person", "reason": "effects"}),
     ("malformed rights refuse", [["agent", {"grant": ["*"]}]], call("info.ping"),
@@ -514,8 +514,9 @@ def gen_rights() -> dict:
 
 PRESET_CASES = [
     ("owner: anything", "owner", [], [], call("shell.exec", "admin", ["destructive"]), {"ok": True}),
-    ("adult: admin allowed", "adult", [], [], call("core.trust.set", "admin", ["persists"]), {"ok": True}),
-    ("child: chat", "child", [], [], call("agent.chat.send", "write"), {"ok": True}),
+    ("adult: admin allowed", "adult", [], [], call("core.trust.set", "admin", []), {"ok": True}),
+    ("child: chat, as the agents plugin adds it", "child", {"agent": ["agent.chat.*"]}, [],
+     call("agent.chat.send", "write"), {"ok": True}),
     ("child: page view", "child", [], [], call("page.view"), {"ok": True}),
     ("child: shell not granted", "child", [], [], call("shell.exec", "exec"), {"ok": False, "reason": "grants"}),
     ("child: plugin adds a read cap", "child", {"homework": ["homework.item.list"]}, [], call("homework.item.list"),
@@ -526,9 +527,12 @@ PRESET_CASES = [
      call("homework.item.purge", "admin", ["destructive"]), {"ok": False, "reason": "risk"}),
     ("child: owner grant can't pass effects", "child", [], ["lights.set"],
      call("lights.set", "write", ["physical"]), {"ok": False, "reason": "effects"}),
-    ("child: personal data refused", "child", {"phone": ["phone.*"]}, [], call("phone.sms.list", "read", ["personal"]),
+    ("child: sensitive data refused", "child", {"phone": ["phone.*"]}, [], call("phone.sms.list", "read", ["sensitive"]),
      {"ok": False, "reason": "effects"}),
-    ("guest: chat", "guest", [], [], call("agent.chat.send", "write"), {"ok": True}),
+    ("guest: chat, as the agents plugin adds it", "guest", {"agent": ["agent.chat.*"]}, [],
+     call("agent.chat.send", "write"), {"ok": True}),
+    ("guest: nothing without a plugin", "guest", [], [], call("agent.chat.send", "write"),
+     {"ok": False, "reason": "grants"}),
     ("guest: pages not in preset", "guest", [], [], call("page.view"), {"ok": False, "reason": "grants"}),
     ("guest: owner grant within ceilings", "guest", [], ["music.play"], call("music.play", "write"), {"ok": True}),
 ]
@@ -543,44 +547,6 @@ def gen_presets() -> dict:
         cases.append({"name": name, "preset": preset, "plugin_grants": plugin_grants, "user_grants": user_grants,
                       "rights": r, "call": c, "expect": expect})
     return {"presets": rights.PRESETS, "cases": cases}
-
-
-# -- gate -----------------------------------------------------------------------
-
-def g(gate, verdict, mode="enforce", **kw):
-    return {"gate": gate, "mode": mode, "verdict": verdict, "confidence": 0.9, "reason": "anomaly", **kw}
-
-
-GATES = [
-    ("no gates", [], {"verdict": "allow", "by": []}),
-    ("all allow", [g("ml", "allow"), g("canary", "allow")], {"verdict": "allow", "by": []}),
-    ("flag", [g("ml", "flag"), g("canary", "allow")], {"verdict": "flag", "by": ["ml"]}),
-    ("block wins over flag", [g("ml", "flag"), g("canary", "block")], {"verdict": "block", "by": ["canary"]}),
-    ("two blocks", [g("ml", "block"), g("canary", "block")], {"verdict": "block", "by": ["ml", "canary"]}),
-    ("shadow never counts", [g("ml", "block", "shadow")], {"verdict": "allow", "by": []}),
-    ("error counts as flag", [{"gate": "ml", "mode": "enforce", "error": "timeout"}], {"verdict": "flag", "by": ["ml"]}),
-    ("unknown verdict counts as flag", [g("ml", "grant")], {"verdict": "flag", "by": ["ml"]}),
-    ("allow can't undo a block", [g("ml", "block"), g("allowlist", "allow", confidence=1.0)],
-     {"verdict": "block", "by": ["ml"]}),
-    # Tiering (castling-security): "reads log, writes/exec can hold, elevation must pass".
-    ("a flag on a read is logged, not held", [g("ml", "flag"), g("canary", "allow")],
-     {"verdict": "allow", "by": [], "logged": ["ml"]}, "read"),
-    ("a gate error on a read is logged, not held", [{"gate": "ml", "mode": "enforce", "error": "timeout"}],
-     {"verdict": "allow", "by": [], "logged": ["ml"]}, "read"),
-    ("a block on a read still refuses", [g("ml", "flag"), g("canary", "block")],
-     {"verdict": "block", "by": ["canary"]}, "read"),
-    ("a flag on a write holds", [g("ml", "flag")], {"verdict": "flag", "by": ["ml"]}, "write"),
-]
-
-
-def gen_gate() -> dict:
-    cases = []
-    for name, results, expect, *risk in GATES:
-        risk = risk[0] if risk else None
-        got = rights.gate_decision(results, risk)
-        check(got == expect, f"gate {name}: {got}")
-        cases.append({"name": name, "results": results, **({"risk": risk} if risk else {}), "expect": expect})
-    return {"verdicts": list(rights.VERDICTS), "reasons": list(rights.GATE_REASONS), "cases": cases}
 
 
 # -- journal --------------------------------------------------------------------
@@ -612,7 +578,7 @@ def gen_journal() -> dict:
 VECTORS = {
     "canonical": gen_canonical, "signatures": gen_signatures, "tickets": gen_tickets, "leases": gen_leases,
     "memberships": gen_memberships, "requests": gen_requests, "version": gen_version, "rights": gen_rights, "presets": gen_presets,
-    "gate": gen_gate, "journal": gen_journal,
+    "journal": gen_journal,
 }
 
 

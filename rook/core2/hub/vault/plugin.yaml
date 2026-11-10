@@ -25,7 +25,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       name: { type: str, required: true, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
       value: { type: secret, required: true, doc: "The value itself (journaled as [redacted])." }

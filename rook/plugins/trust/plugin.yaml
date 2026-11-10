@@ -20,7 +20,7 @@ records:
         type: str
         enum: [sacred, normal, ship-it]
         required: true
-        doc: "How much ceremony a change gets: sacred = full change record and the owner signs off; normal = full record, proceeds; ship-it = a one-line note."
+        doc: "Who signs off before a task's work lands: sacred = a reviewer and the owner; normal = one reviewer other than the author; ship-it = nobody."
       note: { type: str, doc: Why this level. }
     index: [project]
     history: true

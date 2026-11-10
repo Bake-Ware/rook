@@ -12,7 +12,7 @@ caps:
     doc: "Contacts whose name or number contains query (blank: the first ones by name): {contacts: [{name, number}]}, one row per number."
     risk: read
     scope: local
-    effects: [personal]
+    effects: []
     idempotent: true
     timeout: 20s
     args:

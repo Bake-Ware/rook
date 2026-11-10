@@ -2,7 +2,7 @@
 // The settings window.
 let S = null; // last state from the app
 
-const FIELDS = ['hub_url', 'worker_python', 'ask_shortcut', 'poll_seconds', 'voice_url', 'ptt_shortcut', 'speak_answers', 'wake_model', 'wake_threshold'];
+const FIELDS = ['hub_url', 'ask_shortcut', 'poll_seconds', 'voice_url', 'ptt_shortcut', 'speak_answers', 'wake_model', 'wake_threshold'];
 const CHECKS = ['notifications', 'wake_word', 'worker_autostart', 'start_at_login'];
 
 function fill(st) {

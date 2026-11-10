@@ -124,7 +124,7 @@ caps:
       commit to the task.
     risk: write
     scope: external
-    effects: [persists]
+    effects: []
     timeout: 90s
     run: scripts/github.py:merge
     args:

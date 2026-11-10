@@ -1,8 +1,7 @@
 """Worker events reach the hub (gate R2) on a real 0.5 band (hub, worker and
 relay as processes, see harness.py): a text arriving on the worker
 (``e2e.sms.received``, emitted the way the phone's sms plugin does) fires an
-owner's job on the hub, whose call reaches the worker in a tainted session
-and sees the text, and shows on a live page."""
+owner's job on the hub, whose call reaches the worker and sees the text, and shows on a live page."""
 from __future__ import annotations
 
 import json
@@ -56,7 +55,7 @@ def test_a_worker_event_fires_a_job_and_shows_on_a_page(fresh):
     text = {"from": "+15550123", "body": "ping me", "person": "person:bake", "worker": "e2e-worker"}
     assert run["result"]["event"] == {"name": "e2e.sms.received", "payload": text}       # the call saw the text
     assert run["result"]["person"] == "person:bake"
-    assert run["event"]["name"] == "e2e.sms.received" and run["event"]["taints"] is True
+    assert run["event"]["name"] == "e2e.sms.received"
     assert run["event"]["payload"] == text
     entry = b.owner.get("/journal?cap=e2e.ping&limit=1")["entries"][0]
     assert entry["why"].startswith("job on-text (run ") and entry["person"] == "person:bake"

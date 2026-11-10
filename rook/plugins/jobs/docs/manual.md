@@ -25,7 +25,7 @@ text that arrived, the worker that came online).
 
 ## Who it runs as
 
-The call goes through dispatch like any other call: why, rights, gates,
+The call goes through dispatch like any other call: why, rights,
 holds, journal. It runs as:
 
 - its **creator** (the default): the person, or the agent acting for that

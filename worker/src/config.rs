@@ -25,7 +25,11 @@ pub fn load(path: &Path) -> Result<Config, String> {
     let docs = YamlLoader::load_from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     let raw = docs.into_iter().next().unwrap_or(Yaml::Null);
     let base = path.parent().unwrap_or(Path::new("."));
-    let data = base.join(raw["data"].as_str().ok_or(format!("{}: data is required", path.display()))?);
+    let data = base.join(
+        raw["data"]
+            .as_str()
+            .ok_or(format!("{}: data is required", path.display()))?,
+    );
     let anchor = base.join(raw["anchor"].as_str().unwrap_or("anchor.json"));
     let name = match raw["name"].as_str() {
         Some(n) => n.to_string(),
@@ -40,7 +44,10 @@ pub fn load(path: &Path) -> Result<Config, String> {
         .map(|v| {
             v.iter()
                 .map(|b| {
-                    let psk = b["psk"].as_str().map(String::from).or_else(|| b["psk_env"].as_str().and_then(|e| std::env::var(e).ok()));
+                    let psk = b["psk"]
+                        .as_str()
+                        .map(String::from)
+                        .or_else(|| b["psk_env"].as_str().and_then(|e| std::env::var(e).ok()));
                     (psk, b["relay"].as_str().map(String::from))
                 })
                 .collect()
@@ -49,7 +56,10 @@ pub fn load(path: &Path) -> Result<Config, String> {
     if let Ok(text) = fs::read_to_string(data.join("bands.json")) {
         if let Ok(Value::Object(joined)) = serde_json::from_str::<Value>(&text) {
             for spec in joined.values() {
-                bands.push((spec["psk"].as_str().map(String::from), spec["relay"].as_str().map(String::from)));
+                bands.push((
+                    spec["psk"].as_str().map(String::from),
+                    spec["relay"].as_str().map(String::from),
+                ));
             }
         }
     }
@@ -57,7 +67,14 @@ pub fn load(path: &Path) -> Result<Config, String> {
         .into_iter()
         .find_map(|(p, r)| Some((p?, r?)))
         .ok_or("no band with a psk and a relay in the config or <data>/bands.json")?;
-    Ok(Config { name, worker_id, psk, relay, data, anchor })
+    Ok(Config {
+        name,
+        worker_id,
+        psk,
+        relay,
+        data,
+        anchor,
+    })
 }
 
 /// `<data>/worker_id`, made once when the config names none (as the Python worker does).
@@ -70,7 +87,9 @@ fn held_id(data: &Path) -> Result<String, String> {
         }
     }
     let id = crate::link::hex(&crate::link::random::<16>());
-    fs::create_dir_all(data).and_then(|_| fs::write(&file, format!("{id}\n"))).map_err(|e| format!("{}: {e}", file.display()))?;
+    fs::create_dir_all(data)
+        .and_then(|_| fs::write(&file, format!("{id}\n")))
+        .map_err(|e| format!("{}: {e}", file.display()))?;
     Ok(id)
 }
 

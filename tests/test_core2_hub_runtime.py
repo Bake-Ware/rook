@@ -1288,7 +1288,7 @@ caps:
     doc: Pair with it.
     risk: admin
     scope: local
-    effects: [persists]
+    effects: []
     run: scripts/lamp.py:pair
   on:
     doc: Switch it on.

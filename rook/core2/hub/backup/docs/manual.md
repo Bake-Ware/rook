@@ -36,7 +36,7 @@ Targets:
   [backup-store](../../../../plugins/backup-store/docs/manual.md) plugin,
   never one on the hub's own machine. No setup beyond installing backup-store
   on one worker, and your data stays on your own machines. If none is
-  online, the run fails and says so; the house agent brings it up.
+  online, the run fails and says so.
 - `dir:/mnt/usb/rook`: a folder (a disk, a network mount). Files are 0600 in a 0700 folder.
 - `worker:janitor`: another worker on the band, through its
   [backup-store](../../../../plugins/backup-store/docs/manual.md) plugin

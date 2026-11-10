@@ -1,8 +1,7 @@
 """Change records (rook/plugins/changes) on a real 0.5 hub, in process with a
 loopback band, driven through the HTTP door: records only (castling-design:
 "Change records: records only"). Records that gate and run nothing, the
-kit's create/update/search/history, and core writing records only when the
-plugin is there (``Hub.note_change``, plugin pushes). Every test body runs
+kit's create/update/search/history; core never writes one. Every test body runs
 under a hard timeout; HTTP requests have their own socket timeout."""
 
 import asyncio
@@ -18,7 +17,6 @@ pytest.importorskip("jsonschema")
 from port_helpers import PLUGINS  # noqa: E402
 from rook.core2.hub.identity import Caller  # noqa: E402
 from rook.core2.hub.runtime import Config, Hub, Loopback  # noqa: E402
-from rook.kit.ctx import Caller as KitCaller  # noqa: E402
 from rook.kit.manifest import check  # noqa: E402
 
 BAND = "e17904e6ed4c664592f64f6f1d02c682"
@@ -117,24 +115,3 @@ def test_a_record_is_written_and_gates_nothing(cfg):
         out = await amy.call("change.create", why="Because.")
         assert not out["ok"], out
     on_hub(cfg, body)
-
-
-def test_core_writes_a_record_only_when_the_plugin_is_there(cfg):
-    async def body(hub, bake, amy, helper):
-        who = KitCaller(person="person:bake", why="Record a test change")
-        cid = await hub.note_change(who, record(category="plugin"))
-        rec = hub.records.type("change.change").get(KitCaller(band=BAND, owner=True), cid)
-        assert rec["category"] == "plugin" and rec["person"] == "person:bake"
-        # a record that can't be written never stops core
-        assert await hub.note_change(who, {"what": "x"}) is None
-    on_hub(cfg, body)
-
-    (cfg.library / "changes").unlink()
-
-    async def bare(hub, bake, amy, helper):
-        assert await hub.note_change(KitCaller(person="person:bake", why="w"), record()) is None
-        # plugin pushes don't need the plugin (they fail here only for the unknown worker)
-        out = await hub.push_plugin(Caller(person="person:bake"), {"worker": "x", "plugin": "probe", "why": WHY},
-                                    "http")
-        assert out == {"ok": False, "error": "unknown worker: x"}
-    on_hub(cfg, bare)

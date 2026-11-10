@@ -42,9 +42,7 @@ What happens:
 2. It signs the list of the plugin's file hashes **for that worker**
    (`plugin.sig`) and sends the bundle with the cap `core.plugin.install`,
    dispatched and journaled like any call; `core.plugin.rollback` is the way
-   back. With the [change](../../rook/plugins/changes/docs/manual.md) plugin
-   installed the push also leaves a change record (the reply names it:
-   `"change": "r_…"`); without it the journal is the trail.
+   back. Its journaled why names the plugin and the version.
 3. The worker installs it only when the signature is from a hub that may
    approve plugins there (its home hub or a co-owner) and every file
    matches. It loads the new version **without restarting** (nothing
@@ -86,7 +84,6 @@ linked.
 - [notify](../../rook/plugins/notify/docs/manual.md): reach a person on the channel that reaches them.
 - [telegram](../../rook/plugins/telegram/docs/manual.md) and [discord](../../rook/plugins/discord/docs/manual.md): the band's bots.
 - [llm-anthropic](../../rook/plugins/llm-anthropic/docs/manual.md), [llm-openai](../../rook/plugins/llm-openai/docs/manual.md), [llm-cli](../../rook/plugins/llm-cli/docs/manual.md): model providers.
-- [security](../../rook/plugins/security/docs/manual.md): the gate ([Security plugins](security.md)).
 - [job](../../rook/plugins/jobs/docs/manual.md): scheduled, event and manual jobs, each one call ([Jobs](jobs.md)).
 - [backup-store](../../rook/plugins/backup-store/docs/manual.md): keeps the hub's sealed backups on another worker (backup target `worker:<name>`).
 

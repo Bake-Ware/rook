@@ -8,7 +8,7 @@ everything else here a worker may do. Companion material:
 
 - `conformance/core-v2/vectors/*.json`: test vectors for the pure functions
   (canonical JSON, signed objects, ticket checks, worker requests, version
-  negotiation, rights, presets, gate verdicts, journal chains). Where prose and vectors
+  negotiation, rights, presets, journal chains). Where prose and vectors
   disagree, the vectors win and the prose is a bug.
 - `rook/core2/`: the Python reference for those functions.
 - `conformance/manifest/manifest.schema.json`: the plugin manifest schema.
@@ -33,7 +33,7 @@ they appear in capitals.
 7. [Elevation](#7-elevation)
 8. [People, agents and rights](#8-people-agents-and-rights)
 9. [Workers on several bands](#9-workers-on-several-bands)
-10. [Dispatch on the hub and the gate hook](#10-dispatch-on-the-hub-and-the-gate-hook)
+10. [Dispatch on the hub](#10-dispatch-on-the-hub)
 11. [Journal](#11-journal)
 12. [Enrollment](#12-enrollment)
 13. [Core caps](#13-core-caps)
@@ -57,7 +57,7 @@ machine, announces what it has, and **enforces**: it runs a call only when
 it carries a ticket the hub signed for exactly that call.
 
 ```
- agents, people ──MCP/HTTPS──▶ hub ── dispatch: rights ∩, session, gate, holds
+ agents, people ──MCP/HTTPS──▶ hub ── dispatch: rights ∩, session, holds
                                 │      mints one signed ticket per call
                                 ▼
           Telesthete relay (keyless, routes by band id)
@@ -290,13 +290,9 @@ Security flags, a controlled vocabulary. A cap lists zero or more.
 | Flag | Means | Hub treatment |
 |---|---|---|
 | `destructive` | erases or overwrites data for good | hard stop (10.3); never retried automatically |
-| `sensitive` | reveals secrets or private content (screen, camera, secret values) | hard stop when it reveals a secret's value; gate weight otherwise |
-| `personal` | reads or writes a person's personal data (messages, contacts, location) | presets; multi-user filtering |
+| `sensitive` | reveals secrets or private content (screen, camera, secret values) | hard stop when it reveals a secret's value |
 | `physical` | acts on the physical world (power, locks, motors, speakers) | not in child or guest presets; never retried automatically |
 | `sends_as` | sends as a person to someone else | hard stop |
-| `spends` | spends money | hard stop |
-| `persists` | creates persistence (services, keys, users, scheduled tasks) | journaled loudly; stricter gate |
-| `taints` | brings outside content into the session (web, email, inbound messages) | marks the session tainted (8.4) |
 
 An unknown effect flag MUST be treated as `destructive` for holds, and is
 outside any rights object that lists its allowed effects (8.2). Egress has
@@ -304,8 +300,7 @@ no flag: it is `scope: external`.
 
 ### 4.4 Scope
 
-Required on every cap. How far the effect reaches; used by gates and
-shown to people.
+Required on every cap. How far the effect reaches; shown to people.
 
 | Value | Means |
 |---|---|
@@ -462,7 +457,7 @@ online delegate, and with none online still tries them in order (status is
 only a hint). A send that fails before it reaches a delegate, or a call safe
 to repeat (`idempotent`, not `physical` or `destructive`) that timed out or
 failed with `retry`, goes to the next delegate in the same request when that
-one passes rights and gates too. The delegate that answers becomes the
+one passes rights too. The delegate that answers becomes the
 known-good one. An appliance call reaches only its plugin's caps.
 
 ### 5.8 Worker keys
@@ -652,7 +647,7 @@ Every call starts **without** administrator rights: no `sudo`, not "run as
 administrator". Shell stays fully open: whatever that account can do, a
 shell call can do. Every plugin starts processes through core's launch
 path, so none can skip this. An elevated call counts as risk `admin` for
-the journal and the gate.
+the journal.
 
 Each cap declares `elevation` in its manifest: `never` (default),
 `may` (it can ask mid-call), or `upfront` (it needs a lease before it
@@ -673,13 +668,7 @@ call**: the agent sees one call and one result.
    `core.elevate` on the hub (13) with the call's ticket.
 3. The hub checks that the ticket is its own and the call is still in
    flight, and that the call's rights (8.3) permit `core.elevate` on that
-   worker. Unless the call already met the gates as `admin` at dispatch
-   (asked up front, or an `upfront` cap), it runs the gates (10.2) on the
-   call as `admin`, with `elevation` set to the reason: elevation must
-   pass, so a `flag` refuses as well as a `block` (nothing can wait for a
-   person inside a running call; asking up front lets a flag become a
-   hold). It journals the elevation, with the gates' readings, and returns
-   a lease, or refuses.
+   worker. It journals the elevation and returns a lease, or refuses.
 4. **Fail closed:** no answer from the hub within 10 s, or a refusal, and
    the call fails with `elevation: <reason>` (`hub unreachable`,
    `denied`, `outside ceiling`).
@@ -715,10 +704,9 @@ only.
   lost that hub (5.4), so blocking the hub after elevating ends the lease.
 - **Restart:** leases don't survive a worker restart.
 
-Elevation is journaled (11), never prompted: no card, no ping. Alerts come
-only from security plugins (gate, triage agent) when something looks
-wrong. Because one elevated call can create persistence (an SSH key, a
-service), elevation should be rare.
+Elevation is journaled (11), never prompted: no card, no ping. Because one
+elevated call can create persistence (an SSH key, a service), elevation
+should be rare.
 
 ## 8. People, agents and rights
 
@@ -795,8 +783,7 @@ Every call belongs to a session. A session is hub state:
 | `person`, `agent` | who it acts as (8.1) |
 | `caps` | patterns declared at start; the hub signs tickets only for caps matching one of them |
 | `project` | the project its work belongs to (stamped on every journal entry, 11) |
-| `task` | the pinned task recorded at start, for gates |
-| `tainted` | set once the session calls a cap or receives an event with `taints`; never cleared |
+| `task` | the pinned task recorded at start |
 | `started`, `exp` | sessions last hours; hubs SHOULD end them after 12 h |
 
 `caps` is declared at the start and does not grow; a session that needs
@@ -814,8 +801,8 @@ other hub state, and plugins add grants to them in their manifest
 |---|---|---|---|---|
 | `owner` | `["*"]` | none | all | owns every band of the hub; manages people, bands and ceilings |
 | `adult` | `["*"]` | `admin` | all | |
-| `child` | `["agent.chat.*", "page.view"]` | `write` | `[]` | more only when an owner edits the preset or grants that person more |
-| `guest` | `["agent.chat.*"]` | `write` | `[]` | `expires: 7d` after the account is created |
+| `child` | `["page.view"]` | `write` | `[]` | more only when an owner edits the preset, a plugin adds grants or an owner grants that person more |
+| `guest` | `[]` | `write` | `[]` | `expires: 7d` after the account is created |
 
 A person's rights = the preset's `grants`, plus the grants plugins add to
 that preset (a plugin may add only patterns inside its own namespace,
@@ -915,14 +902,14 @@ their ceilings and is managed locally until a person with administrator
 rights on the machine points it at a new home (a new enrollment, 12).
 Re-anchoring removes every membership; the new home adds them again.
 
-## 10. Dispatch on the hub and the gate hook
+## 10. Dispatch on the hub
 
 ### 10.1 Dispatch order
 
 Every door ends at dispatch, before a ticket exists. Platform agents that
-run inside the hub (the security triage agent, recovery) call dispatch
-in-process rather than through MCP, so they keep working when MCP fails or
-is compromised; an owner or the security agent can switch the MCP door off
+run inside the hub call dispatch in-process rather than through MCP, so
+they keep working when MCP fails or is compromised; an owner can switch the
+MCP door off
 (the kill switch) without touching the other doors. A hub MUST apply, in
 order:
 
@@ -936,79 +923,22 @@ order:
 5. **Rights.** The intersection rule (8.3), including the target's
    announced ceiling; refuse with the refusing layer
    (`denied: <layer>: <reason>`).
-6. **Gates** (10.2). `block` refuses (`denied: blocked by gate <name>:
-   <reason category>`); `flag` MAY hold, except on a `read` call (10.2).
-7. **Holds** (10.3).
-8. **Ticket.** Mint (6.2), send, wait (6.5).
-9. **Journal** (11): one entry per dispatched call, whatever the outcome.
-
-### 10.2 Gate contract
-
-A gate is a plugin's `gate` hook. Gates run at hub dispatch, in parallel,
-for calls their `match` selects (by risk, scope or effects). A shared
-worker MAY run its own gates before executing, with the same contract,
-replying `denied by worker: gate` on a block.
-
-Input:
-
-| Field | Meaning |
-|---|---|
-| `cap`, `args` | the call (secret references unresolved) |
-| `caller` | `{person, agent}` |
-| `worker`, `appliance` | the target |
-| `why` | the caller's reason |
-| `risk`, `scope`, `effects` | from the manifest (an elevated call is `admin`) |
-| `session` | `{id, caps, project, task, tainted}` |
-| `band` | the band |
-| `elevation` | only on `core.elevate` (7.2): `upfront` or `access_denied` |
-
-Output:
-
-| Field | Meaning |
-|---|---|
-| `verdict` | `allow`, `flag` or `block` |
-| `confidence` | number 0..1 |
-| `reason` | category: `intent_mismatch`, `anomaly`, `persistence`, `exfiltration`, `injection`, `canary`, `taint`, `policy`, `gate_error`, `other` |
-
-Rules (vectors: `gate.json`):
-
-- **Block-only by construction.** Gates can only restrict, never grant; the
-  hub ignores anything in a result that isn't a restriction. `block` wins
-  over `flag`, `flag` over `allow`.
-- A gate in `shadow` mode is journaled but never counts. Gates ship in
-  shadow mode first.
-- A gate that errors, times out or returns a malformed result counts as
-  `flag` with reason `gate_error`.
-- **Tiering by risk** (castling-security: "reads log, writes/exec can
-  hold, elevation must pass"). On a `read` call a `flag` (`gate_error`
-  included) is journaled and the call goes; it is never held. A `block`
-  still refuses. On `write`, `exec` and `admin` calls a `flag` MAY hold;
-  in elevation (7.2) it refuses.
-- Each gate declares a latency `budget` (default 20 ms); the hub MUST NOT
-  wait longer than 200 ms for any gate.
-- Disabling or replacing a gate plugin is a deliberate owner action and is
-  journaled.
-- A gate MAY also declare a `result` check, run on a call's result after it
-  ran, with the same input plus `result`. It can only withhold: `block`
-  turns the reply into `denied: blocked by gate <name>: <reason>`; any other
-  verdict is journaled only (a call that already ran can't be held). Its
-  entries are journaled with the call's other gate results, marked
-  `stage: result`. Canary detection uses it.
+6. **Holds** (10.3).
+7. **Ticket.** Mint (6.2), send, wait (6.5).
+8. **Journal** (11): one entry per dispatched call, whatever the outcome.
 
 ### 10.3 Holds and hard stops
 
-When the trust map, a hard stop or a gate's flag requires approval, the hub
+When the trust map or a hard stop requires approval, the hub
 **holds the exact call**: the right person gets one card, and approving
 runs that exact call (same cap, target, `args_hash`, session) with a ticket
 minted at that moment. The caller gets a held reply carrying the hold's
-name; a refusal is final. One approval path serves deploys, sacred caps
-and security holds.
+name; a refusal is final. One approval path serves deploys and sacred caps.
 
-**Hard stops** always hold, and nothing (no relayed approval, no triage
-agent) releases them except the person: a change on a sacred machine,
+**Hard stops** always hold, and nothing (no relayed approval, no agent)
+releases them except the person: a change on a sacred machine,
 `destructive` effects (unknown effects count as destructive), revealing a
-secret's value (`sensitive` on a secret-revealing cap), `sends_as`, and
-`spends`.
+secret's value (`sensitive` on a secret-revealing cap), and `sends_as`.
 
 Lasting changes (deploys, configuration, plugin installs, trust and grant
 edits, deletes; guidance, not a hard rule) get a **change record** (what,
@@ -1021,7 +951,7 @@ installed. Records only: they gate nothing.
 
 **Only the hub writes the journal**: one entry per dispatched call, plus
 change records, elevations and lease drops, holds and their outcomes,
-security events (gate blocks, triage actions) and session starts and ends.
+and session starts and ends.
 Agents never write entries directly. Workers MAY keep a local audit of
 what they ran (time, call id, cap, ticket verdict, a redacted argument
 summary); it is not the journal.
@@ -1044,7 +974,6 @@ summary); it is not the journal.
 | `risk`, `scope`, `effects` | from the manifest |
 | `decision` | `allow`, `deny`, `held`, `released`, `refused` (by the person) |
 | `layer` | on `deny`: the refusing layer and reason (8.3) |
-| `gates` | per gate: `{gate, mode, verdict, confidence, reason}` |
 | `lease` | lease id when the call ran elevated |
 | `ok`, `error`, `ms` | the outcome and duration; `error` when it failed or was refused by the worker |
 
@@ -1148,9 +1077,9 @@ payload, replacing whatever the worker sent there. Refused events are
 dropped and logged; the batch is still answered. A taken event goes where
 the hub's own events go: hub plugins' `on:` hooks (library code an owner
 installed), jobs (event jobs are an owner's) and live pages, which show it
-only to viewers whose rights grant its name and whose data it is. An event declared `taints: true` taints the sessions that act
-on it (8.4): the session a hook or job runs its calls in, and a page's
-session once the page receives it.
+only to viewers whose rights grant its name and whose data it is. An event
+declared `taints: true` (outside content) that names no person shows to
+owners only.
 
 Worker administration (plugins over Drop, updates, configuration,
 enrollment changes) is defined by the core manifest's caps, not by this
@@ -1235,7 +1164,7 @@ no longer in flight.
 | **encoding** | 3.2, 3.3 | `canonical`, `signatures` |
 | **worker** | wire and [the minimal worker profile](worker-profile.md) | |
 | **full worker** (optional extensions) | worker, encoding, 2.2, 5.3, 5.5, 5.8, 6, 7.3, 9.3, 13 | `version`, `tickets`, `leases`, `memberships`, `requests` (making proofs) |
-| **hub** | wire, encoding, all of the above plus 8, 10, 11, 13.1 | `rights`, `presets`, `gate`, `journal`, `requests` (checking proofs) |
+| **hub** | wire, encoding, all of the above plus 8, 10, 11, 13.1 | `rights`, `presets`, `journal`, `requests` (checking proofs) |
 
 `conformance/core-v2/README.md` describes the vector files. The Python
 reference (`rook/core2`) passes them all; `generate.py` checks hand-written
@@ -1259,8 +1188,7 @@ signatures).
   it: `core.call` and `core.elevate` must be signed by the ticket's worker
   (13.1). It can send events as any worker the hub knows
   on the band, but only events that worker announced, within its ceiling;
-  they count as that worker's owner's data and, when declared `taints`,
-  taint whatever acts on them. A band member can still receive calls sent
+  they count as that worker's owner's data. A band member can still receive calls sent
   to a `worker_id` it impersonates and answer them first (replies are
   unsigned), and a hub pinning a key on first announce trusts whoever
   announces that `worker_id` first; enrollment pins the key out of band,
@@ -1273,13 +1201,8 @@ signatures).
   cutting the worker off from the hub after elevating ends the lease. One
   elevated call can still create persistence; elevation is rare and
   journaled loudly.
-- **Gates restrict only.** A compromised or buggy gate plugin can deny
-  service but can never grant. The triage agent reads attacker-controlled
-  material all day and is the likeliest injection target: it can release
-  one held call with the same arguments, never a hard stop and never a rule
-  change.
 - **`why` is data.** It is attacker-influenced text for anything reading it
-  (gates, people); it never changes rights.
+  (people, agents); it never changes rights.
 - **Header and transport** considerations of core v1 section 12 (empty
   AAD, nonce reuse, route ids, relay exposure) apply unchanged.
 - **Journal.** The threat model is a confused or compromised agent quietly

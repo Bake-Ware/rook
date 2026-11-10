@@ -45,7 +45,7 @@ caps:
     doc: "Other apps' notifications, newest first: {notifications: [{key, package, title, text, ts, posted_ms, clearable, sub_text?, big_text?}]}. packages keeps only those apps (mail apps put the sender in title, the subject in text, a preview in big_text)."
     risk: read
     scope: local
-    effects: [personal, sensitive, taints]
+    effects: [sensitive]
     idempotent: true
     timeout: 15s
     args:
@@ -56,7 +56,7 @@ caps:
     doc: "One notification by key (from notification.list) with the actions it offers: {notification, actions: [{index, title, takes_text}]}."
     risk: read
     scope: local
-    effects: [personal, sensitive, taints]
+    effects: [sensitive]
     idempotent: true
     timeout: 15s
     args:

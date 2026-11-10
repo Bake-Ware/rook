@@ -543,8 +543,10 @@ def test_agent_made_pages_keep_a_note_and_never_exceed_their_author(site):
             await c.sign_in(tokens["bake"])
             body = {"worker": "rook", "cap": "page.create", "why": WHY, "args": {
                 "name": "uptime", "title": "Uptime", "html": "<html><head></head><body>up</body></html>",
-                "note": "Bake asked to keep an eye on the board.", "caps": ["board.*"], "events": ["board.*"],
-                "task": "t_123"}}
+                "note": "Bake asked to keep an eye on the board.", "caps": ["board.*"], "events": ["board.*"]}}
+            heard = []
+            hub.listeners.append(lambda event, payload, source: event.startswith("page.") and heard.append(
+                (event, payload)))
             _, out = await c.json("POST", "/call", body, bearer=tokens["narrow"])
             assert out["ok"] and out["result"] == {"page": "page/uptime"}, out
             _, out = await c.json("POST", "/call", body, bearer=tokens["narrow"])
@@ -554,7 +556,8 @@ def test_agent_made_pages_keep_a_note_and_never_exceed_their_author(site):
             assert "agent:narrow: made the page" in note
             got = (await c.call("page.get", {"page": "page/uptime"}))["result"]
             assert got["made"] and got["made_by"]["authors"] == [{"person": None, "agent": "agent:narrow"}]
-            assert got["made_by"]["task"] == "t_123"
+            assert heard == [("page.created", {"page": "page/uptime", "title": "Uptime", "by": "agent:narrow",
+                                               "note": "Bake asked to keep an eye on the board.", "person": None})]
             assert got["note"] == note
             # viewed by an owner, the page still can't do more than its author (narrow: board.count)
             t = (await c.open("page/uptime"))["token"]
@@ -565,6 +568,8 @@ def test_agent_made_pages_keep_a_note_and_never_exceed_their_author(site):
                 "page": "page/uptime", "change": "Added the count.", "html": "<p>3</p>"}}, bearer=tokens["claude"])
             assert out["ok"], out
             assert "agent:claude for person:bake: Added the count." in (hub.data / "pages/uptime/NOTE.md").read_text()
+            assert heard[-1] == ("page.updated", {"page": "page/uptime", "change": "Added the count.",
+                                                  "by": "agent:claude", "person": "person:bake"})
             # claude (all rights) changed it, but narrow wrote it too: still no more than narrow
             assert (await c.page(t, "board.secret"))["error"] == "denied: agent: grants"
             assert (hub.data / "pages/uptime/page.html").read_text() == "<p>3</p>"
@@ -911,7 +916,6 @@ def test_approval_ask_is_the_one_question_path(site):
             assert out["ok"] and out["result"]["answered"] is False, out
             q1 = out["result"]["hold"]
             assert q1.startswith("q_") and heard == [("approval.asked", q1)]
-            assert hub.taints("approval.asked")               # the asker's words are outside content
             out = await call("solo", "approval.ask", question="Which disk?", options=["sda", "sdb"])
             q2 = out["result"]["hold"]                         # nobody behind it: asked of the owners
 

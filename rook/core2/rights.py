@@ -1,6 +1,6 @@
 """Core v2 rights: the risk/scope/effects enums, grant patterns, the
-intersection rule, user presets and the gate verdict rule. Spec sections 4,
-8 and 10 of docs/spec/core-v2.md.
+intersection rule and user presets. Spec sections 4 and 8 of
+docs/spec/core-v2.md.
 
 A *rights* object is {"grants": [pattern, ...], "max_risk"?: risk,
 "effects"?: [effect, ...]}. Every layer that applies to a call (person,
@@ -13,22 +13,18 @@ from typing import Any
 
 RISKS = ("read", "write", "exec", "admin")
 SCOPES = ("self", "local", "multi-machine", "multi-user", "external")
-EFFECTS = ("destructive", "sensitive", "personal", "physical",
-           "sends_as", "spends", "persists", "taints")
+EFFECTS = ("destructive", "sensitive", "physical", "sends_as")
 # Effects that always hold a call for the person (spec 4.3). Unknown effect
 # flags count as destructive.
-HARD_STOP_EFFECTS = ("destructive", "sends_as", "spends")
+HARD_STOP_EFFECTS = ("destructive", "sends_as")
 
 PRESETS = {
     "owner": {"grants": ["*"]},
     "adult": {"grants": ["*"], "max_risk": "admin"},
-    "child": {"grants": ["agent.chat.*", "page.view"], "max_risk": "write", "effects": []},
-    "guest": {"grants": ["agent.chat.*"], "max_risk": "write", "effects": [], "expires": "7d"},
+    "child": {"grants": ["page.view"], "max_risk": "write", "effects": []},
+    "guest": {"grants": [], "max_risk": "write", "effects": [], "expires": "7d"},
 }
 
-VERDICTS = ("allow", "flag", "block")
-GATE_REASONS = ("intent_mismatch", "anomaly", "persistence", "exfiltration", "injection",
-                "canary", "taint", "policy", "gate_error", "other")
 
 
 def risk_rank(risk: Any) -> int:
@@ -125,34 +121,3 @@ def hard_stop(effects: list) -> bool:
     """True when a call with these effects always waits for the person."""
     return any(e in HARD_STOP_EFFECTS or e not in EFFECTS for e in effects or ())
 
-
-def gate_decision(results: list, risk: str | None = None) -> dict:
-    """Combine gate results at dispatch (spec 10). Shadow-mode gates never
-    count; a malformed result or an error counts as a flag; block wins over
-    flag, flag over allow. Gates can only restrict.
-
-    ``risk`` tiers a flag (castling-security, Bake: "Tiering: reads log,
-    writes/exec can hold, elevation must pass"): on a ``read`` call a flag,
-    a ``gate_error`` included, is journaled and never held, so the verdict
-    is ``allow`` with the flagging gates in ``logged``; a block still wins."""
-    out = _gate_verdict(results)
-    if out["verdict"] == "flag" and risk == "read":
-        return {"verdict": "allow", "by": [], "logged": out["by"]}
-    return out
-
-
-def _gate_verdict(results: list) -> dict:
-    verdict, by = "allow", []
-    for r in results:
-        if r.get("mode", "enforce") == "shadow":
-            continue
-        v = r.get("verdict")
-        if r.get("error") or v not in VERDICTS:
-            v = "flag"
-        if v == "allow":
-            continue
-        if VERDICTS.index(v) > VERDICTS.index(verdict):
-            verdict, by = v, []
-        if v == verdict:
-            by.append(r.get("gate"))
-    return {"verdict": verdict, "by": by}

@@ -28,12 +28,19 @@ pub const INSTALLED: &str = "installed";
 
 /// The file this worker runs, by name: what a release must hold for it.
 pub fn artifact() -> String {
-    format!("rook-worker-{}-{}{}", if cfg!(windows) { "windows" } else { "linux" }, std::env::consts::ARCH,
-            if cfg!(windows) { ".exe" } else { "" })
+    format!(
+        "rook-worker-{}-{}{}",
+        if cfg!(windows) { "windows" } else { "linux" },
+        std::env::consts::ARCH,
+        if cfg!(windows) { ".exe" } else { "" }
+    )
 }
 
 pub fn trial_secs() -> Duration {
-    let secs = std::env::var("ROOK_UPDATE_TRIAL_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(120.0);
+    let secs = std::env::var("ROOK_UPDATE_TRIAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120.0);
     Duration::from_secs_f64(secs)
 }
 
@@ -59,8 +66,14 @@ impl Core {
     }
 
     pub fn state(&self) -> Map<String, Value> {
-        let got: Value = fs::read_to_string(self.root.join("state.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
-        ["current", "previous", "trial", "failed"].iter().map(|k| (k.to_string(), got[*k].clone())).collect()
+        let got: Value = fs::read_to_string(self.root.join("state.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null);
+        ["current", "previous", "trial", "failed"]
+            .iter()
+            .map(|k| (k.to_string(), got[*k].clone()))
+            .collect()
     }
 
     fn save(&self, state: &Map<String, Value>) {
@@ -83,7 +96,11 @@ impl Core {
     /// boots; `hop` is the version our own exec just went to (counted already).
     pub fn choose(&self, hop: Option<&str>) -> Option<String> {
         let mut state = self.state();
-        if let Some(v) = state["trial"]["version"].as_str().filter(|v| Self::ok_name(v)).map(String::from) {
+        if let Some(v) = state["trial"]["version"]
+            .as_str()
+            .filter(|v| Self::ok_name(v))
+            .map(String::from)
+        {
             if hop == Some(v.as_str()) {
                 return Some(v);
             }
@@ -91,7 +108,9 @@ impl Core {
             let why = if !self.file(&v).is_file() {
                 Some("the release's file is missing".to_string())
             } else if boots >= MAX_BOOTS {
-                Some(format!("did not come up: {MAX_BOOTS} starts without serving a call from the home hub"))
+                Some(format!(
+                    "did not come up: {MAX_BOOTS} starts without serving a call from the home hub"
+                ))
             } else {
                 None
             };
@@ -125,7 +144,12 @@ impl Core {
 
     pub fn status(&self) -> Value {
         let mut kept: Vec<String> = fs::read_dir(&self.root)
-            .map(|d| d.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().to_str().map(String::from)).collect())
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| e.path().is_dir())
+                    .filter_map(|e| e.file_name().to_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
         kept.retain(|n| !n.starts_with('.'));
         kept.sort();
@@ -142,14 +166,23 @@ impl Core {
         if let Some(t) = state["trial"]["version"].as_str() {
             return Err(format!("an update to {t} is already waiting for its restart"));
         }
-        let version = sig["version"].as_str().filter(|v| Self::ok_name(v)).ok_or("malformed: version")?.to_string();
+        let version = sig["version"]
+            .as_str()
+            .filter(|v| Self::ok_name(v))
+            .ok_or("malformed: version")?
+            .to_string();
         if Some(&version) == self.running.as_ref() {
             return Err(format!("already running {version}"));
         }
         let folder = self.root.join(&version);
         if let Ok(old) = fs::read_to_string(folder.join("release.sig")) {
-            if serde_json::from_str::<Value>(&old).map(|o| o["files"] != sig["files"]).unwrap_or(true) {
-                return Err(format!("{version} is already here with different files; bump the version"));
+            if serde_json::from_str::<Value>(&old)
+                .map(|o| o["files"] != sig["files"])
+                .unwrap_or(true)
+            {
+                return Err(format!(
+                    "{version} is already here with different files; bump the version"
+                ));
             }
         }
         fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
@@ -187,13 +220,18 @@ impl Core {
         }
         self.save(&state);
         self.prune(&state);
-        eprintln!("rook-worker: core update {} confirmed", self.running.as_deref().unwrap_or("base"));
+        eprintln!(
+            "rook-worker: core update {} confirmed",
+            self.running.as_deref().unwrap_or("base")
+        );
     }
 
     /// Drop the trial; the caller restarts into `current`.
     pub fn abandon(&self, reason: &str) {
         let mut state = self.state();
-        let Some(v) = state["trial"]["version"].as_str().map(String::from) else { return };
+        let Some(v) = state["trial"]["version"].as_str().map(String::from) else {
+            return;
+        };
         state["trial"] = Value::Null;
         state["failed"] = json!({"version": v, "reason": reason, "at": now()});
         self.save(&state);
@@ -213,8 +251,14 @@ impl Core {
         }
         if let Some(v) = &to {
             if Some(v.as_str()) != state["previous"].as_str() {
-                let kept: Vec<&str> = [cur.as_deref(), state["previous"].as_str(), Some(INSTALLED)].into_iter().flatten().collect();
-                return Err(format!("{version} isn't kept here (kept: {}); update.rollout sends it", kept.join(", ")));
+                let kept: Vec<&str> = [cur.as_deref(), state["previous"].as_str(), Some(INSTALLED)]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                return Err(format!(
+                    "{version} isn't kept here (kept: {}); update.rollout sends it",
+                    kept.join(", ")
+                ));
             }
             if !self.file(v).is_file() {
                 return Err(format!("the kept core {v} can't run: its file is missing"));
@@ -227,7 +271,12 @@ impl Core {
     }
 
     fn prune(&self, state: &Map<String, Value>) {
-        let keep = [state["current"].as_str(), state["previous"].as_str(), state["trial"]["version"].as_str(), self.running.as_deref()];
+        let keep = [
+            state["current"].as_str(),
+            state["previous"].as_str(),
+            state["trial"]["version"].as_str(),
+            self.running.as_deref(),
+        ];
         for e in fs::read_dir(&self.root).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if e.path().is_dir() && !keep.contains(&Some(name.as_str())) {
@@ -247,7 +296,9 @@ pub fn unpack(blob: &[u8]) -> Result<(Value, Vec<u8>), String> {
         let name = entry.path().map_err(|e| e.to_string())?.to_string_lossy().into_owned();
         let mut data = vec![];
         if name == "release.sig" || name == want {
-            entry.read_to_end(&mut data).map_err(|e| format!("not a release: {e}"))?;
+            entry
+                .read_to_end(&mut data)
+                .map_err(|e| format!("not a release: {e}"))?;
         }
         if name == "release.sig" {
             sig = Some(serde_json::from_slice(&data).map_err(|e| format!("not a release: {e}"))?);
@@ -279,7 +330,10 @@ pub fn select(data: &Path) {
         return;
     }
     if hop.is_some() {
-        eprintln!("rook-worker: core switch did not take (wanted {want:?}, running {:?})", core.running);
+        eprintln!(
+            "rook-worker: core switch did not take (wanted {want:?}, running {:?})",
+            core.running
+        );
         return;
     }
     let target = want.as_ref().map_or(base, |v| core.file(v));
@@ -305,7 +359,10 @@ pub fn select(data: &Path) {
 
 /// Start again through the base, which picks the core.
 pub fn restart() {
-    let base = std::env::var(BASE).map(PathBuf::from).or_else(|_| std::env::current_exe()).expect("own path");
+    let base = std::env::var(BASE)
+        .map(PathBuf::from)
+        .or_else(|_| std::env::current_exe())
+        .expect("own path");
     let args: Vec<String> = std::env::args().skip(1).collect();
     #[cfg(unix)]
     {
@@ -328,7 +385,10 @@ mod tests {
     use super::*;
 
     fn core(dir: &Path) -> Core {
-        Core { root: dir.join("core"), running: None }
+        Core {
+            root: dir.join("core"),
+            running: None,
+        }
     }
 
     #[test]
@@ -337,16 +397,25 @@ mod tests {
         let c = core(&dir);
         let sig = json!({"version": "0.5.1", "hub": "h", "files": {}});
         c.receive(&sig, b"bin".to_vec()).unwrap();
-        assert!(c.receive(&sig, b"bin".to_vec()).unwrap_err().contains("already waiting"));
+        assert!(c
+            .receive(&sig, b"bin".to_vec())
+            .unwrap_err()
+            .contains("already waiting"));
         for _ in 0..3 {
             assert_eq!(c.choose(None).as_deref(), Some("0.5.1"));
         }
         assert_eq!(c.choose(None), None);
         assert_eq!(c.state()["failed"]["version"], "0.5.1");
-        let on = Core { root: c.root.clone(), running: Some("0.5.1".into()) };
+        let on = Core {
+            root: c.root.clone(),
+            running: Some("0.5.1".into()),
+        };
         c.receive(&sig, b"bin".to_vec()).unwrap();
         on.confirm();
-        assert_eq!((on.state()["current"].clone(), on.state()["trial"].clone()), (json!("0.5.1"), Value::Null));
+        assert_eq!(
+            (on.state()["current"].clone(), on.state()["trial"].clone()),
+            (json!("0.5.1"), Value::Null)
+        );
         assert!(c.switch("0.5.1").unwrap_err().contains("already on"));
         assert_eq!(c.switch(INSTALLED).unwrap()["from"], "0.5.1");
         assert_eq!(c.choose(None), None);

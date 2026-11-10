@@ -14,7 +14,7 @@ journal; agents and workers can't.
 - the **why**;
 - the cap's risk, scope and effects;
 - the decision (`allow`, `deny` and which layer refused, `held`,
-  `released`, `refused`), each security gate's reading;
+  `released`, `refused`);
 - the outcome: ok or the error, and how long it took.
 
 Arguments are kept with secret values replaced; a hash of the exact

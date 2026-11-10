@@ -13,8 +13,8 @@ Components are the canned tier (manifest ``components:``): small cap-backed
 scripts a package ships, which any agent (a weak local model too) arranges
 into a page by giving ``layout`` instead of ``html``. Each person's start
 page (or the hub's, set by an agent or job acting alone) is kept in
-``pages.json`` too. With the workbench installed, each page an agent makes
-is built under a task linked to the page (castling-dashboard, provenance).
+``pages.json`` too. Making or changing one emits ``page.created`` or
+``page.updated``.
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class Page:
     events: list = field(default_factory=list)
     sizes: list = field(default_factory=list)
     section: str = "Pages"
-    made: dict | None = None     # agent-made: {authors: [{person, agent}], created, task}
+    made: dict | None = None     # agent-made: {authors: [{person, agent}], created}
     nav: bool = True             # in the sidebar; every page opens by its address either way
     layout: list | None = None   # arranged from components instead of its own html
 
@@ -122,7 +122,7 @@ class Pages:
                 caps += [x for x in (c.caps if c else ()) if x not in caps]
             out[pid] = Page(pid, m.get("title") or name, meta_path.parent / "page.html", caps,
                             list(m.get("events") or ()), ["page"], m.get("section") or "Pages",
-                            {k: m.get(k) for k in ("authors", "created", "task")}, layout=layout)
+                            {k: m.get(k) for k in ("authors", "created")}, layout=layout)
         return out
 
     def components(self) -> dict[str, Component]:
@@ -301,7 +301,7 @@ class _Handlers:
 
     async def pages_create(self, ctx, name: str, title: str, note: str, html: str | None = None,
                            layout: list | None = None, caps: list | None = None, events: list | None = None,
-                           section: str | None = None, task: str | None = None) -> dict:
+                           section: str | None = None) -> dict:
         if not NAME.fullmatch(name):
             raise KitError("bad args: name is lowercase letters, digits, - and _ (64 at most)")
         folder = self.hub.pages.folder / name
@@ -311,18 +311,15 @@ class _Handlers:
             raise KitError("bad args: give the page's html or a layout of components (page.components lists them)")
         _check_sizes(html or "", note)
         meta = {"title": title, "caps": _patterns(caps), "events": _patterns(events), "section": section or "Pages",
-                "layout": self._layout(layout), "authors": [_author(ctx)], "created": time.time(), "task": task,
+                "layout": self._layout(layout), "authors": [_author(ctx)], "created": time.time(),
                 "note": note, "history": [_history(ctx, "made the page")]}
         folder.mkdir(parents=True, exist_ok=True)
         _write(folder / "page.html", html or "")
         self._save(folder, meta)
         pid = f"{MADE}/{name}"
-        out = {"page": pid}
-        if self._workbench():
-            out.update(await self._built_under(ctx, pid, meta))
-            if out.get("task") != task:
-                self._save(folder, {**meta, "task": out.get("task")})
-        return out
+        self.hub._emit("page.created", {"page": pid, "title": title, "note": note, "by": ctx.caller.actor,
+                                        "person": ctx.caller.person}, "page")
+        return {"page": pid}
 
     async def pages_update(self, ctx, page: str, change: str, title: str | None = None, html: str | None = None,
                            layout: list | None = None, note: str | None = None, caps: list | None = None,
@@ -350,11 +347,9 @@ class _Handlers:
             meta["layout"] = None
             _write(folder / "page.html", html)
         self._save(folder, meta)
-        out = {"page": page}
-        if meta.get("task") and self._workbench():       # the build record hears every change
-            out.update(await self._task_call(ctx, "task.comment", id=meta["task"],
-                                             text=f"Changed the page {page}: {change.strip()}"))
-        return out
+        self.hub._emit("page.updated", {"page": page, "change": change, "by": ctx.caller.actor,
+                                        "person": ctx.caller.person}, "page")
+        return {"page": page}
 
     def _layout(self, layout: list | None) -> list | None:
         """A layout's items, checked against the components as they are now."""
@@ -382,36 +377,6 @@ class _Handlers:
                 raise KitError(f"bad args: layout[{i}]: title is text, wide is true or false")
             out.append({k: item[k] for k in ("component", "props", "title", "wide") if k in item})
         return out
-
-    # -- the workbench: a page build is a task --------------------------------------
-
-    def _workbench(self) -> bool:
-        return "task" in self.hub.plugins.plugins
-
-    async def _built_under(self, ctx, pid: str, meta: dict) -> dict:
-        """Link the page to the task it was built under; with none given, make
-        that task (the person reviews the page, then it closes)."""
-        task = meta.get("task")
-        if not task:
-            made = await self._task_call(ctx, "task.create", title=f"Page: {meta['title']}", body=meta["note"],
-                                         state="in_progress", assignee=ctx.caller.person or "",
-                                         criteria=["The person has looked at the page and it shows what they asked for."])
-            task = (made.pop("result", None) or {}).get("id")
-            if not task:
-                return {"task": None, **made}
-        linked = await self._task_call(ctx, "task.link", id=task, kind="page", ref=pid, relation="produced",
-                                       note=meta["title"])
-        linked.pop("result", None)
-        return {"task": task, **linked}
-
-    async def _task_call(self, ctx, cap: str, **args) -> dict:
-        """A workbench call as the caller. A refusal never undoes the page:
-        it comes back as ``task_error``."""
-        args = {k: v for k, v in args.items() if v not in ("", None)}
-        reply = await self.hub.call_as(ctx.caller, cap, args)
-        if reply.get("ok"):
-            return {"result": reply.get("result")}
-        return {"task_error": f"{cap}: {reply.get('error') or 'failed'}"}
 
     def _save(self, folder: Path, meta: dict) -> None:
         _write(folder / "meta.json", json.dumps(meta, indent=1))
@@ -453,8 +418,7 @@ class _Handlers:
     async def pages_site(self, ctx) -> dict:
         """What the shell needs: the caller's start page."""
         pages = self.hub.pages
-        return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person),
-                "workbench": self._workbench()}
+        return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person)}
 
     async def pages_start(self, ctx, page: str | None = None) -> dict:
         pages = self.hub.pages
@@ -700,8 +664,8 @@ class Settings:
     def run_agent(self, plugin: str, name: str, grants: list | None) -> None:
         self.hub.run_agent(plugin, name, grants)
 
-    def turn_token(self, plugin: str, person: str | None, name: str, seconds: float, tainted: bool = False) -> str:
-        return self.hub.turn_token(plugin, person, name, seconds, tainted)
+    def turn_token(self, plugin: str, person: str | None, name: str, seconds: float) -> str:
+        return self.hub.turn_token(plugin, person, name, seconds)
 
     def end_turn_token(self, token: str) -> None:
         self.hub.end_turn_token(token)

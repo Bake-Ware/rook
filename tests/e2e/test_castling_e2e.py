@@ -298,11 +298,10 @@ def test_plugins_install_from_the_library_check_roll_back_and_hot_reload(band):
     assert band.worker_calls("core.manifests") == fetches
 
     installs = band.owner.get("/journal?cap=core.plugin.install")["entries"]
-    # each install is the owner's own call, with its why; each push leaves a change record
-    assert [e["ok"] for e in installs] == [False, True, True] and all(e["why"] == WHY for e in installs)
-    changes = band.owner.call("change.list", {"where": {"category": "plugin"}}, worker="rook")["result"]
-    assert [c["outcome"].split(":")[0] for c in changes] == ["not installed", "installed", "installed"], changes
-    assert first["change"] == changes[-1]["id"] and broken["change"] == changes[0]["id"]
+    # each install is the owner's own call, with its why naming the plugin and version
+    assert [e["ok"] for e in installs] == [False, True, True]
+    assert [e["why"] for e in installs] == [f"{WHY} (installs tv 1.2.0 over 1.1.0)",
+                                           f"{WHY} (installs tv 1.1.0 over 1.0.0)", f"{WHY} (installs tv 1.0.0)"]
     chain_holds(band)
 
     # installed plugins load again at start-up, re-checked against plugin.sig

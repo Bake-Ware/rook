@@ -13,7 +13,6 @@ Installing the agents package makes these, each with its skills:
 | Agent | Role | Always on |
 |---|---|---|
 | `house` | Your personal assistant and guardian of the house; knows how and when to reach you | yes |
-| `security` | Triages security events, proposes safer ways | yes |
 
 Any plugin's manifest can ship personas and skills (`personas:`,
 `skills:`). The runtime reads every installed plugin's (`hub.manifests`, at
@@ -36,6 +35,8 @@ go through the house agent.
   (`wait: false` answers at once). It wakes the agent if it sleeps.
 - `agent.chat.read {agent, after}` reads your session with it; pass `next`
   back as `after`.
+- Children and guests may use both: this plugin adds `agent.chat.*` to the
+  `child` and `guest` presets.
 - A direct message to the band's Telegram or Discord bot, once you linked
   your account (`telegram.link`, `discord.link`), goes to the `chat_agent`
   (the house agent by default) in your session with it, as you; the reply
@@ -50,7 +51,7 @@ agent works for you it can do only what both of you may.
 ## Awake and asleep
 
 An agent wakes when addressed and stays warm for `warm` (10 minutes) after
-its last message, then sleeps. Always-on agents (`house`, `security`) never
+its last message, then sleeps. Always-on agents (`house`) never
 sleep on idle. `agent.wake` and `agent.sleep` do it by hand.
 
 ## Notepad, memory and dreams
@@ -81,11 +82,12 @@ playbooks; `agent.skill {name}` reads one.
 ## Backends
 
 Turns go only through the `agent.backend` contract. An agent with backend
-`default` uses the hub's chosen provider; naming one provider's cap
+`default` uses the `backend` setting's provider (the installer sets it;
+blank: the first installed); naming one provider's cap
 (`agents-claude-code.turn`, `agents-codex.turn`, or any plugin that provides
 the contract) pins it there. Each backend has its own System Two and System
 Three models (its `model` and `model_three` settings); an agent's
-`model: {two, three}` overrides them. Settings: `warm`, `turn_timeout`,
+`model: {two, three}` overrides them. Settings: `backend`, `warm`, `turn_timeout`,
 `dream_every`, `chat_agent`.
 
 ## On the hub site

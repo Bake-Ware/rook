@@ -172,8 +172,7 @@ class Band:
         keys = self.hub_dir / "data" / "keys"
         keys.mkdir(parents=True, mode=0o700)
         self.library.mkdir()
-        # plugin pushes and rollouts leave change records when the plugin is there
-        for name in ("changes", *HUB_PORTS):
+        for name in HUB_PORTS:
             (self.library / name).symlink_to(REPO / "rook" / "plugins" / name, target_is_directory=True)
         for name, key in (("root.key", self.root_key), ("op.key", self.op_key)):
             (keys / name).write_text(bytes(key).hex() + "\n")
@@ -188,7 +187,7 @@ class Band:
             "doors": {"http": {"bind": "127.0.0.1:0"}, "mcp": {"bind": "127.0.0.1:0"}},
             "transport": {"bands": band},
             "log": {"level": "info", "format": "json"},
-            "settings": {"hub": {"security": "on"}},     # Tests written for hub.security on (holds, gates, device-code approval); security off has its own tests.
+            "settings": {"hub": {"security": "on"}},     # Tests written for hub.security on (holds); security off has its own tests.
         }, indent=1))
         self.worker_dir.mkdir()
         # No anchor and no band: enrollment (start_worker) writes those.

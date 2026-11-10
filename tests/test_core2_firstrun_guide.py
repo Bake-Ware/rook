@@ -8,9 +8,11 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from rook.core2.hub.doors.web import caps as web_caps
 from rook.core2.hub.doors.web.site import SHELL_CSP
@@ -303,8 +305,60 @@ def test_the_installer_stops_when_claude_code_does_not_answer(tmp_path):
 def test_claude_mode_configures_the_worker_and_the_hub():
     sh = (REPO / "deploy/install/install.sh").read_text()
     assert "none|claude) ;;" in sh                   # option 1 is no longer "coming soon"
-    assert "if [ $AI = claude ]; then BACKEND=agents-claude-code; else BACKEND=agents-opencode; fi" in sh
-    assert 'cfg["contracts"] = {"agent.backend": f"{backend}.turn"}' in sh
+    assert 'if [ -n "$CLAUDE" ]; then BACKEND=agents-claude-code; elif [ -n "$OPENCODE" ]; then BACKEND=agents-opencode; fi' in sh
+    assert "contracts" not in sh                     # hub.yaml names no engine: the agents plugin's setting does
+    assert 'stored.setdefault("agent", {})["backend"] = f"{backend}.turn"' in sh
     assert ('{"agents-claude-code": {"claude": claude, "permission_mode": "auto", "door_url": door}}' in sh
             and 'door = f"http://127.0.0.1:{mcp}/mcp"' in sh)
     assert "curl -fsSL https://claude.ai/install.sh | bash" in sh
+
+
+# -- the level (docs/castling-design.md: "The installer's first question becomes which level you want") --
+
+def _level_plugins(level: str) -> set:
+    """The installer's own list for a level, run against this checkout's plugins."""
+    sh = (REPO / "deploy/install/install.sh").read_text()
+    start = sh.index("HUB_PLUGINS=$(\"$PY\" - \"$plugins\" \"$LEVEL\" <<'EOF'\n")
+    code = sh[sh.index("\n", start) + 1:sh.index("\nEOF\n", start)]
+    out = subprocess.run([sys.executable, "-c", code, str(REPO / "rook/plugins"), level],
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    return set(out.stdout.split())
+
+
+def test_each_level_links_its_packages_plugins_from_their_manifests():
+    package = {}
+    for m in (REPO / "rook/plugins").glob("*/plugin.yaml"):
+        package[m.parent.name] = yaml.safe_load(m.read_text()).get("package")
+    minimal, assistant, team = (_level_plugins(level) for level in ("minimal", "assistant", "team"))
+    assert minimal == {p for p, pkg in package.items() if pkg == "core"} and {"notify", "jobs"} <= minimal
+    assert assistant - minimal == {p for p, pkg in package.items() if pkg == "agents"}
+    assert {"agents", "trust", "agents-claude-code", "agents-opencode"} <= assistant
+    assert team - assistant == {p for p, pkg in package.items() if pkg == "workbench"}
+    assert {"tasks", "projects", "knowledge", "concepts", "whiteboard", "changes"} <= team
+    # device plugins are never a level's: this machine's worker runs shell and file, as before
+    assert not {p for p, pkg in package.items() if pkg == "devices"} & team
+    sh = (REPO / "deploy/install/install.sh").read_text()
+    assert 'WORKER_PLUGINS="shell file $BACKEND"' in sh
+
+
+def _level_step(tmp_path, *args):
+    sh = (REPO / "deploy/install/install.sh").read_text()
+    step = sh[sh.index("# -- 1. Which level?"):sh.index("# -- 2. What do you use for AI now?")]
+    helpers = sh[sh.index("bold() {"):sh.index("SRC=$ROOT/src")] + sh[sh.index("ask() {"):sh.index('bold "Rook"')]
+    script = tmp_path / "level.sh"
+    script.write_text("set -euo pipefail\nLEVEL=${1:-}\n" + helpers + step + ":\nfi\necho LEVEL=$LEVEL\n")
+    return subprocess.run(["setsid", "bash", str(script), *args], capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, timeout=30)
+
+
+def test_the_first_question_is_the_level_and_minimal_asks_no_engine(tmp_path):
+    asked = _level_step(tmp_path)              # no terminal: the default, today's install
+    assert asked.returncode == 0 and "LEVEL=team" in asked.stdout, asked.stderr
+    assert "LEVEL=minimal" in _level_step(tmp_path, "minimal").stdout
+    bad = _level_step(tmp_path, "huge")
+    assert bad.returncode != 0 and "--level is one of minimal, assistant, team" in bad.stderr
+    sh = (REPO / "deploy/install/install.sh").read_text()
+    assert sh.index("Which level do you want?") < sh.index("What do you use for AI now?")
+    engine = sh[sh.index("if [ $LEVEL != minimal ]; then"):sh.index("# -- 4. Rook itself")]
+    assert "What do you use for AI now?" in engine and "Setting up your AI: OpenCode" in engine

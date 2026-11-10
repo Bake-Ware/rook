@@ -19,9 +19,9 @@ settings:
     default: "off"
     where: hub
     doc: >-
-      off: nothing waits on a person. No gate runs and no call is held (each journal entry says
-      security: off) and elevation is not gated. Rights still apply; the vault stays encrypted and
-      secrets stay masked in the journal. on: gates and holds apply.
+      off: nothing waits on a person. No call is held (each journal entry says security: off).
+      Rights still apply; the vault stays encrypted and secrets stay masked in the journal.
+      on: the hard stops hold.
 
 caps:
   status:
@@ -52,7 +52,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-machine
-    effects: [persists]
+    effects: []
     args:
       worker: { type: str, required: true, doc: "The machine's name or id." }
       sacred: { type: bool, default: true, doc: "false: normal again." }
@@ -69,7 +69,7 @@ caps:
     on: hub
     risk: write
     scope: multi-machine
-    effects: [persists]
+    effects: []
     args:
       request: { type: str, required: true, doc: "Its id from hub.joins." }
       refuse: { type: bool, default: false, doc: "true: say no." }
@@ -85,14 +85,14 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       door: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,31}$" }
       open: { type: bool, required: true, doc: "false closes the door, true opens it." }
     result: { type: map }
 
 pages:
-  workers: { title: Workers, file: pages/workers.html, caps: [hub.workers, hub.joins, hub.join], events: ["worker.*", "plugin.*"], nav: { section: Hub } }
+  workers: { title: Workers, file: pages/workers.html, caps: [hub.workers, hub.joins, hub.join], events: ["worker.*"], nav: { section: Hub } }
 
 components:
   workers: { title: Workers, file: components/workers.js, doc: "The band's workers: online or not, last seen.", caps: [hub.workers], props: { only: { type: list, items: { type: str }, doc: "Worker names to show; blank: all." } } }
