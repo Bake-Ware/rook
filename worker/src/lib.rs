@@ -7,6 +7,7 @@ pub mod caps;
 pub mod config;
 pub mod core;
 pub mod drop;
+pub mod enroll;
 pub mod link;
 pub mod manifests;
 pub mod sig;

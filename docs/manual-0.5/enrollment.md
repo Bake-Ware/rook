@@ -7,11 +7,14 @@ needs editing by hand.
 
 ## One tap on the Workers page (any machine)
 
-On the new machine, from a checkout of the `castling` branch:
+On the new machine, with the `rook-worker` binary ([Installing](install.md)):
 
 ```sh
-python -m rook.core2.worker --config worker.yaml enroll https://rook.example --name kaiju
+rook-worker --config worker.yaml enroll https://rook.example --name kaiju
 ```
+
+(The Python worker takes the same arguments: `python -m rook.core2.worker
+--config worker.yaml enroll …`.)
 
 It says `kaiju is waiting for someone to let this machine in on the Workers
 page of hub 1a2b…` and waits. On the hub's **Workers** page the machine
@@ -24,7 +27,7 @@ A request lasts 10 minutes, and one its machine stops asking about goes
 after 30 seconds. Then start the worker:
 
 ```sh
-python -m rook.core2.worker --config worker.yaml
+rook-worker --config worker.yaml
 ```
 
 ## With a one-time code: no tap (an agent, a script, the QR)
@@ -35,7 +38,7 @@ machine, which joins at once:
 
 ```sh
 curl -s -H "Authorization: Bearer $TOKEN" -d '{}' https://rook.example/enroll/code   # or the cap hub.join_code
-python -m rook.core2.worker --config worker.yaml enroll 'rook://enroll?url=…&code=…&hub=…'
+rook-worker --config worker.yaml enroll 'rook://enroll?url=…&code=…&hub=…'
 ```
 
 The QR text also pins the hub's id, so the machine can't be talked into
@@ -53,7 +56,7 @@ signed in.
 ## Finding the hub on the local network
 
 A hub whose config has `enroll: {discover: true}` answers local network
-discovery (mDNS `_rook-hub._tcp`):
+discovery (mDNS `_rook-hub._tcp`). Only the Python worker looks for it:
 
 ```sh
 python -m rook.core2.worker --config worker.yaml enroll --discover
@@ -65,7 +68,9 @@ python -m rook.core2.worker --config worker.yaml enroll --discover
   trusts. On a service install keep it owned by root (or Administrator) so
   the worker can't change it; the worker warns when it can.
 - `<data>/bands.json`: the home band.
-- `<data>/worker.key`: the machine's own key. The worker signs what it asks
+- `<data>/services.json` and `<data>/enrollment.json`: service endpoints
+  the hub hands out, and the hub's address and owner.
+- `<data>/worker.key` (the Python worker only; `rook-worker` sends no key): the machine's own key. The worker signs what it asks
   of a hub with it (sub-calls, elevation), so nobody else on the band can
   ask for those in its name. It never leaves the machine; the
   hub recorded its public half when the machine joined. A
