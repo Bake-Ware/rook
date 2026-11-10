@@ -5,9 +5,7 @@ hub the machine's **home hub** and you its owner, and gives it everything it
 needs (the band, the hub's key, its id) in one go. Nothing on the machine
 needs editing by hand.
 
-Owners and adults may enroll machines; children and guests may not.
-
-## With a code you approve (any machine)
+## One tap on the Workers page (any machine)
 
 On the new machine, from a checkout of the `castling` branch:
 
@@ -15,33 +13,28 @@ On the new machine, from a checkout of the `castling` branch:
 python -m rook.core2.worker --config worker.yaml enroll https://rook.example --name kaiju
 ```
 
-It prints something like `To add kaiju, approve code BCDF-GHJK on hub 1a2b…`
-and waits. Approve the code from a signed-in session (the dashboard has no
-button for it yet, so use the HTTP door with your token):
+It says `kaiju is waiting for someone to let this machine in on the Workers
+page of hub 1a2b…` and waits. On the hub's **Workers** page the machine
+shows under **Wants to join** with the name it gave, the address its request
+came from (and what a proxy in front says) and how long it has waited. Tap
+**Join** to let it in (you own it), or **No**. An agent does the same with
+`hub.joins` and `hub.join {request}` (`refuse: true` says no).
 
-```sh
-H="Authorization: Bearer $TOKEN"
-curl -s -H "$H" https://rook.example/enroll/pending                       # who is waiting
-curl -s -H "$H" -d '{"code":"BCDF-GHJK"}' https://rook.example/enroll/approve
-curl -s -H "$H" -d '{"code":"BCDF-GHJK","decision":"refuse"}' https://rook.example/enroll/approve
-```
-
-Codes last 10 minutes, and a code its machine stops asking about goes
-after 30 seconds. The waiting list shows each machine's `name` (whatever it
-says it is), the `address` its request came from (and what a proxy in front
-says) and its `age` in seconds: approve only the code your machine printed,
-and only when the address and age fit. Then start the worker:
+A request lasts 10 minutes, and one its machine stops asking about goes
+after 30 seconds. Then start the worker:
 
 ```sh
 python -m rook.core2.worker --config worker.yaml
 ```
 
-## With a one-time code (the QR)
+## With a one-time code: no tap (an agent, a script, the QR)
 
-Make a one-time code while signed in, and give its `qr` text to the machine:
+Anyone with a hub token, you or an agent working for you (Claude Code on
+the new machine, say), gets a one-time code and gives its `qr` text to the
+machine, which joins at once:
 
 ```sh
-curl -s -H "$H" -d '{}' https://rook.example/enroll/code
+curl -s -H "Authorization: Bearer $TOKEN" -d '{}' https://rook.example/enroll/code   # or the cap hub.join_code
 python -m rook.core2.worker --config worker.yaml enroll 'rook://enroll?url=…&code=…&hub=…'
 ```
 
@@ -53,9 +46,10 @@ without the pin.
 
 In the Rook Android app, Settings > Band > Rook version: pick **0.5 preview**
 (0.4 stays the default). Then either type the hub's address and tap
-**Sign in**: the phone shows a code to approve, as above. Or scan the hub's
-QR text (`rook://enroll?…`) with the phone's camera: the app opens, names the
-hub and asks before it signs in. Tap **Start worker** once signed in.
+**Sign in**, and tap **Join** for the phone on the Workers page, as above. Or
+scan the hub's QR text (`rook://enroll?…`) with the phone's camera: the app
+opens, names the hub and asks before it signs in. Tap **Start worker** once
+signed in.
 
 ## Finding the hub on the local network
 
@@ -75,7 +69,7 @@ python -m rook.core2.worker --config worker.yaml enroll --discover
 - `<data>/worker.key`: the machine's own key. The worker signs what it asks
   of a hub with it (sub-calls, elevation), so nobody else on the band can
   ask for those in its name. It never leaves the machine; the
-  hub recorded its public half when the person approved the device. A
+  hub recorded its public half when the machine joined. A
   worker that started before it had one makes it on its next start, and
   its hub takes it from the worker's first announce. Lost the file? Enroll
   again (`--force`): the hub refuses a different key for a machine it knows.

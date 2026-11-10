@@ -22,12 +22,11 @@ agent, or an agent for a person).
 
 Enrollment (spec 12; rook.core2.enroll.hub):
 
-    POST /enroll/code     {}  a one-time code and its QR text, for a device to claim
+    POST /enroll/code     {}  a one-time code and its QR text, for a device to claim (also hub.join_code)
     POST /enroll/claim    {code, name}       no token: the device's config bundle, once
-    POST /enroll/device   {name}             no token: a device code to poll and a user code to show
-    POST /enroll/poll     {device_code}      no token: pending, refused, or the bundle (once)
-    GET  /enroll/pending  devices waiting for someone to approve their code
-    POST /enroll/approve  {code, decision?}  approve (or refuse) a device's user code
+    POST /enroll/ask      {name}             no token: ask to join; a ticket to poll with
+    POST /enroll/poll     {ticket}           no token: pending, refused, or the bundle (once)
+                          (someone lets it in on the Workers page: hub.joins, hub.join)
     GET  /recovery-key    owners, in person: the recovery key
     POST /bands/invite    {role?, ceiling?}  owners, in person: an invite to this hub's band
     POST /memberships     {worker, why, invite? | band?, role?, ceiling?}  owners: a worker's other bands
@@ -57,7 +56,7 @@ from .web import Web
 log = logging.getLogger("rook.hub.door.http")
 
 MAX_BODY = 1 << 20
-OPEN = {"/enroll/claim": "claim", "/enroll/device": "device_start", "/enroll/poll": "device_poll"}
+OPEN = {"/enroll/claim": "claim", "/enroll/ask": "ask", "/enroll/poll": "poll"}
 WAIT = 900.0     # longest a request waits for the hub (dispatch has its own timeouts)
 CHUNK = 1 << 20  # a file goes out this much at a time
 
@@ -179,7 +178,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return 200, got[1]
             return 200, _File(got[0], "application/vnd.android.package-archive", "rook-worker.apk")
         if method == "POST" and path in OPEN:      # a device enrolling has no token yet
-            extra = {"address": self._address()} if OPEN[path] == "device_start" else {}
+            extra = {"address": self._address()} if OPEN[path] == "ask" else {}
             return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body(), **extra))
         if path.startswith("/p/"):
             return self._plugin_route(method, url)
@@ -202,8 +201,6 @@ class _Handler(BaseHTTPRequestHandler):
             ("GET", "/holds"): lambda: hub.holds_view(caller),
             ("POST", "/plugins/push"): lambda: hub.push_plugin(caller, body, self.door.name),
             ("POST", "/enroll/code"): lambda: hub.enroll.new_code(caller, self._base()),
-            ("GET", "/enroll/pending"): lambda: hub.enroll.pending(caller),
-            ("POST", "/enroll/approve"): lambda: hub.enroll.approve(caller, body),
             ("GET", "/recovery-key"): lambda: hub.enroll.recovery(caller),
             ("POST", "/bands/invite"): lambda: hub.enroll.invite(caller, body),
             ("POST", "/memberships"): lambda: hub.enroll.membership(caller, body, self.door.name),
