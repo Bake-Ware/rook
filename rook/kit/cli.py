@@ -120,6 +120,7 @@ async def stream(ctx, wid: str, argv: list, *, stdin: str, timeout: str, name: s
                 raise KitError(f"{name} took longer than {timeout}", retry=True)
             await s._more(left)
             data, s.buf = rest + bytes(s.buf), bytearray()
+            s.datagrams.clear()           # kept for UDP; a process's output is read here once
             *done, rest = data.split(b"\n")
             if s.closed and rest:
                 done, rest = [*done, rest], b""
