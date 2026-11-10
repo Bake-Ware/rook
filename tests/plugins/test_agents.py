@@ -16,8 +16,8 @@ from rook.kit.records import RecordStore
 from rook.streams import SqliteStore, Streams
 
 AGENTS = PLUGINS / "agents"
-ROLES = ["archivist", "house", "lead", "pm", "producer", "qa", "security", "writer"]
-OWN = ["house", "security"]                     # the agents package's own; the rest ship with the workbench
+ROLES = ["archivist", "house", "lead", "pm", "producer", "qa", "writer"]
+OWN = ["house"]                     # the agents package's own; the rest ship with the workbench
 WORKBENCH = {"task": "tasks", "knowledge": "knowledge", "concept": "concepts"}    # plugin -> folder
 BAKE = Caller(person="person:bake", band="b1", why="talk to my agents", owner=True)
 GUEST = Caller(person="person:guest", band="b1", why="say hi")
@@ -204,7 +204,7 @@ def test_manifests_are_clean(folder):
 
 
 def test_every_role_has_a_prompt_and_its_skills():
-    """The agents package ships the house agent and security triage; the
+    """The agents package ships the house agent; the
     workbench's plugins ship its team roles (castling-dashboard). Every
     persona's skills exist in some installed manifest."""
     found, skills = {}, {}
@@ -223,7 +223,7 @@ def test_every_role_has_a_prompt_and_its_skills():
     for name, p in found.items():
         assert set(p["skills"]) <= set(skills), name
         assert "consult" in p["skills"] and "notepad" in p["skills"], name
-    assert {n for n, p in found.items() if p.get("always_on")} == {"house", "security"}
+    assert {n for n, p in found.items() if p.get("always_on")} == {"house"}
     assert {skills[s] for s in ("ticket-sweep", "handoff", "verify", "wiki-sweep")} == {"tasks", "knowledge"}
 
 
@@ -249,7 +249,7 @@ def test_install_makes_the_ready_made_roles_and_edits_win(rig):
     async def body():
         listed = rig.rec("agent", "list", order="name")
         assert [a["name"] for a in listed] == ROLES
-        assert {a["name"] for a in listed if a["always_on"]} == {"house", "security"}
+        assert {a["name"] for a in listed if a["always_on"]} == {"house"}
         assert not any(a["awake"] for a in listed)
         pm = rig.agent("pm")
         assert pm["persona"] == "pm" and "keep the work moving" in pm["prompt"] and pm["creator"] == "plugin:agent"
@@ -588,12 +588,12 @@ def test_always_on_agents_wake_with_the_hub(tmp_path):
 
     async def body():
         await rig.start()
-        await rig.call("chat_send", agent="security", text="anything odd?")
+        await rig.call("chat_send", agent="house", text="anything odd?")
         await rig.call("chat_send", agent="qa", text="tests?")
         await rig.stop()
         await rig.start()
         try:
-            assert rig.rt.awake("security") and not rig.rt.awake("qa")
+            assert rig.rt.awake("house") and not rig.rt.awake("qa")
         finally:
             await rig.stop()
     go(body)

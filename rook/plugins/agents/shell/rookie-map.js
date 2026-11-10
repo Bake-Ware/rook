@@ -38,7 +38,6 @@
     ["shell.", "exec"], ["proc.", "exec"], ["job.run", "exec"],
     ["browser.", "websearch"], ["web.", "websearch"], ["http.", "websearch"],
     ["secret.", "locking"], ["vault.", "locking"], ["token.", "locking"], ["trust.", "locking"],
-    ["security.", "locking"],
     ["notify.", "messaging"], ["notification.", "messaging"], ["telegram.", "messaging"],
     ["discord.", "messaging"], ["sms.", "messaging"], ["call.", "messaging"], ["huddle.", "messaging"],
     ["voice.", "messaging"], ["speech.", "messaging"],

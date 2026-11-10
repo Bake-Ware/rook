@@ -71,7 +71,6 @@ symlinks into `rook/plugins/`:
 - `tasks`, `projects`, `knowledge`, `concepts`, `whiteboard`: the workbench
   ([The workbench](workbench.md)).
 - `notify`, `telegram`, `discord`: reaching people.
-- `security`: the gate ([Security plugins](security.md)).
 
 The library also holds worker plugins: the hub pushes them, signed, to the
 workers you choose ([Plugins](plugins.md)).

@@ -117,12 +117,12 @@ def test_agents_on_the_hub(tmp_path):
             # personas (castling-dashboard) are made on the next look.
             # Agents are kit records (drift #31).
             out = await call(hub, owner, "agent.list")
-            assert out["ok"] and {a["name"] for a in out["result"]} >= {"house", "security"}, out
+            assert out["ok"] and {a["name"] for a in out["result"]} >= {"house"}, out
             rt = next(m for m in hub.plugins._modules["agent"].values() if hasattr(m, "_RT"))._RT
             await rt.ready(force=True)
             out = await call(hub, owner, "agent.list")
             assert out["ok"] and sorted(a["name"] for a in out["result"]) == [
-                "archivist", "house", "lead", "pm", "producer", "qa", "security", "writer"], out
+                "archivist", "house", "lead", "pm", "producer", "qa", "writer"], out
             assert not any(a["awake"] for a in out["result"] if a["name"] != "house"), out
             got = next(a for a in out["result"] if a["name"] == "producer")
             assert got["persona"] == "producer" and "assembling a crew" in got["prompt"], got

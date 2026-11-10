@@ -355,7 +355,6 @@ calls in a tainted session, which the security gate watches more closely.
 
 ## Other sections
 
-`gate` (a security check at dispatch, [Security](security.md#writing-a-gate)),
 `contracts`/`provides` (answering a shared cap like `screen.capture` or
 `llm.complete`: declare the cap under the contract's name and list it,
 `provides: [screen.capture]`; a grant on `screen.capture` then covers your

@@ -13,7 +13,6 @@ Installing the agents package makes these, each with its skills:
 | Agent | Role | Always on |
 |---|---|---|
 | `house` | Your personal assistant and guardian of the house; knows how and when to reach you | yes |
-| `security` | Triages security events, proposes safer ways | yes |
 
 Any plugin's manifest can ship personas and skills (`personas:`,
 `skills:`). The runtime reads every installed plugin's (`hub.manifests`, at
@@ -50,7 +49,7 @@ agent works for you it can do only what both of you may.
 ## Awake and asleep
 
 An agent wakes when addressed and stays warm for `warm` (10 minutes) after
-its last message, then sleeps. Always-on agents (`house`, `security`) never
+its last message, then sleeps. Always-on agents (`house`) never
 sleep on idle. `agent.wake` and `agent.sleep` do it by hand.
 
 ## Notepad, memory and dreams

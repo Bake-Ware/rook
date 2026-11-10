@@ -16,8 +16,7 @@ caller's own words: it never grants anything.
 ## What waits for you
 
 **Hard stops** always wait, and only you can release them, from a place
-where you are there yourself: `POST /holds` with your own token. Not an agent acting for you, not the
-security agent, and not a job or plugin acting as you (the
+where you are there yourself: `POST /holds` with your own token. Not an agent acting for you, and not a job or plugin acting as you (the
 `approval.decide` cap never answers a hard stop):
 
 - a cap that erases data for good (`destructive`, or an effect the hub
@@ -48,8 +47,7 @@ and its result is in the journal. Holds don't expire.
 
 When a cap needs administrator rights, the worker asks the hub for a short
 lease inside the same call ([Workers](workers.md#normal-user-elevation-on-request)).
-The hub checks rights and journals it; it does not ask you. Elevation
-should be rare, and the security plugins watch it.
+The hub checks rights and journals it; it does not ask you.
 
 ## For plugin authors
 
