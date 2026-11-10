@@ -14,7 +14,7 @@ PORTS = sorted(p.parent.name for p in PLUGINS.glob("*/plugin.yaml")
 
 
 def test_the_ports_are_there():
-    assert PORTS == ["adb", "battery", "browser", "camera", "cec", "dongle", "file", "hid-desktop", "kvm",
+    assert PORTS == ["adb", "appliance", "battery", "browser", "camera", "cec", "dongle", "file", "hid-desktop", "kvm",
                      "notification-desktop", "screen-desktop", "shell", "torrent", "tv", "tv-roku"]
 
 
@@ -32,9 +32,9 @@ def test_manifest_is_clean(name):
 def test_every_cap_says_risk_scope_and_doc(name):
     m = load(PLUGINS / name, CONTRACTS)
     for cap, spec in m.caps.items():
-        # The browser's page actions reach the internet: external.
+        # The browser's page actions reach the internet, appliance.test a device on the network: external.
         assert spec["doc"] and spec["risk"] and spec["scope"] in (
-            ("local", "external") if name == "browser" else ("local",)), cap
+            ("local", "external") if name in ("browser", "appliance") else ("local",)), cap
         assert ("action" in spec) != ("run" in spec), cap
         if spec["risk"] == "read":
             assert "physical" not in spec.get("effects", ()), cap

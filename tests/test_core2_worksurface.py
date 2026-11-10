@@ -89,6 +89,20 @@ async def bearer(c: Client, token: str, cap: str, **args) -> dict:
     return (await c.json("POST", "/call", {"worker": "rook", "cap": cap, "args": args, "why": WHY}, bearer=token))[1]
 
 
+async def tasks_of(c: Client, tokens: dict) -> list:
+    return (await bearer(c, tokens["bake"], "task.list"))["result"]
+
+
+async def soon(fn, seconds=10.0):
+    """Await ``fn()`` until it gives something truthy (what an on: hook does after the call)."""
+    deadline = time.monotonic() + seconds
+    while not (got := await fn()):
+        if time.monotonic() > deadline:
+            raise AssertionError("condition not met in time")
+        await asyncio.sleep(0.05)
+    return got
+
+
 async def until(pred, seconds=10.0):
     deadline = time.monotonic() + seconds
     while True:
@@ -111,7 +125,7 @@ def test_every_install_combination(tmp_path, combo):
         c = Client(hub)
         await c.sign_in(tokens["bake"])
         s = (await c.call("page.site"))["result"]
-        assert s == {"person": "person:bake", "start": None, "workbench": workbench}
+        assert s == {"person": "person:bake", "start": None}
         # the dock is the agents package's part of the shell: none in core, not even its files
         status, _, shell = await c.req("GET", "/")
         assert status == 200 and (b"/web/plugin/agent/dock" in shell) is agents
@@ -149,23 +163,21 @@ def test_every_install_combination(tmp_path, combo):
         layout = [{"component": "hub/workers"}] + ([{"component": "task/list"}] if workbench else [])
         made = await bearer(c, tokens["bake"], "page.create", name="home", title="Home", layout=layout,
                             note="Bake wants the workers at a glance.")
-        assert made["ok"], made
-        if workbench:
-            task = made["result"]["task"]
-            assert task and "task_error" not in made["result"], made
-            t = await bearer(c, tokens["bake"], "task.get", id=task)
-            assert t["result"]["title"] == "Page: Home" and t["result"]["state"] == "in_progress"
-            assert t["result"]["assignee"] == "person:bake"
-            assert [(x["kind"], x["ref"], x["relation"]) for x in t["result"]["links"]] == \
-                [("page", "page/home", "produced")]
-            assert (await c.call("page.get", {"page": "page/home"}))["result"]["made_by"]["task"] == task
+        assert made["ok"] and made["result"] == {"page": "page/home"}, made     # tasks are not core
+        if workbench:                  # the workbench hears page.created and makes the build task
+            tasks = await soon(lambda: tasks_of(c, tokens))
+            t = tasks[0]
+            assert len(tasks) == 1 and t["title"] == "Page: Home" and t["state"] == "in_progress"
+            assert t["assignee"] == "person:bake"
+            assert [(x["kind"], x["ref"], x["relation"]) for x in t["links"]] == [("page", "page/home", "produced")]
             # every later change is noted on the build record
             assert (await bearer(c, tokens["bake"], "page.update", page="page/home", change="Narrowed it.",
                                  layout=[{"component": "hub/workers"}]))["ok"]
-            notes = await bearer(c, tokens["bake"], "task.comment.list", where={"task": task})
-            assert [n["text"] for n in notes["result"]] == ["Changed the page page/home: Narrowed it."]
-        else:
-            assert made["result"] == {"page": "page/home"}           # tasks are not core
+
+            async def noted():
+                got = await bearer(c, tokens["bake"], "task.comment.list", where={"task": t["id"]})
+                return [n["text"] for n in got["result"]]
+            assert await soon(noted) == ["Changed the page page/home: Narrowed it."]
 
         # past page.*, the shell calls only what plugins' shell parts declare (the dock's chat)
         status, out = await c.json("POST", "/web/api/call", {"cap": "agent.chat.read", "args": {"agent": "house"}})
@@ -303,12 +315,14 @@ def test_the_house_agent_builds_and_archives_a_page_from_the_dock(tmp_path):
         assert (await c.call("agent.chat.read", {"agent": "house"}))["result"]["events"] == []   # first run
         assert "How do you want to use the site?" in await say("[site] First visit to the hub site. Ask me.")
         reply = await say("[site] The person is on the page hub/workers (Workers).\nmake a page uptime")
-        assert reply.startswith("Made page/uptime (task r_")
+        assert reply.startswith("Made page/uptime")
         s = (await c.call("page.site"))["result"]
         assert s["start"] == "page/uptime"
         page = (await c.call("page.get", {"page": "page/uptime"}))["result"]
         assert page["made_by"]["authors"] == [{"person": "person:bake", "agent": "agent:house"}]   # the agent, for bake
-        assert page["made_by"]["task"] and "asked for a uptime page" in page["note"]
+        assert "asked for a uptime page" in page["note"]
+        task = (await soon(lambda: tasks_of(c, tokens)))[0]
+        assert task["links"][0]["ref"] == "page/uptime" and task["state"] == "in_progress"
         assert set(page["caps"]) == {"hub.workers", "task.list"}
         t = (await c.open("page/uptime"))["token"]
         assert (await c.page(t, "task.list", {"limit": 5}))["ok"]

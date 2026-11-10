@@ -5,9 +5,9 @@ through the one approval path: the question waits beside the held calls
 (``approval.list``, ``GET /holds``) and is answered with
 ``approval.decide {hold, answer}``. No call is attached, so nothing runs on
 an answer: the answer goes back to the asker (its waiting ``approval.ask``,
-or ``approval.get`` later). ``approval.asked`` lets the house agent (with the
-agents package) get it to the person the way that fits; core alone leaves it
-in ``approval.list``. Like holds, questions don't expire and are kept in
+or ``approval.get`` later). ``approval.asked`` lets a plugin that hears it get
+it to the person the way that fits; without one it waits in
+``approval.list``. Like holds, questions don't expire and are kept in
 memory (a hub restart drops them).
 
 Who answers: the person it was asked for (an agent acting for them relays

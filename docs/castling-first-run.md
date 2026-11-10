@@ -16,13 +16,19 @@ curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/c12/first-run/deploy
 
 or `deploy/install/install.sh` from a checkout (installs that checkout's
 commit). Options: `--dir` (default `~/.rook`), `--name` (unit prefix, default
-`rook`), `--http-port 8740`, `--mcp-port 8741`, `--relay-port 7474`, `--ai`,
+`rook`), `--http-port 8740`, `--mcp-port 8741`, `--relay-port 7474`, `--level`, `--ai`,
 `--no-boot`, `--no-browser`; `--open` makes a new sign-in link,
 `--uninstall` stops it and moves the folder aside.
 
 What it does:
 
-1. Asks what you use for AI now. "Claude Code" (1, `--ai claude`) and
+1. Asks which level (`--level`): minimal (the plugins whose manifest says
+   `package: core`), assistant (plus `package: agents`) or team (plus
+   `package: workbench`, the default). Those plugin folders are linked into
+   the hub's library; this machine's worker runs `shell` and `file` (device
+   plugins) and, with agents, the engine. Minimal skips the next two steps
+   and the house agent.
+   Then, with agents, what you use for AI now. "Claude Code" (1, `--ai claude`) and
    "none" (6) are built: the others say "coming soon" and fall back to none.
 2. Claude Code (Bake, Nov 9: "start it in claude code mode"): uses the
    `claude` CLI already on the machine, or installs it with the official
@@ -47,7 +53,7 @@ What it does:
    units; enabled at login unless `--no-boot`). The worker runs `shell`,
    `file` and the backend: `agents-claude-code` (`claude` = the tested
    path, `permission_mode: auto`, `door_url` = this hub's MCP door; the
-   hub's `agent.backend` contract is `agents-claude-code.turn`) or
+   agents plugin's `backend` setting is `agents-claude-code.turn`) or
    `agents-opencode` with the tested model (its own tools on); security is
    off. The site, MCP door and relay listen on every interface
    (0.0.0.0).

@@ -28,7 +28,7 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
         made = await ctx.call("page.create", name=name, title=name.title(), layout=layout,
                               note=f"The person asked for a {name} page in the site's dock.")
         await ctx.call("page.start", page=made["page"])
-        return {"text": f"Made {made['page']} (task {made.get('task')}) and made it your start page.",
+        return {"text": f"Made {made['page']} and made it your start page.",
                 "session": "s1"}
     if said.startswith("archive ") and len(words) == 2:
         await ctx.call("page.archive", page=words[1], reason="The person is done with it.")

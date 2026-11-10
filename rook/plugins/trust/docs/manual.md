@@ -7,7 +7,7 @@ in the agents package: put `trust` in the hub's library.
 | Cap | What it does |
 |---|---|
 | `trust.map` | Everything in one read: `security` (`off`/`on`), `hard_stops`, `machines` (each with `level` sacred or normal), `projects` (each with its `trust.level`; normal when it has none), `agents` (each with its `grants`), `waiting` (calls held for a person), `summary` (what agents are told, in plain words) and `history` (recent trust changes from the journal). A plugin that isn't installed (projects, agents) is listed in `missing`. |
-| `trust.level.list`, `get`, `create`, `update` | A project's trust level, one record per project (`project` is its id): `sacred` = a full change record and the owner signs off; `normal` = a full record, then it proceeds; `ship-it` = a one-line note. No record means `normal`. Creating and changing one is admin, so an agent allowed to edit a project can't loosen it. Tasks, github and changes read it; without this plugin every project is `normal`. |
+| `trust.level.list`, `get`, `create`, `update` | A project's trust level, one record per project (`project` is its id): it decides who signs off before a task's work lands: `sacred` = a reviewer and the owner; `normal` = one reviewer other than the author; `ship-it` = nobody. No record means `normal`. Creating and changing one is admin, so an agent allowed to edit a project can't loosen it. Tasks and github read it; without this plugin every project is `normal`. |
 
 The **Trust map** page (sidebar, Trust) shows the map and changes it:
 

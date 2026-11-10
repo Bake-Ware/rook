@@ -24,7 +24,7 @@ caps:
   ask:
     doc: >-
       Ask the person a question and wait (up to wait seconds) for the answer. It waits beside the held
-      calls (approval.list) and, with the agents package, the house agent gets it to them the way that fits.
+      calls (approval.list); a plugin hearing approval.asked may get it to them the way that fits.
       Nothing runs on the answer: it comes back to you, now or later with approval.get. Asked of the
       person you act for; with nobody behind you, of the owners. Questions don't expire.
     on: hub

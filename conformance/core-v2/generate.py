@@ -515,7 +515,8 @@ def gen_rights() -> dict:
 PRESET_CASES = [
     ("owner: anything", "owner", [], [], call("shell.exec", "admin", ["destructive"]), {"ok": True}),
     ("adult: admin allowed", "adult", [], [], call("core.trust.set", "admin", ["persists"]), {"ok": True}),
-    ("child: chat", "child", [], [], call("agent.chat.send", "write"), {"ok": True}),
+    ("child: chat, as the agents plugin adds it", "child", {"agent": ["agent.chat.*"]}, [],
+     call("agent.chat.send", "write"), {"ok": True}),
     ("child: page view", "child", [], [], call("page.view"), {"ok": True}),
     ("child: shell not granted", "child", [], [], call("shell.exec", "exec"), {"ok": False, "reason": "grants"}),
     ("child: plugin adds a read cap", "child", {"homework": ["homework.item.list"]}, [], call("homework.item.list"),
@@ -528,7 +529,10 @@ PRESET_CASES = [
      call("lights.set", "write", ["physical"]), {"ok": False, "reason": "effects"}),
     ("child: personal data refused", "child", {"phone": ["phone.*"]}, [], call("phone.sms.list", "read", ["personal"]),
      {"ok": False, "reason": "effects"}),
-    ("guest: chat", "guest", [], [], call("agent.chat.send", "write"), {"ok": True}),
+    ("guest: chat, as the agents plugin adds it", "guest", {"agent": ["agent.chat.*"]}, [],
+     call("agent.chat.send", "write"), {"ok": True}),
+    ("guest: nothing without a plugin", "guest", [], [], call("agent.chat.send", "write"),
+     {"ok": False, "reason": "grants"}),
     ("guest: pages not in preset", "guest", [], [], call("page.view"), {"ok": False, "reason": "grants"}),
     ("guest: owner grant within ceilings", "guest", [], ["music.play"], call("music.play", "write"), {"ok": True}),
 ]

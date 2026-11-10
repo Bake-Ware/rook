@@ -22,8 +22,8 @@ HARD_STOP_EFFECTS = ("destructive", "sends_as", "spends")
 PRESETS = {
     "owner": {"grants": ["*"]},
     "adult": {"grants": ["*"], "max_risk": "admin"},
-    "child": {"grants": ["agent.chat.*", "page.view"], "max_risk": "write", "effects": []},
-    "guest": {"grants": ["agent.chat.*"], "max_risk": "write", "effects": [], "expires": "7d"},
+    "child": {"grants": ["page.view"], "max_risk": "write", "effects": []},
+    "guest": {"grants": [], "max_risk": "write", "effects": [], "expires": "7d"},
 }
 
 VERDICTS = ("allow", "flag", "block")

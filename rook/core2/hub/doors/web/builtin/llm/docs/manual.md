@@ -17,6 +17,4 @@ contracts:
   llm.complete: llm-cli.complete
 ```
 
-With one provider installed, it is the one. Agents think through their own
-backend (`agent.backend`, for example `agents-claude-code`), not through
-`llm.complete`.
+With one provider installed, it is the one.
