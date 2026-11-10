@@ -70,7 +70,13 @@ pub fn tcp(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, mut a
         "net.open",
         participants,
         attrs,
-        Box::new(TlsRead(conn, sock)),
+        Box::new(TlsRead {
+            conn,
+            sock,
+            raw: vec![0; 16 * 1024],
+            fed: 0,
+            got: 0,
+        }),
         Box::new(writer),
     ))
 }
@@ -78,25 +84,39 @@ pub fn tcp(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, mut a
 /// One TLS session shared by the stream's reader and writer threads. Each
 /// waits on the socket without the lock and holds it only to decrypt or
 /// encrypt in memory, so neither can keep the other waiting.
-struct TlsRead(Arc<Mutex<ClientConnection>>, TcpStream);
+struct TlsRead {
+    conn: Arc<Mutex<ClientConnection>>,
+    sock: TcpStream,
+    raw: Vec<u8>,
+    fed: usize, // raw[fed..got] came from the socket and is not yet in rustls
+    got: usize,
+}
 struct TlsWrite(Arc<Mutex<ClientConnection>>, TcpStream);
 
 impl Read for TlsRead {
+    /// Like rustls's own stream: plaintext out before more ciphertext in, so
+    /// its plaintext buffer never overfills.
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut raw = [0u8; 16 * 1024];
         loop {
-            match self.0.lock().unwrap().reader().read(buf) {
-                Err(e) if e.kind() == ErrorKind::WouldBlock => {}
-                done => return done,
-            }
-            let n = self.1.read(&mut raw)?; // 0 at the end: rustls then says whether it was a clean close
-            let (mut rest, mut conn) = (&raw[..n], self.0.lock().unwrap());
-            loop {
-                conn.read_tls(&mut rest)?;
-                conn.process_new_packets().map_err(std::io::Error::other)?;
-                if rest.is_empty() {
-                    break;
+            {
+                let mut conn = self.conn.lock().unwrap();
+                match conn.reader().read(buf) {
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                    done => return done,
                 }
+                if self.fed < self.got {
+                    let n = conn.read_tls(&mut &self.raw[self.fed..self.got])?;
+                    conn.process_new_packets().map_err(std::io::Error::other)?;
+                    // 0: rustls has its close_notify and takes no more; what is left is dropped
+                    self.fed = if n == 0 { self.got } else { self.fed + n };
+                    continue;
+                }
+            }
+            let n = self.sock.read(&mut self.raw)?;
+            (self.fed, self.got) = (0, n);
+            if n == 0 {
+                // the end: the next turn says whether it was a clean close
+                self.conn.lock().unwrap().read_tls(&mut &[][..])?;
             }
         }
     }
@@ -329,6 +349,7 @@ fn pump(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
     use rustls::pki_types::pem::PemObject;
     use rustls::pki_types::PrivateKeyDer;
     use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -354,8 +375,8 @@ YzzfK8SfubBIb0y1ZFn7UZM8v3ChRANCAASP1rBX+K1gMttml/MJsFeHvmdLQ5a9
 itxigdwZjdVXzFqg4qTYM6wCPFnrWkloa/1LZf/qxxFMkx4GJsmQ5LgB
 -----END PRIVATE KEY-----";
 
-    /// A TLS echo server for one connection: each line comes back.
-    fn echo() -> u16 {
+    /// A TLS server for one connection: `serve` runs once the handshake is done.
+    fn server(serve: impl FnOnce(StreamOwned<ServerConnection, TcpStream>) + Send + 'static) -> u16 {
         let cert = CertificateDer::from_pem_slice(CERT.as_bytes()).unwrap();
         let key = PrivateKeyDer::from_pem_slice(KEY.as_bytes()).unwrap();
         let config = ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
@@ -367,46 +388,111 @@ itxigdwZjdVXzFqg4qTYM6wCPFnrWkloa/1LZf/qxxFMkx4GJsmQ5LgB
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
-            let (sock, _) = listener.accept().unwrap();
-            let conn = ServerConnection::new(Arc::new(config)).unwrap();
-            let mut tls = BufReader::new(StreamOwned::new(conn, sock));
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut conn = ServerConnection::new(Arc::new(config)).unwrap();
+            while conn.is_handshaking() {
+                conn.complete_io(&mut sock).unwrap();
+            }
+            serve(StreamOwned::new(conn, sock));
+        });
+        port
+    }
+
+    fn open(port: u16) -> (Arc<Streams>, String) {
+        let streams = Streams::new(Box::new(|_, _| {}));
+        let a = json!({"host": "127.0.0.1", "port": port, "tls": true, "verify": false});
+        let out = tcp(Args(a.as_object().unwrap()), &streams, vec![], Map::new()).unwrap();
+        (streams, out["stream"].as_str().unwrap().to_string())
+    }
+
+    /// What arrives on the stream after `*next`, until `done` says enough or
+    /// the stream closes; the closing status if it did.
+    async fn take(
+        streams: &Streams,
+        sid: &str,
+        next: &mut u64,
+        done: impl Fn(&[u8]) -> bool,
+    ) -> (Vec<u8>, Option<Value>) {
+        let mut got = vec![];
+        while !done(&got) {
+            let q = json!({"stream": sid, "after": *next, "wait": 5});
+            let out = streams.read(Args(q.as_object().unwrap())).await.unwrap();
+            assert_eq!(out["dropped"], 0);
+            let events = out["events"].as_array().unwrap();
+            assert!(!events.is_empty(), "nothing in 5 s; got {} bytes", got.len());
+            *next = out["next"].as_u64().unwrap();
+            for e in events {
+                if e["type"] == "bytes" {
+                    let b = base64::engine::general_purpose::STANDARD.decode(e["b64"].as_str().unwrap());
+                    got.extend(b.unwrap());
+                } else if e["data"]["state"] == "closed" {
+                    return (got, Some(e["data"].clone()));
+                }
+            }
+        }
+        (got, None)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_write_on_a_tls_stream_goes_out_while_the_reader_waits() {
+        let (streams, sid) = open(server(|tls| {
+            let mut tls = BufReader::new(tls);
             let mut line = String::new();
             while tls.read_line(&mut line).unwrap_or(0) > 0 {
                 tls.get_mut().write_all(line.as_bytes()).unwrap();
                 tls.get_mut().flush().unwrap();
                 line.clear();
             }
-        });
-        port
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_write_on_a_tls_stream_goes_out_while_the_reader_waits() {
-        let streams = Streams::new(Box::new(|_, _| {}));
-        let a = json!({"host": "127.0.0.1", "port": echo(), "tls": true, "verify": false});
-        let sid = tcp(Args(a.as_object().unwrap()), &streams, vec![], Map::new()).unwrap()["stream"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        let mut next = 0;
+        }));
+        let (mut next, mut fastest) = (0, Duration::MAX);
         for i in 0..10 {
             let start = Instant::now();
             let body = json!({"stream": sid, "body": {"text": format!("ping {i}\n")}});
             streams.write(Args(body.as_object().unwrap()), "me").unwrap();
-            let mut got = String::new();
-            while !got.ends_with('\n') {
-                let q = json!({"stream": sid, "after": next, "types": ["bytes"], "wait": 5});
-                let out = streams.read(Args(q.as_object().unwrap())).await.unwrap();
-                next = out["next"].as_u64().unwrap();
-                for e in out["events"].as_array().unwrap() {
-                    let b =
-                        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, e["b64"].as_str().unwrap());
-                    got.push_str(&String::from_utf8(b.unwrap()).unwrap());
-                }
-            }
-            assert_eq!(got, format!("ping {i}\n"));
-            // The reader sits in a read the whole time; the write must not wait for it to give up.
-            assert!(start.elapsed() < POLL / 2, "ping {i} took {:?}", start.elapsed());
+            let (got, _) = take(&streams, &sid, &mut next, |g| g.ends_with(b"\n")).await;
+            assert_eq!(got, format!("ping {i}\n").into_bytes());
+            fastest = fastest.min(start.elapsed());
         }
+        // The reader sits in a read the whole time; a write that waited for it would take most of a POLL.
+        assert!(fastest < POLL / 2, "the fastest ping took {fastest:?}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_download_in_odd_sized_records_arrives_whole_and_closes_cleanly() {
+        let blob: Vec<u8> = (0..240_000u32).map(|i| (i % 251) as u8).collect();
+        let sent = blob.clone();
+        let (streams, sid) = open(server(move |tls| {
+            let mut tls = BufReader::new(tls);
+            tls.read_line(&mut String::new()).unwrap();
+            let tls = tls.get_mut();
+            for chunk in sent.chunks(10_000) {
+                tls.write_all(chunk).unwrap();
+                tls.flush().unwrap();
+            }
+            // close_notify, then stray bytes in the same segment, then the end
+            tls.conn.send_close_notify();
+            let mut out = vec![];
+            while tls.conn.wants_write() {
+                tls.conn.write_tls(&mut out).unwrap();
+            }
+            out.extend([b'x'; 5000]);
+            tls.sock.write_all(&out).unwrap();
+        }));
+        let body = json!({"stream": sid, "body": {"text": "GET\n"}});
+        streams.write(Args(body.as_object().unwrap()), "me").unwrap();
+        let (got, closed) = take(&streams, &sid, &mut 0, |_| false).await;
+        assert_eq!(closed, Some(json!({"state": "closed"})));
+        assert!(got == blob, "{} of {} bytes", got.len(), blob.len());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_server_that_speaks_first_is_heard() {
+        let (streams, sid) = open(server(|mut tls| {
+            tls.write_all(b"hello\n").unwrap();
+            tls.flush().unwrap();
+            tls.read_exact(&mut [0]).ok(); // stay open until the client goes
+        }));
+        let (got, _) = take(&streams, &sid, &mut 0, |g| g.ends_with(b"\n")).await;
+        assert_eq!(got, b"hello\n");
     }
 }
