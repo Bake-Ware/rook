@@ -1,5 +1,5 @@
 """camera.list: what each OS calls its cameras. Processes start through the
-worker's launch path (spec 7.1)."""
+worker's launch path (spec 10.9)."""
 
 from __future__ import annotations
 

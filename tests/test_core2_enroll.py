@@ -1,4 +1,4 @@
-"""Enrollment (rook/core2/enroll; spec 12): a hub started in-process with a
+"""Enrollment (rook/core2/enroll; spec 8): a hub started in-process with a
 loopback band, the device side talking to its HTTP door, local network
 discovery on a loopback port, the hub's ``init`` and ``recovery-key``.
 
@@ -113,7 +113,7 @@ def test_a_qr_code_enrolls_a_device_once_and_install_writes_what_the_worker_read
     assert bundle["owner"] == "person:bake" and bundle["name"] == "laptop" and bundle["core"] == "2.0"
     assert again == {"ok": False, "error": "unknown or expired code"}         # one use
     assert enrolled[bundle["worker_id"]]["owner"] == "person:bake"
-    assert enrolled[bundle["worker_id"]]["key"] == wire.pub_text(sk)            # the hub pins it (5.8)
+    assert enrolled[bundle["worker_id"]]["key"] == wire.pub_text(sk)            # the hub pins it (10.2)
     assert entries[0]["key"] == wire.key_id(wire.pub_text(sk))
     assert entries[0]["worker"] == bundle["worker_id"] and entries[0]["person"] == "person:bake"
 
@@ -145,7 +145,7 @@ def test_a_qr_code_enrolls_a_device_once_and_install_writes_what_the_worker_read
         device.install(cfg_path, bundle, "http://hub")
     (cfg_path.parent / "data" / "memberships.json").write_text("{}")
     device.install(cfg_path, {**bundle, "worker_id": "a" * 32}, "http://hub", force=True)
-    assert not (cfg_path.parent / "data" / "memberships.json").exists()     # re-anchoring drops them (9.5)
+    assert not (cfg_path.parent / "data" / "memberships.json").exists()     # re-anchoring drops them (10.10)
     assert yaml.safe_load(cfg_path.read_text())["worker_id"] == "a" * 32
 
 

@@ -1,7 +1,7 @@
 # Appliances (worker side)
 
 An appliance (a TV, a lamp, a printer) runs no worker: a delegate worker on
-its network carries its calls (spec 5.7). Its caps come from a plugin with an
+its network carries its calls (spec 10.8). Its caps come from a plugin with an
 `appliance:` section, usually a config plugin (YAML, no code). This plugin is
 the worker's part in adding one.
 

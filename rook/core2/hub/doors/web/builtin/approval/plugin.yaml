@@ -1,4 +1,4 @@
-# Calls waiting for a person (spec 10.3) and questions for them (castling-caps C4:
+# Calls waiting for a person (spec 6.4) and questions for them (castling-caps C4:
 # approval.ask).
 # Implemented by the hub (rook.core2.hub.doors.web.caps).
 manifest: 1

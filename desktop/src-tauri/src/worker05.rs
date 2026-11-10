@@ -6,11 +6,11 @@
 //! folder (`<config>/worker05/worker.yaml`), so it never touches a worker
 //! installed some other way.
 //!
-//! **Adding this computer** is 0.5 enrollment (spec 12) with a one-time
+//! **Adding this computer** is 0.5 enrollment (spec 8) with a one-time
 //! code: the app, signed in as the person who clicked "Add", gets one with
 //! their token (`POST /enroll/code`) and hands it to the worker's own
 //! `enroll`, which gets its config bundle and writes its anchor and home
-//! band. The person owns the machine (spec 9.1).
+//! band. The person owns the machine (spec 8).
 //!
 //! The worker loads the desktop plugins from the Rook it runs with
 //! (`DESKTOP_PLUGINS`); what this machine can't serve it lists as

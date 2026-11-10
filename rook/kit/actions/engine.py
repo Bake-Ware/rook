@@ -51,7 +51,7 @@ async def run_action(action: Mapping, args: Mapping | None = None, *,
     parsed output is coerced to. Raises ``ActionError`` (``Unavailable`` when
     the action can't run on this worker); messages are redacted. ``launch``
     starts an ``exec`` process (``launch(argv, **subprocess kwargs)``): on a
-    worker, core's launch path with the call's lease (spec 7.1).
+    worker, core's launch path with the call's lease (spec 10.9).
     """
     kinds = [k for k in action if k not in ACTION_KEYS]
     if not kinds:

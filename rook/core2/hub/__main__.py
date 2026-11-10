@@ -30,7 +30,7 @@ tokens are for agents and apps. ``backup`` makes a sealed backup (rook.core2.hub
 while the hub runs or not; ``restore`` rebuilds a hub on a fresh machine from
 one, asking for the recovery key, and writes ``--config`` with ``data/`` and
 ``library/`` beside it. Devices then enroll with ``python -m rook.core2.worker
---config worker.yaml enroll`` (spec 12).
+--config worker.yaml enroll`` (spec 8).
 
 A config (paths are relative to the file)::
 

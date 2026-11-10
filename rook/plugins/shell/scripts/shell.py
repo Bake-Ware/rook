@@ -1,7 +1,7 @@
 """shell: run commands, look at the environment, and open live terminals.
 
 Every process starts through the worker's launch path
-(rook.core2.worker.security.launch, spec 7.1): as the worker's normal user,
+(rook.core2.worker.security.launch, spec 10.9): as the worker's normal user,
 or elevated when the call holds a lease. Nothing here may start a process
 any other way.
 

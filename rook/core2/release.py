@@ -8,7 +8,7 @@ copy.
 
 A release is ``rook-core-<version>.tar.gz`` holding ``release.sig`` and the
 files of the ``rook/`` package (no caches, no symlinks). ``release.sig`` is a
-``rook-release`` signed object (spec 13): ``hub``, ``version``, ``core`` (the
+``rook-release`` signed object (spec 10.7): ``hub``, ``version``, ``core`` (the
 protocol version the code speaks), ``files`` (posix path -> hex SHA-256 of
 every file but ``release.sig``), ``requires`` (the PEP 508 requirements from
 the source's pyproject, which a worker installs before it switches) and

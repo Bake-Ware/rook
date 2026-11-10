@@ -71,7 +71,7 @@ def test_yaml_plugin_calls_and_aliases():
 
 @needs_echo
 def test_action_processes_go_through_core_launch(monkeypatch):
-    # spec 7.1: a root worker with no normal account refuses to launch, actions included
+    # spec 10.9: a root worker with no normal account refuses to launch, actions included
     from rook.core2.worker import security
 
     def refuse(argv, lease, **kw):
@@ -547,7 +547,7 @@ def test_load_folder_skips_hub_caps_and_refuses_builtin(tmp_path):
         load_folder(b, os_name="linux")
 
 
-# -- appliances (spec 5.7) --------------------------------------------------------
+# -- appliances (spec 10.8) --------------------------------------------------------
 
 LAMP_YAML = """\
 manifest: 1

@@ -180,7 +180,7 @@ class FakeWorker:
 
     def __init__(self, hub: Hub, band: Loopback, tmp: Path, core: str = "2.0", extra: dict | None = None):
         self.hub, self.core = hub, core
-        self.key = SigningKey.generate()    # its own key: signs its core.call / core.elevate (13.1)
+        self.key = SigningKey.generate()    # its own key: signs its core.call / core.elevate (10.2)
         folder = plugin(tmp, "echo", ECHO, {"echo.py": "def say(ctx, text): return text\n"})
         self.echo_raw, _ = check(folder)
         self.core_raw, _ = check(CORE)
@@ -433,7 +433,7 @@ def test_ending_a_session_drops_its_leases_on_the_worker(hubs):
 
 def test_a_sessions_project_is_a_name(hubs, tmp_path):
     # The hub stamps a session's project on its entries and lets the
-    # session's agent read that project's history (11.4); it knows nothing
+    # session's agent read that project's history (7.4); it knows nothing
     # else about projects.
     async def go():
         hub, _, token = await hubs(config(tmp_path), worker=False)
@@ -562,7 +562,7 @@ def test_hub_plugins_records_contracts_and_hooks(hubs, tmp_path):
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notify.send",
                                                        "args": {"text": "eggs"}, "why": WHY}, token)
             assert out["ok"], out
-            # A session for notify.send alone still reaches its provider (spec 8.2).
+            # A session for notify.send alone still reaches its provider (spec 6.2).
             _, s = await http(hub, "POST", "/session", {"caps": ["notify.send"]}, token)
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notify.send", "session": s["session"],
                                                        "args": {"text": "jam"}, "why": WHY}, token)

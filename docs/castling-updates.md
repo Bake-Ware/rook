@@ -61,7 +61,7 @@ release holds what an installed wheel does. From a git checkout only tracked
 and not-ignored files go in (no gitignored model files or local data); no
 caches, no symlinks. About 6 MB.
 
-`release.sig` is a `rook-release` signed object (spec 3.3 and 13): `hub`,
+`release.sig` is a `rook-release` signed object (spec 10.1 and 10.7): `hub`,
 `version`, `core` (the protocol version the code speaks), `files` (path →
 SHA-256), `requires` (the pyproject's dependencies) and `iat`, signed with
 the hub's operational key. Unlike `plugin.sig` it names no worker: one

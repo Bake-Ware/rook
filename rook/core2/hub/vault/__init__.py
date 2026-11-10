@@ -310,7 +310,7 @@ def _hidden(args: Any, arg_specs: Any) -> set:
 
 
 def journal_args(args: Any, arg_specs: Any) -> Any:
-    """``args`` as the journal keeps them (spec 11.1): an argument the cap
+    """``args`` as the journal keeps them (spec 7.1): an argument the cap
     declares ``type: secret`` that holds a value (not a reference) becomes
     ``[redacted]``."""
     hidden = _hidden(args, arg_specs)

@@ -1,7 +1,7 @@
 """tv (LG webOS) against a fake SSAP websocket server on 127.0.0.1.
 
 TODO(castling:worker-host): the host can't run appliance caps yet (no
-instance values reach Host.call or ctx; spec 5.7), so ``call`` below does
+instance values reach Host.call or ctx; spec 10.8), so ``call`` below does
 what it will: the loader's bound cap, the host's arg check, defaults and
 ``bind``, then the script with ``ctx.appliance`` set. Switch to host.call
 once it takes an appliance.

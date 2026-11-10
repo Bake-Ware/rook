@@ -117,12 +117,12 @@ def test_every_message_kind_round_trips_on_loopback():
     async def main():
         relay, hub, worker = await pair(beat=lambda b: heartbeat(), every=0.05)
 
-        # announces both ways (5.3, 5.4); the signed hub announce still verifies
+        # announces both ways (4.2, 10.3); the signed hub announce still verifies
         got = hub.kinds("announce")[0]
         assert got == worker_announce()
         assert worker.t.peers(BAND)[HUB].name == "rook"
         assert wire.verify_sig(wire.pub_text(OP), worker.kinds("announce")[0])
-        # heartbeats (5.5)
+        # heartbeats (4.3)
         await until(lambda: len(hub.kinds("heartbeat")) >= 2)
         assert hub.kinds("heartbeat")[0] == heartbeat()
 
@@ -136,7 +136,7 @@ def test_every_message_kind_round_trips_on_loopback():
             return {"id": msg["id"], "from": WORKER, "ok": False, "error": f"unknown capability: {msg['cap']}"}
         worker.serve = serve
 
-        # a call with its ticket, and its result (6.1, 6.2, 6.4)
+        # a call with its ticket, and its result (5.1, 10.1, 5.2)
         call = request("shell.exec", {"argv": ["uptime"]})
         await hub.t.send(BAND, call)
         await until(lambda: hub.reply(call["id"]))
@@ -163,7 +163,7 @@ def test_every_message_kind_round_trips_on_loopback():
         pushed = next(m for _, m in worker.got if m.get("id") == push["id"])
         assert wire.verify_sig(wire.pub_text(OP), pushed["args"]["membership"])
 
-        # elevation: the worker asks the hub inside the call, the hub answers with a lease (7.2, 13)
+        # elevation: the worker asks the hub inside the call, the hub answers with a lease (10.9, 9)
         lease = wire.sign(OP, {"typ": "rook-lease", "v": 2, "id": "ee" * 16, "hub": "ab" * 8, "band": BAND,
                                "worker": WORKER, "agent": "agent:test", "session": "s_1",
                                "iat": NOW, "exp": NOW + 900})
@@ -251,7 +251,7 @@ def test_requests_to_an_incompatible_peer_are_refused():
         with pytest.raises(TransportError, match="incompatible"):
             await hub.t.send(BAND, request("shell.exec", {}, target=OTHER))
         await hub.t.send(BAND, request("shell.exec", {}, target=WORKER))
-        # an unknown node is not refused (5.6: stored status is only a hint)
+        # an unknown node is not refused (4.3: stored status is only a hint)
         await hub.t.send(BAND, request("shell.exec", {}, target="dd" * 16))
         for n in (hub, old, newer):
             await n.t.close()

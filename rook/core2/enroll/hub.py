@@ -1,4 +1,4 @@
-"""The hub's side of enrollment (spec 3.5). The HTTP door calls these; each
+"""The hub's side of enrollment (spec 8). The HTTP door calls these; each
 returns a JSON-able dict with ``ok``.
 
 Signing a device in, two ways, both ending in the same config bundle:
@@ -15,7 +15,7 @@ Signing a device in, two ways, both ending in the same config bundle:
 
 The person the token is for owns the device.
 
-The device sends its public key (``key``, spec 4.2) with the claim or its
+The device sends its public key (``key``, spec 10.2) with the claim or its
 request to join; the hub records it with the worker id it issues, and
 from then on takes only requests that key signed from that worker. A
 device enrolled without one (before worker keys) gets its key pinned at
@@ -231,7 +231,7 @@ class Enrollment:
                                                                "by": caller.person}})
         return {"ok": True, "name": d["name"], "joined": not refuse}
 
-    # -- the config bundle (3.5) --------------------------------------------------------------
+    # -- the config bundle (8) --------------------------------------------------------------
 
     def _band(self) -> dict:
         """The home band as a device joins it: id, PSK, the relay or WebSocket

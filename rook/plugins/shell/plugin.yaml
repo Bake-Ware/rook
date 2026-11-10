@@ -1,5 +1,5 @@
 # Commands, the environment, and live terminals. All code (scripts/shell.py):
-# every process starts through core's launch path (spec 7.1), which an exec
+# every process starts through core's launch path (spec 10.9), which an exec
 # action can't promise yet. shell.open is the producer of terminal and
 # process streams; proc.* merged into it (castling-streams).
 manifest: 1

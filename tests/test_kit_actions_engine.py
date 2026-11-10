@@ -92,7 +92,7 @@ async def test_exec_children_never_see_the_vault_environment(monkeypatch):
 
 @hard
 async def test_exec_starts_its_process_through_the_launch_path_it_is_given():
-    # spec 7.1: every plugin process goes through core's launch (normal user, or the lease)
+    # spec 10.9: every plugin process goes through core's launch (normal user, or the lease)
     seen = []
 
     async def launch(argv, **kw):

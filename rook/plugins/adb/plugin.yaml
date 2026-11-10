@@ -1,5 +1,5 @@
 # Android phones and tablets cabled to a worker, driven over adb. Each device
-# is an appliance instance (spec 5.7) and the worker it is plugged into is its
+# is an appliance instance (spec 10.8) and the worker it is plugged into is its
 # delegate; nothing is installed on the device or the worker. Every cap is
 # scripts/adb.py, run on the hub: each call checks the device is attached and
 # authorized first, and adb runs on the delegate through shell.exec.

@@ -1,4 +1,4 @@
-"""The hub's journal (spec 11 of docs/spec/core-v2.md): one SQLite table,
+"""The hub's journal (spec 7 of docs/spec/core-v2.md): one SQLite table,
 write-once rows, a hash chain per project plus the general chain.
 
 Only the hub writes. ``append`` stamps the session's project and chain,
@@ -173,7 +173,7 @@ class JournalStore:
         """Entries matching every filter given, newest first. ``cap`` ending in
         ``.*`` matches that prefix; ``actor`` is person or agent; ``since`` is
         inclusive, ``until`` exclusive. ``viewer`` limits to what they may
-        read (11.4). ``worker`` may list several ids (one name, several workers)."""
+        read (7.4). ``worker`` may list several ids (one name, several workers)."""
         where, params = [], []
         if isinstance(worker, (list, tuple)):
             where.append(f"worker IN ({','.join('?' * len(worker))})" if worker else "0")
@@ -276,7 +276,7 @@ class JournalStore:
     # -- retention ------------------------------------------------------------
 
     def prune(self, now: float | None = None) -> list[dict]:
-        """Retention (11.4): the general chain goes by UTC day, oldest first,
+        """Retention (7.4): the general chain goes by UTC day, oldest first,
         up to the first day still kept. A prune moves the chain's checkpoint
         to its last pruned entry, deletes up to it and journals a ``prune``
         entry on the general chain; returns those."""

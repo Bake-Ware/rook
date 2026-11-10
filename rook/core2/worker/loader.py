@@ -34,7 +34,7 @@ from rook.kit.actions.engine import _local_os as local_os   # one answer for wor
 from rook.kit.ctx import KitError, load_run
 from rook.kit.manifest import ManifestError, check, compile_fields, normalize
 
-DEFAULT_TIMEOUT = 15.0   # spec 6.5: a cap without a declared timeout gets 15 s
+DEFAULT_TIMEOUT = 15.0   # spec 5.3: a cap without a declared timeout gets 15 s
 
 
 class LoadError(Exception):
@@ -61,7 +61,7 @@ class Cap:
 class Plugin:
     name: str
     version: str
-    hash: str                    # spec 5.3: sha256 of canonical(parsed manifest)
+    hash: str                    # spec 4.2: sha256 of canonical(parsed manifest)
     raw: dict                    # the parsed manifest, as the hub validated it
     manifest: dict               # normalized (defaults, caps by full name)
     folder: Path | None

@@ -1,4 +1,4 @@
-"""Who a call is for and who makes it (spec 8.1, 8.5 of docs/spec/core-v2.md).
+"""Who a call is for and who makes it (spec 6.2 of docs/spec/core-v2.md).
 
 A door authenticates its caller into a :class:`Caller`: ``person`` (the
 person the call is for, ``person:<name>``) and/or ``agent`` (``agent:<name>``
@@ -29,7 +29,7 @@ from rook.kit._types import parse_duration
 from .. import rights
 
 NONE = {"grants": []}
-# system: identities are hub internals; they only call core caps (spec 13).
+# system: identities are hub internals; they only call core caps (spec 9).
 SYSTEM_RIGHTS = {"grants": ["core.*"]}
 PREFIXES = {"person": ("person:",), "agent": ("agent:", "system:")}
 
@@ -202,7 +202,7 @@ class Identities:
         return self.agents.get(name, NONE) if kind == "agent" else NONE
 
     def layers(self, caller: Caller) -> list:
-        """[[layer, rights], ...] for the intersection rule (spec 8.3)."""
+        """[[layer, rights], ...] for the intersection rule (spec 6.2)."""
         out = []
         if caller.person:
             out.append(["person", self.person_rights(caller.person)])

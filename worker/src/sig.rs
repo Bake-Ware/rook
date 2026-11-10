@@ -1,4 +1,4 @@
-//! Signed objects (core v2 3.3), verify only: Ed25519 over a type prefix
+//! Signed objects (core v2 10.1), verify only: Ed25519 over a type prefix
 //! and the canonical JSON of the object without `sig` and `hubkey`. A
 //! release is checked as anchor.json's root key -> the `rook-hubkey` grant
 //! it signed -> the operational key -> `release.sig`.

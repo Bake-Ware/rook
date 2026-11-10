@@ -160,7 +160,7 @@ async fn door_json(resp: reqwest::Response) -> Result<Value, HubError> {
     serde_json::from_str(&body).map_err(|_| HubError::Http(status, "not JSON".into()))
 }
 
-/// `{ok, result | error}`, or a held call `{held, hold}` (spec 10.3).
+/// `{ok, result | error}`, or a held call `{held, hold}` (spec 6.4).
 pub fn call_result(v: Value) -> Result<Value, HubError> {
     if v.get("held").and_then(Value::as_bool) == Some(true) {
         return Err(HubError::Agent(format!(

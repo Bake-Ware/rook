@@ -8,13 +8,13 @@
     announce = {**base, **await host.announce(ceiling)}
 
 A request from a band goes through :meth:`Host.handle`: the worker gate
-(security.py) checks its ticket (spec 6.3) and runs it, elevating when the
+(security.py) checks its ticket (spec 10.1) and runs it, elevating when the
 cap asks; the host checks args against the manifest, merges ``bind``, takes
 the cap's ``exclusive`` lock, runs the action or ``run:`` function under the
 cap's timeout, and turns every failure into an error reply: a plugin never
 takes the worker down. The gate's cap table follows every load and unload.
 
-What the hub carries beside the args (spec 5.7, bound by the ticket's
+What the hub carries beside the args (spec 10.8, bound by the ticket's
 ``carry_hash``) is used for that one call and never stored: ``settings``,
 the plugin's hub-kept settings with secret values already read from the
 hub's vault (castling-enrollment: "Secrets: referenced only by vault name;
@@ -60,7 +60,7 @@ _TMP_REF = re.compile(r"\{\{\s*tmp\s*\}\}")
 
 
 class CallError(Exception):
-    """A failed call; ``message`` is the reply's ``error`` (spec 6.4)."""
+    """A failed call; ``message`` is the reply's ``error`` (spec 5.2)."""
 
     def __init__(self, message: str, retry: bool = False):
         super().__init__(message)
@@ -243,7 +243,7 @@ class Host:
 
     def caps(self) -> dict[str, dict]:
         """``{cap: {"risk", "effects", "elevation", "contracts"}}`` for every cap served
-        now (aliases included): what the worker gate checks (spec 6.3, 7)."""
+        now (aliases included): what the worker gate checks (spec 10.1, 10.9)."""
         return {name: {"risk": c.spec["risk"], "effects": list(c.spec.get("effects", ())),
                        "elevation": c.spec.get("elevation", "never"),
                        **({"contracts": list(c.spec["contracts"])} if c.spec.get("contracts") else {})}
@@ -479,7 +479,7 @@ class Host:
     # -- announce ---------------------------------------------------------------
 
     def _visible(self, ceiling: Mapping | None) -> list[Plugin]:
-        """Filtered view (spec 9.4): plugins with a cap or an event the band's
+        """Filtered view (spec 10.10): plugins with a cap or an event the band's
         ceiling grants name."""
         out = []
         for p in self.plugins.values():
@@ -494,7 +494,7 @@ class Host:
 
     def sends(self, plugin: str, event: str, ceiling: Mapping | None, target: str = "") -> bool:
         """Whether ``plugin``'s ``event`` goes to the hub whose ceiling this
-        is: the plugin declares it in ``emits`` and a grant names it (spec 13,
+        is: the plugin declares it in ``emits`` and a grant names it (spec 10.4,
         ``core.event``; ``target`` is this worker's name, for ``@`` grants)."""
         p = self.plugins.get(plugin)
         if p is None or event not in (p.manifest.get("emits") or {}):
@@ -502,7 +502,7 @@ class Host:
         return ceiling is None or any(rights.matches(g, event, target) for g in ceiling.get("grants") or ())
 
     def manifests(self, plugins=None, ceiling: Mapping | None = None) -> dict:
-        """``core.manifests`` (spec 13): the parsed manifests of the band's view."""
+        """``core.manifests`` (spec 9): the parsed manifests of the band's view."""
         return {"manifests": [p.raw for p in self._visible(ceiling)
                               if plugins is None or p.name in plugins]}
 
@@ -513,7 +513,7 @@ class Host:
         return {p.name: s for p, s in zip(visible, got, strict=True) if s is not None}
 
     async def announce(self, ceiling: Mapping | None = None) -> dict:
-        """The plugin part of the worker announce (spec 5.3): ``manifests``,
+        """The plugin part of the worker announce (spec 4.2): ``manifests``,
         ``manifests_hash``, ``unavailable`` and ``status`` for one band's view.
         Core adds the rest (worker_id, name, core, facts, role, ceiling...)."""
         visible = self._visible(ceiling)

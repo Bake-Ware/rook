@@ -175,7 +175,7 @@ def test_core_manifests_and_trust_set_ignore_the_ceiling(hub):
     hub.worker.ceiling = {"grants": []}
     assert call(hub, BAKE, "core.manifests")[0]["ok"]
     # the worker takes core.trust.set from its home hub whatever the ceiling
-    # (6.3): a home hub that narrowed it can widen it again
+    # (10.10): a home hub that narrowed it can widen it again
     assert call(hub, BAKE, "core.trust.set", {"membership": {}})[0]["ok"]
     assert hub.tx.verdicts[-1] == "ok"
     assert call(hub, BAKE, "file.read")[0]["error"] == "denied: ceiling: grants"
@@ -287,7 +287,7 @@ def test_args_without_canonical_form_refused(hub):
     assert out["error"] == "bad args: no canonical JSON form" and not hub.tx.requests
 
 
-# -- rights: the intersection rule (8.3) -------------------------------------
+# -- rights: the intersection rule (6.2) -------------------------------------
 
 def test_agent_for_person_gets_the_intersection(hub):
     # bake (owner) may do anything; claude is capped at exec
@@ -317,7 +317,7 @@ def test_system_identities_only_core_caps(hub):
 
 
 def test_a_contract_name_resolves_and_grants_on_it_cover_the_provider(hub):
-    # spec 4.1, 8.2: kvm.screen.capture provides screen.capture.
+    # spec 3.3, 6.2: kvm.screen.capture provides screen.capture.
     cap = {"risk": "read", "scope": "local", "effects": [], "contracts": ["screen.capture"]}
     hub.worker.caps["kvm.screen.capture"] = cap
     hub.tx.worker["caps"]["kvm.screen.capture"] = {"risk": "read", "effects": [], "contracts": ["screen.capture"]}
@@ -369,7 +369,7 @@ def test_elevated_call_counts_as_admin(hub):
 
 
 def test_upfront_elevation_counts_as_admin(hub):
-    # It always runs elevated (7.1), so gates, the sacred hold and the journal see admin.
+    # It always runs elevated (10.9), so gates, the sacred hold and the journal see admin.
     out, _ = call(hub, CLAUDE_FOR_BAKE, "pkg.fix")
     assert out["error"] == "denied: agent: risk"
     out, _ = call(hub, BAKE, "pkg.fix")
@@ -517,7 +517,7 @@ def test_unknown_risk_is_admin_and_unknown_scope_external(hub):
     assert calls(hub)[0]["scope"] == "external" and calls(hub)[0]["risk"] == "admin"
 
 
-# -- presets (8.5) -----------------------------------------------------------
+# -- presets (6.2) -----------------------------------------------------------
 
 def test_presets_match_vectors():
     v = json.loads((VECTORS / "presets.json").read_text())
@@ -753,7 +753,7 @@ def test_only_the_security_triage_component_releases_flags_of_its_own_gate(hub):
 def test_hard_stops_are_never_released_by_automation(hub):
     # A person-only caller that isn't there (a job made by the person, a hub
     # plugin's ctx.call_as) can't release or refuse the person's hard stop;
-    # the triage component never can (review H7, spec 10.3).
+    # the triage component never can (review H7, spec 6.4).
     out, _ = call(hub, BAKE, "mail.send")
     for by in ("person:bake", "system:plugin.security"):
         assert "may not release" in run(hub.release(out["hold"], by))["error"]
@@ -890,7 +890,7 @@ def test_a_closed_mcp_door_refuses_agents_on_every_door(hub):
     assert call(hub, CLAUDE_FOR_BAKE, "file.read")[0]["ok"]          # no door: the hub's own work
 
 
-# -- taint (8.4) -------------------------------------------------------------
+# -- taint (6.3) -------------------------------------------------------------
 
 def test_taints_cap_marks_the_session_for_good(hub):
     seen = []
@@ -910,7 +910,7 @@ def test_denied_taints_cap_does_not_taint(hub):
     assert not out["ok"] and not s.tainted
 
 
-# -- sending: re-mint, retries, timeouts (6.5) -------------------------------
+# -- sending: re-mint, retries, timeouts (5.3) -------------------------------
 
 def test_expired_ticket_is_reminted_once(hub):
     hub.tx.answer = lambda req, n: ({"id": req["id"], "from": WID, "ok": False,
@@ -1140,7 +1140,7 @@ def test_a_crash_while_releasing_is_journaled(hub):
     assert (e["decision"], e["ok"], e["error"]) == ("released", False, "internal")
 
 
-# -- appliances (5.7): by name, delegates, carry ------------------------------
+# -- appliances (10.8): by name, delegates, carry ------------------------------
 
 WID2 = "4f0a9c1d2e3f40516273849506a7b8c9"
 

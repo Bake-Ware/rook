@@ -1,4 +1,4 @@
-"""Enrollment as real processes (spec 3.7): an owner hub set up with
+"""Enrollment as real processes (spec 8): an owner hub set up with
 ``hub init``, and a fresh worker that asks to join and is let in with one tap."""
 from __future__ import annotations
 

@@ -15,7 +15,7 @@ RISKS = ("read", "write", "exec", "admin")
 SCOPES = ("self", "local", "multi-machine", "multi-user", "external")
 EFFECTS = ("destructive", "sensitive", "personal", "physical",
            "sends_as", "spends", "persists", "taints")
-# Effects that always hold a call for the person (spec 4.3). Unknown effect
+# Effects that always hold a call for the person (spec 3.5). Unknown effect
 # flags count as destructive.
 HARD_STOP_EFFECTS = ("destructive", "sends_as", "spends")
 
@@ -127,7 +127,7 @@ def hard_stop(effects: list) -> bool:
 
 
 def gate_decision(results: list, risk: str | None = None) -> dict:
-    """Combine gate results at dispatch (spec 10). Shadow-mode gates never
+    """Combine gate results at dispatch (spec 6). Shadow-mode gates never
     count; a malformed result or an error counts as a flag; block wins over
     flag, flag over allow. Gates can only restrict.
 

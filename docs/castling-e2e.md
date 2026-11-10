@@ -26,7 +26,7 @@ What they prove:
 | Refusals | no why; a child over its preset (and its first use of a cap waiting for an owner); a ticket sniffed off the band and replayed; a worker ceiling narrower than the hub's grant (refused by the hub early and by the worker for a validly signed ticket); a destructive cap held until the person approves or refuses |
 | Plugins | a plugin pushed from the hub library, signed for that worker, installs and passes its `check`; a new version replaces it in the same worker process (hot reload); a broken version fails its check and is rolled back; `core.plugin.rollback` goes back by hand; installed plugins load again after a worker restart |
 | MCP door | an agent token (claude-code for bake) calls a cap over MCP, its hold waits for the person, the journal reads back; the stdio shim does the same as a child process |
-| Enrollment | every worker enrolls with a one-time code (the QR); a fresh worker enrolls with a device code the owner approves on a hub made by `init`; it joins a second hub's band as a guest under the home owner's ceiling (the journal keeps the PSK as a reference), the guest hub is refused outside it, and the worker leaves the band when removed |
+| Enrollment | every worker enrolls with a one-time code (the QR); a fresh worker asks to join a hub made by `init` and is let in with one tap (`hub.join`) |
 | Speech | the voice service's worker (`services/voice/band.py`, fake models) announces the builtin speech-engine manifest; a voice session on the hub's speech plugin hears, IDs the speaker and speaks over the band, and the agent's reply arrives in the session (docs/castling-speech.md) |
 | Real ports | the worker also loads `rook/plugins/battery`, `torrent`, `shell` and `file`; what the machine can't serve is listed as unavailable, with the reason, and a call says why; `shell.exec` runs through the ticket, the worker gate and core's launch path, and `file.read` reads its output back |
 | Events | a text arriving on the worker (`e2e.sms.received`, `taints`, emitted like the phone's `sms.received`) reaches the hub over `core.event` with `person` and `worker` set; it fires an owner's job filtered on the text, whose call goes back to that worker, and shows on a live page made with `events: [e2e.*]` |
@@ -45,17 +45,18 @@ python -m rook.core2.hub --config hub/hub.yaml init --owner me --relay 127.0.0.1
 #   sets the owner's sign-in password, prints an API token and the recovery key, once; the config holds the band key
 python -m rook.core2.hub --config hub/hub.yaml &
 
-# A machine signs in as a person (spec 12). It shows a code; approve it as the owner.
+# A machine signs in as a person (spec 8). It waits until someone lets it in.
 echo 'plugins: [path/to/rook/tests/e2e/plugins]' > worker.yaml
 python -m rook.core2.worker --config worker.yaml enroll http://127.0.0.1:8740 --name laptop
-#   "To add laptop, approve code BCDF-GHJK on hub 1a2b…"; in another shell:
-#   curl -s -H "Authorization: Bearer $TOKEN" -d '{"code":"BCDF-GHJK"}' localhost:8740/enroll/approve
+#   in another shell, or tap Join on the Workers page:
+#   curl -s -H "Authorization: Bearer $TOKEN" -d '{"worker":"rook","cap":"hub.joins","why":"Who waits?"}' localhost:8740/call
+#   curl -s -H "Authorization: Bearer $TOKEN" -d '{"worker":"rook","cap":"hub.join","args":{"request":"<id>"},"why":"Let the laptop in."}' localhost:8740/call
 python -m rook.core2.worker --config worker.yaml &
 ```
 
 Enrollment writes `anchor.json`, the home band into
-`data/bands.json` and `name`/`worker_id` into `worker.yaml`. Instead of a
-device code, the owner can make a one-time code
+`data/bands.json` and `name`/`worker_id` into `worker.yaml`. Instead of
+waiting, the owner can make a one-time code
 (`curl -s -H "$H" -d '{}' localhost:8740/enroll/code`) and the worker claims
 its QR text: `... enroll 'rook://enroll?url=…&code=…&hub=…'`. A hub whose
 config has `enroll: {url: https://…, discover: true}` answers local network

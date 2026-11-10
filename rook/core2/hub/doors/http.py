@@ -20,7 +20,7 @@ agent, or an agent for a person).
                           bearer token, ``hmac``/``token`` a signature or token under the
                           route's secret (HubPlugins.route_allows), ``none`` anyone
 
-Enrollment (spec 3.7; rook.core2.enroll.hub):
+Enrollment (spec 8; rook.core2.enroll.hub):
 
     POST /enroll/code     {}  a one-time code and its QR text, for a device to claim (also hub.join_code)
     POST /enroll/claim    {code, name}       no token: the device's config bundle, once
