@@ -24,6 +24,7 @@ the first by plugin name wins (this plugin's own come first).
 
 `agent.skill {name}` reads a skill from the manifest that ships it, else
 the knowledge page of kind `skill` with that slug (with the workbench).
+Its `plugins` skill teaches any agent to write a Rook plugin.
 
 Every agent knows the others (a roster in its prompt) and is told that
 pulling in another agent is expected, not overstepping. Agents that need you
