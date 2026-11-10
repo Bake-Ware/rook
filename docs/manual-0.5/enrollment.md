@@ -7,14 +7,14 @@ needs editing by hand.
 
 ## One tap on the Workers page (any machine)
 
-On the new machine, with the `rook-worker` binary ([Installing](install.md)):
+On the new machine (the installer does this for you: [Installing](install.md#another-machine)):
 
 ```sh
-rook-worker --config worker.yaml enroll https://rook.example --name kaiju
+python -m rook.core2.worker --config worker.yaml enroll https://rook.example --name kaiju
 ```
 
-(The Python worker takes the same arguments: `python -m rook.core2.worker
---config worker.yaml enroll …`.)
+(The one-file worker, where a release provides it, takes the same
+arguments: `rook-worker --config worker.yaml enroll …`.)
 
 It says `kaiju is waiting for someone to let this machine in on the Workers
 page of hub 1a2b…` and waits. On the hub's **Workers** page the machine
@@ -27,7 +27,7 @@ A request lasts 10 minutes, and one its machine stops asking about goes
 after 30 seconds. Then start the worker:
 
 ```sh
-rook-worker --config worker.yaml
+python -m rook.core2.worker --config worker.yaml        # or: rook-worker --config worker.yaml
 ```
 
 ## With a one-time code: no tap (an agent, a script, the QR)
@@ -38,7 +38,7 @@ machine, which joins at once:
 
 ```sh
 curl -s -H "Authorization: Bearer $TOKEN" -d '{}' https://rook.example/enroll/code   # or the cap hub.join_code
-rook-worker --config worker.yaml enroll 'rook://enroll?url=…&code=…&hub=…'
+python -m rook.core2.worker --config worker.yaml enroll 'rook://enroll?url=…&code=…&hub=…'
 ```
 
 The QR text also pins the hub's id, so the machine can't be talked into

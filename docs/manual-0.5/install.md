@@ -54,23 +54,25 @@ python -m rook.core2.worker --config worker/worker.yaml &
 paste the token `init` printed ([The hub site](dashboard.md)) and tap
 **Join** for `laptop` on the Workers page ([Adding machines](enrollment.md)).
 
-## Another machine: one file
+## Another machine
 
-`deploy/castling-worker/install.sh` installs the `rook-worker` binary (no
-Python) as a service that starts at boot and restarts when it exits, and
-joins it to your hub:
+`deploy/castling-worker/install.sh` installs a worker as a service that
+starts at boot and restarts when it exits, and joins it to your hub:
 
 ```sh
-install.sh --binary ./rook-worker-linux-x86_64 --hub https://rook.example --name kaiju   # waits for a Join tap
-install.sh --binary https://…/rook-worker-linux-x86_64 --hub https://rook.example --code <one-time code>
-install.sh --upgrade --binary ./rook-worker-linux-x86_64     # a newer file, same data and keys
+curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/castling/deploy/castling-worker/install.sh \
+  | bash -s -- --hub https://rook.example --name kaiju        # waits for a Join tap; --code <one-time code> for none
 ```
 
-It lives in `~/.rook05` (`/opt/rook05` as root) under the systemd unit
-`rook05-worker`. Without the installer: `rook-worker --config worker.yaml
-enroll <hub>`, then `rook-worker --config worker.yaml` under any service
-manager that restarts it. Linux and Windows builds only; Windows has no
-installer yet.
+That installs the Python worker (it needs Python 3.11+ or `uv`, and git).
+Where a release provides the one-file worker, `--binary
+<path or URL of rook-worker-linux-x86_64>` installs that instead, with no
+Python; `install.sh --upgrade --binary …` turns a Python install into it,
+keeping its data and identity. Either way it lives in `~/.rook05`
+(`/opt/rook05` as root) under the systemd unit `rook05-worker`. Without the
+installer: `rook-worker --config worker.yaml enroll <hub>`, then
+`rook-worker --config worker.yaml` under any service manager that restarts
+it. Windows has no installer yet.
 
 `init` options: `--owner` (your user name, lowercase), `--relay host:port`
 or `--ws-url` (the band's relay), `--url https://...` (where other devices

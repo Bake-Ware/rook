@@ -1,5 +1,7 @@
-"""deploy/castling-worker/install.sh: one file in place, joined to a real hub
-with a one-time code, and a user unit that restarts it. systemctl and
+"""deploy/castling-worker/install.sh: with --binary, one file in place,
+joined to a real hub with a one-time code, and a user unit that restarts it.
+Without --binary it takes the Python worker's path (a download, a venv): only
+the choice is checked here, since that path needs the network. systemctl and
 loginctl are stubs that record what the script asks of them."""
 from __future__ import annotations
 
@@ -47,10 +49,9 @@ def test_install_puts_one_file_in_place_joins_and_sets_up_the_unit(tmp_path, bin
             token = (hub.data / "owner.token").read_text().strip()
             code = (await door(hub, token, "/enroll/code", {}))["code"]
             url = f"http://127.0.0.1:{hub.doors[0].port}"
-            assert (await run("--hub", url))[0] != 0                       # --binary is required
             rc, out = await run("--binary", str(binary), "--hub", url, "--code", code, "--name", "box")
             assert rc == 0, out
-            assert "Enrolled box" in out and "done: box, unit rook05-worker (active)" in out, out
+            assert "Enrolled box" in out and "done: box, the one-file worker, unit rook05-worker (active)" in out, out
             installed = root / "rook-worker"
             assert installed.read_bytes() == binary.read_bytes() and installed.stat().st_mode & stat.S_IXUSR
             assert (root / "anchor.json").is_file() and "anchor: anchor.json" in (root / "worker.yaml").read_text()
@@ -67,6 +68,14 @@ def test_install_puts_one_file_in_place_joins_and_sets_up_the_unit(tmp_path, bin
             assert rc == 0 and "enroll" not in out, out
             assert "systemctl --user stop rook05-worker" in log.read_text()
             assert "anchor: anchor.json" in (root / "worker.yaml").read_text()
+
+            # Without --binary: the Python worker's path, which downloads the code first.
+            (stubs / "curl").write_text("#!/bin/sh\necho offline >&2\nexit 22\n")
+            (stubs / "curl").chmod(0o755)
+            other = tmp_path / "py"
+            rc, out = await run("--hub", url, "--root", str(other), "--name", "pybox")
+            assert rc != 0 and "== code: Bake-Ware/rook@castling" in out, out
+            assert not (other / "rook-worker").exists()
         finally:
             await hub.stop()
     asyncio.run(asyncio.wait_for(go(), 120))
