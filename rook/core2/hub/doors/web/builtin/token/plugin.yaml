@@ -9,6 +9,7 @@ version: 0.5.0
 title: Tokens
 doc: Door tokens for agents (MCP, HTTP), acting for a person.
 package: core
+segment: Hub
 builtin: true
 runs_on: hub
 license: Apache-2.0

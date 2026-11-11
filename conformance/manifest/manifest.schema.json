@@ -14,6 +14,7 @@
     "license": {"type": "string"},
     "source": {"type": "string"},
     "package": {"enum": ["core", "agents", "workbench", "devices"]},
+    "segment": {"type": "string", "minLength": 1},
     "runs_on": {"$ref": "#/$defs/home"},
     "builtin": {"type": "boolean"},
     "platforms": {"$ref": "#/$defs/platforms"},
@@ -237,7 +238,7 @@
     },
     "type_name": {
       "enum": ["str", "int", "float", "bool", "time", "duration", "markdown", "json",
-               "file", "secret", "ref", "list", "map", "url", "path"]
+               "file", "secret", "ref", "list", "map", "url", "path", "worker"]
     },
     "typespec": {
       "description": "The type language. type defaults to str.",

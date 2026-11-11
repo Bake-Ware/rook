@@ -11,6 +11,7 @@ version: 0.5.1
 title: Telegram
 doc: The band's Telegram bot, a notify channel; inbound messages become events.
 package: core
+segment: Hub
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook

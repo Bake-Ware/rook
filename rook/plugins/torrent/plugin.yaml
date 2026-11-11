@@ -10,6 +10,7 @@ version: 0.6.0
 title: Torrents (Deluge)
 doc: Manage a worker's Deluge torrent client through deluge-console.
 package: devices
+segment: Machines
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 runs_on: hub

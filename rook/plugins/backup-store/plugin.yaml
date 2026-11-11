@@ -9,6 +9,7 @@ version: 0.5.2
 title: Backup store
 doc: Holds the hub's sealed backups in a folder on this worker.
 package: core
+segment: Machines
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 # pull fetches the backup from the hub's backup.part.

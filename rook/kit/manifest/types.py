@@ -13,7 +13,7 @@ payloads, contracts and component props::
 from __future__ import annotations
 
 TYPES = ("str", "int", "float", "bool", "time", "duration", "markdown", "json",
-         "file", "secret", "ref", "list", "map", "url", "path")
+         "file", "secret", "ref", "list", "map", "url", "path", "worker")
 
 DURATION_PATTERN = r"^[0-9]+(\.[0-9]+)?(ms|s|m|h|d|w)$"
 
@@ -39,6 +39,8 @@ _BASE = {
     # 1.1, for settings that hold connection strings and file locations.
     "url": {"type": "string", "format": "uri"},
     "path": {"type": "string"},
+    # A worker's name (as hub.workers lists them).
+    "worker": {"type": "string"},
 }
 _TEXT = {"str", "markdown", "url", "path"}
 

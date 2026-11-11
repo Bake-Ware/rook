@@ -9,6 +9,7 @@ version: 0.5.0
 title: Settings
 doc: The hub plugins' settings.
 package: core
+segment: Hub
 builtin: true
 runs_on: hub
 license: Apache-2.0
@@ -39,6 +40,6 @@ caps:
     result: { type: map }
 
 pages:
-  settings: { title: Settings, file: pages/settings.html, caps: ["hub.status", "hub.person", "setting.*"] }
+  settings: { title: Settings, file: pages/settings.html, caps: ["hub.status", "hub.person", "hub.workers", "secret.list", "setting.*"] }
 
 docs: { manual: docs/manual.md }

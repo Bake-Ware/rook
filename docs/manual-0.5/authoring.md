@@ -36,6 +36,7 @@ knowledge page, `castling-manifest-<section>` (index: `castling-manifest`).
 | `version` | semver; bump it for every change. Required |
 | `title`, `doc` | a display name; one line on what it is for |
 | `package` | `core`, `agents`, `workbench` or `devices`: which level installs it |
+| `segment` | where in the site its pages and settings belong: `Agents`, `Machines`, `Work`, `Hub` or a new name; none: `Hub` |
 | `runs_on` | `hub` for every new plugin ([below](#plugins-that-run-on-a-worker)) |
 | `platforms` | `linux`, `windows`, `macos`, `android`, `termux`, `ios`: the workers its `on: worker` caps fit |
 | `uses` | every cap its code calls, globs allowed; `ctx.call` refuses any other |
@@ -77,7 +78,8 @@ A cap's name is `<plugin>.<key>`. `doc`, `risk` and `scope` are required
 | `platforms` | narrows the plugin's `platforms` for this cap |
 
 Types: `str`, `int`, `float`, `bool`, `time`, `duration`, `markdown`,
-`json`, `file`, `secret`, `ref`, `list`, `map`, `url`, `path`.
+`json`, `file`, `secret`, `ref`, `list`, `map`, `url`, `path`, `worker` (a
+worker's name).
 
 An argument a script passes to a program goes in its own `argv` slot, never
 into a shell string. A tool that re-parses its arguments (deluge-console
@@ -99,8 +101,10 @@ worker` in a hub plugin is a cap of the hub itself.
 
 `settings:` name: `{type, default, doc, secret, where, setup, apply, enum,
 min, max, pattern}`, set on the hub ([Settings](settings.md)) and read as
-`ctx.settings["name"]`, secrets resolved. `where: person` makes it each
-person's own (`ctx.settings_for(person)` reads someone else's).
+`ctx.settings["name"]`, secrets resolved. A hub plugin's setting is the
+hub's unless `where: person` makes it each person's own
+(`ctx.settings_for(person)` reads someone else's). Give every setting a
+one-line `doc`: the Settings page shows it as the setting's description.
 
 ## Appliances
 

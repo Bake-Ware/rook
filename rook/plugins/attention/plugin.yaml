@@ -15,6 +15,7 @@ version: 0.5.1
 title: Attention
 doc: What is trying to get the person's attention, curated in one place by the house agent.
 package: agents
+segment: Agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook

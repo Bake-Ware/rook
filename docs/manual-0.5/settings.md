@@ -6,8 +6,8 @@ Each plugin setting says in the plugin's manifest where it lives:
 
 | `where` | Set in | Example |
 |---|---|---|
-| `worker` (the default for worker plugins) | the worker's `worker.yaml`, under `settings:` | whether the browser on that machine shows its window |
-| `hub` | the hub: `hub.yaml` under `settings:`, or the Settings page | which agent answers the dashboard's chat dock |
+| `worker` (the default for a plugin that runs on a worker) | the worker's `worker.yaml`, under `settings:` | whether the browser on that machine shows its window |
+| `hub` (the default for a plugin that runs on the hub) | the hub: `hub.yaml` under `settings:`, or the Settings page | which agent answers the dashboard's chat dock |
 | `person` | each person's own, on the Settings page | which channel `notify` reaches you on |
 
 ```yaml
@@ -25,6 +25,15 @@ the default. Owners change hub settings and anyone's per-person settings;
 everyone changes their own. `setting.list` shows every hub-side setting
 with its type, default and value. Worker settings are only in `worker.yaml`
 for now: the Settings page doesn't edit them yet.
+
+The Settings page is a map of what the system can do. It groups every
+setting by its plugin's segment (Agents, Machines, Work, Hub, then any
+other), and inside it by plugin. Each row is the setting's description,
+its `plugin.key` name, and a control: a switch, a dropdown where the
+values are known (a fixed list, the vault's secret names, the band's
+workers), a number box, a text box, or one item per line for a list. A
+change is saved as it is made. Your own settings are marked "yours". The
+filter box narrows the rows by any word.
 
 A plugin that needs a setting before some caps can work (`requires:
 {settings: [...]}`) shows those caps as unavailable, with the reason, until

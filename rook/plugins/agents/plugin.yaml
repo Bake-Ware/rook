@@ -17,6 +17,7 @@ version: 0.5.2
 title: Agents
 doc: Agents with a persona, a backend, persistent sessions, a private notepad and curated memory.
 package: agents
+segment: Agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook

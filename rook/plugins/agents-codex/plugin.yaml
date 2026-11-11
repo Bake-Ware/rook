@@ -10,12 +10,13 @@ version: 0.6.0
 title: Codex backend
 doc: Agent turns in the Codex CLI signed in on one of the band's workers, for the agents package.
 package: agents
+segment: Agents
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 runs_on: hub
 uses: [shell.open, shell.env, file.write, stream.read, stream.write, stream.close]
 settings:
-  worker: { where: hub, doc: "The worker (name) where Codex is installed and signed in; turns fail until it is set." }
+  worker: { where: hub, type: worker, doc: "The worker (name) where Codex is installed and signed in; turns fail until it is set." }
   codex: { where: hub, default: codex, doc: "The codex program on that worker: a name on PATH or a full path (~ is its home)." }
   model: { where: hub, doc: "System Two's model when the agent names none (a Codex model id); blank: Codex's own default." }
   model_three: { where: hub, default: gpt-6-luna, doc: "System Three's model (dream cycles): a light one; blank: Codex's own default." }

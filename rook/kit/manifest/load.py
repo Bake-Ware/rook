@@ -83,11 +83,12 @@ def normalize(data: dict) -> dict:
     plugin = out["plugin"]
     runs_on = out.setdefault("runs_on", "worker")
     out.setdefault("builtin", False)
+    out.setdefault("segment", "Hub")
     for key in ("uses", "check"):
         out.setdefault(key, [])
     for spec in out.setdefault("settings", {}).values():
         spec.setdefault("type", "secret" if spec.get("secret") else "str")
-        spec.setdefault("where", "worker")
+        spec.setdefault("where", "hub" if runs_on == "hub" else "worker")
         spec.setdefault("apply", "live")
         spec.setdefault("required", False)
         spec.setdefault("secret", spec["type"] == "secret")

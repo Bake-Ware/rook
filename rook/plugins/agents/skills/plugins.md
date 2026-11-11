@@ -39,7 +39,9 @@ exist, that is `page.create` (the hub-pages skill), not a plugin.
 ## 2. The manifest: fewest keys that work
 
 Top level: `manifest: 1`, `plugin` (the caps' namespace), `version`,
-`runs_on: hub`, a one-line `doc`. `uses:` lists every cap your script calls
+`runs_on: hub`, a one-line `doc`, `segment:` (where in the site its
+settings and pages go: `Agents`, `Machines`, `Work`, or a new name; none
+is `Hub`). `uses:` lists every cap your script calls
 (`ctx.call` refuses any other). `platforms:` (linux, windows, termux, ...)
 limits which workers an `on: worker` cap shows up on.
 
@@ -50,7 +52,9 @@ Every cap: `doc` (what it does and returns, for an agent reading it cold),
 doc}`), `result`, `timeout`, `idempotent: true` when it only looks.
 
 Add a section only when you need it: `settings` (read as
-`ctx.settings["name"]`, `secret: true` for vault values), `emits` (events
+`ctx.settings["name"]`, each with a one-line `doc` people read on the
+Settings page; `secret: true` for vault values, `type: worker` for a
+worker's name), `emits` (events
 you send), `hooks` (`start`, `stop`, `every`, `on` an event), `jobs`,
 `docs: { manual: docs/manual.md }`. Full key tables:
 `docs/manual-0.5/authoring.md`.

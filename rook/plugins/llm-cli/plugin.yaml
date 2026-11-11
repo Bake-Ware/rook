@@ -15,13 +15,14 @@ version: 0.6.0
 title: Models through Claude Code or Codex
 doc: Completions through a Claude Code or Codex subscription signed in on one of the band's workers.
 package: core
+segment: Agents
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 runs_on: hub
 uses: [shell.exec, shell.env, file.read, file.write]
 
 settings:
-  worker: { doc: "The worker (name) where the CLI is signed in; calls fail until it is set." }
+  worker: { type: worker, doc: "The worker (name) where the CLI is signed in; calls fail until it is set." }
   tool: { enum: [claude, codex], default: claude, doc: "Which CLI: claude (Claude Code) or codex." }
   program: { type: path, doc: "The CLI's program: a name on PATH or a full path; blank: claude or codex." }
   model_one: { doc: "System One's model; blank: haiku for claude, the CLI's default for codex." }

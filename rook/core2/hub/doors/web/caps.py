@@ -697,12 +697,13 @@ class Settings:
     # -- caps -------------------------------------------------------------------
 
     def _specs(self, plugin: str | None = None, where: str = "hub"):
+        """``(manifest, key, spec)`` of every setting kept ``where``."""
         for p in sorted(list(self.hub.plugins.plugins.values()), key=lambda p: p.name):
             if plugin and p.name != plugin:
                 continue
             for key, spec in (p.manifest.get("settings") or {}).items():
                 if spec.get("where") == where:
-                    yield p.name, key, spec
+                    yield p.manifest, key, spec
         if where != "hub":
             return
         # Worker plugins' hub-kept settings: ``where: hub`` ones and every
@@ -714,28 +715,25 @@ class Settings:
                 continue
             for key, spec in (manifest.get("settings") or {}).items():
                 if spec.get("where") == "hub" or spec.get("secret") is True or spec.get("type") == "secret":
-                    yield name, key, spec
+                    yield manifest, key, spec
 
     async def list(self, ctx, plugin: str | None = None, person: str | None = None) -> dict:
         out = []
-        for name, key, spec in self._specs(plugin):
+        for manifest, key, spec in self._specs(plugin):
+            name = manifest["plugin"]
             values = self.hub.plugins.settings.get(name, {})
             source = "set" if key in self.stored.get(name, {}) else \
                 "config" if key in self.base.get(name, {}) else "default"
-            out.append({"plugin": name, "key": key, "type": spec.get("type"), "doc": spec.get("doc", ""),
-                        "default": spec.get("default"), "secret": bool(spec.get("secret")),
-                        "value": values.get(key, spec.get("default")), "source": source,
-                        **({"enum": list(spec["enum"])} if spec.get("enum") else {})})
+            out.append({**_row(manifest, key, spec), "value": values.get(key, spec.get("default")), "source": source})
         who = self._person(ctx, person)
         if who and who != ctx.caller.person and not ctx.caller.owner:
             raise KitError("denied: only an owner reads someone else's settings")
         if who:
             mine = self.settings(who)
-            for name, key, spec in self._specs(plugin, "person"):
+            for manifest, key, spec in self._specs(plugin, "person"):
+                name = manifest["plugin"]
                 have = key in mine.get(name, {})
-                out.append({"plugin": name, "key": key, "type": spec.get("type"), "doc": spec.get("doc", ""),
-                            "default": spec.get("default"), "secret": bool(spec.get("secret")),
-                            "value": mine[name][key] if have else spec.get("default"),
+                out.append({**_row(manifest, key, spec), "value": mine[name][key] if have else spec.get("default"),
                             "source": "set" if have else "default", "where": "person", "person": who})
         return {"settings": out}
 
@@ -795,6 +793,17 @@ class Settings:
         if self.hub.identities.user(who) is None:
             raise KitError(f"no person {person} on this hub")
         return who
+
+
+def _row(manifest: dict, key: str, spec: dict) -> dict:
+    """What a settings page needs to group and draw one setting: its
+    plugin's segment, title and doc, then the setting's own type, doc,
+    default, known values (``enum``) and a list's or map's item type."""
+    return {"plugin": manifest["plugin"], "segment": manifest["segment"],
+            "title": manifest.get("title") or manifest["plugin"], "plugin_doc": manifest.get("doc", ""),
+            "key": key, "type": spec.get("type"), "doc": spec.get("doc", ""), "default": spec.get("default"),
+            "secret": bool(spec.get("secret")), **({"enum": list(spec["enum"])} if spec.get("enum") else {}),
+            **({"items": spec["items"]} if spec.get("items") else {})}
 
 
 def _worker_manifests(hub) -> dict:

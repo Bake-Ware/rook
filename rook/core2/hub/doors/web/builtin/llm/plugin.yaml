@@ -9,6 +9,7 @@ version: 0.5.0
 title: Models
 doc: The language model providers this hub can use.
 package: core
+segment: Agents
 builtin: true
 runs_on: hub
 license: Apache-2.0

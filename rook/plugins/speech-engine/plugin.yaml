@@ -15,6 +15,7 @@ version: 0.5.1
 title: Speech engine
 doc: Speech recognition, spoken voices, end-of-turn detection and speaker ID from the voice service.
 package: agents
+segment: Agents
 builtin: true
 runs_on: worker
 license: Apache-2.0

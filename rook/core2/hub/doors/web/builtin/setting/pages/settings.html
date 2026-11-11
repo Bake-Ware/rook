@@ -7,14 +7,25 @@
   section { margin-bottom: 20px; }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
   dt { color: var(--muted); } dd { margin: 0; word-break: break-all; }
-  .setting { display: grid; grid-template-columns: minmax(140px, 220px) 1fr; gap: 6px 12px; padding: 8px 0;
-    border-bottom: 1px solid var(--line); }
-  .setting textarea { width: 100%; min-height: 60px; }
-  .setting input[type=text], .setting input[type=number] { width: 100%; max-width: 360px; }
+  #filter { width: 100%; max-width: 480px; margin-bottom: 12px; }
+  details.seg { background: var(--overlay); border: 1px solid var(--line); margin-bottom: 10px; }
+  details.seg > summary { cursor: pointer; padding: 10px 14px; font-weight: 500; }
+  details.seg > summary .muted { font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .plugin { padding: 4px 14px 10px; }
+  .plugin h3 { margin: 10px 0 0; } .plugin > p { margin: 0 0 4px; }
+  .setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 16px; padding: 8px 0;
+    border-top: 1px solid var(--line-soft); }
+  .setting code { font-size: 11px; margin-right: 6px; }
+  .yours { font: 500 10px var(--mono); letter-spacing: 1px; text-transform: uppercase; color: var(--accent); }
+  .setting textarea { width: 100%; min-height: 64px; }
+  .setting input[type=text], .setting input[type=number], .setting select { width: 100%; max-width: 360px; }
   @media (max-width: 600px) { .setting { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
+<section>
+  <input id="filter" type="search" placeholder="Filter by any word: a description, a setting or a plugin" autocomplete="off">
+  <div id="settings" class="muted">Loading…</div></section>
 <section><h2>Hub</h2><div id="hub" class="muted">Loading…</div></section>
 <section id="people-box" hidden><h2>People</h2><div class="scroll"><table><thead><tr><th>Name</th><th>Preset</th><th>Extra grants</th><th></th></tr></thead>
   <tbody id="people"></tbody></table></div>
@@ -26,76 +37,163 @@
   </form>
   <h2>Agents</h2><div class="scroll"><table><thead><tr><th>Name</th><th>Grants</th></tr></thead>
   <tbody id="agents"></tbody></table></div></section>
-<section><h2>Plugin settings</h2><div id="settings" class="muted">Loading…</div></section>
 <section><h2>Plugins</h2><div class="scroll"><table><thead><tr><th>Plugin</th><th>Version</th><th>Runs on</th><th>Caps</th><th>Pages</th></tr></thead>
   <tbody id="plugins"></tbody></table></div></section>
 <script>
 "use strict";
 const esc = rook.esc;
-let settings = [];
+const SEGMENTS = ["Agents", "Machines", "Work", "Hub"];
+let settings = [], choices = { secret: null, worker: null };
 
-function input(s, i) {
-  const v = s.value;
-  if (s.type === "bool") return `<input type="checkbox" data-i="${i}" ${v ? "checked" : ""}>`;
-  if (s.enum) return `<select data-i="${i}">${s.enum.map((o) => `<option value="${esc(o)}" ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
-  if (s.type === "int" || s.type === "float") return `<input type="number" data-i="${i}" step="${s.type === "int" ? 1 : "any"}" value="${v == null ? "" : esc(v)}">`;
-  if (["str", "secret", "duration", "time", "url"].includes(s.type)) return `<input type="text" data-i="${i}" value="${v == null ? "" : esc(v)}">`;
-  return `<textarea data-i="${i}">${v == null ? "" : esc(JSON.stringify(v, null, 2))}</textarea>`;
+const name = (s) => `${s.plugin}.${s.key}`;
+const lines = (s) => s.type === "list" && s.items && s.items.type === "str";
+
+function options(s) {
+  if (s.enum) return s.enum;
+  return s.type === "secret" || s.type === "worker" ? choices[s.type] : null;
 }
 
-function read(s, box) {
-  const f = box.querySelector("[data-i]");
+function control(s) {
+  const v = s.value, opts = options(s);
+  if (s.type === "bool") return `<input type="checkbox" ${v ? "checked" : ""}>`;
+  if (opts) {
+    const all = v == null || opts.some((o) => o === v) ? opts : [v, ...opts];
+    const blank = s.default == null || s.default === "" ? "Default" : `Default (${s.default})`;
+    return `<select><option value="">${esc(blank)}</option>${all.map((o, n) =>
+      `<option value="${n}" ${o === v && s.source !== "default" ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  }
+  if (s.type === "int" || s.type === "float") return `<input type="number" step="${s.type === "int" ? 1 : "any"}" value="${v == null ? "" : esc(v)}">`;
+  if (lines(s)) return `<textarea placeholder="One per line">${esc((v || []).join("\n"))}</textarea>`;
+  if (["list", "map", "json"].includes(s.type)) return `<textarea>${v == null ? "" : esc(JSON.stringify(v, null, 2))}</textarea>`;
+  return `<input type="text" value="${v == null ? "" : esc(v)}">`;
+}
+
+function read(s, f) {
   if (s.type === "bool") return f.checked;
-  if (f.value === "") return null;
+  if (f.value.trim() === "") return null;
+  if (f.tagName === "SELECT") {
+    const opts = options(s);
+    return (s.value == null || opts.some((o) => o === s.value) ? opts : [s.value, ...opts])[Number(f.value)];
+  }
   if (s.type === "int") return parseInt(f.value, 10);
   if (s.type === "float") return parseFloat(f.value);
+  if (lines(s)) return f.value.split("\n").map((l) => l.trim()).filter(Boolean);
   if (f.tagName === "TEXTAREA") return JSON.parse(f.value);
   return f.value;
+}
+
+function row(s, i) {
+  return `<div class="setting" data-i="${i}">
+    <div><div>${esc(s.doc || "")}</div><code class="muted">${esc(name(s))}</code>${s.where === "person" ? '<span class="yours">yours</span>' : ""}</div>
+    <div class="row">${control(s)}${s.source === "set" ? '<button data-act="reset">Back to default</button>' : ""}<span class="out muted"></span></div>
+  </div>`;
 }
 
 function renderSettings() {
   const box = document.getElementById("settings");
   if (!settings.length) {
     box.className = "muted";
-    box.textContent = "No hub plugin has settings.";
+    box.textContent = "No plugin has settings here.";
     return;
   }
+  const segs = new Map();
+  settings.forEach((s, i) => {
+    const plugins = segs.get(s.segment) || segs.set(s.segment, new Map()).get(s.segment);
+    (plugins.get(s.plugin) || plugins.set(s.plugin, []).get(s.plugin)).push(i);
+  });
+  const order = [...SEGMENTS.filter((g) => segs.has(g)), ...[...segs.keys()].filter((g) => !SEGMENTS.includes(g)).sort()];
   box.className = "";
-  box.innerHTML = settings.map((s, i) => `<div class="setting" data-i="${i}">
-    <div><div>${esc(s.plugin)}.${esc(s.key)}</div><div class="muted">${esc(s.doc)}</div></div>
-    <div><div class="row">${input(s, i)}<button class="primary" data-act="save">Save</button>
-      ${s.source === "set" ? '<button data-act="reset">Back to default</button>' : ""}<span class="out muted">${esc(s.source)}</span></div></div>
-  </div>`).join("");
+  box.innerHTML = order.map((g) => {
+    const plugins = [...segs.get(g).values()].sort((a, b) => settings[a[0]].title.localeCompare(settings[b[0]].title));
+    const rows = plugins.flat(), set = rows.some((i) => settings[i].source !== "default");
+    return `<details class="seg" ${set ? "open" : ""} data-set="${set ? 1 : ""}"><summary>${esc(g)}<span class="muted">${rows.length} settings</span></summary>
+      ${plugins.map((ix) => { const p = settings[ix[0]]; return `<div class="plugin"><h3>${esc(p.title)} <span class="muted">${esc(p.plugin)}</span></h3>
+        <p class="muted">${esc(p.plugin_doc || "")}</p>${ix.map((i) => row(settings[i], i)).join("")}</div>`; }).join("")}</details>`;
+  }).join("");
+  filter();
 }
 
-document.getElementById("settings").addEventListener("click", async (e) => {
-  const b = e.target.closest("button[data-act]");
-  if (!b) return;
-  const box = b.closest(".setting"), s = settings[Number(box.dataset.i)], out = box.querySelector(".out");
-  let value;
-  try {
-    value = b.dataset.act === "reset" ? null : read(s, box);
-  } catch (x) {
-    out.className = "out bad";
-    out.textContent = "Not valid JSON";
-    return;
+function filter() {
+  const words = document.getElementById("filter").value.toLowerCase().split(/\s+/).filter(Boolean);
+  for (const seg of document.querySelectorAll("details.seg")) {
+    let shown = 0;
+    for (const p of seg.querySelectorAll(".plugin")) {
+      let any = 0;
+      for (const el of p.querySelectorAll(".setting")) {
+        const s = settings[Number(el.dataset.i)];
+        const text = `${s.doc} ${name(s)} ${s.title}`.toLowerCase();
+        el.hidden = !words.every((w) => text.includes(w));
+        any += el.hidden ? 0 : 1;
+      }
+      p.hidden = !any;
+      shown += any;
+    }
+    seg.hidden = !shown;
+    seg.open = words.length ? shown > 0 : Boolean(seg.dataset.set);
   }
+}
+
+async function save(el, reset) {
+  const s = settings[Number(el.dataset.i)], out = el.querySelector(".out");
+  let value = null;
+  if (!reset) {
+    try {
+      value = read(s, el.querySelector("input, select, textarea"));
+    } catch (x) {
+      out.className = "out bad";
+      out.textContent = "Not valid JSON";
+      return;
+    }
+  }
+  const args = { plugin: s.plugin, key: s.key, value };
+  if (s.where === "person") args.person = s.person;
   try {
-    await rook.call("setting.set", { plugin: s.plugin, key: s.key, value },
-      { why: `The person changed ${s.plugin}.${s.key} on the Settings page.` });
-    await Promise.all([loadSettings(), loadHub()]);
+    await rook.call("setting.set", args, { why: `The person ${reset ? "put back the default of" : "changed"} ${name(s)} on the Settings page.` });
+    const fresh = (await rook.call("setting.list", { plugin: s.plugin }, { why: `Show ${name(s)} as it is now.` })).settings
+      .find((f) => f.key === s.key && f.where === s.where);
+    if (fresh) settings[Number(el.dataset.i)] = fresh;
+    el.outerHTML = row(settings[Number(el.dataset.i)], el.dataset.i);
+    const now = document.querySelector(`.setting[data-i="${el.dataset.i}"] .out`);
+    now.className = "out ok";
+    now.textContent = "Saved";
+    if (s.plugin === "hub") loadHub();
   } catch (x) {
     out.className = "out bad";
     out.textContent = x.message;
   }
+}
+
+const box = document.getElementById("settings");
+box.addEventListener("change", (e) => {
+  const el = e.target.closest(".setting");
+  if (el && e.target.matches("input, select, textarea")) save(el, false);
 });
+box.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.matches("input[type=text], input[type=number]")) e.target.blur();
+});
+box.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act=reset]");
+  if (b) save(b.closest(".setting"), true);
+});
+document.getElementById("filter").addEventListener("input", filter);
+
+async function names(cap, list, key) {
+  try {
+    return (await rook.call(cap, {}, { why: "Offer the known values on the Settings page." }))[list].map((x) => x[key]);
+  } catch (x) {
+    return null;       // a text box instead of a dropdown
+  }
+}
 
 async function loadSettings() {
   try {
-    settings = (await rook.call("setting.list")).settings;
+    const [listed, secret, worker] = await Promise.all([
+      rook.call("setting.list", {}, { why: "Show the settings." }),
+      names("secret.list", "secrets", "name"), names("hub.workers", "workers", "name")]);
+    choices = { secret, worker };
+    settings = listed.settings;
     renderSettings();
   } catch (x) {
-    const box = document.getElementById("settings");
     box.className = "bad";
     box.textContent = x.message;
   }
@@ -103,7 +201,7 @@ async function loadSettings() {
 
 async function loadHub() {
   try {
-    const h = await rook.call("hub.status");
+    const h = await rook.call("hub.status", {}, { why: "Show the hub." });
     document.getElementById("hub").className = "";
     document.getElementById("hub").innerHTML = `<dl><dt>Hub id</dt><dd>${esc(h.hub)}</dd><dt>Band</dt><dd>${esc(h.band)}</dd>
       <dt>Relay</dt><dd>${esc(h.relay || h.ws_url || "none")}</dd><dt>Joining</dt><dd><a href="#" id="workers">on the Workers page</a></dd>

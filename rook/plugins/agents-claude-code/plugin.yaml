@@ -11,12 +11,13 @@ version: 0.6.0
 title: Claude Code backend
 doc: Agent turns in the Claude Code CLI signed in on one of the band's workers, for the agents package.
 package: agents
+segment: Agents
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 runs_on: hub
 uses: [shell.open, shell.env, file.write, stream.read, stream.write, stream.close]
 settings:
-  worker: { where: hub, doc: "The worker (name) where Claude Code is installed and signed in; turns fail until it is set." }
+  worker: { where: hub, type: worker, doc: "The worker (name) where Claude Code is installed and signed in; turns fail until it is set." }
   claude: { where: hub, default: claude, doc: "The claude program on that worker: a name on PATH or a full path (~ is its home)." }
   model: { where: hub, default: opus, doc: "System Two's model when the agent names none (opus, sonnet, haiku or a full model id)." }
   model_three: { where: hub, default: haiku, doc: "System Three's model (dream cycles)." }

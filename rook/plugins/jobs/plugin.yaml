@@ -16,6 +16,7 @@ version: 0.5.0
 title: Jobs
 doc: Scheduled, event and manual jobs, each firing one cap call.
 package: core
+segment: Hub
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook

@@ -17,6 +17,7 @@ version: 0.5.1
 title: Speech
 doc: Talk to your agents by voice - sessions, a fast front talker, the agent's brain behind it.
 package: agents
+segment: Agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
