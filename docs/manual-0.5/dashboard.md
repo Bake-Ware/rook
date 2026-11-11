@@ -24,12 +24,26 @@ in. `doors: {http: {web: false}}` turns the site off.
 
 | Installed | You get |
 |---|---|
-| the hub alone | **Workers**, **Tokens** and **Jobs** in the sidebar; **Journal**, **Vault** and **Settings** under More |
-| + agents | the house agent's **chat dock** beside every page. A hub the installer made opens on its guided first run (`agent.setup`); after that, on your first visit it asks how you want to use the site; it builds pages for you and can set your start page. The **Agents** page: each agent's engine and model, the default engine, the attention pass. With `trust` in the library, the **Trust map** too |
+| the hub alone | **Workers** (under Machines); **Tokens**, **Jobs**, **Journal**, **Vault** and **Settings** (under Hub) |
+| + agents | the house agent's **chat dock** beside every page. A hub the installer made opens on its guided first run (`agent.setup`); after that, on your first visit it asks how you want to use the site; it builds pages for you and can set your start page. The **Agents** page (under Agents): each agent's engine and model, the default engine, the attention pass. With `trust` in the library, the **Trust map** too |
 | + workbench | **Tasks**, **Projects** and **Knowledge** pages; every page an agent makes is built under a task, so you can review it |
 
 The site opens on your start page, else the hub's, else Workers. On a
 phone, the dock is a sheet behind the Chat button.
+
+## The sidebar
+
+Every page is in it, under its plugin's segment: Agents, Machines, Work
+and Hub first, then any other a plugin names, then Pages for what agents
+made. **Pinned** at the top holds the pages you pin (a page's ⋯ menu: Pin,
+Unpin), in the order you pinned them; each stays in its segment too.
+Click a segment's heading to open or fold it, and it stays that way. One
+you have not touched is open when it holds one of the three pages you
+open most; before you have opened anything, your start page's segment is
+open, or every segment when you have no start page. A folded segment
+still shows its pages, as one quiet line of links. The sidebar is yours:
+an agent can pin and fold for you too (`page.arrange`, see the
+[page plugin's manual](../../rook/core2/hub/doors/web/builtin/page/docs/manual.md)).
 
 - **Workers**: every machine, online or not, its plugins and what it can't serve.
 - **Jobs**: every job, its last run, Run now and on/off ([Jobs](jobs.md)).

@@ -145,7 +145,8 @@ That alone gives `storyboard.list`, `get`, `search`, `create`, `update`,
 `archive` and `history`. A record type named like its plugin drops the
 repeat (`storyboard.create`); another type is `<plugin>.<type>.create`.
 
-The page runs sandboxed with no network: `rook.call` (only the caps the
+The page goes in the sidebar under your plugin's `segment:`. It runs
+sandboxed with no network: `rook.call` (only the caps the
 page declares), `rook.on` (its declared events), `rook.esc`, `rook.ago`,
 `rook.open("plugin/page")`, and the site's base style.
 
