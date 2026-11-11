@@ -569,11 +569,12 @@ def test_the_sidebar_is_each_persons_and_follows_what_they_open(site):
 
             # a new hub: nothing pinned, every segment open, the four first, a plugin's new segment after
             s = await sidebar(bake)
-            assert s["pinned"] == [] and [x["segment"] for x in s["segments"]] == ["Machines", "Hub", "Garden"]
+            assert s["pinned"] == [] and [x["segment"] for x in s["segments"]] == ["Agents", "Machines", "Hub", "Garden"]
             assert all(x["open"] for x in s["segments"])
             board = next(p for p in flat(s) if p["page"] == "board/board")
             assert board["segment"] == "Garden" and board["opens"] == 0 and board["pinned"] is False
-            assert [p["page"] for p in s["segments"][0]["pages"]] == ["hub/workers"]
+            assert [p["page"] for p in s["segments"][0]["pages"]] == ["llm/models"]
+            assert [p["page"] for p in s["segments"][1]["pages"]] == ["hub/workers"]
             # no history but a start page: its segment open
             assert (await bake.call("page.start", {"page": "board/board"}))["ok"]
             assert await opened(bake) == ["Garden"]
@@ -588,9 +589,9 @@ def test_the_sidebar_is_each_persons_and_follows_what_they_open(site):
             # opened or folded by hand wins; a folded segment still lists its pages
             s = await arrange(bake, segment="Hub", open=True)
             s = await arrange(bake, segment="Garden", open=False)
-            assert [(x["segment"], x["open"]) for x in s["segments"]] == [("Machines", False), ("Hub", True),
+            assert [(x["segment"], x["open"]) for x in s["segments"]] == [("Agents", False), ("Machines", False), ("Hub", True),
                                                                            ("Garden", False)]
-            assert [p["page"] for p in s["segments"][2]["pages"]] == ["board/board", "board/holds"]
+            assert [p["page"] for p in s["segments"][3]["pages"]] == ["board/board", "board/holds"]
             # only what differs from the default is kept, per person, beside the start page
             state = json.loads((hub.data / "pages.json").read_text())
             assert state["start"] == {"person:bake": "board/board"}
@@ -610,7 +611,7 @@ def test_the_sidebar_is_each_persons_and_follows_what_they_open(site):
             # the rows carry her counts, not bake's
             for pid in ("board/board", "board/board", "hub/workers"):
                 assert (await kim.open(pid))["ok"]
-            assert await opened(kim) == ["Machines", "Hub", "Garden"]
+            assert await opened(kim) == ["Agents", "Machines", "Hub", "Garden"]
             assert (await kim.open("board/holds"))["ok"]
             s = await sidebar(kim)
             assert [x["segment"] for x in s["segments"] if x["open"]] == ["Machines", "Garden"]
@@ -751,7 +752,7 @@ def test_an_agent_made_page_lives_in_the_segment_it_was_made_with(site):
             (old / "page.html").write_text("<p>old</p>")
             (old / "meta.json").write_text(json.dumps({"title": "Old", "section": "Reports", "note": "x"}))
             s = (await c.call("page.list"))["result"]
-            assert [x["segment"] for x in s["segments"]] == ["Machines", "Hub", "Garden", "Pages", "Reports"]
+            assert [x["segment"] for x in s["segments"]] == ["Agents", "Machines", "Hub", "Garden", "Pages", "Reports"]
             assert [p["page"] for p in s["segments"][-1]["pages"]] == ["page/old", "page/uptime"]
             assert (await c.call("page.update", {"page": "page/old", "change": "moved", "segment": "Garden"}))["ok"]
             got = (await c.call("page.get", {"page": "page/old"}))["result"]

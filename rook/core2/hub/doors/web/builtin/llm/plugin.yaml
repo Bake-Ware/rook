@@ -54,4 +54,7 @@ caps:
       provider: { type: str, doc: "A provider plugin; blank: every one." }
     result: { type: map }
 
+pages:
+  models: { title: Model providers, file: pages/models.html, caps: [llm.providers, llm.status, llm.models, llm.choose, setting.list, setting.set, secret.list, hub.workers] }
+
 docs: { manual: docs/manual.md }
