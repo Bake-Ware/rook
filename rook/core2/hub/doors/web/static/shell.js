@@ -49,7 +49,7 @@ function message(text, bad, home) {
     a.onclick = (e) => {
       e.preventDefault();
       history.replaceState(null, "", location.pathname);
-      open(wanted());
+      openPage(wanted());
     };
     m.append(" ", a);
   }
@@ -179,7 +179,7 @@ function pageMenu(trigger, p) {
       await loadNav();
       if (current && current.page === p.page) {
         history.replaceState(null, "", location.pathname);
-        open(wanted());
+        openPage(wanted());
       }
     }, "danger");
   }
@@ -283,7 +283,7 @@ function wanted() {
 
 let opening = 0;
 
-async function open(pid) {
+async function openPage(pid) {
   const n = ++opening;
   document.body.classList.remove("nav-open");
   closePage();
@@ -419,7 +419,7 @@ $("#nav").onclick = (e) => {
   const a = e.target.closest("a");
   if (!a) return;
   document.body.classList.remove("nav-open");
-  if (!current && location.hash === a.getAttribute("href")) open(a.dataset.page);   // reopen a closed page
+  if (!current && location.hash === a.getAttribute("href")) openPage(a.dataset.page);   // reopen a closed page
 };
 
 $("#signout").onclick = async () => {
@@ -427,7 +427,7 @@ $("#signout").onclick = async () => {
   location.href = "/login";
 };
 
-window.addEventListener("hashchange", () => open(wanted()));
+window.addEventListener("hashchange", () => openPage(wanted()));
 
 // After every plugin's shell part has run (they load after this file).
 document.addEventListener("DOMContentLoaded", async function start() {
@@ -436,7 +436,7 @@ document.addEventListener("DOMContentLoaded", async function start() {
     site = await call("page.site");
     await loadNav();
     const kept = await Promise.all(shellHooks.starting.map((f) => f().catch(() => false)));
-    if (!kept.some(Boolean)) open(wanted());
+    if (!kept.some(Boolean)) openPage(wanted());
   } catch (x) {
     message(String((x && x.message) || x), true);
   }

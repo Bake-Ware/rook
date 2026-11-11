@@ -1,7 +1,7 @@
 // The house agent beside every page of the hub site: the chat dock, Rookie,
 // the work pane and the guided first run. The agents package's part of the
 // shell (manifest shell:): it loads after the shell's shell.js and uses its
-// helpers ($, el, api, call, open, site, current); agent.site says which
+// helpers ($, el, api, call, openPage, site, current); agent.site says which
 // agent is in the dock. Loaded on every shell page; it starts on the main one
 // only (shellHooks).
 "use strict";
@@ -860,9 +860,9 @@ async function refresh() {
     await loadNav();
     if (current && !pages.some((p) => p.page === current.page)) {      // archived meanwhile
       history.replaceState(null, "", location.pathname);
-      open(wanted());
+      openPage(wanted());
     } else if (!current && !setup) {                                   // setup just finished
-      open(wanted());
+      openPage(wanted());
     }
   } catch (x) { /* next time */ }
 }
@@ -1087,7 +1087,7 @@ function mountDock() {
     if (document.body.classList.contains("setup")) {
       skipped = true;
       setupMode();
-      if (!current) open(wanted());
+      if (!current) openPage(wanted());
       return;
     }
     dockOpen(false);
