@@ -1,12 +1,16 @@
-"""The shell asks the open page where a control is (bridge.js ``locate``), in
-a real browser: the page scrolls the control marked ``data-target`` into
-view, marks it, and the shell gets its box in its own coordinates. Core only
-(no agents package). Skipped without Playwright and its Chromium."""
+"""The chat pane in a real browser. The shell asks the open page where a
+control is (bridge.js ``locate``; core only): the page scrolls the control
+marked ``data-target`` into view, marks it, and the shell gets its box in
+its own coordinates. The house agent's chat pops out into its own window
+and docks back (the agents package's dock.js). Skipped without Playwright
+and its Chromium."""
 from __future__ import annotations
 
 import asyncio
 
 import pytest
+
+import time
 
 from tests.test_core2_dashboard import Client, run
 from tests.test_core2_worksurface import start
@@ -38,7 +42,7 @@ def test_the_shell_gets_the_box_of_a_target_inside_a_page(tmp_path):
                 await ctx.add_cookies([{"name": name, "value": value, "url": f"http://127.0.0.1:{c.port}"}])
                 shell = await ctx.new_page()
                 await shell.goto(f"http://127.0.0.1:{c.port}/#/page/far")
-                await shell.wait_for_function("current && current.page === 'page/far'", timeout=10000)
+                await until(shell, "typeof current !== 'undefined' && current && current.page === 'page/far'")
                 frame = shell.frame_locator("#stage iframe")
                 await frame.locator("[data-target='far.model']").wait_for(state="attached", timeout=10000)
                 box = await shell.evaluate("""async () => {
@@ -61,3 +65,56 @@ def test_the_shell_gets_the_box_of_a_target_inside_a_page(tmp_path):
         finally:
             await hub.stop()
     run(asyncio.wait_for(go(), 60))
+
+
+async def until(page, expr, seconds=15):
+    """Poll ``expr`` in the page (the shell's CSP forbids wait_for_function's eval)."""
+    deadline = time.monotonic() + seconds
+    while not await page.evaluate(f"() => !!({expr})"):
+        assert time.monotonic() < deadline, f"timed out: {expr}"
+        await asyncio.sleep(0.2)
+
+
+def test_the_chat_pops_out_into_its_own_window_and_docks_back(tmp_path):
+    """The site design: "The chat can pop out into its own browser window:
+    same chat, same stream; closing the window docks it back"."""
+    async def go():
+        hub, tokens = await start(tmp_path, ("agents",))
+        c = Client(hub)
+        await c.sign_in(tokens["bake"])
+        try:
+            async with pw.async_playwright() as p:
+                try:
+                    browser = await p.chromium.launch()
+                except Exception as x:
+                    pytest.skip(f"no Chromium: {x}")
+                ctx = await browser.new_context(viewport={"width": 1200, "height": 800})
+                name, _, value = c.cookie.partition("=")
+                await ctx.add_cookies([{"name": name, "value": value, "url": f"http://127.0.0.1:{c.port}"}])
+                main = await ctx.new_page()
+                await main.goto(f"http://127.0.0.1:{c.port}/")
+                await until(main, "document.querySelector('#dock-log .msg.them')")
+                async with ctx.expect_page() as popup:
+                    await main.click("#dock-pop")
+                chat = await popup.value
+                assert chat.url.endswith("/?chat")
+                await until(main, "pop.out && !document.querySelector('#dock').offsetWidth")
+                assert not await chat.is_visible("#nav") and await chat.is_visible("#dock-log")
+                # the same conversation: what the main window had, and a reply to the chat window
+                await until(chat, "document.querySelector('#dock-log .msg.them')")
+                await chat.fill("#dock-text", "hello from the chat window")
+                await chat.press("#dock-text", "Enter")
+                said = "[...document.querySelectorAll('#dock-log .msg.them')].some(e => e.textContent.includes('brain: hello from the chat window'))"
+                await until(chat, said, 30)
+                # reloading the main window leaves the chat out, not two chats
+                await main.reload()
+                await until(main, "typeof pop !== 'undefined' && pop.out")
+                assert not await main.is_visible("#dock")
+                # closing the chat window docks it back, with the whole conversation
+                await chat.close()
+                await until(main, "!pop.out && document.querySelector('#dock').offsetWidth")
+                await until(main, said)
+                await browser.close()
+        finally:
+            await hub.stop()
+    run(asyncio.wait_for(go(), 90))
