@@ -30,7 +30,7 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from rook.kit.ctx import KitError
+from rook.kit.ctx import Caller as KitCaller, KitError
 from rook.kit.manifest import compile_fields
 from rook.kit.manifest.types import setting_spec
 
@@ -315,7 +315,8 @@ def install(hub) -> None:
                      "approval.ask": h.approval_ask, "approval.get": h.approval_get},
         "journal": {"journal.search": h.journal_search},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
-        "llm": {"llm.providers": h.llm_providers, "llm.models": h.llm_models, "llm.status": h.llm_status},
+        "llm": {"llm.providers": h.llm_providers, "llm.choose": h.llm_choose, "llm.models": h.llm_models,
+                "llm.status": h.llm_status},
         "token": {"token.create": tokens.create, "token.list": tokens.list, "token.revoke": tokens.revoke},
     }
     for plugin, handlers in table.items():
@@ -672,6 +673,12 @@ class _Handlers:
         return {"chosen": chosen and _plugin_of(chosen),
                 "providers": [{"provider": _plugin_of(c), "cap": c, "chosen": c == chosen} for c in caps]}
 
+    async def llm_choose(self, ctx, provider: str) -> dict:
+        plugin = self._llm_provider(provider)
+        self.hub.cfg.contracts["llm.complete"] = next(
+            c for c in self.hub.contracts.providers("llm.complete") if _plugin_of(c) == plugin)
+        return {**await self.llm_providers(ctx), "saved": _save_config(self.hub.cfg, "contracts")}
+
     async def llm_models(self, ctx, provider: str | None = None) -> dict:
         plugin = self._llm_provider(provider)
         return {"provider": plugin, **await self._llm_call(ctx, plugin)}
@@ -699,7 +706,10 @@ class _Handlers:
         return provider
 
     async def _llm_call(self, ctx, plugin: str) -> dict:
-        reply = await self.hub.call_as(ctx.caller, f"{plugin}.models", {})
+        """As the llm plugin itself (its uses), not bounded by the page asking,
+        as agent.models asks the engines."""
+        me = KitCaller(plugin="llm", band=ctx.caller.band, why=ctx.caller.why)
+        reply = await self.hub.call_as(me, f"{plugin}.models", {}, uses=self.hub.plugins.uses("llm"))
         if not reply.get("ok"):
             raise KitError(str(reply.get("error") or "failed"))
         return reply.get("result") or {}
@@ -712,7 +722,7 @@ def _or_raise(out: dict) -> dict:
 
 
 def _save_config(cfg, key: str) -> str | None:
-    """Write ``key`` (sacred, users) into the hub's YAML file, keeping its comment
+    """Write ``key`` (sacred, users, contracts) into the hub's YAML file, keeping its comment
     lines at the top (as install.sh does). None when the hub has no file."""
     import yaml
     path = getattr(cfg, "file", None)
