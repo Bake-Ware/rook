@@ -7,6 +7,7 @@ doc: Talk to people on Telegram through your own bot.
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 package: agents
+segment: Garden shed
 runs_on: hub
 platforms: [linux, macos]
 requires:
@@ -19,6 +20,7 @@ settings:
   webhook_secret: { where: hub, secret: true }
   handle: { where: person, doc: Your Telegram handle. }
   limit: { type: int, min: 1, max: 100, default: 20 }
+  relay: { type: worker, doc: The worker that holds the bot's session. }
 caps:
   send:
     doc: Send a message.

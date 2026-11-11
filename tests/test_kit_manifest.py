@@ -127,11 +127,12 @@ def test_load_normalizes(tmp_path):
 def test_settings_live_where_the_plugin_runs_and_segment_is_any_name():
     data = _yaml.loads((ROOT / "valid" / "everything.yaml").read_text())
     from rook.kit.manifest import normalize
-    assert normalize(data)["segment"] == "Hub"
-    data["runs_on"], data["segment"] = "worker", "Garden shed"
-    assert not [i for i in validate(data) if i.level == "error" or i.path == "/segment"]
+    assert normalize(data)["segment"] == "Garden shed"
+    assert normalize(data)["settings"]["relay"]["type"] == "worker"
+    data["runs_on"] = "worker"
+    del data["segment"]
     out = normalize(data)
-    assert out["segment"] == "Garden shed" and out["settings"]["limit"]["where"] == "worker"
+    assert out["segment"] == "Hub" and out["settings"]["limit"]["where"] == "worker"
     data["segment"] = ""
     assert any(i.code == "schema-minLength" for i in validate(data))
 

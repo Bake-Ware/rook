@@ -11,10 +11,16 @@ and `invalid/v1-1*.yaml` cover them. Format 1.2
 (also additive: `provides` as a list, record `aliases`) is covered by
 `valid/v1-2.yaml` and `invalid/v1-2*.yaml`.
 
-**The format is frozen at 1.2** (Oct 31 2026, castling drift audit #34).
+Format 1.3 (Nov 2026, the site design) adds two optional things, both
+in `valid/everything.yaml`: the top-level `segment:` (where in the site a
+plugin's pages and settings belong; any name, none means `Hub`) and the
+setting/arg type `worker` (a worker's name). A setting with no `where:`
+lives where its plugin runs: `hub` for `runs_on: hub`, else `worker`.
+
+**The format was frozen at 1.2** (Oct 31 2026, castling drift audit #34).
 1.1 and 1.2 were Claude's calls under Bake's delegation of the schema, not
 Bake's decisions, and each closed a gap the 0.4 converter found rather than
-something a 0.5 plugin needed. No new keys. Every cap is a `run:` script
+something a 0.5 plugin needed. Every cap is a `run:` script
 (castling-design, Bake's design: "there is one way to write one: a manifest
 plus Python scripts that run on the hub"; the config `action` format and its
 arg `join`/`map` are gone). These keys

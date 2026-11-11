@@ -798,11 +798,12 @@ class Settings:
 def _row(manifest: dict, key: str, spec: dict) -> dict:
     """What a settings page needs to group and draw one setting: its
     plugin's segment, title and doc, then the setting's own type, doc,
-    default and known values (``enum``)."""
+    default, known values (``enum``) and a list's or map's item type."""
     return {"plugin": manifest["plugin"], "segment": manifest["segment"],
             "title": manifest.get("title") or manifest["plugin"], "plugin_doc": manifest.get("doc", ""),
             "key": key, "type": spec.get("type"), "doc": spec.get("doc", ""), "default": spec.get("default"),
-            "secret": bool(spec.get("secret")), **({"enum": list(spec["enum"])} if spec.get("enum") else {})}
+            "secret": bool(spec.get("secret")), **({"enum": list(spec["enum"])} if spec.get("enum") else {}),
+            **({"items": spec["items"]} if spec.get("items") else {})}
 
 
 def _worker_manifests(hub) -> dict:

@@ -40,6 +40,6 @@ caps:
     result: { type: map }
 
 pages:
-  settings: { title: Settings, file: pages/settings.html, caps: ["hub.status", "hub.person", "setting.*"] }
+  settings: { title: Settings, file: pages/settings.html, caps: ["hub.status", "hub.person", "hub.workers", "secret.list", "setting.*"] }
 
 docs: { manual: docs/manual.md }

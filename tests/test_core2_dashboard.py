@@ -9,6 +9,7 @@ thread with their own socket timeout."""
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import shutil
 import subprocess
@@ -42,6 +43,8 @@ runs_on: hub
 settings:
   motto: { type: str, default: hello, doc: Shown on top. }
   size: { type: int, where: hub, default: 3 }
+  printer: { type: worker, doc: The worker that prints the board. }
+  key: { secret: true, doc: The vault name of the printer's key. }
 caps:
   count:
     doc: How many notes.
@@ -763,7 +766,19 @@ def test_workers_journal_and_settings_pages(site):
             listed = (await c.page(t, "setting.list"))["result"]["settings"]
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
                 ("board", "motto", "hello", "default"), ("board", "size", 3, "default"),
+                ("board", "printer", None, "default"), ("board", "key", None, "default"),
                 ("hub", "security", "on", "config"), ("backup", "target", "", "default"), ("backup", "keep", 7, "default")}
+            # a worker's name and a vault name: the page offers hub.workers' and secret.list's names
+            assert {s["key"]: s["type"] for s in listed if s["plugin"] == "board"}["printer"] == "worker"
+            assert {s["key"]: s["type"] for s in listed if s["plugin"] == "board"}["key"] == "secret"
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.list", "why": WHY}, bearer=tokens["bake"])
+            page = next(p for p in out["result"]["pages"] if p["page"] == "setting/settings")
+            served = hub.dispatcher.workers[hub.node].caps
+            assert all(any(fnmatch.fnmatch(cap, c) for cap in served) for c in page["caps"]), page["caps"]
+            assert "rook" in [w["name"] for w in (await c.page(t, "hub.workers"))["result"]["workers"]]
+            assert "secrets" in (await c.page(t, "secret.list"))["result"]
+            assert (await c.page(t, "setting.set", {"plugin": "board", "key": "printer", "value": "rook"}))["ok"]
+            assert (await c.page(t, "setting.set", {"plugin": "board", "key": "printer", "value": None}))["ok"]
             # what the page groups and draws them by: the plugin's segment, title and doc
             motto = next(s for s in listed if (s["plugin"], s["key"]) == ("board", "motto"))
             assert (motto["segment"], motto["title"], motto["plugin_doc"]) == ("Garden", "board", "A bulletin board kept on the hub.")
@@ -890,7 +905,7 @@ def test_stored_settings_apply_at_start(site, tmp_path):
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "setting.list", "why": WHY},
                                   bearer=tokens["bake"])
             src = {s["key"]: (s["value"], s["source"]) for s in out["result"]["settings"] if s["plugin"] == "board"}
-            assert src == {"motto": ("stored", "set"), "size": (9, "config")}
+            assert src == {"motto": ("stored", "set"), "size": (9, "config"), "printer": (None, "default"), "key": (None, "default")}
         finally:
             await hub.stop()
     run(go())
