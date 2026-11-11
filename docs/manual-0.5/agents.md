@@ -34,6 +34,8 @@ Put `agents` in the hub's library, and a backend:
   machine it installs on.
 - Each keeps its work folder and generated config on that worker, in
   `~/.rook-plugins/<plugin>/`.
+- Agents > Engines on the hub site shows each engine, whether it can run a
+  turn now and why not, and sets its worker, model and light model.
 - `llm-cli`, `llm-anthropic` or `llm-openai` if other plugins need plain
   completions (`llm.complete`); agents themselves think through
   `agent.backend`.
