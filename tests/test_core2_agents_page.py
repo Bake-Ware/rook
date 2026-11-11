@@ -141,6 +141,14 @@ def test_the_agents_page(tmp_path, monkeypatch):
         assert out["text"] == "claude here"
         argv = ran()[-1]
         assert argv[0] == "claude" and argv[argv.index("--model") + 1] == "sonnet"
+        # A session from before engines were stored resolved ("default" for the
+        # default engine): its conversation goes on, it doesn't start over.
+        meta = hub.streams.streams.update(out["stream"], attrs={"harness_backend": "default"})
+        assert meta.attrs["harness"] == "c-1"
+        await ok("agent.chat.send", "Talk to the house agent.", agent="house", text="still there?")
+        argv = ran()[-1]
+        assert argv[0] == "claude" and argv[argv.index("--resume") + 1] == "c-1"
+        assert hub.streams.streams.get(out["stream"]).attrs["harness_backend"] == "agents-claude-code.turn"
 
         # Its engine: OpenCode, once its worker is set; its models come from the worker.
         await ok("setting.set", "Name OpenCode's worker.", plugin="agents-opencode", key="worker", value="kaiju")
@@ -166,6 +174,14 @@ def test_the_agents_page(tmp_path, monkeypatch):
         await ok("setting.set", "Default engine.", plugin="agent", key="backend", value="agents-opencode.turn")
         assert (await ok("agent.engines", "Engines."))["default"] == "agents-opencode.turn"
         await ok("agent.chat.send", "Talk.", agent="house", text="opencode?")
+        assert ran()[-1][:2] == ["opencode", "run"] and "--session" not in ran()[-1]
+        # The setting blank (the first installed: Claude Code), then set again: each a change of engine.
+        await ok("setting.set", "Default engine.", plugin="agent", key="backend", value="")
+        assert (await ok("agent.engines", "Engines."))["default"] == "agents-claude-code.turn"
+        await ok("agent.chat.send", "Talk.", agent="house", text="claude again?")
+        assert ran()[-1][0] == "claude" and "--resume" not in ran()[-1]
+        await ok("setting.set", "Default engine.", plugin="agent", key="backend", value="agents-opencode.turn")
+        await ok("agent.chat.send", "Talk.", agent="house", text="opencode again?")
         assert ran()[-1][:2] == ["opencode", "run"] and "--session" not in ran()[-1]
 
         # The attention pass: the same calls as the first-run skill to turn it on, the job's own switch off.

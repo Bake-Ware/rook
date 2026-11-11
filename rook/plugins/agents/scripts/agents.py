@@ -374,7 +374,7 @@ class Runtime:
             self.alone[name] = self.alone.get(name, 0) + alone
             try:
                 # another harness can't resume this one's session
-                same = meta.attrs.get("harness_backend") == self.engine(a)
+                same = engine_of(ctx, meta.attrs.get("harness_backend")) == engine_of(ctx, a.get("backend"))
                 setup = await self.setup_brief(ctx, a)
                 res = await self.backend(ctx, a, f"Message from {ev.by}:\n\n{ev.body['text']}{setup}",
                                          system=system, session=meta.attrs.get("harness") if same else None,
@@ -389,7 +389,7 @@ class Runtime:
         if not isinstance(res, dict) or not isinstance(res.get("text"), str):
             return self.fail(prod, fut, "the backend gave no reply text")
         if res.get("session"):
-            self.streams.update(prod.id, attrs={"harness": res["session"], "harness_backend": self.engine(a)})
+            self.streams.update(prod.id, attrs={"harness": res["session"], "harness_backend": engine_of(ctx, a.get("backend"))})
         reply = prod.append("turn", {"role": "reply", "text": res["text"],
                                      **({"usage": res["usage"]} if res.get("usage") else {})})
         if not fut.done():
@@ -416,11 +416,6 @@ class Runtime:
         if fut is not None and not fut.done():
             fut.set_result({"error": error})
 
-    def engine(self, a: dict) -> str:
-        """The provider cap the agent's turns go to (default: the hub's choice)."""
-        kind = a.get("backend") or "default"
-        return (self.settings.get("backend") or "default") if kind == "default" else kind
-
     async def backend(self, ctx, a: dict, prompt: str, *, system: str, why: str, session: str | None = None,
                       model: str | None = None, door: bool = False) -> dict:
         """One ``agent.backend`` turn as the agent: for ``ctx``'s person, or
@@ -428,7 +423,9 @@ class Runtime:
         provider cap the agent is pinned to. ``door``: hand the harness a turn token
         for the same pair, by name (the hub resolves it on the way to the
         worker), ended when the turn returns."""
-        name, kind = a["name"], self.engine(a)
+        name = a["name"]
+        # named by the agent or the backend setting; else the contract picks (provider None)
+        named = a.get("backend") not in (None, "", "default") or self.settings.get("backend")
         who = Caller(person=ctx.person, agent=f"agent:{name}", band=ctx.band, why=why)
         args = {"prompt": inert(prompt), "system": inert(system), "timeout": self.settings["turn_timeout"]}
         model = model or (a.get("model") or {}).get("two")
@@ -441,7 +438,7 @@ class Runtime:
         if turn:
             args["door"] = "{{secret:%s}}" % turn
         try:
-            return await ctx.call_as(who, BACKEND, args, provider=None if kind == "default" else kind)
+            return await ctx.call_as(who, BACKEND, args, provider=engine_of(ctx, a.get("backend")) if named else None)
         finally:
             if turn:
                 ctx.end_turn_token(turn)
@@ -1012,8 +1009,11 @@ async def backend_ready(ctx) -> bool:
         return False
 
 
-def default_engine(ctx) -> str | None:
-    """The engine an agent with backend default uses: the backend setting, else the first installed."""
+def engine_of(ctx, backend: str | None = "default") -> str | None:
+    """The engine an agent's backend means: a provider's cap itself; default
+    (or blank, as old sessions stored it) the backend setting, else the first installed."""
+    if backend and backend != "default":
+        return backend
     return ctx.settings["backend"] or next(iter(ctx.providers(BACKEND)), None)
 
 
@@ -1034,13 +1034,13 @@ async def engines(ctx):
         plugin = cap.partition(".")[0]
         rows.append({"engine": cap, "title": titles.get(plugin, plugin), "ready": states.get(plugin) is None,
                      "why": states.get(plugin)})
-    return {"default": default_engine(ctx), "engines": rows}
+    return {"default": engine_of(ctx), "engines": rows}
 
 
 async def models(ctx, engine=None):
     """The models one engine offers (its own ``models`` cap) and its default model."""
     if not engine or engine == "default":
-        engine = default_engine(ctx)
+        engine = engine_of(ctx)
     if not engine:
         raise ctx.Error("no engine is installed")
     return {"engine": engine, **await _own(ctx)(f"{engine.partition('.')[0]}.models")}

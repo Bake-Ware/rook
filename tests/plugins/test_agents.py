@@ -77,7 +77,8 @@ def _dreaming(args):
 
 class People:
     """The hub's view the agents plugin gets: who the owners are, the agent
-    identities it runs and the turn tokens it mints for them."""
+    identities it runs, the turn tokens it mints for them and the
+    agent.backend providers (the Backend above)."""
 
     def __init__(self):
         self.agents = {}                   # name -> grants
@@ -90,6 +91,9 @@ class People:
 
     def settings(self, person):
         return {}
+
+    def providers(self, contract):
+        return ["agents-fake.turn"] if contract == "agent.backend" else []
 
     def run_agent(self, plugin, name, grants):
         assert plugin == "agent"
