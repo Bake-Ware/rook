@@ -129,8 +129,14 @@ pub fn hostname() -> String {
 mod tests {
     #[test]
     fn the_band_door_is_the_hubs_own_address() {
-        assert_eq!(super::band_door("https://hub.example").as_deref(), Some("wss://hub.example/band"));
-        assert_eq!(super::band_door("http://192.168.1.5:8750/").as_deref(), Some("ws://192.168.1.5:8750/band"));
+        assert_eq!(
+            super::band_door("https://hub.example").as_deref(),
+            Some("wss://hub.example/band")
+        );
+        assert_eq!(
+            super::band_door("http://192.168.1.5:8750/").as_deref(),
+            Some("ws://192.168.1.5:8750/band")
+        );
         assert_eq!(super::band_door("hub.example"), None);
     }
 }

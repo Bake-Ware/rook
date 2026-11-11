@@ -46,7 +46,8 @@ class WsBand(Band):
         super().write()
         path = self.hub_dir / "hub.yaml"
         cfg = json.loads(path.read_text())
-        cfg["doors"]["http"]["band"] = f"ws://127.0.0.1:{self.ws_port}/band"
+        cfg["doors"]["http"].update(band=f"ws://127.0.0.1:{self.ws_port}/band",      # a fixed port: workers
+                                    bind=f"127.0.0.1:{_free_port(socket.SOCK_STREAM)}")  # keep its address
         path.write_text(json.dumps(cfg, indent=1))
 
     def add_worker(self, name: str, relay: str, kind: str = "python") -> Proc:
@@ -77,7 +78,11 @@ class WsBand(Band):
         assert r.returncode == 0, r.stderr
         bands = json.loads((data / "bands.json").read_text())
         assert all(set(b) == {"psk", "relay"} for b in bands.values()), bands
-        (data / "bands.json").write_text(json.dumps({k: {**b, "relay": relay} for k, b in bands.items()}))
+        if relay != self.relay_addr:
+            (data / "bands.json").write_text(json.dumps({k: {**b, "relay": relay} for k, b in bands.items()}))
+        return self.start(name, argv, folder, env, kind)
+
+    def start(self, name, argv, folder, env, kind) -> Proc:
         p = Proc(name, argv, folder, env, self.root / f"{name}.log")
         self.procs.append(p)
         if kind == "python":
@@ -176,3 +181,31 @@ def test_the_rust_worker_and_the_script_fall_back_too(ws_band, tmp_path):
             until(lambda name=name: band.owner.call("shell.exec", {"argv": ["true"]}, worker=name).get("ok"),
                   60, f"a call to {name} again", every=1)
         _serves(band, "rusty-blocked", tmp_path, 1 << 20)
+
+
+@pytest.mark.skipif(not shutil.which("cargo"), reason="cargo is not installed")
+def test_workers_that_start_while_the_hub_is_away_join_when_it_is_back(ws_band, tmp_path):
+    """UDP silent and the web socket refused: each worker keeps trying both,
+    and joins (by whichever answers first) once the relay and hub are back."""
+    band = ws_band
+    band.start_hub()
+    starts = {}
+    for kind in ("python", "rust", "script"):
+        name = f"{kind}-early"
+        p = band.add_worker(name, band.relay_addr, kind)
+        starts[name] = p.p.args
+        p.stop()
+    band.hub.stop()
+    band.relay.kill()
+    early = []
+    for kind in ("python", "rust", "script"):
+        name = f"{kind}-early"
+        env = {**band.env, **({"HOME": str(band.root / name)} if kind == "script" else {})}
+        early.append(band.start(name + "-again", starts[name], band.root / name, env, kind))
+    until(lambda: all(_said(p, "nothing heard over UDP") >= 2 for p in early), 60, "two tries each")
+    band.start_relay()
+    band.start_hub()
+    for kind in ("python", "rust", "script"):
+        _online(band, f"{kind}-early")
+        out = band.owner.call("shell.exec", {"argv": ["true"]}, worker=f"{kind}-early")
+        assert out["ok"], out

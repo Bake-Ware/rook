@@ -206,19 +206,25 @@ impl Worker {
         });
         loops.spawn(self.clone().send_events());
         let mut reassembler = link::reassembler();
+        // UDP until it hears the band; else the web socket; neither: both again.
         let mut first = None;
-        if let Some(url) = &self.cfg.ws_url {
-            match tokio::time::timeout(link::FALLBACK, self.link.recv(&mut reassembler)).await {
-                Ok(got) => first = Some(got?),
-                Err(_) => {
-                    eprintln!(
-                        "rook-worker: nothing heard over UDP in {}s; trying {url}",
-                        link::FALLBACK.as_secs()
-                    );
-                    self.link.fall_back(url).await?;
-                    eprintln!("rook-worker: on the band through {url}");
-                    self.announce().await;
-                }
+        while let Some(url) = &self.cfg.ws_url {
+            if let Ok(got) = tokio::time::timeout(link::FALLBACK, self.link.recv(&mut reassembler)).await {
+                first = Some(got?);
+                break;
+            }
+            eprintln!(
+                "rook-worker: nothing heard over UDP in {}s; trying {url}",
+                link::FALLBACK.as_secs()
+            );
+            let moved = self.link.fall_back(url).await;
+            match &moved {
+                Ok(()) => eprintln!("rook-worker: on the band through {url}"),
+                Err(e) => eprintln!("rook-worker: {e}"),
+            }
+            self.announce().await;
+            if moved.is_ok() {
+                break;
             }
         }
         loop {

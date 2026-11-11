@@ -166,19 +166,24 @@ class Link:
 
     def first(self, announce):
         """With a web socket address: UDP's first payload within FALLBACK
-        seconds, else the web socket from now on (and None)."""
-        if not self.ws_url:
-            return None
-        self.sock.settimeout(FALLBACK)
-        try:
-            return self.recv()
-        except socket.timeout:
-            pass
-        finally:
-            self.sock.settimeout(None)
-        print(f"rook_worker.py: nothing heard over UDP in {FALLBACK}s; trying {self.ws_url}", file=sys.stderr)
-        self.ws = self._ws_connect()
-        announce()
+        seconds, else the web socket from now on (and None); neither: both
+        again."""
+        while self.ws_url:
+            self.sock.settimeout(FALLBACK)
+            try:
+                return self.recv()
+            except socket.timeout:
+                pass
+            finally:
+                self.sock.settimeout(None)
+            print(f"rook_worker.py: nothing heard over UDP in {FALLBACK}s; trying {self.ws_url}", file=sys.stderr)
+            try:
+                self.ws = self._ws_connect()
+            except OSError as e:
+                print(f"rook_worker.py: {e}", file=sys.stderr)
+            announce()
+            if self.ws is not None:
+                return None
         return None
 
     def _ws_connect(self):
