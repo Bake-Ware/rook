@@ -479,28 +479,38 @@ function placeRookie() {
   document.body.append(h);
 }
 
-function point(target, said) {
+// The target's box once it is in view: one shown here (a work view, the shell;
+// "page" is the open page itself), else a control in the open page (locate).
+async function where(target) {
   const t = target === "page" ? current && current.frame : document.querySelector(`[data-target="${CSS.escape(target)}"]`);
-  if (!t) return;
+  if (!t || !t.getClientRects().length) return locate(target);
   t.scrollIntoView({ block: "center", behavior: "smooth" });
   t.classList.add("pointed");
   setTimeout(() => t.classList.remove("pointed"), 6000);
+  await sleep(400);                                       // after the scroll settles
+  return t.getBoundingClientRect();
+}
+
+// Where Rookie stands to point at a box: to its right, else its left.
+function beside(r, w, ht) {
+  return { x: r.right + 10 + w < innerWidth ? r.right + 10 : Math.max(8, r.left - w - 10),
+    y: Math.max(8, r.top + r.height / 2 - ht / 2) };
+}
+
+async function point(target, said) {
+  const r = await where(target);
   const h = rookie.holder;
-  if (!h || !rookie.inst || document.body.classList.contains("no-rookie")) return;
+  if (!r || !h || !rookie.inst || document.body.classList.contains("no-rookie")) return;
   clearTimeout(rookie.back);
-  setTimeout(() => {                                      // after the scroll settles
-    const me = h.getBoundingClientRect(), r = t.getBoundingClientRect();
-    const x = r.right + 10 + me.width < innerWidth ? r.right + 10 : Math.max(8, r.left - me.width - 10);
-    const y = Math.max(8, r.top + r.height / 2 - me.height / 2);
-    travel(x, y, () => {
-      rookie.inst.set("talking");                        // there: this one
-      speak(said || "Right here");
-      rookie.back = setTimeout(() => {
-        const to = homeSpot() || $("#rookie-home").getBoundingClientRect();
-        travel(to.left, to.top, settle);
-      }, 4000);
-    });
-  }, 400);
+  const me = h.getBoundingClientRect(), to = beside(r, me.width, me.height);
+  travel(to.x, to.y, () => {
+    rookie.inst.set("talking");                          // there: this one
+    speak(said || "Right here");
+    rookie.back = setTimeout(() => {
+      const home = homeSpot() || $("#rookie-home").getBoundingClientRect();
+      travel(home.left, home.top, settle);
+    }, 4000);
+  });
 }
 
 // Rookie's speech bubbles (Bake, Nov 9: "I want rookie to make little chat

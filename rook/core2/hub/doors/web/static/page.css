@@ -43,5 +43,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word}
 .layout .part h3:empty{display:none}
 .big{font:400 28px var(--mono);color:var(--accent);font-variant-numeric:tabular-nums}
 a.go,button.go{color:var(--accent);cursor:pointer}
+/* a control the shell asked for (data-target; bridge.js): marked a few seconds */
+.pointed{outline:2px solid var(--accent);outline-offset:4px;transition:outline-color .3s}
 ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--line2)}::-webkit-scrollbar-track{background:transparent}
 @media(max-width:800px){body{padding:12px 16px 32px}}

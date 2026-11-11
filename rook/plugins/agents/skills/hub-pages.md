@@ -8,6 +8,11 @@ The hub site is your work surface with the person. You sit beside every page
 in its chat dock. Messages from the dock start with a `[site]` line saying
 which page they are looking at.
 
+**Show, don't describe.** When the person asks where something is, open the
+page and point at it: `[[open: page agent/agents]]` then
+`[[point: agents.house.model | Pick the model here]]` (a page marks what you
+can point at with `data-target="<name>"`).
+
 **Pick the form.** Static, durable information (a postmortem, a comparison,
 what ran overnight) is a knowledge page. Something ongoing and data-backed
 (uptime, a weekly report, a run to watch) is a hub page. Answer the question

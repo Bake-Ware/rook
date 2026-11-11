@@ -8,6 +8,10 @@
 //   rook.on("worker.*", (payload, event) => reload());  // events it declared
 //   rook.open("journal/journal");                        // go to another page
 //
+// A control marked data-target="<name>" can be asked for by the shell: the
+// page scrolls it into view, marks it a few seconds (.pointed, page.css) and
+// answers its box.
+//
 // A component (manifest components:) is a script that registers its render
 // function; a layout page mounts each one into its card:
 //
@@ -46,8 +50,26 @@
         if (!glob(l[0], m.event)) return;
         try { l[1](m.payload, m.event); } catch (x) { console.error(x); }
       });
+    } else if (m.kind === "locate") {
+      locate(m.id, String(m.target));
     }
   });
+
+  function locate(id, target) {
+    var t = document.querySelector('[data-target="' + CSS.escape(target) + '"]');
+    if (!t || !t.getClientRects().length) return send({ kind: "located", id: id, box: null });
+    t.scrollIntoView({ block: "center", behavior: "smooth" });
+    t.classList.add("pointed");
+    setTimeout(function () { t.classList.remove("pointed"); }, 6000);
+    var last = null, still = 0, frames = 0;
+    (function settle() {                          // answer once it stops moving
+      var r = t.getBoundingClientRect();
+      still = last !== null && r.top === last ? still + 1 : 0;
+      last = r.top;
+      if ((still < 3 || frames < 6) && ++frames < 120) return requestAnimationFrame(settle);
+      send({ kind: "located", id: id, box: { left: r.left, top: r.top, width: r.width, height: r.height } });
+    })();
+  }
 
   window.rook = {
     page: info,

@@ -347,8 +347,31 @@ window.addEventListener("message", async (e) => {
     listen(cur);
   } else if (m.kind === "open" && /^[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_-]*$/.test(String(m.page))) {
     location.hash = "#/" + m.page;
+  } else if (m.kind === "located" && locating[m.id]) {
+    locating[m.id](m.box);
   }
 });
+
+// Where the control the open page marks data-target="<name>" is: the page
+// scrolls it into view and marks it (bridge.js); its box here, in the shell's
+// own coordinates, or null when the page has none (or doesn't answer).
+const locating = {};
+let locates = 0;
+function locate(target) {
+  const cur = current;
+  if (!cur) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const id = ++locates;
+    locating[id] = (box) => {
+      delete locating[id];
+      if (!box || cur !== current) return resolve(null);
+      const f = cur.frame.getBoundingClientRect();
+      resolve(new DOMRect(f.left + box.left, f.top + box.top, box.width, box.height));
+    };
+    toFrame(cur, { kind: "locate", id, target: String(target) });
+    setTimeout(() => locating[id] && locating[id](null), 3000);
+  });
+}
 
 async function listen(cur) {
   let since = "";
