@@ -25,7 +25,7 @@ in. `doors: {http: {web: false}}` turns the site off.
 | Installed | You get |
 |---|---|
 | the hub alone | **Workers**, **Tokens** and **Jobs** in the sidebar; **Journal**, **Vault** and **Settings** under More |
-| + agents | the house agent's **chat dock** beside every page. A hub the installer made opens on its guided first run (`agent.setup`); after that, on your first visit it asks how you want to use the site; it builds pages for you and can set your start page. With `trust` in the library, the **Trust map** too |
+| + agents | the house agent's **chat dock** beside every page. A hub the installer made opens on its guided first run (`agent.setup`); after that, on your first visit it asks how you want to use the site; it builds pages for you and can set your start page. The **Agents** page: each agent's engine and model, the default engine, the attention pass. With `trust` in the library, the **Trust map** too |
 | + workbench | **Tasks**, **Projects** and **Knowledge** pages; every page an agent makes is built under a task, so you can review it |
 
 The site opens on your start page, else the hub's, else Workers. On a
