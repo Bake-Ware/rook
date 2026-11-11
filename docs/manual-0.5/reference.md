@@ -15,8 +15,8 @@ Paths are relative to the file. An unknown key is an error.
 | `settings` | hub-side plugin settings: `plugin: {setting: value}` ([Settings](settings.md)) |
 | `contracts` | which provider answers a shared cap: `llm.complete: llm-cli.complete` |
 | `sacred` | worker names where every change is a hard stop ([Workers](workers.md#sacred-machines)) |
-| `doors` | `http: {bind, web}` (`web: false` turns the site off, `{secure_cookie: true}` behind TLS); `mcp: {bind, path, origins, oauth}` (`oauth`: the door's public https address, for [claude.ai's connectors](mcp.md#claudeais-connectors)) ([MCP](mcp.md)) |
-| `transport` | the band link: `bands: [{psk_env \| psk, relay \| ws_url}]` |
+| `doors` | `http: {bind, web, band}` (`web: false` turns the site off, `{secure_cookie: true}` behind TLS; `band`: the relay's web socket, passed through on `/band`, [Web socket fallback](install.md#web-socket-fallback)); `mcp: {bind, path, origins, oauth}` (`oauth`: the door's public https address, for [claude.ai's connectors](mcp.md#claudeais-connectors)) ([MCP](mcp.md)) |
+| `transport` | the band link: `bands: [{psk_env \| psk, relay \| ws_url}]` (both: UDP first, the web socket when UDP hears nothing) |
 | `enroll` | what enrolling devices are told: `url`, `relay`, `ws_url`, `discover`, `services` ([Adding machines](enrollment.md)) |
 | `log` | `{level, format: text \| json}` |
 

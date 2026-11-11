@@ -122,6 +122,55 @@ enrolling another machine or opening the port; `enroll` refuses a plain
 `http://` hub off this machine unless you pass `--insecure`. Behind TLS,
 set `doors: {http: {web: {secure_cookie: true}}}`.
 
+## Web socket fallback
+
+Some networks drop UDP (offices, hotels, some phone carriers), and a worker
+there can't reach the relay. Every worker joins over UDP first; when nothing
+comes back from the band within 5 seconds it switches to a web socket at the
+hub's own address, `wss://<your hub>/band`, for the rest of that run. That
+rides the same TLS proxy or tunnel as the site: no new name, no new port.
+
+1. The relay. Telesthete's relay (`telesthete-hub`) has a web socket
+   listener; turn it on, plain web socket on localhost (TLS stays at your
+   proxy). For its systemd unit, in `/etc/telesthete-hub.env`, then restart
+   it (Rook's small relay, `rook.core2.relay`, has no web socket):
+
+   ```sh
+   HUB_WS_BIND=127.0.0.1:7475
+   HUB_WS_TLS=false
+   ```
+
+2. The hub: one line in `hub.yaml`, then restart the hub. A web socket
+   opened on `/band` is passed straight through to the relay:
+
+   ```yaml
+   doors:
+     http:
+       band: ws://127.0.0.1:7475/band
+   ```
+
+3. Workers: nothing. Python workers, the phone app, `rook-worker` and
+   `rook_worker.py` take the address from the hub address they enrolled with
+   (`<data>/enrollment.json`), so machines already enrolled get it at their
+   next start.
+
+Check it from anywhere (the first line should be `HTTP/1.1 101 Switching
+Protocols`):
+
+```sh
+curl -si -N --max-time 3 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: cm9vay1iYW5kLWNoZWNrIQ==' \
+  https://rook.example/band | head -1
+```
+
+A worker that fell back says so in its log: `nothing heard over UDP in 5s;
+trying wss://rook.example/band`.
+
+To turn it off, take the `band:` line out of `hub.yaml` (and `HUB_WS_BIND`
+out of the relay's environment) and restart both; the check then answers
+`401`. Workers whose UDP works never notice; one already on the web socket
+keeps retrying it until it restarts, then tries UDP first again.
+
 ## Backups
 
 Everything the hub knows is in its `data:` folder (keys, journal, records,
