@@ -219,6 +219,7 @@ class Runtime:
         self.running: dict[str, asyncio.Task] = {}       # job id -> its run
         self.tasks: set[asyncio.Task] = set()
         self.seeded = 0.0
+        self.event_args: dict[str, bool] = {}            # cap -> whether it declares an event arg (until the next seed)
         self.closing = False
         self.recover()
 
@@ -371,11 +372,18 @@ class Runtime:
 
     async def takes_event(self, cap: str) -> bool:
         """Whether ``cap`` declares an ``event`` arg (caps refuse args they
-        don't declare)."""
-        for m in await self.manifests("caps"):
-            if cap in m["caps"]:
-                return "event" in (m["caps"][cap].get("args") or {})
-        return False
+        don't declare). Remembered until the next seed (a plugin loaded, a
+        worker online or updated): every event-triggered run asks, and the
+        answer is read out of every plugin's caps."""
+        known = self.event_args.get(cap)
+        if known is None:
+            known = False
+            for m in await self.manifests("caps"):
+                if cap in m["caps"]:
+                    known = "event" in (m["caps"][cap].get("args") or {})
+                    break
+            self.event_args[cap] = known
+        return known
 
     # -- other plugins' jobs ---------------------------------------------------------
 
@@ -389,6 +397,7 @@ class Runtime:
         once it no longer ships enabled (a job already running stays);
         archive the ones a plugin dropped. A person's edits and archives win."""
         self.seeded = time.time()
+        self.event_args.clear()
         offered = {}
         for m in await self.manifests():
             for name, spec in m["jobs"].items():
