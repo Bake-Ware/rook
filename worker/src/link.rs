@@ -252,7 +252,14 @@ impl Link {
     }
 }
 
+/// The whole connect (TCP, TLS, upgrade), at most 30 s, as the Python link.
 async fn connect_ws(url: &str) -> io::Result<(SplitSink<Ws, Message>, SplitStream<Ws>)> {
+    tokio::time::timeout(Duration::from_secs(30), open_ws(url))
+        .await
+        .map_err(|_| ws_err(format!("{url} did not answer in 30s")))?
+}
+
+async fn open_ws(url: &str) -> io::Result<(SplitSink<Ws, Message>, SplitStream<Ws>)> {
     let bad = || io::Error::new(io::ErrorKind::InvalidInput, format!("bad web socket address: {url}"));
     let (scheme, rest) = url.split_once("://").ok_or_else(bad)?;
     let authority = rest.split('/').next().unwrap_or_default();

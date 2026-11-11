@@ -696,8 +696,8 @@ class Worker:
         except (OSError, ValueError):
             return {}
         joined = {b: s for b, s in got.items() if isinstance(s, dict)} if isinstance(got, dict) else {}
-        home = joined.get(self.trust.home.band)
-        if with_door and home and home.get("relay") and not home.get("ws_url"):
+        home = joined.get(self.trust.home.band) if with_door else None
+        if home and home.get("relay") and not home.get("ws_url"):
             try:
                 site = json.loads((self.data / "enrollment.json").read_text(encoding="utf-8")).get("url")
             except (OSError, ValueError, AttributeError):

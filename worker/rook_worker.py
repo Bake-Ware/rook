@@ -2,8 +2,9 @@
 """Rook worker in one file, for machines where nothing can be installed.
 Python 3.8+, standard library only. It speaks the minimal worker profile
 (docs/spec/worker-profile.md) over a Telesthete UDP relay (or, when UDP
-hears nothing, the hub's /band web socket) and serves commands and files; streams, terminals and self-update it doesn't (to
-update it, replace this file).
+hears nothing, the hub's /band web socket) and serves commands and files;
+streams, terminals and self-update it doesn't (to update it, replace this
+file).
 
     python3 rook_worker.py enroll <hub address> [--code CODE] [--name NAME]
     python3 rook_worker.py
