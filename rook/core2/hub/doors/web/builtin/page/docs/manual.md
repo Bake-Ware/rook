@@ -7,7 +7,7 @@ the ones agents make.
 |---|---|
 | `page.list` | Your sidebar, ready to draw: `{pinned, segments: [{segment, open, pages}], hidden}`; each page has its `title` and `segment` as you see them (with `own_title`, `home`: its own, when they differ), `opens` (how often you opened it) and `pinned`. `person`: someone else's. `archived=true`: `{pages}`, the archived ones. |
 | `page.view` | Open a page: what it may call and hear. The site calls it when you open one. |
-| `page.get` | One page: its title, caps and events; for a page an agent made, who made it, its layout and its note (why it exists and every change); for a plugin's page, which plugin. |
+| `page.get` | One page: its title, caps and events, and its `targets` (what it marks with `data-target`); for a page an agent made, who made it, its layout and its note (why it exists and every change); for a plugin's page, which plugin. |
 | `page.create` | Make a page: `{name, title, note, html \| layout, caps?, events?, segment?}`; no segment: Pages. |
 | `page.update` | Change one: `{page, change, ...}`; `change` says what and why, kept in its history. |
 | `page.archive` / `page.restore` | Take a page off the site for everyone without losing it, or bring it back. The site offers Archive only on pages agents made; a plugin's page is hidden instead. |
@@ -53,6 +53,8 @@ every few seconds if you like), `hub/workers` and
 A page marks a control an agent may point at with `data-target="<name>"`
 (the Agents page's model dropdown is `agents.house.model`): the site can
 ask the open page for it, and the page scrolls it into view and marks it.
+`page.get` lists a page's targets, read from its file; a part a template
+fills in reads `<...>` (`jobs.<...>.enabled`: the job's own name goes there).
 
 Every call a page makes runs as the person viewing it, and only for the
 caps the page declared. Making or changing a page emits `page.created` or

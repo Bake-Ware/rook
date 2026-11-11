@@ -251,6 +251,20 @@ class Pages:
                                              "public": self.public, "layout": self.layouts}, indent=1))
 
 
+TARGET = re.compile(r"""data-target(?:=|"\s*[:,]\s*)(["`])(.*?)\1""")
+
+
+def targets(html: str) -> list[str]:
+    """The names a page marks with ``data-target`` (what the house agent can
+    point at), in order; a part a template fills in reads ``<...>``."""
+    out = []
+    for _, value in TARGET.findall(html):
+        name = re.sub(r"\$\{[^}]*\}", "<...>", value)
+        if name and not re.search(r"\s", name) and name not in out:
+            out.append(name)
+    return out
+
+
 def public_path(pid: str) -> str:
     """Where a public page opens without signing in."""
     return "/public/" + pid
@@ -393,7 +407,8 @@ class _Handlers:
         pages = self.hub.pages
         p = pages.get(page)
         out = {**p.view(), "archived": pages.archived.get(page), "public": pages.public.get(page),
-               "public_url": public_path(page) if page in pages.public else None}
+               "public_url": public_path(page) if page in pages.public else None,
+               "targets": targets(pages.html(p))}
         if p.made:
             out.update(made_by=p.made, note=pages.note(p), layout=p.layout)
         else:
