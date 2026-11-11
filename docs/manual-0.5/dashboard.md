@@ -41,8 +41,15 @@ Click a segment's heading to open or fold it, and it stays that way. One
 you have not touched is open when it holds one of the three pages you
 open most; until you have opened three different pages, your start
 page's segment is open, or every segment when you have no start page. A folded segment
-still shows its pages, as one quiet line of links. The sidebar is yours:
-an agent can pin and fold for you too (`page.arrange`, see the
+still shows its pages, as one quiet line of links.
+
+**Hide** (the ⋯ menu) takes a page off your sidebar only: its address
+still opens it and everyone else still has it. **Hidden**, folded at the
+bottom, lists what you hid, each with **Show**. To rename a page, move it
+to another segment or group pages under a new one, ask the agent in the
+dock; it changes only your sidebar. The sidebar is yours, and the agent
+keeps it with you: it can pin what you keep opening, and hide, rename,
+move, fold and put back (`page.arrange`, see the
 [page plugin's manual](../../rook/core2/hub/doors/web/builtin/page/docs/manual.md)).
 
 - **Workers**: every machine, online or not, its plugins and what it can't serve.
@@ -61,9 +68,10 @@ an agent can pin and fold for you too (`page.arrange`, see the
 Ask the house agent in the dock for a page ("a board with the lights
 downstairs and today's tasks") and it makes one. A page is one HTML file,
 or a layout of ready-made components. Each page says why it exists and
-keeps the history of every change under **About**. **Archive** (in every
-page's bar) takes a page off the site without losing it; **Restore** in the
-sidebar brings it back.
+keeps the history of every change under **About**. **Archive** (in the ⋯
+menu of a page an agent made) takes it off the site for everyone without
+losing it; **Restore** in the sidebar's Archived fold brings it back. A
+page that came with a plugin is never archived from the menu, only hidden.
 
 A page can never do more than the person viewing it: every call it makes
 runs as you, through dispatch (rights, holds, journal), and only for
