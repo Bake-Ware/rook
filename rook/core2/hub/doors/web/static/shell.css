@@ -58,10 +58,10 @@ code, pre { font-family: var(--mono); }
 .folded-pages { padding: 0 8px; font-size: 11px; line-height: 1.6; color: var(--dim2); }
 #nav .folded-pages a { display: inline; padding: 0; border: 0; font-size: 11px; color: var(--dim); }
 #nav .folded-pages a.on { background: none; color: var(--accent); }
-#archived { margin-top: 12px; color: var(--dim); font: 10px var(--mono); }
-#archived summary { cursor: pointer; letter-spacing: .8px; padding: 0 8px; }
-#archived ul { list-style: none; padding: 0 8px; margin: 6px 0; }
-#archived li { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; }
+#hidden, #archived { margin-top: 12px; color: var(--dim); font: 10px var(--mono); }
+#hidden summary, #archived summary { cursor: pointer; letter-spacing: .8px; padding: 0 8px; }
+#hidden ul, #archived ul { list-style: none; padding: 0 8px; margin: 6px 0; }
+#hidden li, #archived li { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; }
 #account { padding-top: 12px; font: 10px var(--mono) !important; color: var(--dim) !important; }
 #signout { padding: 4px 8px 0; }
 .grow { flex: 1; }
