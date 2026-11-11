@@ -11,7 +11,7 @@ stopped or changed, and the install never restarts cachyrig's 0.4 worker.
 
 | Piece | Unit | Address |
 |---|---|---|
-| Band relay (UDP, the e2e relay) | `rook-castling-relay` | `127.0.0.1:7475` |
+| Band relay (UDP, the e2e relay) | `rook-castling-relay` | `127.0.0.1:7475`; its web socket `127.0.0.1:7476`, reached through the site's `/band` (a sidecar installed before the fallback: only if its `hub.yaml` has the door's `band:` line) |
 | Hub: HTTP door + dashboard | `rook-castling-hub` | `0.0.0.0:8750`: http://127.0.0.1:8750/ here, http://192.168.1.185:8750/ on the LAN once ufw allows it (below) |
 | Hub: MCP door | (same) | `http://127.0.0.1:8751/mcp`, this machine only |
 | Worker `cachyrig` | `rook-castling-worker` | dials the relay |

@@ -19,9 +19,9 @@ A link is the Telesthete profile of spec 2.1 for one band (one PSK):
   went unanswered: a restarted relay forgot us and our route).
 
 :class:`TelestheteLink` wraps the band transport (:mod:`.band`: UDP or
-WebSocket to the relay, the frame codec, route declarations, keepalives,
-bulk pacing and the WS reconnect backoff), so core v2 rides the wire v1
-workers proved out.
+WebSocket to the relay, UDP first when both are known; the frame codec,
+route declarations, keepalives, bulk pacing and the WS reconnect backoff),
+so core v2 rides the wire v1 workers proved out.
 
 :class:`LoopbackRelay` is an in-memory relay for tests: same contract, no
 sockets, routing like a routing relay (ADDRESSED to a declared route goes to
@@ -31,12 +31,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from typing import Awaitable, Callable, Protocol
 from urllib.parse import urlsplit
 
-from .band import TelestheteHubTransport
+from .band import WS_CONNECT_TIMEOUT, TelestheteHubTransport
 from .codec import KEEPALIVE_PAYLOAD, route_id_for
 from .writer import TokenBucket
+
+log = logging.getLogger("rook.core2.transport")
 
 OnPayload = Callable[[bytes], Awaitable[None]]
 OnConnect = Callable[[], Awaitable[None]]
@@ -52,6 +55,10 @@ UDP_KEEPALIVE = 5.0
 # (1,024 slots in telesthitium) sees at most the burst at once, and Drop
 # re-requests whatever an overflow loses.
 UDP_PACE = (20_000.0, 256)
+# A band with a relay and a web socket: UDP that hears nothing back this long
+# after joining (the hub answers an announce within a second) gives way to
+# the web socket.
+FALLBACK_SECS = 5.0
 
 
 def band_of(psk: str) -> str:
@@ -73,30 +80,43 @@ class Link(Protocol):
 
 
 class TelestheteLink:
-    """One band over a Telesthete relay: ``relay="host:port"`` (UDP) or
-    ``ws_url`` (WebSocket, e.g. the hub's ``/band`` bridge). ``keepalive``
-    (seconds) and ``pace`` (``[frames/s, burst]``, rate 0 = unpaced) apply
-    to UDP."""
+    """One band over a Telesthete relay: ``relay="host:port"`` (UDP) and/or
+    ``ws_url`` (WebSocket, e.g. the hub's ``/band`` door). With both, UDP
+    goes first; when nothing comes back from the band within FALLBACK_SECS
+    (the hub answers every announce at once), the link moves to the web
+    socket for the rest of the run. A web socket that never comes up sends
+    :meth:`start` back to the caller's retry, which tries UDP first again.
+    ``keepalive`` (seconds) and ``pace`` (``[frames/s, burst]``, rate 0 =
+    unpaced) apply to UDP."""
 
     def __init__(self, psk: str, relay: str | None = None, ws_url: str | None = None,
                  keepalive: float | None = None, pace: tuple[float, int] | None = None):
-        if ws_url:
-            host, port = urlsplit(ws_url).hostname or "", DEFAULT_RELAY_PORT
-        elif relay:
-            host, _, p = relay.rpartition(":")
-            if not host:
-                host, p = relay, ""
-            host, port = host.strip("[]"), int(p) if p else DEFAULT_RELAY_PORT    # [::1]:7474
-        else:
+        if not (relay or ws_url):
             raise ValueError("a band link needs relay or ws_url")
-        self.ws = bool(ws_url)
-        self.pace = None if self.ws else tuple(pace if pace is not None else UDP_PACE)
-        rate, burst = self.pace or (0, 1)
-        pacer = TokenBucket(float(rate), int(burst)) if float(rate) > 0 else None
-        self.t = TelestheteHubTransport(psk, host, port, ws_url=ws_url or None, pacer=pacer,
-                                        keepalive_secs=20.0 if self.ws else float(keepalive or UDP_KEEPALIVE))
+        self.psk, self.relay, self.ws_url, self.keepalive = psk, relay, ws_url, keepalive
+        self.pace = tuple(pace if pace is not None else UDP_PACE) if relay else None
+        self.route_name: str | None = None
+        self.t = self._transport(ws=not relay)
         self.band_id = self.t.band_id
         self.band = self.band_id.hex()
+
+    def _transport(self, ws: bool) -> TelestheteHubTransport:
+        self.ws = ws
+        if ws:
+            t = TelestheteHubTransport(self.psk, urlsplit(self.ws_url).hostname or "", DEFAULT_RELAY_PORT,
+                                       ws_url=self.ws_url, keepalive_secs=20.0)
+        else:
+            host, _, p = self.relay.rpartition(":")
+            if not host:
+                host, p = self.relay, ""
+            host, port = host.strip("[]"), int(p) if p else DEFAULT_RELAY_PORT    # [::1]:7474
+            rate, burst = self.pace
+            pacer = TokenBucket(float(rate), int(burst)) if float(rate) > 0 else None
+            t = TelestheteHubTransport(self.psk, host, port, pacer=pacer,
+                                       keepalive_secs=float(self.keepalive or UDP_KEEPALIVE))
+        if self.route_name:
+            t.set_route(self.route_name)
+        return t
 
     @property
     def route(self) -> int:
@@ -108,20 +128,48 @@ class TelestheteLink:
         return link is not None and link.connected
 
     def set_route(self, name: str) -> None:
+        self.route_name = name
         self.t.set_route(name)
 
     async def start(self, on_payload: OnPayload, on_connect: OnConnect) -> None:
+        heard, up = asyncio.Event(), asyncio.Event()
+
         async def on_message(payload: bytes, _peer: tuple) -> None:
+            heard.set()
             await on_payload(payload)
 
+        async def on_up() -> None:
+            up.set()
+            await on_connect()
+
+        if self.relay:
+            await self._start(False, on_message)
+            await on_connect()           # UDP has no connection: joined now
+            if not self.ws_url:
+                return
+            try:
+                await asyncio.wait_for(heard.wait(), FALLBACK_SECS)
+                return
+            except asyncio.TimeoutError:
+                log.info("band %s: nothing heard over UDP in %gs; trying %s",
+                         self.band[:8], FALLBACK_SECS, self.ws_url)
+                await self.t.stop()
+        await self._start(True, on_message, on_up)
+        if self.relay:
+            try:
+                await asyncio.wait_for(up.wait(), WS_CONNECT_TIMEOUT)
+            except asyncio.TimeoutError:
+                await self.t.stop()
+                raise OSError(f"neither UDP to {self.relay} nor {self.ws_url} reached the band") from None
+
+    async def _start(self, ws: bool, on_message, on_up=None) -> None:
+        if ws != self.ws:
+            self.t = self._transport(ws)
         try:
-            # WS calls on_connect on every (re)connect; UDP has no connection.
-            await self.t.start(on_message, on_connect if self.ws else None)
+            await self.t.start(on_message, on_up)
         except BaseException:
             await self.t.stop()
             raise
-        if not self.ws:
-            await on_connect()
 
     async def send(self, payload: bytes, route: int = 0) -> None:
         await self.t.send(payload, route=route)

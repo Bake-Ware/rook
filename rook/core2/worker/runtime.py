@@ -74,7 +74,7 @@ from rook.kit.manifest import check
 
 from .. import CORE_VERSION, wire
 from ..builtin import CORE, STREAM, WORKER
-from ..transport import FEATURES, Transport, TransportError, link_from
+from ..transport import FEATURES, Transport, TransportError, band_door, link_from
 from rook.streams import Reporter, Streams
 
 from . import boot, builtins, events
@@ -318,7 +318,7 @@ class Worker:
         await self._load_plugins()
         self.transport = Transport(self.worker_id, [], hello=self._announce, beat=self._heartbeat,
                                    on_lost=self._lost, on_contact=self._regained, **self.transport_opts)
-        for spec in [*self.cfg.bands, *self._joined().values()]:
+        for spec in [*self.cfg.bands, *self._joined(with_door=True).values()]:
             try:
                 await self.transport.add(self.make_link(spec))
             except (ValueError, KeyError, TypeError) as e:     # a duplicate band, a missing PSK
@@ -685,15 +685,26 @@ class Worker:
         self._spawn(self.reannounce())
         return {"ok": True}
 
-    def _joined(self) -> dict[str, dict]:
+    def _joined(self, with_door: bool = False) -> dict[str, dict]:
         """Bands joined at enrollment and through ``core.trust.set``: band ->
         link spec. The file holds band PSKs, so it is private to the worker's
-        account."""
+        account. ``with_door``: the home band reached over UDP also gets its
+        hub's ``/band`` web socket (from the address kept at enrollment), the
+        fallback when UDP hears nothing."""
         try:
             got = json.loads((self.data / "bands.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
-        return {b: s for b, s in got.items() if isinstance(s, dict)} if isinstance(got, dict) else {}
+        joined = {b: s for b, s in got.items() if isinstance(s, dict)} if isinstance(got, dict) else {}
+        home = joined.get(self.trust.home.band) if with_door else None
+        if home and home.get("relay") and not home.get("ws_url"):
+            try:
+                site = json.loads((self.data / "enrollment.json").read_text(encoding="utf-8")).get("url")
+            except (OSError, ValueError, AttributeError):
+                site = None
+            if isinstance(site, str) and site:
+                home["ws_url"] = band_door(site)
+        return joined
 
     def _save_joined(self, joined: dict) -> None:
         _write_atomic(self.data / "bands.json", json.dumps(joined, indent=1, sort_keys=True))

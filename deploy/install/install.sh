@@ -18,7 +18,8 @@
 #   --name NAME        unit name prefix: NAME-hub, NAME-relay, NAME-worker (default rook)
 #   --http-port N      the hub site (default 8740)
 #   --mcp-port N       the hub's MCP door for agents (default 8741)
-#   --relay-port N     the band relay, UDP (default 7474)
+#   --relay-port N     the band relay, UDP (default 7474); its web socket, for workers whose UDP
+#                      is blocked (through the hub site's /band), is N+1 on 127.0.0.1
 #   --level LEVEL      skip the question: minimal, assistant, team
 #   --ai CHOICE        skip the question: none, claude, codex, gemini, api, local
 #   --ref REF          the Rook branch or commit to install (curl installs only)
@@ -306,14 +307,15 @@ mkdir -p "$ROOT/hub/library"
 for p in $HUB_PLUGINS $WORKER_PLUGINS; do
     [ -f "$plugins/$p/plugin.yaml" ] && ln -sfn "$plugins/$p" "$ROOT/hub/library/$p"
 done
-"$PY" - "$HUB_CFG" "$MCP_PORT" <<'EOF'
+"$PY" - "$HUB_CFG" "$MCP_PORT" "$((RELAY_PORT + 1))" <<'EOF'
 import sys, yaml
 from pathlib import Path
-path, mcp = Path(sys.argv[1]), sys.argv[2]
+path, mcp, ws = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 text = path.read_text()
 head = "".join(l for l in text.splitlines(True) if l.startswith("#"))
 cfg = yaml.safe_load(text)
 cfg["doors"]["mcp"] = {"bind": f"0.0.0.0:{mcp}"}
+cfg["doors"]["http"]["band"] = f"ws://127.0.0.1:{ws}/band"     # the relay's web socket, on the site's /band
 cfg["log"] = {"level": "info", "format": "text"}
 path.write_text(head + yaml.safe_dump(cfg, sort_keys=False))
 EOF
@@ -365,10 +367,10 @@ EOF
 # -- the units --------------------------------------------------------------------
 cat > "$UNIT_DIR/$NAME-relay.service" <<EOF
 [Unit]
-Description=Rook: band relay (UDP 127.0.0.1:$RELAY_PORT)
+Description=Rook: band relay (UDP 0.0.0.0:$RELAY_PORT, web socket 127.0.0.1:$((RELAY_PORT + 1)))
 
 [Service]
-ExecStart=$PY -m rook.core2.relay $RELAY_PORT 0.0.0.0
+ExecStart=$PY -m rook.core2.relay $RELAY_PORT 0.0.0.0 $((RELAY_PORT + 1))
 Restart=on-failure
 RestartSec=3
 

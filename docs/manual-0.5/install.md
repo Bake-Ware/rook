@@ -34,7 +34,8 @@ From the top of the checkout (this makes `hub/` and `worker/` folders there):
 pip install -e '.[manifest]'          # the hub validates plugin manifests with jsonschema
 
 # 1. A relay. Rook's small one listens on 127.0.0.1 unless you give it a
-#    host (`python -m rook.core2.relay 7474 0.0.0.0`); Telesthete's relay,
+#    host (`python -m rook.core2.relay 7474 0.0.0.0`), and takes a web socket
+#    port after that ([Web socket fallback](#web-socket-fallback)); Telesthete's relay,
 #    telesthete-hub, also works (prebuilt binaries: the Telesthete README).
 python -m rook.core2.relay 7474 &
 
@@ -121,6 +122,67 @@ cross the network in the clear, so put TLS in front (a reverse proxy) before
 enrolling another machine or opening the port; `enroll` refuses a plain
 `http://` hub off this machine unless you pass `--insecure`. Behind TLS,
 set `doors: {http: {web: {secure_cookie: true}}}`.
+
+## Web socket fallback
+
+Some networks drop UDP (offices, hotels, some phone carriers), and a worker
+there can't reach the relay. Every worker joins over UDP first; when nothing
+comes back from the band within 5 seconds it switches to a web socket at the
+hub's own address, `wss://<your hub>/band`, for the rest of that run. That
+rides the same TLS proxy or tunnel as the site: no new name, no new port.
+
+Both installers (`deploy/install` and the sidecar) set this up on a new hub:
+the relay's web socket on 127.0.0.1, one port above its UDP port, and the
+hub's `band:` line. A hub installed before this: add the two lines below
+(an upgrade leaves the relay and `hub.yaml` as they were).
+
+1. The relay, with a plain web socket on localhost (TLS stays at your
+   proxy). Rook's relay takes the web socket's port after its host
+   (`python -m rook.core2.relay 7474 0.0.0.0 7475`). Telesthete's relay
+   (`telesthete-hub`) takes it from its environment, for its systemd unit in
+   `/etc/telesthete-hub.env`:
+
+   ```sh
+   HUB_WS_BIND=127.0.0.1:7475
+   HUB_WS_TLS=false
+   ```
+
+2. The hub: one line in `hub.yaml`, then restart the hub. A web socket
+   opened on `/band` is passed straight through to the relay:
+
+   ```yaml
+   doors:
+     http:
+       band: ws://127.0.0.1:7475/band
+   ```
+
+3. Workers: nothing. Python workers, the phone app, `rook-worker` and
+   `rook_worker.py` take the address from the hub address they enrolled with,
+   so machines already enrolled get it at their next start. That address is
+   the `url` in the worker's `<data>/enrollment.json`: a worker enrolled
+   against a LAN or localhost address tries that address, not your public
+   one. To give it another, add `"ws_url": "wss://rook.example/band"` to its
+   band in `<data>/bands.json` and restart it.
+
+Check it from anywhere (the first line should be `HTTP/1.1 101 Switching
+Protocols`):
+
+```sh
+curl -si -N --max-time 3 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: cm9vay1iYW5kLWNoZWNrIQ==' \
+  https://rook.example/band | head -1
+```
+
+A worker that fell back says so in its log: `nothing heard over UDP in 5s;
+trying wss://rook.example/band`. A worker that starts while its hub is down
+can end up on the web socket once the hub is back, and stays there until it
+restarts: it works, but its traffic goes through the hub's door.
+
+To turn it off, take the `band:` line out of `hub.yaml` (and the web socket
+out of the relay: its port argument, or `HUB_WS_BIND`) and restart both; the
+check then answers `401`. Workers whose UDP works never notice; one already
+on the web socket keeps retrying it until it restarts, then tries UDP first
+again.
 
 ## Backups
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Rook worker in one file, for machines where nothing can be installed.
 Python 3.8+, standard library only. It speaks the minimal worker profile
-(docs/spec/worker-profile.md) over a Telesthete UDP relay and serves
-commands and files; streams, terminals and self-update it doesn't (to
-update it, replace this file).
+(docs/spec/worker-profile.md) over a Telesthete UDP relay (or, when UDP
+hears nothing, the hub's /band web socket) and serves commands and files;
+streams, terminals and self-update it doesn't (to update it, replace this
+file).
 
     python3 rook_worker.py enroll <hub address> [--code CODE] [--name NAME]
     python3 rook_worker.py
@@ -15,7 +16,7 @@ same files the other workers write.
 from __future__ import annotations
 
 import base64, binascii, codecs, hashlib, hmac, json, os, platform, random, re, shutil, signal, socket  # noqa: E401
-import stat as st_, struct, subprocess, sys, threading, time, urllib.error, urllib.request  # noqa: E401
+import ssl, stat as st_, struct, subprocess, sys, threading, time, urllib.error, urllib.parse, urllib.request  # noqa: E401
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -23,6 +24,7 @@ VERSION, CORE = "0.5.0", "2.0"
 HOME = Path("~/.rook-worker").expanduser()
 LIMIT = 256 * 1024          # largest reply sent inline: this worker has no Drop (see send_reply)
 OUT_MAX = 8 << 20
+FALLBACK = 5                # UDP silent this long after the announce: the hub's web socket instead
 UNAVAILABLE = {
     "shell.open": "rook_worker.py has no streams or terminals; use shell.exec",
     "worker.log": "the hub's journal has every call this worker ran: read it there",
@@ -133,9 +135,12 @@ class Reassembler:
 
 
 class Link:
-    """One band over a UDP relay: CHANNEL frames sealed with empty associated data."""
+    """One band over a UDP relay: CHANNEL frames sealed with empty associated
+    data. :meth:`first` moves it to the hub's /band web socket (one frame per
+    binary message) when UDP hears nothing; a dropped web socket connects
+    again."""
 
-    def __init__(self, psk: str, relay: str):
+    def __init__(self, psk: str, relay: str, ws_url: str | None = None):
         host, _, port = relay.rpartition(":")
         host, port = (host, int(port)) if host else (relay, 7474)
         self.addr = socket.getaddrinfo(host.strip("[]"), port, type=socket.SOCK_DGRAM)[0][4]
@@ -143,6 +148,7 @@ class Link:
         self.band, self.key, self.lock = band_id(psk), band_key(psk), threading.Lock()
         self.seq = random.SystemRandom().getrandbits(63)
         self.reasm = Reassembler()
+        self.ws_url, self.ws = ws_url, None
 
     def frame(self, seq: int, chunk: bytes) -> bytes:
         return self.band + b"\x02" + bytes(2) + seq.to_bytes(8, "big") + seal(self.key, seq, chunk)
@@ -151,14 +157,112 @@ class Link:
         for chunk in split(payload, os.urandom(16)):
             with self.lock:
                 self.seq += 1
-                self.sock.sendto(self.frame(self.seq, chunk), self.addr)
+                if not self.ws_url or self.ws is None:
+                    self.sock.sendto(self.frame(self.seq, chunk), self.addr)
+                    continue
+                try:
+                    self._ws_send(2, self.frame(self.seq, chunk))
+                except OSError:
+                    pass                                # recv connects again
+
+    def first(self, announce):
+        """With a web socket address: UDP's first payload within FALLBACK
+        seconds, else the web socket from now on (and None); neither: both
+        again."""
+        while self.ws_url:
+            self.sock.settimeout(FALLBACK)
+            try:
+                return self.recv()
+            except socket.timeout:
+                pass
+            finally:
+                self.sock.settimeout(None)
+            print(f"rook_worker.py: nothing heard over UDP in {FALLBACK}s; trying {self.ws_url}", file=sys.stderr)
+            try:
+                self.ws = self._ws_connect()
+            except OSError as e:
+                print(f"rook_worker.py: {e}", file=sys.stderr)
+            announce()
+            if self.ws is not None:
+                return None
+        return None
+
+    def _ws_connect(self):
+        u = urllib.parse.urlsplit(self.ws_url)
+        conn = socket.create_connection((u.hostname, u.port or (443 if u.scheme == "wss" else 80)), timeout=30)
+        if u.scheme == "wss":
+            conn = ssl.create_default_context().wrap_socket(conn, server_hostname=u.hostname)
+        key = base64.b64encode(os.urandom(16)).decode()
+        conn.sendall(f"GET {u.path or '/'} HTTP/1.1\r\nHost: {u.netloc}\r\nUpgrade: websocket\r\n"
+                     f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n".encode())
+        reader = conn.makefile("rb")
+        status = reader.readline()
+        while reader.readline() not in (b"\r\n", b"\n", b""):
+            pass
+        if not status.startswith(b"HTTP/1.1 101"):
+            conn.close()
+            raise OSError(f"no web socket at {self.ws_url}: {status.strip().decode(errors='replace')}")
+        conn.settimeout(None)
+        print(f"rook_worker.py: on the band through {self.ws_url}", file=sys.stderr)
+        return conn, reader
+
+    def _ws_send(self, op: int, data: bytes) -> None:
+        n, mask = len(data), os.urandom(4)
+        size = bytes([0x80 | n]) if n < 126 else (bytes([0xFE]) + n.to_bytes(2, "big") if n < 65536
+                                                  else bytes([0xFF]) + n.to_bytes(8, "big"))
+        masked = (int.from_bytes(data, "big") ^ int.from_bytes((mask * (n // 4 + 1))[:n], "big")).to_bytes(n, "big")
+        self.ws[0].sendall(bytes([0x80 | op]) + size + mask + masked)
+
+    def _ws_frame(self) -> bytes:
+        """The next binary message (answering pings); OSError when the socket ends."""
+        reader = self.ws[1]
+        while True:
+            head = reader.read(2)
+            if len(head) < 2:
+                raise OSError("the web socket closed")
+            n = head[1] & 0x7F
+            n = int.from_bytes(reader.read(2 if n == 126 else 8), "big") if n >= 126 else n
+            mask = reader.read(4) if head[1] & 0x80 else b""
+            data = reader.read(n)
+            if mask:
+                data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+            op = head[0] & 0x0F
+            if op == 2:
+                return data
+            if op == 8:
+                raise OSError("the web socket closed")
+            if op == 9:
+                with self.lock:
+                    self._ws_send(10, data)
+
+    def _ws_again(self) -> None:
+        wait = 1
+        while True:
+            print(f"rook_worker.py: the web socket dropped; connecting again in {wait}s", file=sys.stderr)
+            time.sleep(wait)
+            try:
+                ws = self._ws_connect()
+            except OSError as e:
+                print(f"rook_worker.py: {e}", file=sys.stderr)
+                wait = min(wait * 2, 30)
+                continue
+            with self.lock:
+                self.ws = ws
+            return
 
     def recv(self) -> bytes:
         while True:
-            try:
-                data = self.sock.recv(65536)
-            except ConnectionResetError:        # Windows: an earlier send's ICMP refusal
-                continue
+            if self.ws is not None:
+                try:
+                    data = self._ws_frame()
+                except OSError:
+                    self._ws_again()
+                    continue
+            else:
+                try:
+                    data = self.sock.recv(65536)
+                except ConnectionResetError:        # Windows: an earlier send's ICMP refusal
+                    continue
             if len(data) < 43 or data[:16] != self.band or data[16] not in (2, 6):
                 continue
             chunk = open_(self.key, int.from_bytes(data[19:27], "big"), data[27:])
@@ -186,7 +290,10 @@ class Worker:
         if not spec:
             raise Err("no band with a psk and a relay: enroll first (python3 rook_worker.py enroll <hub>)")
         self.id, self.name = cfg["worker_id"], cfg["name"]
-        self.link, self.started = Link(spec["psk"], spec["relay"]), time.time()
+        site = load(data / "enrollment.json").get("url")
+        door = spec.get("ws_url") or (site and "%s://%s/band" % ("wss" if site.startswith("https:") else "ws",
+                                                                 urllib.parse.urlsplit(site).netloc))
+        self.link, self.started = Link(spec["psk"], spec["relay"], door or None), time.time()
         self.entries = [{"plugin": m["plugin"], "version": m["version"], "hash": sha(text),
                          **({"builtin": True} if m.get("builtin") else {})}
                         for text, m in ((t, json.loads(t)) for t in MANIFESTS)]
@@ -214,9 +321,11 @@ class Worker:
     def run(self) -> None:
         self.announce()
         threading.Thread(target=self.beat, daemon=True).start()
+        first = self.link.first(self.announce)
         while True:
+            payload, first = first or self.link.recv(), None
             try:
-                msg = json.loads(self.link.recv())
+                msg = json.loads(payload)
             except ValueError:
                 continue
             if not isinstance(msg, dict):

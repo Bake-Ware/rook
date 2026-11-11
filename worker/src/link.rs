@@ -3,22 +3,36 @@
 //! and EMPTY associated data, the 21-byte fragment envelope, a keepalive
 //! payload `0x00`. The crate's own encoder always binds the 3-byte spec AAD,
 //! so frames are sealed and opened here.
+//!
+//! UDP first; [`Link::fall_back`] moves the link to the hub's `/band` web
+//! socket (one frame per binary message) for the rest of the run when UDP
+//! hears nothing. A web socket that drops connects again (backing off); the
+//! next start tries UDP first again.
 
 use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+use futures_util::stream::{SplitSink, SplitStream};
+use futures_util::{SinkExt, StreamExt};
 use telesthete::framing::{ChannelType, Header, HEADER_LEN, MIN_PACKET_LEN};
 use telesthete::wire::fragment::{fragment, Reassembler, MAX_CHUNK_PAYLOAD};
 use telesthete::{derive_band_id, derive_key, BandId};
 use tokio::net::UdpSocket;
+use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
 
 pub const DEFAULT_RELAY_PORT: u16 = 7474;
 pub const KEEPALIVE: &[u8] = b"\x00";
 pub const KEEPALIVE_EVERY: Duration = Duration::from_secs(5);
+/// UDP that hears nothing from the band this long after the announce (the
+/// hub answers at once) gives way to the web socket.
+pub const FALLBACK: Duration = Duration::from_secs(5);
 /// Frames sent back to back before a pause: 256 frames per 12.8 ms is the
 /// Python link's 20,000 frames/s, which the relay's queue keeps up with.
 const BURST: usize = 256;
@@ -30,6 +44,18 @@ pub struct Link {
     band_id: BandId,
     aead: ChaCha20Poly1305,
     seq: AtomicU64,
+    /// The web socket's address once the link fell back, and its two halves while connected.
+    ws_url: OnceLock<String>,
+    ws_tx: Mutex<Option<SplitSink<Ws, Message>>>,
+    ws_rx: Mutex<Option<SplitStream<Ws>>>,
+}
+
+trait Io: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Io for T {}
+type Ws = WebSocketStream<Box<dyn Io>>;
+
+fn ws_err(e: impl std::fmt::Display) -> io::Error {
+    io::Error::new(io::ErrorKind::ConnectionAborted, format!("web socket: {e}"))
 }
 
 pub fn band_id_hex(psk: &str) -> String {
@@ -76,7 +102,19 @@ impl Link {
             band_id: derive_band_id(psk.as_bytes()),
             aead: ChaCha20Poly1305::new_from_slice(&key).expect("32-byte key"),
             seq: AtomicU64::new(start),
+            ws_url: OnceLock::new(),
+            ws_tx: Mutex::new(None),
+            ws_rx: Mutex::new(None),
         }
+    }
+
+    /// From now on, frames go over the web socket at `url` (`ws://` or `wss://`).
+    pub async fn fall_back(&self, url: &str) -> io::Result<()> {
+        let (tx, rx) = connect_ws(url).await?;
+        *self.ws_tx.lock().await = Some(tx);
+        *self.ws_rx.lock().await = Some(rx);
+        let _ = self.ws_url.set(url.to_string());
+        Ok(())
     }
 
     pub fn band_id(&self) -> BandId {
@@ -128,8 +166,37 @@ impl Link {
             .ok()
     }
 
+    /// The web socket dropped: connect again, backing off up to 30 s.
+    async fn reconnect(&self, url: &str) {
+        *self.ws_tx.lock().await = None;
+        let mut wait = Duration::from_secs(1);
+        loop {
+            eprintln!(
+                "rook-worker: the web socket dropped; connecting again in {}s",
+                wait.as_secs()
+            );
+            tokio::time::sleep(wait).await;
+            match connect_ws(url).await {
+                Ok((tx, rx)) => {
+                    *self.ws_tx.lock().await = Some(tx);
+                    *self.ws_rx.lock().await = Some(rx);
+                    eprintln!("rook-worker: on the band through {url}");
+                    return;
+                }
+                Err(e) => eprintln!("rook-worker: {e}"),
+            }
+            wait = (wait * 2).min(Duration::from_secs(30));
+        }
+    }
+
     pub async fn send(&self, payload: &[u8]) -> io::Result<()> {
         for (i, frame) in self.frames(payload).iter().enumerate() {
+            if self.ws_url.get().is_some() {
+                let mut tx = self.ws_tx.lock().await;
+                let tx = tx.as_mut().ok_or_else(|| ws_err("connecting again"))?;
+                tx.send(Message::Binary(frame.clone().into())).await.map_err(ws_err)?;
+                continue;
+            }
             if i > 0 && i % BURST == 0 {
                 tokio::time::sleep(PAUSE).await;
             }
@@ -142,19 +209,37 @@ impl Link {
     pub async fn recv(&self, reassembler: &mut Reassembler) -> io::Result<Vec<u8>> {
         let mut buf = vec![0u8; 65536];
         loop {
-            let n = match self.sock.recv_from(&mut buf).await {
-                Ok((n, _)) => n,
-                // Windows reports an earlier send's ICMP "port unreachable"
-                // here (a relay that restarted): not this socket's end.
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionRefused
-                    ) =>
-                {
-                    continue
+            let n = if let Some(url) = self.ws_url.get() {
+                let next = match self.ws_rx.lock().await.as_mut() {
+                    Some(rx) => rx.next().await,
+                    None => None,
+                };
+                match next {
+                    Some(Ok(Message::Binary(frame))) if frame.len() <= buf.len() => {
+                        buf[..frame.len()].copy_from_slice(&frame);
+                        frame.len()
+                    }
+                    Some(Ok(_)) => continue,
+                    Some(Err(_)) | None => {
+                        self.reconnect(url).await;
+                        continue;
+                    }
                 }
-                Err(e) => return Err(e),
+            } else {
+                match self.sock.recv_from(&mut buf).await {
+                    Ok((n, _)) => n,
+                    // Windows reports an earlier send's ICMP "port unreachable"
+                    // here (a relay that restarted): not this socket's end.
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionRefused
+                        ) =>
+                    {
+                        continue
+                    }
+                    Err(e) => return Err(e),
+                }
             };
             if let Some(chunk) = self.open(&buf[..n]) {
                 if let Some(payload) = reassembler.feed(&chunk) {
@@ -165,6 +250,46 @@ impl Link {
             }
         }
     }
+}
+
+/// The whole connect (TCP, TLS, upgrade), at most 30 s, as the Python link.
+async fn connect_ws(url: &str) -> io::Result<(SplitSink<Ws, Message>, SplitStream<Ws>)> {
+    tokio::time::timeout(Duration::from_secs(30), open_ws(url))
+        .await
+        .map_err(|_| ws_err(format!("{url} did not answer in 30s")))?
+}
+
+async fn open_ws(url: &str) -> io::Result<(SplitSink<Ws, Message>, SplitStream<Ws>)> {
+    let bad = || io::Error::new(io::ErrorKind::InvalidInput, format!("bad web socket address: {url}"));
+    let (scheme, rest) = url.split_once("://").ok_or_else(bad)?;
+    let authority = rest.split('/').next().unwrap_or_default();
+    let tls = scheme == "wss";
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) if !p.contains(']') => (h, p.parse().map_err(|_| bad())?),
+        _ => (authority, if tls { 443 } else { 80 }),
+    };
+    let host = host.trim_matches(['[', ']']);
+    let tcp = tokio::net::TcpStream::connect((host, port)).await?;
+    let io: Box<dyn Io> = if tls {
+        let roots = rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        let config = rustls::ClientConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
+            .with_safe_default_protocol_versions()
+            .map_err(ws_err)?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|_| bad())?;
+        Box::new(
+            tokio_rustls::TlsConnector::from(std::sync::Arc::new(config))
+                .connect(name, tcp)
+                .await?,
+        )
+    } else {
+        Box::new(tcp)
+    };
+    let (ws, _) = tokio_tungstenite::client_async(url, io).await.map_err(ws_err)?;
+    Ok(ws.split())
 }
 
 pub fn reassembler() -> Reassembler {

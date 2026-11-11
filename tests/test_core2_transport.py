@@ -17,7 +17,7 @@ from nacl.signing import SigningKey  # noqa: E402
 
 from rook.core2 import CORE_VERSION, wire  # noqa: E402
 from rook.core2.transport import (FEATURES, LoopbackRelay, TelestheteLink, Transport,  # noqa: E402
-                                  TransportError, band_of, from_config)
+                                  TransportError, band_door, band_of, from_config)
 from rook.core2.transport import conn as conn_mod  # noqa: E402
 from test_core2_minimal_worker import Relay  # noqa: E402
 
@@ -678,6 +678,51 @@ def test_from_config_builds_one_link_per_band(monkeypatch):
         from_config({"node_id": WORKER, "bands": [{"psk": PSK}]})
     with pytest.raises(ValueError, match="already on band"):
         from_config({"node_id": WORKER, "bands": [{"psk": PSK, "relay": "a:1"}, {"psk": PSK, "relay": "b:1"}]})
+
+
+def test_band_door_is_the_hubs_own_address():
+    assert band_door("https://hub.example") == "wss://hub.example/band"
+    assert band_door("http://192.168.1.5:8750/") == "ws://192.168.1.5:8750/band"
+
+
+def test_a_worker_falls_back_to_its_hubs_address_unless_its_band_names_another(tmp_path):
+    """The home band's web socket: the enrollment address's /band, or the
+    band's own ws_url in <data>/bands.json when one is written there."""
+    from types import SimpleNamespace
+    from rook.core2.worker.runtime import Worker
+    me = SimpleNamespace(data=tmp_path, trust=SimpleNamespace(home=SimpleNamespace(band=BAND)))
+    (tmp_path / "enrollment.json").write_text(json.dumps({"url": "http://192.168.1.5:8750"}))
+    (tmp_path / "bands.json").write_text(json.dumps({BAND: {"psk": PSK, "relay": "r:1"}}))
+    assert Worker._joined(me, with_door=True)[BAND]["ws_url"] == "ws://192.168.1.5:8750/band"
+    assert "ws_url" not in Worker._joined(me)[BAND]
+    (tmp_path / "bands.json").write_text(json.dumps({BAND: {"psk": PSK, "relay": "r:1",
+                                                            "ws_url": "wss://rook.example/band"}}))
+    assert Worker._joined(me, with_door=True)[BAND]["ws_url"] == "wss://rook.example/band"
+
+
+def test_a_link_whose_udp_and_web_socket_both_fail_goes_back_to_its_caller(monkeypatch):
+    """UDP that hears nothing gives way to the web socket; a web socket that
+    never comes up raises, so the band's retry tries UDP first again."""
+    from rook.core2.transport import links
+    monkeypatch.setattr(links, "FALLBACK_SECS", 0.3)
+    monkeypatch.setattr(links, "WS_CONNECT_TIMEOUT", 0.5)
+
+    async def main():
+        hole = await asyncio.get_running_loop().create_datagram_endpoint(
+            asyncio.DatagramProtocol, local_addr=("127.0.0.1", 0))
+        port = hole[0].get_extra_info("socket").getsockname()[1]
+        link = TelestheteLink(PSK, relay=f"127.0.0.1:{port}", ws_url="ws://127.0.0.1:9/band")
+        joined = []
+
+        async def on_connect():
+            joined.append(link.ws)
+        try:
+            with pytest.raises(OSError, match="neither UDP"):
+                await link.start(lambda _p: asyncio.sleep(0), on_connect)
+            assert joined == [False] and link.ws and not link.connected
+        finally:
+            hole[0].close()
+    arun(main())
 
 
 # -- a real Telesthete round trip ------------------------------------------------------

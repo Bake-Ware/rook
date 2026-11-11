@@ -81,6 +81,19 @@ def test_exec_times_out_when_a_child_outlives_the_shell(tmp_path):
         pytest.fail("the background child outlived the timeout")
 
 
+def test_the_web_socket_is_the_hubs_address_unless_the_band_names_another(tmp_path, monkeypatch):
+    rw = script()
+    monkeypatch.setattr(rw, "HOME", tmp_path)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "worker.yaml").write_text(json.dumps({"worker_id": "0" * 32, "name": "s"}))
+    (tmp_path / "data" / "enrollment.json").write_text(json.dumps({"url": "https://rook.example"}))
+    band = {"psk": "p", "relay": "127.0.0.1:9"}
+    (tmp_path / "data" / "bands.json").write_text(json.dumps({"b": band}))
+    assert rw.Worker().link.ws_url == "wss://rook.example/band"
+    (tmp_path / "data" / "bands.json").write_text(json.dumps({"b": {**band, "ws_url": "ws://10.0.0.2:8740/band"}}))
+    assert rw.Worker().link.ws_url == "ws://10.0.0.2:8740/band"
+
+
 def test_the_embedded_manifests_are_the_sources():
     r = subprocess.run([sys.executable, str(ROOT / "worker" / "gen_script_manifests.py"), "--check"],
                        capture_output=True, text=True)

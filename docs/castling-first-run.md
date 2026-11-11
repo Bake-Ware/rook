@@ -58,7 +58,8 @@ What it does:
    agents plugin's `backend` setting is `agents-claude-code.turn`) or
    `agents-opencode` with the tested model (its own tools on); security is
    off. The site, MCP door and relay listen on every interface
-   (0.0.0.0).
+   (0.0.0.0); the relay's web socket (the site's `/band`, for workers whose
+   UDP is blocked) on 127.0.0.1, one port above the relay's.
 6. Opens the browser on the hub's address. A new hub is open until it is
    claimed (castling-design, Agents: "creating the first user claims it"):
    `init --no-password` leaves `hub/data/unclaimed`, and while it is there
