@@ -49,12 +49,16 @@ uv pip install -q --python "$PY" -e "${SRC}[manifest]"
 
 # -- the units ------------------------------------------------------------------------
 say "units: ${UNITS[*]} (not enabled at boot)"
+# The relay's web socket (workers whose UDP is blocked, through the site's /band):
+# a new hub gets it; an upgraded one only if its hub.yaml has the door's band: line.
+WS_PORT=$((RELAY_PORT + 1)) ws_arg=""
+if [ $upgrade = 0 ] || grep -q "^    band: ws://" "$HUB_CFG"; then ws_arg="127.0.0.1 $WS_PORT"; fi
 cat > "$UNIT_DIR/rook-castling-relay.service" <<EOF
 [Unit]
-Description=Rook 0.5 sidecar: band relay (UDP 127.0.0.1:$RELAY_PORT)
+Description=Rook 0.5 sidecar: band relay (UDP 127.0.0.1:$RELAY_PORT${ws_arg:+, web socket 127.0.0.1:$WS_PORT})
 
 [Service]
-ExecStart=$PY -m rook.core2.relay $RELAY_PORT
+ExecStart=$PY -m rook.core2.relay $RELAY_PORT $ws_arg
 Restart=on-failure
 RestartSec=3
 
@@ -125,10 +129,10 @@ find "$ROOT/hub/library" -maxdepth 1 -type l -delete
 for p in $HUB_PLUGINS $WORKER_PLUGINS; do
     [ -f "$plugins/$p/plugin.yaml" ] && ln -s "$plugins/$p" "$ROOT/hub/library/$p"
 done
-"$PY" - "$HUB_CFG" "$MCP_BIND" "$WORKER_NAME" <<'EOF'
+"$PY" - "$HUB_CFG" "$MCP_BIND" "$WORKER_NAME" "$upgrade" "$WS_PORT" <<'EOF'
 import os, shutil, sys, yaml
 from pathlib import Path
-path, mcp, worker = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+path, mcp, worker, upgrade, ws = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 text = path.read_text()
 head = "".join(l for l in text.splitlines(True) if l.startswith("#"))
 cfg = yaml.safe_load(text)
@@ -139,6 +143,8 @@ for plugin, program in (("agents-claude-code", "claude"), ("agents-codex", "code
     found = shutil.which(program) or os.path.expanduser(f"~/.local/bin/{program}")
     cfg.setdefault("settings", {}).setdefault(plugin, {"worker": worker, program: found, "door_url": door})
 cfg["doors"]["mcp"] = {"bind": mcp}
+if upgrade == "0":
+    cfg["doors"]["http"]["band"] = f"ws://127.0.0.1:{ws}/band"
 cfg["log"] = {"level": "info", "format": "text"}
 path.write_text(head + yaml.safe_dump(cfg, sort_keys=False))
 EOF
