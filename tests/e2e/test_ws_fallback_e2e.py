@@ -1,7 +1,8 @@
-"""The band's web socket fallback with real processes: the real relay
-(telesthitium, UDP and its ``/band`` web socket), the hub's door passing
-``/band`` through to it, one worker on UDP and one whose UDP goes nowhere,
-sharing the band. Needs ``ROOK_TELESTHETE_HUB``: a built ``telesthete-hub``
+"""The band's web socket fallback with real processes: a relay with UDP and
+a ``/band`` web socket, the hub's door passing ``/band`` through to it, one
+worker on UDP and one whose UDP goes nowhere, sharing the band. Every test
+runs on Rook's relay (rook.core2.relay), and on the real one (telesthitium)
+too when ``ROOK_TELESTHETE_HUB`` names a built ``telesthete-hub``
 (``cargo build --release -p telesthitium`` in telesthete/rust)."""
 from __future__ import annotations
 
@@ -18,8 +19,7 @@ import yaml
 
 from harness import REPO, Band, Proc, until
 
-RELAY = os.environ.get("ROOK_TELESTHETE_HUB")
-pytestmark = pytest.mark.skipif(not RELAY, reason="ROOK_TELESTHETE_HUB names no telesthete-hub binary")
+TELESTHITIUM = os.environ.get("ROOK_TELESTHETE_HUB")
 
 
 def _free_port(kind: int) -> int:
@@ -29,16 +29,25 @@ def _free_port(kind: int) -> int:
 
 
 class WsBand(Band):
-    """A Band whose relay is telesthitium with its web socket on, and whose
-    hub door passes ``/band`` to it."""
+    """A Band whose relay (``rook`` or ``telesthitium``) has its web socket
+    on, and whose hub door passes ``/band`` to it."""
+
+    def __init__(self, root, relay: str):
+        super().__init__(root)
+        self.kind = relay
 
     def start_relay(self) -> str:
         if not getattr(self, "udp_port", None):
             self.udp_port, self.ws_port = _free_port(socket.SOCK_DGRAM), _free_port(socket.SOCK_STREAM)
-        self.env.update(HUB_BIND=f"127.0.0.1:{self.udp_port}", HUB_WS_BIND=f"127.0.0.1:{self.ws_port}",
-                        RUST_LOG="info", NO_COLOR="1")
-        self.relay = self._spawn("relay", [RELAY], self.root)
-        until(lambda: any("ws transport listening" in line for line in self.relay.lines), 30, "the relay")
+        if self.kind == "rook":
+            self.relay = self._spawn("relay", [sys.executable, "-m", "rook.core2.relay", str(self.udp_port),
+                                               "127.0.0.1", str(self.ws_port)], self.root)
+            until(lambda: len(self.relay.lines) >= 2, 30, "the relay")
+        else:
+            self.env.update(HUB_BIND=f"127.0.0.1:{self.udp_port}", HUB_WS_BIND=f"127.0.0.1:{self.ws_port}",
+                            RUST_LOG="info", NO_COLOR="1")
+            self.relay = self._spawn("relay", [TELESTHITIUM], self.root)
+            until(lambda: any("ws transport listening" in line for line in self.relay.lines), 30, "the relay")
         self.relay_addr = f"127.0.0.1:{self.udp_port}"
         return self.relay_addr
 
@@ -90,9 +99,10 @@ class WsBand(Band):
         return p
 
 
-@pytest.fixture
+@pytest.fixture(params=["rook", pytest.param("telesthitium", marks=pytest.mark.skipif(
+    not TELESTHITIUM, reason="ROOK_TELESTHETE_HUB names no telesthete-hub binary"))])
 def ws_band(request, tmp_path):
-    b = WsBand(tmp_path)
+    b = WsBand(tmp_path, request.param)
     request.node._e2e_band = b
     b.write()
     try:
