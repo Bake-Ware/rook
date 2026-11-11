@@ -107,4 +107,12 @@ caps:
 hooks:
   stop: scripts/speech.py:stop
 
+# The Voice page: your voice (and hearing it), the agent sessions talk to,
+# quick answers, and what provides each voice contract and whether it is reachable.
+pages:
+  voice:
+    title: Voice
+    file: pages/voice.html
+    caps: [speech.voices, speech.status, setting.list, setting.set, agent.list, hub.manifests, hub.workers, voice.tts]
+
 docs: { manual: docs/manual.md }

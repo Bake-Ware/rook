@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Voice</title>
+<style>
+  .card h2 { margin: 0 0 10px; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 10px 14px; align-items: end; }
+  .fields label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .fields select { width: 100%; min-width: 0; }
+  .hear { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .hear audio { max-width: 100%; height: 36px; }
+  .talker { margin-top: 12px; }
+  .status { font-size: 13px; margin-top: 8px; }
+  .status:empty { display: none; }
+  .contracts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .contracts b { display: block; }
+  .more { margin-top: 4px; font-size: 14px; }
+</style>
+</head>
+<body>
+<p id="err" class="bad" hidden></p>
+
+<section class="card">
+  <h2>Your voice</h2>
+  <div class="fields">
+    <label><span class="label">The voice your sessions speak in</span>
+      <select id="voice" data-target="voice.voice"><option>Loading…</option></select></label>
+    <div class="hear">
+      <button id="hear" class="soft" data-target="voice.hear">Hear it</button>
+      <audio id="audio" controls hidden></audio>
+    </div>
+  </div>
+  <div id="voice-status" class="status"></div>
+</section>
+
+<section class="card">
+  <h2>Who answers</h2>
+  <div class="fields">
+    <label><span class="label">The agent you talk to</span>
+      <select id="agent" data-target="voice.agent"><option>Loading…</option></select></label>
+  </div>
+  <label class="row talker"><input type="checkbox" id="talker" data-target="voice.talker"> <b>Quick answers</b></label>
+  <div id="talker-doc" class="muted"></div>
+  <div id="answer-status" class="status"></div>
+</section>
+
+<section class="card">
+  <h2>What does the listening and the speaking</h2>
+  <ul id="contracts" class="contracts"><li class="muted">Loading…</li></ul>
+</section>
+
+<p class="more"><a href="#" id="more" data-target="voice.more">More settings</a></p>
+
+<script>
+"use strict";
+const esc = rook.esc;
+const SAMPLE = "Hello, this is how I sound when we talk.";
+const DEFAULT = "";                  // the voice setting's blank: the provider's default
+// Each voice contract in plain words, and what it means for the person when nothing provides it.
+const CONTRACTS = [
+  ["voice.stt", "Hearing you", "Rook cannot hear you yet: no speech engine is on the band."],
+  ["voice.tts", "Speaking", "Rook cannot speak yet: no voice provider is on the band."],
+  ["voice.turn", "Knowing when you're done", "Rook takes every pause as the end of what you said."],
+  ["voice.speaker", "Who is speaking", "Rook doesn't know whose voice it hears."]];
+let settings = {}, titles = {}, workers = [];
+
+const $ = (id) => document.getElementById(id);
+function said(id, text, cls) { const el = $(id); el.textContent = text; el.className = `status ${cls || ""}`; }
+
+function voiceOptions(voices, current) {
+  let known = false;
+  const groups = Object.entries(voices).map(([plugin, v]) => {
+    const labels = Object.fromEntries((v.catalog || []).map((c) => [c.id, c.label]));
+    const opts = (v.voices || []).map((id) => {
+      known = known || id === current;
+      return `<option value="${esc(id)}"${id === current ? " selected" : ""}>${esc(labels[id] || id)}${id === v.default ? " (its default)" : ""}</option>`;
+    }).join("");
+    return `<optgroup label="${esc(titles[plugin] || plugin)}">${opts}</optgroup>`;
+  }).join("");
+  return `<option value="${DEFAULT}"${current ? "" : " selected"}>The provider's default</option>${groups}`
+    + (current && !known ? `<option value="${esc(current)}" selected>${esc(current)}</option>` : "");
+}
+
+// Where a provider cap's plugin runs and whether it can serve that cap now, in plain words.
+function reach(cap) {
+  const plugin = cap.split(".")[0], name = titles[plugin] || plugin;
+  const on = workers.filter((w) => (w.plugins || []).includes(plugin));
+  if (!on.length) return [`${name}: not on any machine the hub knows.`, "bad"];
+  const ready = on.filter((w) => w.online && !(w.unavailable || {})[cap]);
+  if (ready.length) return [`${name} on ${ready.map((w) => w.hub ? "the hub" : w.name).join(", ")}: reachable now.`, "ok"];
+  return [`${name}: ${on.map((w) => !w.online ? `${w.name} is offline`
+    : `${w.name} can't do it now (${w.unavailable[cap]})`).join("; ")}.`, "bad"];
+}
+
+function contracts(engines) {
+  $("contracts").innerHTML = CONTRACTS.map(([contract, title, none]) => {
+    const caps = engines[contract] || [];
+    const lines = caps.length ? caps.map((c) => { const [t, cls] = reach(c); return `<div class="${cls}">${esc(t)}</div>`; }).join("")
+      + (caps.length > 1 ? '<div class="muted">The first one is used unless the hub\'s config picks another.</div>' : "")
+      : `<div class="bad">${esc(none)}</div>`;
+    return `<li data-target="voice.${esc(contract.slice(6))}"><b>${esc(title)}</b>${lines}</li>`;
+  }).join("");
+}
+
+async function load() {
+  try {
+    const [rows, status, voices, manifests, w, agents] = await Promise.all([
+      rook.call("setting.list", { plugin: "speech" }, { why: "Show your voice settings on the Voice page." }),
+      rook.call("speech.status", {}, { why: "See what provides hearing and speaking, for the Voice page." }),
+      rook.call("speech.voices", {}, { why: "List the voices you can pick on the Voice page." }),
+      rook.call("hub.manifests", { section: "title" }, { why: "Name the voice providers on the Voice page." }),
+      rook.call("hub.workers", {}, { why: "See whether the voice providers are reachable now." }),
+      rook.call("agent.list", { limit: 500 }, { why: "List the agents a voice session can talk to." })]);
+    settings = Object.fromEntries(rows.settings.map((s) => [s.key, s]));
+    titles = Object.fromEntries(manifests.manifests.map((m) => [m.plugin, m.title]));
+    workers = w.workers;
+    $("voice").innerHTML = voiceOptions(voices.voices, settings.voice.value || "");
+    if (voices.errors) said("voice-status", Object.entries(voices.errors).map(([p, e]) => `${titles[p] || p}: ${e}`).join("; "), "warn");
+    const current = settings.agent.value || "";
+    const names = agents.map((a) => a.name);
+    $("agent").innerHTML = agents.map((a) => `<option value="${esc(a.name)}"${a.name === current ? " selected" : ""}>${esc(a.title || a.name)}</option>`).join("")
+      + (current && !names.includes(current) ? `<option selected>${esc(current)}</option>` : "");
+    $("talker").checked = !!settings.talker.value;
+    $("talker-doc").textContent = settings.talker.doc;
+    contracts(status.engines);
+    $("err").hidden = true;
+  } catch (x) {
+    $("err").textContent = x.message;
+    $("err").hidden = false;
+  }
+}
+
+async function set(key, value, where, why) {
+  said(where, "Saving…", "muted");
+  try {
+    await rook.call("setting.set", { plugin: "speech", key, value }, { why });
+    said(where, "Saved", "ok");
+  } catch (x) {
+    said(where, x.message, "bad");
+  }
+}
+
+$("voice").addEventListener("change", (e) => {
+  const v = e.target.value;
+  $("audio").hidden = true;
+  set("voice", v, "voice-status", v ? `Speak your voice sessions in ${v}, from the Voice page.` : "Speak your voice sessions in the provider's default voice, from the Voice page.");
+});
+$("hear").addEventListener("click", async () => {
+  const v = $("voice").value, audio = $("audio");
+  said("voice-status", "Speaking…", "muted");
+  try {
+    const f = await rook.call("voice.tts", { text: SAMPLE, ...(v ? { voice: v } : {}) },
+      { why: `Let you hear ${v || "the default voice"} on the Voice page.` });
+    audio.src = `data:${f.mime || "audio/wav"};base64,${f.data}`;
+    audio.hidden = false;
+    said("voice-status", "", "");
+    audio.play().catch(() => {});
+  } catch (x) {
+    said("voice-status", x.message, "bad");
+  }
+});
+$("agent").addEventListener("change", (e) => set("agent", e.target.value, "answer-status", `Voice sessions talk to ${e.target.value}, from the Voice page.`));
+$("talker").addEventListener("change", (e) => set("talker", e.target.checked, "answer-status",
+  `Turn quick answers ${e.target.checked ? "on" : "off"} for voice sessions, from the Voice page.`));
+$("more").addEventListener("click", (e) => { e.preventDefault(); rook.open("setting/settings"); });
+load();
+</script>
+</body>
+</html>
