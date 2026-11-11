@@ -6,6 +6,7 @@ version: 0.5.0
 title: Phone screen
 doc: Wake, keep awake and capture the screen of the phone running the Rook app.
 package: devices
+segment: Machines
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 platforms: [android]

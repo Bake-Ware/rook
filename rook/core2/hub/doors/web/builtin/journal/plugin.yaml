@@ -6,6 +6,7 @@ version: 0.5.0
 title: Journal
 doc: What was called, by whom, why, and what came of it.
 package: core
+segment: Hub
 builtin: true
 runs_on: hub
 license: Apache-2.0

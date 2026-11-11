@@ -10,6 +10,7 @@ version: 0.5.0
 title: Tasks
 doc: "Units of work: claim one before working on it, link what it produced, ask for sign-off, hand it to whoever is next."
 package: workbench
+segment: Work
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 runs_on: hub

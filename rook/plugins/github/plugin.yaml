@@ -10,6 +10,7 @@ version: 0.5.0
 title: GitHub
 doc: Read pull requests, checks and diffs on GitHub, and merge one once its task is signed off and its gates pass.
 package: workbench
+segment: Work
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook

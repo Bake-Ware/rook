@@ -37,9 +37,10 @@ manifest: 1
 plugin: board
 version: 1.0.0
 doc: A bulletin board kept on the hub.
+segment: Garden
 runs_on: hub
 settings:
-  motto: { type: str, where: hub, default: hello, doc: Shown on top. }
+  motto: { type: str, default: hello, doc: Shown on top. }
   size: { type: int, where: hub, default: 3 }
 caps:
   count:
@@ -762,7 +763,12 @@ def test_workers_journal_and_settings_pages(site):
             listed = (await c.page(t, "setting.list"))["result"]["settings"]
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
                 ("board", "motto", "hello", "default"), ("board", "size", 3, "default"),
-                ("hub", "security", "on", "config")}
+                ("hub", "security", "on", "config"), ("backup", "target", "", "default"), ("backup", "keep", 7, "default")}
+            # what the page groups and draws them by: the plugin's segment, title and doc
+            motto = next(s for s in listed if (s["plugin"], s["key"]) == ("board", "motto"))
+            assert (motto["segment"], motto["title"], motto["plugin_doc"]) == ("Garden", "board", "A bulletin board kept on the hub.")
+            assert {(s["plugin"], s["segment"], s["title"]) for s in listed if s["plugin"] != "board"} == {
+                ("hub", "Machines", "Hub"), ("backup", "Hub", "Backup")}
             # the security switch (castling-switchover-decisions, "Usable first, security later"): a dropdown, owners only
             sec = next(s for s in listed if (s["plugin"], s["key"]) == ("hub", "security"))
             assert sec["enum"] == ["off", "on"] and sec["default"] == "off"

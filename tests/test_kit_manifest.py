@@ -121,7 +121,19 @@ def test_load_normalizes(tmp_path):
     settings = normalize(_yaml.loads((ROOT / "valid" / "everything.yaml").read_text()))["settings"]
     assert settings["webhook_secret"] == {"where": "hub", "secret": True, "type": "secret", "required": False,
                                           "apply": "live"}
-    assert settings["limit"]["where"] == "worker"
+    assert settings["limit"]["where"] == "hub"     # a hub plugin's setting with no where: is the hub's
+
+
+def test_settings_live_where_the_plugin_runs_and_segment_is_any_name():
+    data = _yaml.loads((ROOT / "valid" / "everything.yaml").read_text())
+    from rook.kit.manifest import normalize
+    assert normalize(data)["segment"] == "Hub"
+    data["runs_on"], data["segment"] = "worker", "Garden shed"
+    assert not [i for i in validate(data) if i.level == "error" or i.path == "/segment"]
+    out = normalize(data)
+    assert out["segment"] == "Garden shed" and out["settings"]["limit"]["where"] == "worker"
+    data["segment"] = ""
+    assert any(i.code == "schema-minLength" for i in validate(data))
 
 
 def test_load_generates_record_caps(tmp_path):

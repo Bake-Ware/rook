@@ -10,12 +10,13 @@ version: 0.6.0
 title: OpenCode backend
 doc: Agent turns in the OpenCode CLI on one of the band's workers (free models need no account), for the agents package.
 package: agents
+segment: Agents
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 runs_on: hub
 uses: [shell.open, shell.env, file.read, file.write, stream.read, stream.write, stream.close]
 settings:
-  worker: { where: hub, doc: "The worker (name) where OpenCode is installed; turns fail until it is set." }
+  worker: { where: hub, type: worker, doc: "The worker (name) where OpenCode is installed; turns fail until it is set." }
   opencode: { where: hub, default: opencode, doc: "The opencode program on that worker: a name on PATH or a full path (~ is its home)." }
   model: { where: hub, doc: "System Two's model when the agent names none, as provider/model (opencode models lists them); blank: OpenCode's own default." }
   model_three: { where: hub, doc: "System Three's model (dream cycles), provider/model; blank: the model setting." }

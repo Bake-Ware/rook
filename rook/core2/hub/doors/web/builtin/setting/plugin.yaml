@@ -9,6 +9,7 @@ version: 0.5.0
 title: Settings
 doc: The hub plugins' settings.
 package: core
+segment: Hub
 builtin: true
 runs_on: hub
 license: Apache-2.0

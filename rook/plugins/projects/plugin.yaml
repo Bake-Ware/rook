@@ -6,6 +6,7 @@ version: 0.5.0
 title: Projects
 doc: Ongoing work with a goal; tasks belong to a project, concepts tag it with the disciplines it draws on.
 package: workbench
+segment: Work
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 runs_on: hub
