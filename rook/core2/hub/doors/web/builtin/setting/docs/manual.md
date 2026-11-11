@@ -9,7 +9,7 @@ The hub plugins' settings, and each person's own.
 
 Values set here are kept in the hub's data folder (`settings.json`,
 `person-settings.json`) and win over `hub.yaml`'s `settings:`. The
-**Settings** page (under More) edits both kinds, then shows the hub's status.
+**Settings** page (under Hub) edits both kinds, then shows the hub's status.
 Its settings are grouped by segment, then by plugin; a segment is open when
 it holds a value somebody set. A secret setting offers the vault's names
 (`secret.list`), a `worker` one the band's workers (`hub.workers`). A change

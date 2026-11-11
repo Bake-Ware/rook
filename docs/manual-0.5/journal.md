@@ -22,7 +22,7 @@ arguments ties the entry to the ticket that ran.
 
 ## Reading it
 
-- **Dashboard**: Journal (under More), searchable by cap, worker, person
+- **Dashboard**: Journal (under Hub), searchable by cap, worker, person
   and project.
 - **Agents**: the MCP `journal` tool, or the cap `journal.search` on `rook`.
 - **HTTP**: `GET /journal?cap=shell.exec&worker=kaiju&limit=20` (filters:
