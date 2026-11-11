@@ -20,6 +20,7 @@
 <div class="top row">
   <label class="label" for="default">Default engine</label>
   <select id="default" data-target="agents.default"></select>
+  <a href="#" id="engines" data-target="agents.engines">Engines</a>
   <span id="default-status" class="status"></span>
 </div>
 <div id="rows"><p class="muted">Loading…</p></div>
@@ -207,6 +208,8 @@ document.getElementById("attention-on").addEventListener("change", async (e) => 
   if (out) attention.job = out;
   else e.target.checked = !on;
 });
+
+document.getElementById("engines").addEventListener("click", (e) => { e.preventDefault(); rook.open("agent/engines"); });
 
 let soon = null;
 rook.on("agent.agent.*", () => {

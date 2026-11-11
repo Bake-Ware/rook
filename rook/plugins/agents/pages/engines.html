@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Engines</title>
+<style>
+  .top { margin-bottom: 14px; }
+  .engine .head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 6px; }
+  .engine .head h2 { margin: 0; }
+  .engine .ready { margin: 0 0 10px; }
+  .engine .ready.bad { font-weight: 600; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 10px 14px; }
+  .fields label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .fields select, .fields input { width: 100%; min-width: 0; }
+  .status { font-size: 13px; margin-top: 8px; }
+  .status:empty { display: none; }
+  .more { margin-top: 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+<p id="err" class="bad" hidden></p>
+<p class="top muted">Each engine runs agents' turns in a program on one of your machines. The default one runs every agent that doesn't name its own; pick an agent's engine on the <a href="#" id="agents" data-target="engines.agents">Agents</a> page.</p>
+<div id="rows"><p class="muted">Loading…</p></div>
+<script>
+"use strict";
+const esc = rook.esc;
+const OTHER = "+other";            // no model id starts with +
+const KEYS = { worker: "Worker", model: "Model", model_three: "Light model (dream cycles)" };
+let engines = { default: null, engines: [] }, workers = [];
+const settings = {};        // engine -> {key: setting.list row}
+const models = {};          // engine -> promise of its agent.models answer
+const said = {};            // engine -> [text, class]: "Saved" or the error, kept across a redraw
+
+function pluginOf(engine) { return engine.split(".")[0]; }
+function titleOf(engine) { const e = engines.engines.find((x) => x.engine === engine); return e ? e.title : engine; }
+
+function modelsOf(engine) {
+  if (!models[engine]) {
+    models[engine] = rook.call("agent.models", { engine }, { why: "List the models an engine offers for the Engines page." })
+      .catch((x) => ({ models: [], default: "", error: x.message }));
+  }
+  return models[engine];
+}
+
+async function settingsOf(engine) {
+  const rows = (await rook.call("setting.list", { plugin: pluginOf(engine) }, { why: `Show ${titleOf(engine)}'s settings on the Engines page.` })).settings;
+  settings[engine] = Object.fromEntries(rows.map((s) => [s.key, s]));
+}
+
+// What a blank model means for this engine, in its setting's own words.
+function blank(row) {
+  const m = /blank: ([^;]*?)\.?$/.exec(row.doc || "");
+  return m ? `Blank: ${m[1]}` : "Blank";
+}
+
+function modelOptions(list, row) {
+  const known = list.models || [], current = row.value || "";
+  const other = current && !known.includes(current);
+  return `<option value=""${current ? "" : " selected"}>${esc(blank(row))}</option>`
+    + known.map((m) => `<option${m === current ? " selected" : ""}>${esc(m)}</option>`).join("")
+    + `<option value="${OTHER}"${other ? " selected" : ""}>Another model id…</option>`;
+}
+
+function workerOptions(current) {
+  const names = workers.map((w) => w.name);
+  return `<option value=""${current ? "" : " selected"}>Not set</option>`
+    + workers.map((w) => `<option value="${esc(w.name)}"${w.name === current ? " selected" : ""}>${esc(w.name)}${w.online ? " (online)" : ""}</option>`).join("")
+    + (current && !names.includes(current) ? `<option selected>${esc(current)}</option>` : "");
+}
+
+async function card(e) {
+  const mine = settings[e.engine] || {}, name = pluginOf(e.engine);
+  const doc = (Object.values(mine)[0] || {}).plugin_doc || "";
+  const list = mine.model || mine.model_three ? await modelsOf(e.engine) : null;
+  const s = said[e.engine] || ["", ""];
+  const fields = Object.keys(KEYS).filter((k) => mine[k]).map((k) => {
+    const target = `engines.${esc(name)}.${k}`;
+    if (k === "worker") {
+      return `<label><span class="label">${KEYS[k]}</span>
+        <select data-key="worker" data-target="${target}">${workerOptions(mine[k].value || "")}</select></label>`;
+    }
+    const current = mine[k].value || "", other = current && !(list.models || []).includes(current);
+    return `<label><span class="label">${KEYS[k]}</span>
+      <select data-key="${k}" data-target="${target}">${modelOptions(list, mine[k])}</select>
+      <input data-model-id="${k}" data-target="${target}_id" placeholder="A model id" value="${other ? esc(current) : ""}"${other ? "" : " hidden"}></label>`;
+  }).join("");
+  const notes = list && list.error && e.ready ? `<div class="warn status">Its models aren't known: ${esc(list.error)}</div>` : "";
+  return `<section class="card engine" data-engine="${esc(e.engine)}">
+    <div class="head"><h2>${esc(e.title)}</h2>${e.engine === engines.default ? '<span class="ok">default</span>' : ""}</div>
+    ${doc ? `<p class="muted">${esc(doc)}</p>` : ""}
+    <p class="ready ${e.ready ? "ok" : "bad"}">${e.ready ? "Can run turns now." : `Can't run turns now: ${esc(e.why)}.`}</p>
+    <div class="fields">${fields}</div>
+    ${notes}
+    <div class="status ${s[1]}" data-status>${esc(s[0])}</div>
+    <div class="more"><a href="#" data-more data-target="${`engines.${esc(name)}.more`}">More settings for ${esc(e.title)}</a></div>
+  </section>`;
+}
+
+async function render() {
+  const rows = document.getElementById("rows");
+  const order = [...engines.engines].sort((x, y) => (y.engine === engines.default) - (x.engine === engines.default));
+  rows.innerHTML = order.length ? (await Promise.all(order.map(card))).join("") : '<p class="muted">No engine installed.</p>';
+}
+
+async function load() {
+  const err = document.getElementById("err");
+  try {
+    let w;
+    [engines, w] = await Promise.all([
+      rook.call("agent.engines", {}, { why: "Show the engines on the Engines page." }),
+      rook.call("hub.workers", {}, { why: "List the machines an engine can run on." })]);
+    workers = w.workers.filter((x) => !x.hub);
+    await Promise.all(engines.engines.map((e) => settingsOf(e.engine)));
+    err.hidden = true;
+    await render();
+  } catch (x) {
+    err.textContent = x.message;
+    err.hidden = false;
+  }
+}
+
+async function set(engine, key, value) {
+  const title = titleOf(engine);
+  said[engine] = ["Saving…", "muted"];
+  const why = key === "worker" ? (value ? `Run ${title} on ${value}, from the Engines page.` : `Unset ${title}'s worker on the Engines page.`)
+    : `Set ${title}'s ${key === "model" ? "model" : "light model"} to ${value || "blank"} on the Engines page.`;
+  try {
+    await rook.call("setting.set", { plugin: pluginOf(engine), key, value }, { why });
+    said[engine] = ["Saved", "ok"];
+    delete models[engine];            // its list can depend on the worker
+    engines = await rook.call("agent.engines", {}, { why: "See whether the engine can run turns now." });
+    await settingsOf(engine);
+  } catch (x) {
+    said[engine] = [x.message, "bad"];
+  }
+  render();
+}
+
+const rows = document.getElementById("rows");
+rows.addEventListener("change", (e) => {
+  const t = e.target, engine = t.closest("[data-engine]").dataset.engine;
+  if (t.matches("[data-key]")) {
+    if (t.value === OTHER) {
+      const box = t.parentElement.querySelector("[data-model-id]");
+      box.hidden = false; box.focus(); return;
+    }
+    set(engine, t.dataset.key, t.value);
+  } else if (t.matches("[data-model-id]")) {
+    set(engine, t.dataset.modelId, t.value.trim());
+  }
+});
+rows.addEventListener("click", (e) => {
+  if (!e.target.matches("[data-more]")) return;
+  e.preventDefault();
+  rook.open("setting/settings");
+});
+document.getElementById("agents").addEventListener("click", (e) => { e.preventDefault(); rook.open("agent/agents"); });
+load();
+</script>
+</body>
+</html>

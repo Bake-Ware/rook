@@ -289,5 +289,10 @@ pages:
     file: pages/agents.html
     caps: [agent.list, agent.get, agent.update, agent.engines, agent.models, setting.set, job.templates, job.install, job.list, job.update]
     events: ["agent.agent.*"]
+  # The Engines page: each engine's worker, model and light model, and whether it can run a turn now.
+  engines:
+    title: Engines
+    file: pages/engines.html
+    caps: [agent.engines, agent.models, setting.list, setting.set, hub.workers]
 
 docs: { manual: docs/manual.md }
