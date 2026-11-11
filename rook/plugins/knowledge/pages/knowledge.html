@@ -365,6 +365,7 @@ function dialog(root) {
 const root = document.getElementById("root");
 const layout = el("div", undefined, "kn-layout");
 const side = el("aside", undefined, "kn-side");
+side.setAttribute("data-target", "knowledge.pages");
 const page = el("article", undefined, "kn-page");
 layout.append(side, page);
 root.append(layout);
@@ -388,7 +389,6 @@ chk.setAttribute("aria-label", "Show archived pages");
 showOld.prepend(chk);
 const index = el("nav", undefined, "kn-index");
 index.setAttribute("aria-label", "All pages");
-index.setAttribute("data-target", "knowledge.pages");
 const reviewBtn = btn("Review", () => startReview(), "kn-review-btn");
 reviewBtn.setAttribute("data-target", "knowledge.review");
 const tools = el("div", undefined, "kn-tools");
