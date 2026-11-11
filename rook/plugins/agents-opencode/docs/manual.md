@@ -1,4 +1,4 @@
-# OpenCode backend
+# OpenCode
 
 `agents-opencode` lets agents think with the OpenCode CLI on one of the
 band's workers. It

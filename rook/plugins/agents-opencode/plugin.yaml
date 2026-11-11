@@ -7,7 +7,7 @@
 manifest: 1
 plugin: agents-opencode
 version: 0.6.1
-title: OpenCode backend
+title: OpenCode
 doc: Agent turns in the OpenCode CLI on one of the band's workers (free models need no account), for the agents package.
 package: agents
 segment: Agents

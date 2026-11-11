@@ -7,7 +7,7 @@
 manifest: 1
 plugin: agents-codex
 version: 0.6.1
-title: Codex backend
+title: Codex
 doc: Agent turns in the Codex CLI signed in on one of the band's workers, for the agents package.
 package: agents
 segment: Agents

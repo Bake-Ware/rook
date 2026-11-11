@@ -1,4 +1,4 @@
-# Claude Code backend
+# Claude Code
 
 `agents-claude-code` lets agents think with the Claude Code CLI on one of the
 band's workers, under whatever subscription `claude` is signed in with there.
