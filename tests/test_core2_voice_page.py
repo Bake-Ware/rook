@@ -26,7 +26,6 @@ from tests.test_core2_dashboard import Client, run  # noqa: E402
 REPO = Path(__file__).resolve().parents[1]
 PAGE = REPO / "rook/plugins/speech/pages/voice.html"
 BAND = "e17904e6ed4c664592f64f6f1d02c682"
-SHOTS = REPO / ".c13" / "shots"
 
 
 def library(tmp_path, engine=True):
@@ -136,7 +135,6 @@ async def _until(page, expr, seconds=15):
 
 def test_the_voice_page_in_a_browser(tmp_path):
     pw = pytest.importorskip("playwright.async_api")
-    SHOTS.mkdir(parents=True, exist_ok=True)
 
     async def look(c, browser, name, width, height):
         ctx = await browser.new_context(viewport={"width": width, "height": height})
@@ -184,7 +182,6 @@ def test_the_voice_page_in_a_browser(tmp_path):
                         await shell.wait_for_timeout(100)
                     await frame.locator("#agent").select_option("house")
                     await frame.locator("#answer-status.ok").wait_for(timeout=10000)
-                    await shell.screenshot(path=str(SHOTS / f"voice-{name}.png"), full_page=True)
                     # Back to the provider's default; More settings opens the Settings page.
                     await frame.locator("#voice").select_option("")
                     await frame.locator("#voice-status.ok").wait_for(timeout=10000)
@@ -206,7 +203,6 @@ def test_the_voice_page_in_a_browser(tmp_path):
                     assert "Rook cannot speak yet" in text and "every pause" in text
                     await frame.locator("#hear").click()
                     await frame.locator("#voice-status.bad").wait_for(timeout=10000)
-                    await shell.screenshot(path=str(SHOTS / f"voice-no-engine-{name}.png"), full_page=True)
                     await ctx.close()
                 await browser.close()
         finally:
