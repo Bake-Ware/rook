@@ -13,17 +13,17 @@
 <section>
   <h2>Add or replace a secret</h2>
   <form class="new" id="new">
-    <input id="name" type="text" placeholder="name, e.g. gh-token" autocomplete="off" required>
-    <input id="value" type="password" placeholder="value" autocomplete="new-password" required>
-    <input id="description" type="text" placeholder="what it's for (optional)" autocomplete="off">
-    <button class="primary">Save</button>
+    <input id="name" data-target="vault.name" type="text" placeholder="name, e.g. gh-token" autocomplete="off" required>
+    <input id="value" data-target="vault.value" type="password" placeholder="value" autocomplete="new-password" required>
+    <input id="description" data-target="vault.description" type="text" placeholder="what it's for (optional)" autocomplete="off">
+    <button class="primary" data-target="vault.save">Save</button>
     <span id="out" class="muted"></span>
   </form>
 </section>
 <section>
   <h2>Secrets</h2>
   <p class="muted">Calls use one as <code>{{secret:NAME}}</code> in their args. Values are never shown here.</p>
-  <div class="scroll"><table>
+  <div class="scroll" data-target="vault.list"><table>
     <thead><tr><th>Name</th><th>What it's for</th><th>Set by</th><th>Updated</th><th></th></tr></thead>
     <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
   </table></div>
@@ -40,7 +40,7 @@ async function load() {
     rows.innerHTML = out.secrets.map((s) => `<tr>
       <td><code>${esc(s.name)}</code></td><td>${esc(s.description || "")}</td><td>${esc(s.set_by || "")}</td>
       <td class="muted">${s.updated ? rook.ago(s.updated) : ""}</td>
-      <td class="row"><button data-act="replace" data-name="${esc(s.name)}">Replace</button>
+      <td class="row"><button data-act="replace" data-name="${esc(s.name)}" data-target="vault.${esc(s.name)}.replace">Replace</button>
         <button data-act="delete" data-name="${esc(s.name)}">Delete</button></td></tr>`).join("");
   } catch (x) {
     rows.innerHTML = `<tr><td colspan="5" class="bad">${esc(x.message)}</td></tr>`;

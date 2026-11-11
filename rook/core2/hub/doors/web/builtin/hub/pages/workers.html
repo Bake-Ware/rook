@@ -170,10 +170,10 @@
 </head>
 <body data-layout="list">
 <div class="controls">
-  <input type="search" id="filter" placeholder="Filter" aria-label="Filter workers" autocomplete="off" spellcheck="false">
-  <label>Group <select id="group" aria-label="Group by"><option value="os">Operating system</option><option value="band">Band</option><option value="none">No grouping</option></select></label>
-  <label>Sort <select id="sort" aria-label="Sort"><option value="name">Name</option><option value="os">Operating system</option><option value="band">Band</option><option value="status">Online first</option></select></label>
-  <div class="view-toggle" role="group" aria-label="Worker view">
+  <input type="search" id="filter" data-target="workers.filter" placeholder="Filter" aria-label="Filter workers" autocomplete="off" spellcheck="false">
+  <label>Group <select id="group" data-target="workers.group" aria-label="Group by"><option value="os">Operating system</option><option value="band">Band</option><option value="none">No grouping</option></select></label>
+  <label>Sort <select id="sort" data-target="workers.sort" aria-label="Sort"><option value="name">Name</option><option value="os">Operating system</option><option value="band">Band</option><option value="status">Online first</option></select></label>
+  <div class="view-toggle" data-target="workers.view" role="group" aria-label="Worker view">
     <button type="button" data-layout="list" aria-pressed="true">&#9776; List</button><button type="button" data-layout="grid" aria-pressed="false">&#9638; Grid</button><button type="button" data-layout="scene" aria-pressed="false" title="3D">&#9820; 3D</button>
   </div>
 </div>
@@ -184,9 +184,9 @@
   <div class="tile ver"><div class="l">versions</div><div class="verbar" id="verbar"></div><div class="verleg" id="verleg"></div></div>
   <div class="tile hb"><div class="l">heartbeats</div><div class="bars" id="bars"></div></div>
 </section>
-<section class="joins" id="joins" hidden><h2>Wants to join</h2><div id="join-list"></div></section>
+<section class="joins" id="joins" data-target="workers.joins" hidden><h2>Wants to join</h2><div id="join-list"></div></section>
 <div class="listhead"><span></span><span></span><span>worker</span><span>band</span><span>version</span><span></span><span>heartbeat</span></div>
-<div class="list" id="list"><div class="empty">Loading&hellip;</div></div>
+<div class="list" id="list" data-target="workers.list"><div class="empty">Loading&hellip;</div></div>
 <div class="fleet-scene" id="fleet-scene" hidden></div>
 <div class="foot" id="foot"></div>
 <script>
@@ -247,7 +247,7 @@ function rowFor(w) {
   if (!m) {
     const wrap = document.createElement("div");
     wrap.className = "item";
-    wrap.innerHTML = `<div class="row"><button type="button" class="caret" aria-expanded="false">▸</button><span class="st"></span>
+    wrap.innerHTML = `<div class="row" data-target="workers.${esc(w.name)}"><button type="button" class="caret" aria-expanded="false">▸</button><span class="st"></span>
       <span class="name"></span><button type="button" class="worker-band"></button><span class="ver"></span>
       <span class="batt-slot"></span><span class="seen"><span class="seenbar"><i></i></span><span class="t"></span></span></div>
       <div class="detail"></div>`;
@@ -419,7 +419,7 @@ async function joins() {
   $("joins").hidden = !devices.length;
   $("join-list").innerHTML = devices.map((d) => `<div class="join"><b>${esc(d.name)}</b>
     <span>from ${esc(d.address || "?")} &middot; asked ${esc(d.age)} s ago</span>
-    <button type="button" data-id="${esc(d.id)}">Join</button><button type="button" data-id="${esc(d.id)}" data-refuse="1">No</button></div>`).join("");
+    <button type="button" data-id="${esc(d.id)}" data-target="workers.${esc(d.name)}.join">Join</button><button type="button" data-id="${esc(d.id)}" data-refuse="1" data-target="workers.${esc(d.name)}.refuse">No</button></div>`).join("");
 }
 $("join-list").onclick = async (e) => {
   const b = e.target.closest("button");
