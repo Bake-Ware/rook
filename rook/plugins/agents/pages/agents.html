@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agents</title>
+<style>
+  .top { margin-bottom: 14px; }
+  .agent .head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 10px; }
+  .agent .head h2 { margin: 0; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 10px 14px; }
+  .fields label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .fields select, .fields input { width: 100%; min-width: 0; }
+  .status { font-size: 13px; margin-top: 8px; }
+  .status:empty { display: none; }
+  .top select { max-width: 100%; }
+</style>
+</head>
+<body>
+<p id="err" class="bad" hidden></p>
+<div class="top row">
+  <label class="label" for="default">Default engine</label>
+  <select id="default" data-target="agents.default"></select>
+  <span id="default-status" class="status"></span>
+</div>
+<div id="rows"><p class="muted">Loading…</p></div>
+<div id="attention" class="card" hidden>
+  <label class="row"><input type="checkbox" id="attention-on" data-target="agents.attention"> <b>Attention pass</b></label>
+  <div id="attention-doc" class="muted"></div>
+  <div id="attention-status" class="status"></div>
+</div>
+<script>
+"use strict";
+const esc = rook.esc;
+const OTHER = "+other";            // no model id starts with +
+let engines = { default: null, engines: [] }, agents = [], attention = null;
+const models = {};          // engine -> promise of its agent.models answer
+const said = {};            // where -> [text, class]: "Saved" or the error, kept across a redraw
+
+function modelsOf(engine) {
+  if (!engine) return Promise.resolve({ models: [], default: "" });
+  if (!models[engine]) {
+    models[engine] = rook.call("agent.models", { engine }, { why: "List the models an engine offers for the Agents page." })
+      .catch((x) => ({ models: [], default: "", error: x.message }));
+  }
+  return models[engine];
+}
+
+function engineOf(a) { return a.backend && a.backend !== "default" ? a.backend : engines.default; }
+function titleOf(engine) { const e = engines.engines.find((x) => x.engine === engine); return e ? e.title : engine; }
+
+function status(where, text, cls) {
+  said[where] = [text, cls];
+  const el = document.querySelector(`[data-status="${CSS.escape(where)}"]`) || document.getElementById(where + "-status");
+  if (el) { el.textContent = text; el.className = "status " + (cls || ""); }
+}
+
+async function save(where, cap, args, why) {
+  status(where, "Saving…", "muted");
+  try {
+    const out = await rook.call(cap, args, { why });
+    status(where, "Saved", "ok");
+    return out;
+  } catch (x) {
+    status(where, x.message, "bad");
+    return null;
+  }
+}
+
+function modelOptions(list, current) {
+  const known = list.models || [];
+  const other = current && !known.includes(current);
+  return `<option value=""${current ? "" : " selected"}>Engine's default${list.default ? ` (${esc(list.default)})` : ""}</option>`
+    + known.map((m) => `<option${m === current ? " selected" : ""}>${esc(m)}</option>`).join("")
+    + `<option value="${OTHER}"${other ? " selected" : ""}>Another model id…</option>`;
+}
+
+async function row(a) {
+  const engine = engineOf(a);
+  const list = await modelsOf(engine);
+  const current = (a.model || {}).two || "";
+  const e = engines.engines.find((x) => x.engine === engine);
+  const other = current && !(list.models || []).includes(current);
+  const pinned = a.backend && a.backend !== "default" ? a.backend : "";
+  const notes = [e && !e.ready ? `${esc(e.title)} can't run turns now: ${esc(e.why)}.` : "",
+    list.error && (!e || e.ready) ? `Its models aren't known: ${esc(list.error)}` : ""].filter(Boolean);
+  const s = said[a.name] || ["", ""];
+  return `<section class="card agent" data-agent="${esc(a.name)}">
+    <div class="head"><h2>${esc(a.title || a.name)}</h2><span class="muted">${esc(a.name)}</span>
+      <span class="${a.awake ? "ok" : "muted"}">${a.awake ? "awake" : "asleep"}</span>
+      ${a.always_on ? '<span class="muted">always on</span>' : ""}</div>
+    <div class="fields">
+      <label><span class="label">Engine</span>
+        <select data-engine data-target="agents.${esc(a.name)}.engine">
+          <option value="default"${pinned ? "" : " selected"}>Default (${esc(titleOf(engines.default) || "none")})</option>
+          ${engines.engines.map((x) => `<option value="${esc(x.engine)}"${x.engine === pinned ? " selected" : ""}>${esc(x.title)}</option>`).join("")}
+        </select></label>
+      <label><span class="label">Model</span>
+        <select data-model data-target="agents.${esc(a.name)}.model">${modelOptions(list, current)}</select>
+        <input data-model-id data-target="agents.${esc(a.name)}.model_id" placeholder="A model id" value="${other ? esc(current) : ""}"${other ? "" : " hidden"}></label>
+      <label><span class="label">Persona</span><span>${esc(a.persona || "none")}</span></label>
+    </div>
+    ${notes.length ? `<div class="warn status">${notes.join(" ")}</div>` : ""}
+    <div class="status ${s[1]}" data-status="${esc(a.name)}">${esc(s[0])}</div>
+  </section>`;
+}
+
+async function render() {
+  const sel = document.getElementById("default");
+  sel.innerHTML = engines.engines.length ? engines.engines.map((x) => `<option value="${esc(x.engine)}"${x.engine === engines.default ? " selected" : ""}>${esc(x.title)}${x.ready ? "" : " (not ready)"}</option>`).join("")
+    : '<option value="">No engine installed</option>';
+  const rows = document.getElementById("rows");
+  rows.innerHTML = agents.length ? (await Promise.all(agents.map(row))).join("") : '<p class="muted">No agents.</p>';
+  const box = document.getElementById("attention");
+  box.hidden = !attention;
+  if (attention) {
+    document.getElementById("attention-on").checked = !!(attention.job && attention.job.enabled);
+    document.getElementById("attention-doc").textContent = attention.template.doc;
+  }
+}
+
+async function loadAttention() {
+  try {
+    const t = (await rook.call("job.templates", {}, { why: "See whether the attention pass is on this hub." }))
+      .find((x) => x.template === "attention/attention");
+    if (!t) return null;
+    const jobs = await rook.call("job.list", { where: { source: t.template }, limit: 1 }, { why: "See whether the attention pass is on." });
+    return { template: t, job: jobs[0] || null };
+  } catch (x) {
+    return null;            // no jobs here: the line isn't there
+  }
+}
+
+async function load() {
+  const err = document.getElementById("err");
+  try {
+    [engines, agents, attention] = await Promise.all([
+      rook.call("agent.engines", {}, { why: "Show the engines on the Agents page." }),
+      rook.call("agent.list", { limit: 500 }, { why: "Show the agents on the Agents page." }),
+      loadAttention()]);
+    agents.sort((x, y) => (y.persona === "house") - (x.persona === "house") || (x.name < y.name ? -1 : 1));
+    err.hidden = true;
+    await render();
+  } catch (x) {
+    err.textContent = x.message;
+    err.hidden = false;
+  }
+}
+
+function agentOf(el) { return agents.find((a) => a.name === el.closest("[data-agent]").dataset.agent); }
+
+// On the record as it is now: the agent's own writes (awake, asleep) move its revision.
+async function update(a, fields, why) {
+  status(a.name, "Saving…", "muted");
+  try {
+    Object.assign(a, await rook.call("agent.get", { id: a.id }, { why: "Read the agent before changing it." }));
+    const out = await rook.call("agent.update", { id: a.id, revision: a.revision, ...fields(a) }, { why });
+    Object.assign(a, out);
+    status(a.name, "Saved", "ok");
+  } catch (x) {
+    status(a.name, x.message, "bad");
+  }
+}
+
+function withoutTwo(a, two) {
+  const model = { ...(a.model || {}) };
+  if (two) model.two = two; else delete model.two;
+  return model;
+}
+
+async function setModel(a, two) {
+  await update(a, (now) => ({ model: withoutTwo(now, two) }),
+    two ? `Set ${a.name}'s model to ${two} on the Agents page.` : `Set ${a.name} to its engine's default model on the Agents page.`);
+  render();
+}
+
+document.getElementById("rows").addEventListener("change", async (e) => {
+  const t = e.target, a = agentOf(t);
+  if (t.matches("[data-engine]")) {
+    const engine = t.value === "default" ? engines.default : t.value;
+    const list = await modelsOf(engine);
+    await update(a, (now) => {
+      const two = (now.model || {}).two;          // one the new engine doesn't offer: its default
+      return two && !(list.models || []).includes(two) ? { backend: t.value, model: withoutTwo(now, "") } : { backend: t.value };
+    }, `Run ${a.name} on ${t.value === "default" ? "the default engine" : titleOf(t.value)} from the Agents page.`);
+    render();
+  } else if (t.matches("[data-model]")) {
+    const box = t.parentElement.querySelector("[data-model-id]");
+    if (t.value === OTHER) { box.hidden = false; box.focus(); return; }
+    await setModel(a, t.value);
+  } else if (t.matches("[data-model-id]")) {
+    await setModel(a, t.value.trim());
+  }
+});
+
+document.getElementById("default").addEventListener("change", async (e) => {
+  const value = e.target.value;
+  if (await save("default", "setting.set", { plugin: "agent", key: "backend", value }, `Make ${titleOf(value)} the default engine on the Agents page.`)) {
+    engines.default = value;
+    render();
+  }
+});
+
+document.getElementById("attention-on").addEventListener("change", async (e) => {
+  const on = e.target.checked, job = attention.job;
+  const out = job ? await save("attention", "job.update", { id: job.id, revision: job.revision, enabled: on }, `Turn the attention pass ${on ? "on" : "off"} from the Agents page.`)
+    : await save("attention", "job.install", { template: attention.template.template }, "Turn the attention pass on from the Agents page.");
+  if (out) attention.job = out;
+  else e.target.checked = !on;
+});
+
+let soon = null;
+rook.on("agent.agent.*", () => {
+  soon = soon || setTimeout(() => {
+    soon = null;
+    if (document.activeElement && document.activeElement.closest("#rows")) return;    // not while they pick
+    load();
+  }, 1500);
+});
+load();
+</script>
+</body>
+</html>

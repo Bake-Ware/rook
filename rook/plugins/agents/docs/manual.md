@@ -91,6 +91,31 @@ Three models (its `model` and `model_three` settings); an agent's
 `model: {two, three}` overrides them. Settings: `backend`, `warm`, `turn_timeout`,
 `dream_every`, `chat_agent`.
 
+`agent.engines` lists the engines (the contract's providers, by the cap an
+agent's backend names, with their titles), which one is the default and
+whether each can run a turn now (`why` when it can't: no worker set for it,
+or its worker offline). `agent.models {engine?}` asks one engine's own
+`models` cap for the models it offers and its default (blank: the default
+engine). Changing an agent's model is `agent.update {id, revision, model:
+{two, three}}`; its engine, `agent.update {backend}`; the default engine,
+`setting.set {plugin: agent, key: backend, value}`. A model the engine
+doesn't list is still passed on as given.
+
+## Agents page
+
+Agents > Agents on the hub site (`pages/agents.html`) shows each agent, the
+house agent first: its name and title, awake or asleep, always on. Its
+engine is a dropdown ("Default (...)" or one engine), its model a dropdown of
+that engine's models with "Engine's default" first and "Another model id..."
+last (a box for any id). A change saves at once, with "Saved" or the error
+beside it; changing the engine puts back the engine's default model when the
+new engine doesn't offer the old one. An engine that can't run turns now
+says why on its agents' rows. The persona shows as text: changing it would
+only change the label, not the prompt, skills and grants it filled in. Above
+the agents, the default engine; below them, the attention pass on or off
+(installing the ready-made `attention/attention` job, or switching it), only
+when the jobs plugin offers that job.
+
 ## On the hub site
 
 The agents package adds the house agent to the hub site itself (`shell:` in

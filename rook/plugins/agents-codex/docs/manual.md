@@ -14,6 +14,11 @@ system prompt as Codex's developer instructions. The next turn continues the
 same Codex session (`codex exec resume <id>`). The reply (Codex's last
 message), the session id and token usage come back.
 
+`agents-codex.models` answers the models its `model` setting and an agent's
+model take: the ones `codex debug models` on the worker shows in Codex's own
+picker, and `default`, the `model` setting (blank: Codex's own). Any other
+model id Codex knows works too.
+
 Settings (the hub's: Settings page, or `setting.set`):
 
 | Setting | Default | What |

@@ -13,7 +13,7 @@
 # what both may. Code: scripts/agents.py.
 manifest: 1
 plugin: agent
-version: 0.5.2
+version: 0.5.3
 title: Agents
 doc: Agents with a persona, a backend, persistent sessions, a private notepad and curated memory.
 package: agents
@@ -29,8 +29,10 @@ source: https://github.com/Bake-Ware/rook
 # hub.manifests: the personas and skills every installed plugin ships;
 # knowledge.get: skills kept as knowledge pages (kind skill), with the workbench.
 # hub.workers, setting.list: whether a worker serving agent.backend (or the
-# worker a hub-run one names) is online (agent.site).
-uses: ["agent.backend", "notify.channel.send", "hub.manifests", "knowledge.get", "hub.workers", "setting.list"]
+# worker a hub-run one names) is online (agent.site, agent.engines).
+# *.models: an engine's own list of models (agent.models).
+uses: ["agent.backend", "notify.channel.send", "hub.manifests", "knowledge.get", "hub.workers", "setting.list",
+       "*.models"]
 
 settings:
   warm: { type: duration, default: 10m, doc: How long an agent that isn't always-on stays awake after its last message. }
@@ -167,6 +169,28 @@ caps:
     idempotent: true
     run: scripts/agents.py:site
     result: { type: map }
+  engines:
+    doc: >-
+      The engines agents can run on (the agent.backend providers, by the cap an agent's backend names), which
+      one is the default (the backend setting, else the first installed), and whether each can run a turn now
+      (why not, when it can't).
+    risk: read
+    scope: multi-user
+    idempotent: true
+    run: scripts/agents.py:engines
+    result: { type: map }
+  models:
+    doc: >-
+      The models one engine offers (its models cap): names its model setting and an agent's model take, and
+      its default (blank: the engine's own). Any other model id the engine knows works too.
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 1m
+    run: scripts/agents.py:models
+    args:
+      engine: { type: str, doc: "An engine as agent.engines lists it (agents-claude-code.turn); blank: the default." }
+    result: { type: map }
   setup:
     doc: >-
       First-run setup: whether it is finished. While it isn't, the site opens straight into the house
@@ -256,5 +280,15 @@ skills:
   hub-pages: skills/hub-pages.md
   housekeeping: skills/housekeeping.md
   plugins: skills/plugins.md
+
+# The Agents page: each agent's engine, model and persona, the default
+# engine, and the attention pass when the attention job is on this hub.
+pages:
+  agents:
+    title: Agents
+    file: pages/agents.html
+    caps: [agent.list, agent.get, agent.update, agent.engines, agent.models, setting.set, job.templates, job.install, job.list, job.update]
+    events: ["agent.agent.*"]
+    nav: { section: Agents }
 
 docs: { manual: docs/manual.md }

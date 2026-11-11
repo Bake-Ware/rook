@@ -6,7 +6,7 @@
 # stdin. Code: scripts/codex.py.
 manifest: 1
 plugin: agents-codex
-version: 0.6.0
+version: 0.6.1
 title: Codex backend
 doc: Agent turns in the Codex CLI signed in on one of the band's workers, for the agents package.
 package: agents
@@ -46,6 +46,14 @@ caps:
         text: { type: str, required: true }
         session: { type: str, required: true }
         usage: { type: map, items: { type: int } }
+  models:
+    doc: "The models the model setting and an agent's model take (codex debug models on the worker; a full model id works too), and the model setting."
+    risk: exec
+    scope: local
+    idempotent: true
+    timeout: 1m
+    run: scripts/codex.py:models
+    result: { type: map }
 provides:
   agent.backend: agents-codex.turn
 docs: { manual: docs/manual.md }

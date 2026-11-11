@@ -374,7 +374,7 @@ class Runtime:
             self.alone[name] = self.alone.get(name, 0) + alone
             try:
                 # another harness can't resume this one's session
-                same = meta.attrs.get("harness_backend") == a.get("backend")
+                same = engine_of(ctx, meta.attrs.get("harness_backend")) == engine_of(ctx, a.get("backend"))
                 setup = await self.setup_brief(ctx, a)
                 res = await self.backend(ctx, a, f"Message from {ev.by}:\n\n{ev.body['text']}{setup}",
                                          system=system, session=meta.attrs.get("harness") if same else None,
@@ -389,7 +389,7 @@ class Runtime:
         if not isinstance(res, dict) or not isinstance(res.get("text"), str):
             return self.fail(prod, fut, "the backend gave no reply text")
         if res.get("session"):
-            self.streams.update(prod.id, attrs={"harness": res["session"], "harness_backend": a.get("backend")})
+            self.streams.update(prod.id, attrs={"harness": res["session"], "harness_backend": engine_of(ctx, a.get("backend"))})
         reply = prod.append("turn", {"role": "reply", "text": res["text"],
                                      **({"usage": res["usage"]} if res.get("usage") else {})})
         if not fut.done():
@@ -423,9 +423,9 @@ class Runtime:
         provider cap the agent is pinned to. ``door``: hand the harness a turn token
         for the same pair, by name (the hub resolves it on the way to the
         worker), ended when the turn returns."""
-        name, kind = a["name"], a.get("backend") or "default"
-        if kind == "default":
-            kind = self.settings.get("backend") or "default"
+        name = a["name"]
+        # named by the agent or the backend setting; else the contract picks (provider None)
+        named = a.get("backend") not in (None, "", "default") or self.settings.get("backend")
         who = Caller(person=ctx.person, agent=f"agent:{name}", band=ctx.band, why=why)
         args = {"prompt": inert(prompt), "system": inert(system), "timeout": self.settings["turn_timeout"]}
         model = model or (a.get("model") or {}).get("two")
@@ -438,7 +438,7 @@ class Runtime:
         if turn:
             args["door"] = "{{secret:%s}}" % turn
         try:
-            return await ctx.call_as(who, BACKEND, args, provider=None if kind == "default" else kind)
+            return await ctx.call_as(who, BACKEND, args, provider=engine_of(ctx, a.get("backend")) if named else None)
         finally:
             if turn:
                 ctx.end_turn_token(turn)
@@ -979,26 +979,71 @@ def look_state(ctx) -> dict:
             "styles": styles, "themes": themes}
 
 
-async def backend_ready(ctx) -> bool:
-    """Whether a turn of the house agent can run now: a plugin providing
-    ``agent.backend`` on a worker that is online, or on the hub (one with a
-    ``worker`` setting, where its program runs, once that worker is online).
-    Right after an install the worker takes a few seconds to join; the site
-    waits for this before starting setup."""
+async def engine_states(ctx, call) -> dict:
+    """Each plugin providing ``agent.backend`` -> None when a turn can run on
+    it now, else why not in plain words: on a worker, that worker is online;
+    on the hub (one with a ``worker`` setting, where its program runs), that
+    worker is set and online. ``call`` makes the reads (ctx.call: as the caller)."""
     plugins = {c.partition(".")[0] for c in ctx.providers(BACKEND)}
+    if not plugins:
+        return {}
+    workers = (await call("hub.workers"))["workers"]
+    online = {w["name"] for w in workers if w.get("online") and not w.get("hub")}
+    hub = plugins & {p for w in workers if w.get("hub") for p in w.get("plugins") or ()}
+    out = {p: None if any(w.get("online") and p in (w.get("plugins") or ()) for w in workers)
+           else "no worker serving it is online" for p in plugins - hub}
+    for p in hub:              # turns go to the hub's own, whatever a worker announces
+        where = [s["value"] for s in (await call("setting.list", plugin=p))["settings"] if s["key"] == "worker"]
+        out[p] = None if not where or where[0] in online else \
+            f"no worker is set for it ({p}.worker)" if not where[0] else f"its worker {where[0]} is offline"
+    return out
+
+
+async def backend_ready(ctx) -> bool:
+    """Whether a turn of the house agent can run now: some engine is ready
+    (engine_states). Right after an install the worker takes a few seconds to
+    join; the site waits for this before starting setup."""
     try:
-        workers = (await ctx.call("hub.workers"))["workers"] if plugins else ()
-        online = {w["name"] for w in workers if w.get("online") and not w.get("hub")}
-        hub = plugins & {p for w in workers if w.get("hub") for p in w.get("plugins") or ()}
-        if any(w.get("online") and (plugins - hub) & set(w.get("plugins") or ()) for w in workers):
-            return True
-        for p in hub:              # turns go to the hub's own, whatever a worker announces
-            where = [s["value"] for s in (await ctx.call("setting.list", plugin=p))["settings"] if s["key"] == "worker"]
-            if not where or where[0] in online:
-                return True
+        return None in (await engine_states(ctx, ctx.call)).values()
     except Exception:          # noqa: BLE001 - not theirs to see: not ready for them
         return False
-    return False
+
+
+def engine_of(ctx, backend: str | None = "default") -> str | None:
+    """The engine an agent's backend means: a provider's cap itself; default
+    (or blank, as old sessions stored it) the backend setting, else the first installed."""
+    if backend and backend != "default":
+        return backend
+    return ctx.settings["backend"] or next(iter(ctx.providers(BACKEND)), None)
+
+
+def _own(ctx):
+    """Calls the plugin makes for itself (its uses are its grants), not bounded by
+    the page or person asking: which engines there are and what they offer."""
+    me = Caller(plugin=ctx.plugin, band=ctx.band, why=ctx.caller.why)
+    return lambda cap, **args: ctx.call_as(me, cap, args)
+
+
+async def engines(ctx):
+    """The engines (agent.backend providers) by cap, their titles, which is the default, and whether each is ready."""
+    call = _own(ctx)
+    titles = {m["plugin"]: m["title"] for m in (await call("hub.manifests", section="title"))["manifests"]}
+    states = await engine_states(ctx, call)
+    rows = []
+    for cap in ctx.providers(BACKEND):
+        plugin = cap.partition(".")[0]
+        rows.append({"engine": cap, "title": titles.get(plugin, plugin), "ready": states.get(plugin) is None,
+                     "why": states.get(plugin)})
+    return {"default": engine_of(ctx), "engines": rows}
+
+
+async def models(ctx, engine=None):
+    """The models one engine offers (its own ``models`` cap) and its default model."""
+    if not engine or engine == "default":
+        engine = engine_of(ctx)
+    if not engine:
+        raise ctx.Error("no engine is installed")
+    return {"engine": engine, **await _own(ctx)(f"{engine.partition('.')[0]}.models")}
 
 
 async def site(ctx):

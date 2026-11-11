@@ -94,6 +94,24 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
     return parse(ctx, code, lines, tail)
 
 
+async def models(ctx):
+    """The models Codex lists (``codex debug models``, the ones it shows in its own picker)."""
+    ctx = itself(ctx)
+    w = worker(ctx)
+    place = await Place.of(ctx, w)
+    lines: list[str] = []
+    code, tail = await stream(ctx, w, [place.expand(ctx.settings["codex"] or "codex"), "debug", "models"],
+                              stdin="", timeout="1m", name="Codex", setting="agents-codex.codex",
+                              line=lines.append)
+    try:
+        listed = json.loads("".join(lines))["models"]
+    except (ValueError, KeyError, TypeError):
+        raise ctx.Error(f"codex debug models failed (exit {code}): {tail.strip()[-300:] or 'no output'}") from None
+    return {"models": [m["slug"] for m in listed if isinstance(m, dict) and m.get("visibility") == "list"
+                       and isinstance(m.get("slug"), str)],
+            "default": ctx.settings["model"] or ""}
+
+
 def _message(raw) -> str:
     """Codex's error text; the API's own error often comes JSON-encoded inside."""
     text = str(raw or "")

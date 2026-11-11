@@ -103,7 +103,9 @@ Owners curate an agent's memory with `agent.memory.*`. A persona's
 **grants** are its own rights, checked on every call it makes; every agent
 may also run its own turns (`agent.backend`). `backend` is `default` (the
 agents plugin's `backend` setting) or one provider's cap, e.g.
-`agents-claude-code.turn`. Skills are markdown playbooks an agent follows
+`agents-claude-code.turn`. `agent.engines` lists the engines and the
+default one, `agent.models {engine?}` the models one offers; the
+**Agents** page sets each agent's engine and model from dropdowns. Skills are markdown playbooks an agent follows
 (`agent.skill {name}` reads one). Any plugin can ship personas and skills
 in its manifest; each installed plugin's personas become agents. With the
 workbench, a knowledge page of kind `skill` is a skill too (the skill

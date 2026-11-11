@@ -142,13 +142,13 @@ def test_every_install_combination(tmp_path, combo):
             assert dock["look"]["chosen"]["name"] is False
             assert dock["setup"] == {"done": True}       # guided setup only when the installer asks for it
 
-        # a lean sidebar: workers and tokens (+ what packages add: the agents package's trust map,
-        # "it matters most to the agents"); journal, vault and settings by address.
+        # a lean sidebar: workers and tokens (+ what packages add: the agents package's Agents page
+        # and trust map, "it matters most to the agents"); journal, vault and settings by address.
         listed = {p["page"]: p for p in (await c.call("page.list"))["result"]["pages"]}
         nav = {pid for pid, p in listed.items() if p["nav"]}
         work = {"task/tasks", "project/projects", "knowledge/knowledge"}
         assert nav == {"hub/workers", "token/tokens", "board/board"} | (work if workbench else set()) | \
-            ({"trust/trust"} if agents else set())
+            ({"agent/agents", "trust/trust"} if agents else set())
         trust_caps = [cap for cap in hub.plugins.caps() if cap.startswith("trust.")]
         assert bool(trust_caps) is agents, trust_caps
         assert {"journal/journal", "setting/settings", "secret/vault"} <= set(listed) - nav

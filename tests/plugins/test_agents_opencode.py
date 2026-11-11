@@ -176,3 +176,14 @@ def test_missing_worker_program_and_folder(tmp_path, bins):
 def test_it_provides_the_agent_backend_contract():
     m = load(FOLDER, CONTRACTS).data
     assert m["provides"] == {"agent.backend": "agents-opencode.turn"}
+
+
+def test_its_models_are_the_ones_opencode_lists(tmp_path, bins, home):
+    """opencode models on the worker, provider/model one a line."""
+    bins.add("opencode", "print('opencode/big-pickle'); print('a warning'); print('openai/gpt-x')")
+    out, _ = on_worker("agents-opencode", "agents-opencode.models", settings=SETTINGS)
+    assert out == {"models": ["opencode/big-pickle", "openai/gpt-x"], "default": ""}
+    assert bins.calls("opencode")[0]["argv"] == ["models"]
+    bins.add("opencode", "sys.stderr.write('boom\\\\n'); sys.exit(3)")
+    with pytest.raises(KitError, match=r"opencode models failed \(exit 3\): boom"):
+        on_worker("agents-opencode", "agents-opencode.models", settings=SETTINGS)

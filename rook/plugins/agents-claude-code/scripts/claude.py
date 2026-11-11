@@ -27,6 +27,8 @@ _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,127}")
 USAGE = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 TOKEN_ENV = "ROOK_DOOR_TOKEN"
 SERVER = "rook"
+# The aliases the CLI takes (its own list; it has no command that prints them).
+MODELS = ["sonnet", "opus", "haiku", "fable"]
 
 
 def argv(settings, *, program="claude", session=None, model=None, system=None, door_config=None) -> list[str]:
@@ -54,6 +56,10 @@ def argv(settings, *, program="claude", session=None, model=None, system=None, d
     if settings["isolate"]:          # not the person's own hooks, plugins and MCP servers (another band's, say)
         out += ["--setting-sources", "project,local", "--strict-mcp-config"]
     return out
+
+
+async def models(ctx):
+    return {"models": MODELS, "default": ctx.settings["model"] or ""}
 
 
 def door_config(url: str) -> str:

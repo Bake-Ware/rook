@@ -13,6 +13,11 @@ session id from the last turn, the agent's system prompt appended with
 `--append-system-prompt`. The reply, the session id and token usage come
 back. A turn that runs past its timeout, or is cancelled, ends the process.
 
+`agents-claude-code.models` answers the models its `model` setting and an
+agent's model take, without asking the worker: Claude Code's aliases
+(`sonnet`, `opus`, `haiku`, `fable`; the CLI has no command that lists
+models), and `default`, the `model` setting. A full model id works too.
+
 Settings (the hub's: Settings page, or `setting.set`):
 
 | Setting | Default | What |
