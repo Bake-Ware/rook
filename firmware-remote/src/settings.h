@@ -33,6 +33,18 @@ void seed(uint8_t out[32]);
 std::string replay();
 void set_replay(const std::string& blob);
 
+// The devices the remote's menu offers and the one chosen: its name rides
+// every remote.button event (target), so a job can act on that device.
+std::vector<std::string> targets();
+void set_targets(const std::vector<std::string>& t);
+int target();
+void set_target(int i);
+std::string target_name();
+
+// The screen's rotation, in quarter turns clockwise (0..3).
+int rotation();
+void set_rotation(int r);
+
 void factory_reset();
 
 }  // namespace settings

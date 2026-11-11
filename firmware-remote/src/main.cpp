@@ -1,5 +1,6 @@
-// Rook remote: a XIAO ESP32-S3 handheld with 11 buttons (charlieplexed on a
-// PCF8574) and a 128x32 OLED, joining the band as a core v2 worker.
+// Rook remote: a XIAO ESP32-S3 handheld with 11 buttons (on a PCF8574 and
+// GPIOs) and a 128x32 OLED held upright, joining the band as a core v2 worker.
+// The input button opens its own menu: which device the buttons are for, or Tetris.
 //   I2C: SDA GPIO5, SCL GPIO6. PCF8574 0x20, SSD1306 0x3C.
 // Button presses go to the hub as remote.button events; caps let agents show
 // text, ask a question, wait for a press, read state and name the buttons.
@@ -16,9 +17,10 @@
 #include "rc_worker.h"
 #include "remote_manifest.h"
 #include "settings.h"
+#include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.1.0"
+#define FW_VERSION "0.2.0"
 static const int PIN_SDA = 5, PIN_SCL = 6;
 static const uint8_t PCF_ADDR = 0x20, OLED_ADDR = 0x3C;
 
@@ -29,6 +31,13 @@ static SemaphoreHandle_t ev_mu;
 static std::deque<ButtonEvent> recent;      // last presses, for state and wait
 static volatile int ask_answer = -1;        // set by the button handler while asking
 static std::string last_note;
+// What the buttons do now: the TV's (events to the hub), the menu's (the input
+// button opens it: pick the device the events are for, or the game), the game's.
+enum Mode { REMOTE, MENU, GAME };
+static volatile Mode mode = REMOTE;
+static uint32_t menu_until = 0;             // the menu closes itself when left alone
+static bool swallow = false;                // drop the release of the press that left the game
+static const uint32_t MENU_IDLE_MS = 20000;
 
 static void logf(const char* fmt, ...) {
     char b[200];
@@ -44,6 +53,28 @@ static void logf(const char* fmt, ...) {
 static bool is_name(const std::string& n, std::initializer_list<const char*> set) {
     for (const char* s : set) if (n == s) return true;
     return false;
+}
+
+static void open_menu() {
+    std::vector<std::string> items = settings::targets();
+    items.push_back("Tetris");
+    ui::menu_begin("MENU", items, settings::target());
+    menu_until = millis() + MENU_IDLE_MS;
+    mode = MENU;
+}
+
+static void menu_pick(int i) {
+    auto ts = settings::targets();
+    ui::menu_end();
+    if (i < (int)ts.size()) {
+        settings::set_target(i);
+        mode = REMOTE;
+        ui::flash(ts[i]);
+    } else {
+        tetris::start(millis());
+        ui::game(true);
+        mode = GAME;
+    }
 }
 
 static void on_button(const ButtonEvent& e) {
@@ -64,6 +95,20 @@ static void on_button(const ButtonEvent& e) {
         else ui::ask_move(1);
         return;
     }
+    if (swallow || mode == GAME) return;       // the game reads the held buttons itself (loop)
+    if (mode == MENU) {
+        if (strcmp(e.action, "press")) return;
+        menu_until = millis() + MENU_IDLE_MS;
+        if (e.name == "up") ui::menu_move(-1);
+        else if (e.name == "down") ui::menu_move(1);
+        else if (e.name == "ok") menu_pick(ui::menu_selected());
+        else if (is_name(e.name, {"back", "input", "home"})) { ui::menu_end(); mode = REMOTE; }
+        return;
+    }
+    if (e.name == "input" && !buttons::learning()) {
+        if (!strcmp(e.action, "press")) open_menu();
+        return;
+    }
     if (buttons::learning()) {
         char b[24];
         snprintf(b, sizeof b, "%s = %s", e.name.c_str(), buttons::pair(e.index).c_str());
@@ -77,6 +122,7 @@ static void on_button(const ButtonEvent& e) {
         p["action"] = e.action;
         p["index"] = e.index;
         p["held_ms"] = e.held_ms;
+        if (!settings::target_name().empty()) p["target"] = settings::target_name();
         worker.emit("remote.button", p.as<JsonObjectConst>());
     }
 }
@@ -86,6 +132,10 @@ static void on_button(const ButtonEvent& e) {
 static void fill_state(JsonObject r) {
     r["name"] = settings::name();
     r["version"] = FW_VERSION;
+    r["mode"] = mode == GAME ? "game" : mode == MENU ? "menu" : "remote";
+    r["target"] = settings::target_name();
+    JsonArray tg = r["targets"].to<JsonArray>();
+    for (auto& t : settings::targets()) tg.add(t);
     JsonArray bs = r["buttons"].to<JsonArray>();
     for (int i = 0; i < buttons::count(); i++) {
         JsonObject b = bs.add<JsonObject>();
@@ -193,8 +243,17 @@ static bool cap_map(JsonObjectConst a, JsonObject r, std::string&) {
         }
         buttons::set_names(names);
     }
+    JsonArrayConst tg = a["targets"].as<JsonArrayConst>();
+    if (!tg.isNull() && tg.size()) {
+        std::vector<std::string> ts;
+        for (JsonVariantConst v : tg) ts.push_back(v | "");
+        settings::set_targets(ts);
+    }
     JsonArray bs = r["buttons"].to<JsonArray>();
     for (int i = 0; i < buttons::count(); i++) bs.add(buttons::name(i));
+    JsonArray to = r["targets"].to<JsonArray>();
+    for (auto& t : settings::targets()) to.add(t);
+    r["target"] = settings::target_name();
     return true;
 }
 
@@ -277,6 +336,16 @@ static void handle_line(const std::string& line) {
     } else if (cmd == "layout.reset") {
         buttons::forget_layout();
         ui::flash("press each button in order");
+    } else if (cmd == "targets") {
+        std::vector<std::string> ts;
+        for (JsonVariantConst v : in["targets"].as<JsonArrayConst>()) ts.push_back(v | "");
+        if (!ts.empty()) settings::set_targets(ts);
+        JsonArray to = out["targets"].to<JsonArray>();
+        for (auto& t : settings::targets()) to.add(t);
+    } else if (cmd == "rotate") {
+        settings::set_rotation(in["turns"] | 3);
+        ui::set_rotation(settings::rotation());
+        out["turns"] = settings::rotation();
     } else if (cmd == "reboot") {
         reply(out);
         delay(200);
@@ -289,7 +358,7 @@ static void handle_line(const std::string& line) {
         ESP.restart();
     } else {
         out["ok"] = false;
-        out["error"] = "commands: status key wifi wifi.clear name enroll unenroll show names layout.reset reboot factory";
+        out["error"] = "commands: status key wifi wifi.clear scan name enroll unenroll show names identify layout.set layout.reset targets rotate reboot factory";
     }
     reply(out);
 }
@@ -354,7 +423,7 @@ void setup() {
     ev_mu = xSemaphoreCreateMutex();
     settings::begin();
     Wire.begin(PIN_SDA, PIN_SCL, 100000);
-    ui::begin(OLED_ADDR);
+    ui::begin(OLED_ADDR, settings::rotation());
     if (!buttons::begin(PCF_ADDR)) logf("PCF8574 not answering at 0x%02x", PCF_ADDR);
     buttons::on_event() = on_button;
     ui::status_line(0, settings::name() + "  starting");
@@ -413,30 +482,49 @@ void loop() {
     if ((int32_t)(ms - next_scan) >= 0) {
         next_scan = ms + 5;
         buttons::poll();
+        if (swallow && buttons::held().empty()) swallow = false;
+        if (mode == GAME && !ui::asking()) {
+            uint8_t keys = 0;
+            for (int i : buttons::held()) {
+                std::string n = buttons::name(i);
+                keys |= n == "left" ? tetris::LEFT : n == "right" ? tetris::RIGHT : n == "down" ? tetris::DOWN :
+                        n == "up" ? tetris::ROTATE : n == "ok" ? tetris::DROP : n == "home" ? tetris::PAUSE :
+                        n == "back" ? tetris::QUIT : 0;
+            }
+            if (tetris::tick(ms, keys)) ui::redraw();
+            if (tetris::quit()) {
+                ui::game(false);
+                mode = REMOTE;
+                swallow = true;
+                ui::flash("score\n" + std::to_string(tetris::score()));
+            }
+        }
+    }
+    if (mode == MENU && (int32_t)(ms - menu_until) >= 0) {
+        ui::menu_end();
+        mode = REMOTE;
     }
     poll_serial();
     if ((int32_t)(ms - next_status) >= 0) {
         next_status = ms + 500;
         bool up = WiFi.status() == WL_CONNECTED;
-        std::string s0 = settings::name() + "  ";
-        if (!settings::enrollment().ok) s0 += "not enrolled";
-        else if (!up) s0 += "no wifi";
-        else if (!worker.clock_ok()) s0 += "clock...";
-        else s0 += worker.hub_ok() ? "on band" : "no hub";
+        std::string s0;
+        if (!settings::enrollment().ok) s0 = "setup";
+        else if (!up) s0 = settings::wifi().empty() ? "wifi?" : "wifi-";
+        else if (!worker.clock_ok()) s0 = "clock";
+        else s0 = worker.hub_ok() ? "band" : "hub?";
         ui::status_line(0, s0);
-        ui::status_line(1, up ? std::string(WiFi.localIP().toString().c_str()) : (settings::wifi().empty() ? "set wifi over USB" : "joining wifi"));
+        ui::status_line(1, "TV:");
+        ui::status_line(2, settings::target_name());
         if (buttons::learning()) {
             char b[24];
-            snprintf(b, sizeof b, "learn: %d/%d buttons", buttons::count(), buttons::expected());
-            ui::status_line(2, b);
+            snprintf(b, sizeof b, "L%d/%d", buttons::count(), buttons::expected());
+            ui::status_line(3, b);
         } else {
             xSemaphoreTake(ev_mu, portMAX_DELAY);
-            ui::status_line(2, recent.empty() ? "" : "last: " + recent.back().name);
+            ui::status_line(3, recent.empty() ? "" : recent.back().name);
             xSemaphoreGive(ev_mu);
         }
-        char b[24];
-        snprintf(b, sizeof b, "calls %u  events %u", (unsigned)worker.calls(), (unsigned)worker.events_sent());
-        ui::status_line(3, worker_on ? b : "");
     }
     ui::tick();
     delay(1);

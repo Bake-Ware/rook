@@ -7,6 +7,8 @@
 static Preferences prefs;
 static Enrollment enr;
 static SemaphoreHandle_t mu;
+static std::vector<std::string> tgts;
+static int tgt = 0;
 
 static std::string get(const char* k) {
     String s = prefs.getString(k, "");
@@ -14,6 +16,22 @@ static std::string get(const char* k) {
 }
 
 static void put(const char* k, const std::string& v) { prefs.putString(k, v.c_str()); }
+
+static void load_targets() {
+    tgts.clear();
+    std::string s = get("targets");
+    if (s.empty()) s = "office-tv,living-room-tv";
+    size_t pos = 0;
+    while (pos <= s.size()) {
+        size_t c = s.find(',', pos);
+        std::string item = s.substr(pos, c == std::string::npos ? std::string::npos : c - pos);
+        if (!item.empty()) tgts.push_back(item);
+        if (c == std::string::npos) break;
+        pos = c + 1;
+    }
+    tgt = prefs.getInt("target", 0);
+    if (tgt < 0 || tgt >= (int)tgts.size()) tgt = 0;
+}
 
 static void load_enrollment() {
     enr = Enrollment();
@@ -37,6 +55,7 @@ void begin() {
     mu = xSemaphoreCreateMutex();
     prefs.begin("rook-remote", false);
     load_enrollment();
+    load_targets();
 }
 
 const Enrollment& enrollment() { return enr; }
@@ -136,5 +155,50 @@ void factory_reset() {
     prefs.clear();
     load_enrollment();
 }
+
+std::vector<std::string> targets() {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    auto out = tgts;
+    xSemaphoreGive(mu);
+    return out;
+}
+
+void set_targets(const std::vector<std::string>& t) {
+    std::string joined;
+    for (auto& n : t) {
+        if (n.empty() || n.find(',') != std::string::npos) continue;
+        joined += (joined.empty() ? "" : ",") + n;
+    }
+    xSemaphoreTake(mu, portMAX_DELAY);
+    std::string was = tgt < (int)tgts.size() ? tgts[tgt] : "";
+    put("targets", joined);
+    load_targets();
+    tgt = 0;
+    for (int k = 0; k < (int)tgts.size(); k++) if (tgts[k] == was) tgt = k;     // the chosen one stays chosen
+    prefs.putInt("target", tgt);
+    xSemaphoreGive(mu);
+}
+
+int target() { return tgt; }
+
+void set_target(int i) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    if (i >= 0 && i < (int)tgts.size()) {
+        tgt = i;
+        prefs.putInt("target", i);
+    }
+    xSemaphoreGive(mu);
+}
+
+std::string target_name() {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    std::string n = tgt < (int)tgts.size() ? tgts[tgt] : "";
+    xSemaphoreGive(mu);
+    return n;
+}
+
+int rotation() { return prefs.getInt("rot", 3) & 3; }
+
+void set_rotation(int r) { prefs.putInt("rot", r & 3); }
 
 }  // namespace settings
