@@ -56,8 +56,18 @@ expect("unknown name changes nothing", R.variant("enter", "nope"), "ring");
 expect("let go", R.variant("enter", null), null);
 expect("no pool for idle", R.variant("idle", "x"), null);
 bot.set("thinking"); expect("no variant outside a pool", bot.variant, null);
-// every skin draws every variant, every frame, without an error; and the sheet has a row for each
-for (const skin of R.SKINS) for (const st of ["enter", "exit"]) for (const v of R.VARIANTS[st]) {
+// the 3D "rook" skin is web only: no sprite sheet, a note instead (and one still, for pickers); without the scene
+// library or WebGL it is drawn by a stand-in, with the same pool of variants
+expect("rook is a skin", R.SKINS.includes("rook") && R.skinInfo("rook").web, true);
+const web = R.bake({ skin: "rook", rows: ["enter-smoke", "happy"] });
+expect("rook: skipped", [web.manifest.skipped, web.manifest.rows, /no sprite sheet/.test(web.manifest.note)], [true, {}, true]);
+expect("pixel: not skipped", R.bake({ skin: "pixel", rows: ["happy"] }).manifest.skipped, undefined);
+bot.setSkin("rook");
+for (const st of R.STATES) { calls.n = 0; bot.set(st); if (st !== "hidden" && !calls.n) out["rook drew nothing " + st] = 1; }
+const rk = {}; for (let i = 0; i < 300; i++) { bot.enter(); rk[bot.variant] = 1; }
+expect("rook: same pool", Object.keys(rk).sort(), R.VARIANTS.enter.slice().sort());
+// every skin that bakes draws every variant, every frame, without an error; and the sheet has a row for each
+for (const skin of R.SKINS.filter((k) => !R.skinInfo(k).web)) for (const st of ["enter", "exit"]) for (const v of R.VARIANTS[st]) {
   const row = v === R.VARIANTS[st][0] ? st : st + "-" + v;
   expect("frames " + row, R.FRAMES[row], 14);
   try { calls.n = 0; R.bake({ skin, rows: [row] }); if (!calls.n) out["drew nothing " + skin + " " + row] = 1; }

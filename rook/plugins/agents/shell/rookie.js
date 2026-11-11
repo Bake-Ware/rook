@@ -409,6 +409,57 @@ window.Rookie = (function(){
       const word={error:'!?',happy:'YAY!',deploying:'SHIP IT',spawning:'wind',exec:'clack',listening:'hm?',testing:'tick',searching:'hmm',locking:'click'}[st];
       if(word&&(f%16<11)) g.text(5.5+po.dx,3.2,word,'y',st==='error'?4.5:3); } };
 
+  // ------------------------------------------------------------------ the site's own 3D rook (web only)
+  // The "rook" skin is the brand's rook itself: the scene library (rook-scene.js, rookStage) draws the same mesh and material
+  // on a small WebGL canvas, and this skin poses it in real 3D for every state and copies it in; props are the shared glyphs.
+  // The library loads the first time the skin is drawn (from Rookie.scene, or window.RookLib['rook-scene'] where the page
+  // has it); until it is there, and where there is no WebGL, the n64 skin stands in. Stone, the first theme, keeps the
+  // scene's own colours; any other theme recolours the same material. It cannot bake: Rookie.bake skips it with a note.
+  const R3={lib:null,asked:false,failed:false,stage:null,quiet:false,PX:8};            // one stage for every instance, 8 px a cell
+  const U=0.27, FOOT=-2.44;                                           // the rook's units per cell; where the front of its foot is drawn
+  function stage3d(){
+    if(R3.stage) return R3.stage.lost()?null:R3.stage;
+    if(R3.failed) return null;                                         // no WebGL here
+    const lib=R3.lib||(window.RookLib&&window.RookLib['rook-scene']);
+    if(lib&&lib.rookStage){ try{ R3.stage=lib.rookStage(COLS*R3.PX,ROWS*R3.PX,[-15.5*U,16.5*U,FOOT+FLOOR*U,FOOT-(ROWS-FLOOR)*U]); }catch(e){} if(!R3.stage) R3.failed=true; return R3.stage; }
+    if(!R3.asked&&!R3.quiet){ R3.asked=true; try{ import(api.scene).then(m=>{ R3.lib=m; },()=>{}); }catch(e){} }
+    return null;
+  }
+  // how the rook stands in a state at time f (ticks, with fractions): x,y in cells, turns in radians, sx/sy squash
+  function move3d(st,f,act){
+    const s=Math.sin, PI=Math.PI, m={x:0,y:0,rx:0,ry:0.3*s(f*0.13),rz:0,sx:1,sy:1};
+    const bob=(per,amt)=>{ const u=s(f*2*PI/per); m.sy=1+amt*u; m.sx=1-amt*0.6*u; };
+    if(st==='idle'){ bob(8,0.015);
+      if(act){ const ph=Math.max(0,f-act.t0);
+        if(act.name==='turn'){ const u=Math.min(1,ph/ACTS.turn); m.ry+=2*PI*u*u*(3-2*u); m.y=s(u*PI)*1.5; }
+        else if(act.name==='stretch'){ const u=s(Math.min(1,ph/ACTS.stretch)*PI); m.sy=1+0.2*u; m.sx=1-0.1*u; }
+        else if(act.name==='yoyo'){ m.rz=-0.07; m.rx=0.06; } } }
+    else if(st==='listening'){ m.ry=0.45; m.rz=-0.1+0.02*s(f*0.9); }
+    else if(st==='thinking'){ m.rx=-0.13; m.ry=0.6*s(f*0.32); m.rz=0.07*s(f*0.5); }
+    else if(st==='waiting'){ m.rz=0.06*s(f*2*PI/10); m.y=Math.max(0,s(f*2*PI/5))*0.5; }
+    else if(st==='confused'){ m.ry=0.9*s(f*2*PI/8); m.rz=0.12; }
+    else if(st==='talking'){ const u=Math.abs(s(f*PI/1.5)); m.sy=1+0.12*u; m.sx=1-0.07*u; m.y=0.7*u; m.rz=0.08*s(f*1.1); m.rx=0.07*s(f*2.1); }
+    else if(st==='happy'){ const u=(f%6)/6; m.y=s(u*PI)*3; m.ry=u*2*PI; m.sy=1+0.08*s(u*2*PI); m.sx=1-0.05*s(u*2*PI); }
+    else if(st==='error'){ m.ry=0; m.rz=0.2; m.x=0.45*s(f*PI); }
+    else if(st==='sleeping'){ m.ry=0; m.rz=0.42; bob(12,0.03); }
+    else if(st==='working'||st==='writing'||st==='testing'){ const u=Math.max(0,s((f%3)/3*2*PI)); m.ry=0.35; m.rx=0.14*u; m.sy=1-0.04*u; }
+    else if(st==='music'){ m.rz=0.16*s(f*PI/2); bob(2,0.04); }
+    else if(st==='delete'){ const p=f%12; m.ry=0.35; if(p>=4&&p<7){ const u=s((p-4)/3*PI); m.rz=0.25*u; m.x=-1.2*u; } }
+    else if(st==='deploying'){ m.ry=0.5; m.rx=0.12; m.rz=-0.08+0.05*s(f*2*PI/6); }
+    else if(st==='searching'||st==='reading'||st==='locking'){ m.rx=0.12; m.ry=0.4+0.15*s(f*0.5); }
+    else if(st==='downloading'||st==='uploading'){ m.ry=0.4; m.rx=(st==='uploading'?-1:1)*0.12*s(f*2*PI/5); }
+    else if(DOING.indexOf(st)>=0){ m.ry=f*0.22; m.rz=0.06*s(f*2*PI/4); bob(4,0.05); }                       // busy: turning steadily
+    return m;
+  }
+  SKINS.rook={ label:'rook', web:true, smooth:true, note:'The site\'s own 3D rook: the same mesh and material as the background, small, moving in real 3D. Web only.',
+    draw(ctx,st,f,inst,scale,dpr){ const S=stage3d(), fi=Math.floor(f); if(!S){ SKINS.n64.draw(ctx,st,fi,inst,scale,dpr); return; }
+      const po=pose(st,fi,inst), m=move3d(st,f,po.act), r=S.rook, own=inst.pal.s===BASE.s&&inst.pal.o===BASE.o, body=own?'#aaa17d':PAL.s;
+      r.position.set(m.x*U,m.y*U,0); r.rotation.set(m.rx,m.ry,m.rz); r.scale.set(m.sx,m.sy,m.sx);
+      S.tint(st==='error'?mix(body,hex('r'),0.45):own?null:body, own?null:PAL.o); S.render();
+      const lift=1/(1+m.y*0.25); ctx.fillStyle='rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(15.5+m.x,21.9,5.4*lift,1.5*lift,0,0,Math.PI*2); ctx.fill();
+      ctx.save(); ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; ctx.drawImage(S.canvas,0,0,COLS,ROWS); ctx.restore();
+      const g=makeG(ctx,{fill:c=>PAL[c]||c,stroke:c=>darken(c,0.35),lw:0.1,lineColor:c=>c==='o'?darken(body,0.3):PAL[c]||c}); ctx.save(); ctx.translate(-2.5,0); vecProps(g,po,st,fi,inst); ctx.restore(); } };
+
   SKINS.none={ label:'none', pool:both({'*':0}), note:'No mascot. A status dot and the state name, for people who want the information and nothing else.',
     draw(ctx,st,f,inst,scale,dpr){ const cat= st==='error'?'r' : st==='happy'?'t' : st==='sleeping'?'g' : st==='idle'?'S' : MOOD.indexOf(st)>=0?'b':'y'; const pulse= DOING.indexOf(st)>=0 ? 0.75+0.25*Math.sin(f*0.6) : 1;
       ctx.fillStyle=PAL[cat]; ctx.globalAlpha=0.25*pulse; ctx.beginPath(); ctx.arc(15,11,4.2*pulse,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1; ctx.beginPath(); ctx.arc(15,11,2.2,0,Math.PI*2); ctx.fill();
@@ -536,7 +587,7 @@ window.Rookie = (function(){
     ctx.setTransform(dpr*s,0,0,dpr*s,0,0); ctx.clearRect(0,0,COLS,ROWS);
     if(st==='hidden') return;
     if(st!=='enter'&&st!=='exit'){ skin.draw(ctx,st,f,inst,s,dpr); return; }
-    const p=Math.max(0,Math.min(TRANS_LEN-1,f-inst.t0)), enter=st==='enter';
+    const p=Math.max(0,Math.min(TRANS_LEN-1,Math.floor(f-inst.t0))), enter=st==='enter';
     if(!inst.buf){ inst.buf=document.createElement('canvas'); } const buf=inst.buf; buf.width=COLS*s*dpr; buf.height=ROWS*s*dpr;
     const bctx=buf.getContext('2d'); bctx.setTransform(dpr*s,0,0,dpr*s,0,0); bctx.clearRect(0,0,COLS,ROWS);
     const sub={ctx:bctx,scale:s,dpr,skin:inst.skin,pal:inst.pal,state:'idle',look:{x:0,y:0},lookUntil:0,blinkUntil:0,act:null,yoyoLow:false}; const savedT=tick; tick=0; skin.draw(bctx,'idle',0,sub,s,dpr); tick=savedT;
@@ -555,8 +606,17 @@ window.Rookie = (function(){
     ctx.restore();
   }
   function draw(inst){ render(inst,inst.state,tick); }
+  // a skin drawn in real 3D (smooth:true) is redrawn between ticks, so its motion is continuous; the rest stay stepped
+  let raf=0, tickAt=0, drewAt=0;
+  function between(now){
+    raf=0; let any=false; const live=now-drewAt>=33; if(live) drewAt=now;
+    for(const i of instances){ if(!(SKINS[i.skin]||{}).smooth) continue; any=true;
+      if(live&&R3.stage&&i.state!=='hidden'&&i.state!=='enter'&&i.state!=='exit') render(i,i.state,tick+Math.min(0.999,(now-tickAt)/150)); }
+    if(any) raf=requestAnimationFrame(between);
+  }
   function tickAll(){
-    tick++;
+    tick++; tickAt=typeof performance==='undefined'?0:performance.now();
+    if(!raf&&!reduce&&window.requestAnimationFrame&&instances.some(i=>(SKINS[i.skin]||{}).smooth)) raf=requestAnimationFrame(between);
     for(const i of instances){
       if(tick>=i.nextBlink){ i.blinkUntil=tick+1; i.nextBlink=tick+18+rand(30); }
       if(i.state==='idle'){
@@ -599,8 +659,8 @@ window.Rookie = (function(){
   Object.keys(POOL).forEach(st=>POOL[st].slice(1).forEach(n=>{ FRAMES[st+'-'+n]=FRAMES[st]; }));
   function bake(opts){
     opts=opts||{}; const scale=opts.scale||4, skin=SKINS[opts.skin]?opts.skin:'pixel', theme=THEMES[opts.theme]?opts.theme:'stone';
-    const rows=opts.rows||Object.keys(FRAMES), cols=Math.max(...rows.map(r=>FRAMES[r]||8));
-    const cw=COLS*scale, ch=ROWS*scale, sheet=document.createElement('canvas'); sheet.width=cw*cols; sheet.height=ch*rows.length;
+    const web=!!SKINS[skin].web, rows=web?[]:(opts.rows||Object.keys(FRAMES)), cols=web?1:Math.max(...rows.map(r=>FRAMES[r]||8));
+    const cw=COLS*scale, ch=ROWS*scale, sheet=document.createElement('canvas'); sheet.width=cw*cols; sheet.height=ch*Math.max(1,rows.length);
     const sctx=sheet.getContext('2d'); const cell=document.createElement('canvas'); cell.width=cw; cell.height=ch;
     const inst={ctx:cell.getContext('2d'),scale,dpr:1,skin,theme,pal:palFor(theme),state:'idle',variant:null,look:{x:0,y:0},lookUntil:0,nextLook:1e9,nextBlink:1e9,blinkUntil:0,act:null,yoyoLow:false,t0:0,buf:null};
     const saved=tick, savedPal=PAL; PAL=inst.pal; const manifest={skin,theme,scale,cell:[cw,ch],cols,fps:Math.round(1000/150*10)/10,rows:{}};
@@ -608,6 +668,9 @@ window.Rookie = (function(){
       inst.variant=POOL[st]?(st===row?POOL[st][0]:row.slice(cut+1)):null;
       for(let c=0;c<n;c++){ tick=c; inst.act=isAct?{name:row.slice(5),t0:0}:null; if(isAct) inst.look={x:0,y:0}; render(inst,st,tick); sctx.drawImage(cell,c*cw,ri*ch); }
       manifest.rows[row]={row:ri,frames:n,y:ri*ch}; });
+    if(web){ // drawn live in WebGL: no sprite sheet. The sheet is skipped with a note; the canvas holds one still, for pickers.
+      tick=0; R3.quiet=true; render(inst,'idle',0); R3.quiet=false; sctx.drawImage(cell,0,0);
+      manifest.skipped=true; manifest.note="the '"+skin+"' skin is drawn live in WebGL and has no sprite sheet"; }
     tick=saved; PAL=savedPal; return {canvas:sheet,manifest};
   }
   // ------------------------------------------------------------------ sfx: tiny chiptune synth, no assets. Opt in with bot.sound=true (needs a user gesture first).
@@ -673,5 +736,7 @@ window.Rookie = (function(){
     bot.stop=function(){ clearInterval(iv); bot.destroy(); host.remove(); if(prev) link.href=prev; };
     return bot;
   }
-  return {mount, bake, favicon, variant, VARIANTS:POOL, sfx:SFX, FRAMES, STATES, MOOD, DOING, TRANS, SKINS:SKIN_LIST, THEMES:THEME_LIST, skinInfo:k=>SKINS[k]};
+  // scene: where the "rook" skin finds the site's 3D rook (rook-scene.js)
+  const api={mount, bake, favicon, variant, VARIANTS:POOL, scene:'/web/static/rook-scene.js', sfx:SFX, FRAMES, STATES, MOOD, DOING, TRANS, SKINS:SKIN_LIST, THEMES:THEME_LIST, skinInfo:k=>SKINS[k]};
+  return api;
 })();
