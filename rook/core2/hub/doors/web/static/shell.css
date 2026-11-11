@@ -50,9 +50,16 @@ code, pre { font-family: var(--mono); }
   font-size: 12.5px; }
 #nav a:hover { background: var(--hover); color: var(--accent); }
 #nav a.on { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent); }
-#more, #archived { margin-top: 12px; color: var(--dim); font: 10px var(--mono); }
-#more summary, #archived summary { cursor: pointer; letter-spacing: .8px; padding: 0 8px; }
-#more a { color: var(--dim); }
+/* a segment's heading opens or folds it; folded, its pages are one quiet line of links */
+#nav button.seg-head { display: flex; width: 100%; border: 0; background: none; text-align: left; cursor: pointer; }
+#nav button.seg-head:after { content: '\25BE'; margin-left: auto; }
+#nav button.seg-head[aria-expanded="false"]:after { content: '\25B8'; }
+#nav button.seg-head:hover { color: var(--accent); }
+.folded-pages { padding: 0 8px; font-size: 11px; line-height: 1.6; color: var(--dim2); }
+#nav .folded-pages a { display: inline; padding: 0; border: 0; font-size: 11px; color: var(--dim); }
+#nav .folded-pages a.on { background: none; color: var(--accent); }
+#archived { margin-top: 12px; color: var(--dim); font: 10px var(--mono); }
+#archived summary { cursor: pointer; letter-spacing: .8px; padding: 0 8px; }
 #archived ul { list-style: none; padding: 0 8px; margin: 6px 0; }
 #archived li { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; }
 #account { padding-top: 12px; font: 10px var(--mono) !important; color: var(--dim) !important; }
