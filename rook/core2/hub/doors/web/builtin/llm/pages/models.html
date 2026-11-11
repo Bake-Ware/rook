@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Model providers</title>
+<style>
+  .provider .head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 4px; }
+  .provider .head h2 { margin: 0; }
+  .provider .doc { margin: 0 0 10px; }
+  .answer { margin-bottom: 10px; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 10px 14px; }
+  .fields label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .fields select, .fields input { width: 100%; min-width: 0; }
+  .fields a { font-size: 12px; }
+  .actions { margin-top: 12px; }
+  .status { font-size: 13px; }
+  .status:empty { display: none; }
+</style>
+</head>
+<body>
+<p id="err" class="bad" hidden></p>
+<div id="rows"><p class="muted">Loading…</p></div>
+<script>
+"use strict";
+const esc = rook.esc;
+const OTHER = "+other";            // no model id starts with +
+const SYSTEMS = { model_one: "System One", model_two: "System Two", model_three: "System Three" };
+let chosen = null, providers = [], vault = null, workers = null;
+const state = {};           // provider -> {settings, answer, models}
+const said = {};            // provider -> [text, class]: "Saved" or the error, kept across a redraw
+
+function status(p, text, cls) {
+  said[p] = [text, cls];
+  const el = document.querySelector(`[data-status="${CSS.escape(p)}"]`);
+  if (el) { el.textContent = text; el.className = "status " + (cls || ""); }
+}
+
+async function names(cap, list) {
+  try {
+    return (await rook.call(cap, {}, { why: "Offer the known values on the Model providers page." }))[list].map((x) => x.name);
+  } catch (x) {
+    return null;       // a text box instead of a dropdown
+  }
+}
+
+async function check(p) {
+  const s = state[p];
+  try {
+    s.answer = (await rook.call("llm.status", { provider: p }, { why: `See whether ${p} answers, for the Model providers page.` })).providers[0];
+  } catch (x) {
+    s.answer = { ok: false, error: x.message };
+  }
+  s.models = s.answer.ok ? await rook.call("llm.models", { provider: p }, { why: `List the models ${p} offers on the Model providers page.` })
+    .catch((x) => ({ models: [], error: x.message })) : { models: [] };
+}
+
+async function loadOne(p) {
+  state[p] = { settings: [], answer: null, models: { models: [] } };
+  try {
+    state[p].settings = (await rook.call("setting.list", { plugin: p }, { why: `Show ${p}'s settings on the Model providers page.` })).settings;
+  } catch (x) {
+    status(p, x.message, "bad");
+  }
+  await check(p);
+}
+
+function select(s, opts, blank) {
+  const v = s.source === "default" ? "" : s.value || "";
+  const all = v && !opts.includes(v) ? [v, ...opts] : opts;
+  return `<select data-key="${esc(s.key)}" data-target="llm.${esc(s.plugin)}.${esc(s.key)}"><option value=""${v ? "" : " selected"}>${esc(blank)}</option>
+    ${all.map((o) => `<option${o === v ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+}
+
+function blankOf(s) { return s.default ? `Default (${s.default})` : "Default"; }
+
+function field(p, s) {
+  const target = `llm.${esc(p)}.${esc(s.key)}`;
+  if (s.secret || s.type === "secret") {
+    return `<label><span class="label">Key</span>${vault ? select(s, vault, "None")
+      : `<input data-key="${esc(s.key)}" data-target="${target}" placeholder="A vault name" value="${esc(s.source === "default" ? "" : s.value || "")}">`}
+      <a href="#" data-vault>Add a key on the Vault page</a></label>`;
+  }
+  if (s.key === "url") {
+    return `<label><span class="label">URL</span><input data-key="url" data-target="${target}" placeholder="${esc(s.default || "")}" value="${esc(s.source === "default" ? "" : s.value || "")}"></label>`;
+  }
+  if (s.type === "worker") {
+    return `<label><span class="label">Worker</span>${workers ? select(s, workers, "None")
+      : `<input data-key="${esc(s.key)}" data-target="${target}" placeholder="A worker name" value="${esc(s.source === "default" ? "" : s.value || "")}">`}</label>`;
+  }
+  const known = state[p].models.models || [], v = s.source === "default" ? "" : s.value || "";
+  const other = v && !known.includes(v);
+  return `<label><span class="label">${SYSTEMS[s.key]}</span>
+    <select data-model="${esc(s.key)}" data-target="${target}"><option value=""${v ? "" : " selected"}>${esc(blankOf(s))}</option>
+      ${known.map((m) => `<option${m === v ? " selected" : ""}>${esc(m)}</option>`).join("")}
+      <option value="${OTHER}"${other ? " selected" : ""}>Another model id…</option></select>
+    <input data-key="${esc(s.key)}" data-target="${target}_id" placeholder="A model id" value="${other ? esc(v) : ""}"${other ? "" : " hidden"}></label>`;
+}
+
+function card(p) {
+  const s = state[p], first = s.settings[0] || {}, title = first.title || p, a = s.answer || {};
+  const hands = s.settings.filter((x) => x.secret || x.type === "secret" || x.type === "worker" || x.key === "url" || SYSTEMS[x.key]);
+  const said_ = said[p] || ["", ""];
+  return `<section class="card provider" data-provider="${esc(p)}">
+    <div class="head"><h2>${esc(title)}</h2><span class="muted">${esc(p)}</span>${p === chosen ? '<span class="ok">In use</span>' : ""}</div>
+    <p class="doc muted">${esc(first.plugin_doc || "")}</p>
+    <div class="answer ${a.ok ? "ok" : "bad"}">${a.ok ? `Answers (${a.ms} ms).` : `Doesn't answer: ${esc(a.error || "unknown")}`}
+      ${a.ok && s.models.error ? `<span class="muted">Its models aren't known: ${esc(s.models.error)}</span>` : ""}</div>
+    <div class="fields">${hands.map((x) => field(p, x)).join("")}</div>
+    <div class="row actions">
+      ${p === chosen ? "" : `<button class="primary" data-choose data-target="llm.${esc(p)}.choose">Use this one</button>`}
+      <button data-check data-target="llm.${esc(p)}.check">Check again</button>
+      <a href="#" data-more>More settings for ${esc(title)}</a>
+      <span class="status ${said_[1]}" data-status="${esc(p)}">${esc(said_[0])}</span>
+    </div>
+  </section>`;
+}
+
+function render() {
+  const order = [...providers].sort((x, y) => (y === chosen) - (x === chosen));
+  document.getElementById("rows").innerHTML = order.length ? order.map(card).join("")
+    : '<p class="muted">No model provider is installed.</p>';
+}
+
+async function load() {
+  const err = document.getElementById("err");
+  try {
+    const listed = await rook.call("llm.providers", {}, { why: "Show the model providers." });
+    [vault, workers] = await Promise.all([names("secret.list", "secrets"), names("hub.workers", "workers")]);
+    chosen = listed.chosen;
+    providers = listed.providers.map((x) => x.provider);
+    await Promise.all(providers.map(loadOne));
+    err.hidden = true;
+    render();
+  } catch (x) {
+    err.textContent = x.message;
+    err.hidden = false;
+  }
+}
+
+async function set(p, key, value) {
+  status(p, "Saving…", "muted");
+  try {
+    await rook.call("setting.set", { plugin: p, key, value: value === "" ? null : value },
+      { why: value === "" ? `Put ${p}.${key} back to its default on the Model providers page.` : `Set ${p}.${key} on the Model providers page.` });
+    state[p].settings = (await rook.call("setting.list", { plugin: p }, { why: `Show ${p}'s settings as they are now.` })).settings;
+    status(p, "Saved", "ok");
+  } catch (x) {
+    status(p, x.message, "bad");
+  }
+  render();
+}
+
+const rows = document.getElementById("rows");
+rows.addEventListener("change", (e) => {
+  const t = e.target, p = t.closest("[data-provider]").dataset.provider;
+  if (t.matches("[data-model]")) {
+    const box = t.parentElement.querySelector("input");
+    if (t.value === OTHER) { box.hidden = false; box.focus(); return; }
+    set(p, t.dataset.model, t.value);
+  } else if (t.dataset.key) {
+    set(p, t.dataset.key, t.value.trim());
+  }
+});
+rows.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.matches("input")) e.target.blur();
+});
+rows.addEventListener("click", async (e) => {
+  const t = e.target, el = t.closest("[data-provider]");
+  if (!el) return;
+  const p = el.dataset.provider;
+  if (t.matches("[data-vault]")) { e.preventDefault(); rook.open("secret/vault"); }
+  else if (t.matches("[data-more]")) { e.preventDefault(); rook.open("setting/settings"); }
+  else if (t.matches("[data-check]")) {
+    status(p, "Checking…", "muted");
+    await check(p);
+    status(p, "", "");
+    render();
+  } else if (t.matches("[data-choose]")) {
+    status(p, "Saving…", "muted");
+    try {
+      chosen = (await rook.call("llm.choose", { provider: p }, { why: `Send llm.complete to ${p} from the Model providers page.` })).chosen;
+      status(p, "Saved", "ok");
+    } catch (x) {
+      status(p, x.message, "bad");
+    }
+    render();
+  }
+});
+
+load();
+</script>
+</body>
+</html>

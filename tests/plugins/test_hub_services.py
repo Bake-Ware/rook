@@ -333,3 +333,97 @@ def test_llm_complete_routes_to_the_chosen_provider(tmp_path):
             finally:
                 await hub.stop()
     asyncio.run(asyncio.wait_for(main(), 40))
+
+
+def test_llm_choose_and_the_model_providers_page(tmp_path):
+    """llm.choose sends the next llm.complete to another provider and keeps the
+    choice in hub.yaml (its comments and other keys as they were) across a
+    restart; the Model providers page is listed under Agents and every call
+    it makes works through its grants."""
+    import re
+    from pathlib import Path
+
+    from rook.core2.hub.runtime import load_config
+    seed_vault(tmp_path / "data", **{"claude-api": "sk-ant-test"})
+    oa, cl = FakeOpenAI(), FakeClaude(key="sk-ant-test")
+    lib = library(tmp_path, "llm-openai", "llm-anthropic")
+    conf = tmp_path / "hub.yaml"
+    bake = Caller(person="person:bake")
+
+    async def main():
+        async with serve(oa.app) as oa_url, serve(cl.app) as cl_url:
+            conf.write_text(
+                "# my hub\n# second line\n"
+                f"data: data\nband: {BAND}\nlibrary: {lib}\n"
+                "users: {bake: {preset: owner}}\ndoors: {http: {bind: '127.0.0.1:0'}}\n"
+                "contracts: {llm.complete: llm-openai.complete, notify.send: telegram.send}\n"
+                f"settings:\n  llm-openai: {{url: '{oa_url}/v1', model_two: qwen, timeout: 5s}}\n"
+                f"  llm-anthropic: {{url: '{cl_url}', key: claude-api}}\n")
+            msgs = [{"role": "user", "content": "hi"}]
+            hub = Hub(load_config(conf), transport=Loopback())
+            await hub.start()
+            try:
+                owner = (hub.data / "owner.token").read_text().strip()
+                assert (await call(hub, owner, "llm.complete", messages=msgs))["result"]["model"] == "qwen"
+                out = await call(hub, owner, "llm.choose", provider="llm-anthropic")
+                assert out["ok"] and out["result"]["chosen"] == "llm-anthropic", out
+                assert out["result"]["saved"] == str(conf)
+                out = await call(hub, owner, "llm.complete", messages=msgs)
+                assert out["ok"] and out["result"]["model"] == "claude-opus-5-5", out
+                assert hub.journal.query(cap="llm-anthropic.complete", limit=1)
+                out = await call(hub, owner, "llm.choose", provider="nope")
+                assert not out["ok"] and "doesn't provide llm.complete" in out["error"]
+            finally:
+                await hub.stop()
+            text = conf.read_text()
+            assert text.startswith("# my hub\n# second line\n")
+            again = load_config(conf)
+            assert again.contracts == {"llm.complete": "llm-anthropic.complete", "notify.send": "telegram.send"}
+            assert again.settings["llm-openai"]["model_two"] == "qwen" and again.library == lib
+
+            hub = Hub(again, transport=Loopback())
+            await hub.start()
+            try:
+                grants: list = []
+
+                async def ok(cap, **args):         # the page's calls carry its grants, as the site sends them
+                    layers = [["page", {"grants": grants}]] if cap in grants else None
+                    out = await hub.call(bake, {"worker": "rook", "cap": cap, "args": args, "why": WHY}, "test",
+                                         layers=layers)
+                    assert out["ok"], (cap, out)
+                    return out["result"]
+                assert (await ok("llm.providers"))["chosen"] == "llm-anthropic"     # after the restart
+
+                sidebar = await ok("page.list")
+                page = next(p for s in sidebar["segments"] for p in s["pages"] if p["page"] == "llm/models")
+                assert page["segment"] == "Agents" and page["title"] == "Model providers"
+                served = hub.dispatcher.workers[hub.node].caps
+                assert set(page["caps"]) <= set(served), set(page["caps"]) - set(served)
+                grants += page["caps"]
+                html = (Path(__file__).parents[2] / "rook/core2/hub/doors/web/builtin/llm/pages/models.html").read_text()
+                assert set(re.findall(r'rook\.call\("([a-z.]+)"', html) + re.findall(r'names\("([a-z.]+)"', html)) \
+                    == set(page["caps"])
+
+                # the calls the page makes, with its args
+                listed = await ok("llm.providers")
+                assert [p["provider"] for p in listed["providers"]] == ["llm-anthropic", "llm-openai"]
+                (st,) = (await ok("llm.status", provider="llm-openai"))["providers"]
+                assert st["ok"] is True, st
+                assert (await ok("llm.models", provider="llm-openai"))["models"] == ["llama", "qwen"]
+                rows = {s["key"]: s for s in (await ok("setting.list", plugin="llm-anthropic"))["settings"]}
+                assert rows["key"]["secret"] and rows["key"]["value"] == "claude-api"
+                assert rows["model_one"]["default"] == "claude-haiku-5-5" and rows["url"]["title"] == "Claude API"
+                assert [s["name"] for s in (await ok("secret.list"))["secrets"]] == ["claude-api"]
+                assert "workers" in await ok("hub.workers")
+                await ok("setting.set", plugin="llm-openai", key="model_two", value="llama")
+                assert (await ok("llm.complete", messages=msgs))["model"] != "llama"   # still Claude
+                assert (await ok("llm.choose", provider="llm-openai"))["chosen"] == "llm-openai"
+                assert (await ok("llm.complete", messages=msgs))["model"] == "llama"
+                await ok("setting.set", plugin="llm-openai", key="model_two", value=None)
+                # a provider that does not answer: the page shows the error
+                await ok("setting.set", plugin="llm-anthropic", key="key", value="nope")
+                (st,) = (await ok("llm.status", provider="llm-anthropic"))["providers"]
+                assert st["ok"] is False and st["error"]
+            finally:
+                await hub.stop()
+    asyncio.run(asyncio.wait_for(main(), 60))

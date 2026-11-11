@@ -413,7 +413,7 @@ class Hub:
             self.identities.add_agent(name, r)
         self._load_tokens()
 
-        self.contracts = Contracts(dict(cfg.contracts))
+        self.contracts = Contracts(cfg.contracts)
         self.streams = hub_streams.HubStreams(self)   # one stream store (ctx.streams) + the index (N28)
         self.plugins = HubPlugins(records=self.records, contracts=self.contracts, call=self.call_as,
                                   emit=self._emit, data_dir=self.data / "plugins", settings=cfg.settings,

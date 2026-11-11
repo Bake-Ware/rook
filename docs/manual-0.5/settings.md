@@ -43,8 +43,11 @@ it has a value.
 
 Some caps are shared contracts that several plugins can provide:
 `llm.complete` (Claude API, an OpenAI-compatible server, a Claude Code or
-Codex subscription), `notify.send`, `voice.tts`. Pick the provider in
-`hub.yaml`:
+Codex subscription), `notify.send`, `voice.tts`. With none picked, the
+first installed answers. For `llm.complete`, the **Model providers** page
+(under Agents) has **Use this one** on each provider (`llm.choose`, which
+an agent can call too); it takes effect on the next call and is kept in
+`hub.yaml`. The others are picked in `hub.yaml`:
 
 ```yaml
 contracts:

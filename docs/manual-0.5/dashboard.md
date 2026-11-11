@@ -24,7 +24,7 @@ in. `doors: {http: {web: false}}` turns the site off.
 
 | Installed | You get |
 |---|---|
-| the hub alone | **Workers** (under Machines); **Tokens**, **Jobs**, **Journal**, **Vault** and **Settings** (under Hub) |
+| the hub alone | **Model providers** (under Agents); **Workers** (under Machines); **Tokens**, **Jobs**, **Journal**, **Vault** and **Settings** (under Hub) |
 | + agents | the house agent's **chat dock** beside every page. A hub the installer made opens on its guided first run (`agent.setup`); after that, on your first visit it asks how you want to use the site; it builds pages for you and can set your start page. The **Agents** page (under Agents): each agent's engine and model, the default engine, the attention pass. With `trust` in the library, the **Trust map** too |
 | + workbench | **Tasks**, **Projects** and **Knowledge** pages; every page an agent makes is built under a task, so you can review it |
 
@@ -57,6 +57,9 @@ move, fold and put back (`page.arrange`, see the
 [page plugin's manual](../../rook/core2/hub/doors/web/builtin/page/docs/manual.md)).
 
 - **Workers**: every machine, online or not, its plugins and what it can't serve.
+- **Model providers**: each installed `llm.complete` provider, whether it
+  answers, its key, address, worker and System One/Two/Three models, and
+  **Use this one** to send `llm.complete` to it ([Settings](settings.md#choosing-a-provider)).
 - **Jobs**: every job, its last run, Run now and on/off ([Jobs](jobs.md)).
 - **Tokens**: a token for an agent, with its ready `claude mcp add` line and
   claude.ai connector details (this is the agent installer); revoke one.
