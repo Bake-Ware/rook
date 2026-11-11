@@ -30,7 +30,11 @@ Replies are JSON objects with ``ok``; a refused call is still 200 (the body
 says why). Bind to localhost: put TLS in front before exposing it.
 Options: ``bind: "127.0.0.1:8740"`` (port 0 picks one); ``web:`` the hub
 site on ``/``, ``/login`` and ``/web/`` (:mod:`.web`; ``false`` turns it off,
-``{secure_cookie: true}`` behind TLS).
+``{secure_cookie: true}`` behind TLS); ``band: "ws://127.0.0.1:7475/band"``
+the relay's web socket listener: a web socket upgrade on ``/band`` is passed
+straight through to it, so a worker whose UDP is blocked joins the band at
+the hub's own address (the frames are sealed with the band key; this door
+never reads them).
 """
 from __future__ import annotations
 
@@ -38,6 +42,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -69,6 +74,7 @@ class HttpDoor:
         self._server: ThreadingHTTPServer | None = None
         web = options.get("web", {} if self.name == "http" else False)    # the site is on the plain door only
         self.web = None if web is False else Web(hub, web if isinstance(web, dict) else {})
+        self.band = options.get("band")
         self._apk: ApkFeed | None = None
         self._thread: threading.Thread | None = None
 
@@ -117,7 +123,42 @@ class _Handler(BaseHTTPRequestHandler):
         log.debug("request", extra={"fields": {"line": fmt % args}})
 
     def do_GET(self):
+        if (self.door.band and urlsplit(self.path).path == "/band"
+                and self.headers.get("Upgrade", "").lower() == "websocket"):
+            return self._band()
         self._handle("GET")
+
+    def _band(self) -> None:
+        """Replay this upgrade to the relay's web socket, then copy bytes
+        both ways until either side closes."""
+        to = urlsplit(self.door.band)
+        try:
+            relay = socket.create_connection((to.hostname, to.port or 80), timeout=10)
+        except OSError as e:
+            log.warning("band relay unreachable", extra={"fields": {"relay": self.door.band, "error": str(e)}})
+            self.send_error(502)
+            return
+        self.close_connection = True
+        relay.settimeout(None)
+        self.connection.settimeout(None)
+        head = [f"GET {to.path or '/band'} HTTP/1.1", *(f"{k}: {v}" for k, v in self.headers.items())]
+        relay.sendall(("\r\n".join(head) + "\r\n\r\n").encode("latin-1"))
+
+        def back():
+            try:
+                while data := relay.recv(1 << 16):
+                    self.connection.sendall(data)
+            except OSError:
+                pass
+            _shut(self.connection)
+        threading.Thread(target=back, name="rook-band-door", daemon=True).start()
+        try:
+            while data := self.rfile.read1(1 << 16):
+                relay.sendall(data)
+        except OSError:
+            pass
+        _shut(relay)
+        relay.close()
 
     def do_POST(self):
         self._handle("POST")
@@ -290,6 +331,13 @@ class _Handler(BaseHTTPRequestHandler):
             return asyncio.run_coroutine_threadsafe(coro, self.loop).result(WAIT)
         except (concurrent.futures.CancelledError, TimeoutError):
             raise _Error(503, "hub unavailable") from None
+
+
+def _shut(sock: socket.socket) -> None:
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
 
 
 def _encode(body: dict | bytes | None) -> tuple[dict, bytes]:
