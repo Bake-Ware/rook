@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from .conn import (BEAT_SECS, DROP_THRESHOLD, FEATURES, LOST_SECS, Peer, Transport,
                    TransportError)
@@ -19,7 +20,7 @@ from .links import LoopbackLink, LoopbackRelay, TelestheteLink, band_of
 
 __all__ = ["BEAT_SECS", "DROP_THRESHOLD", "FEATURES", "LOST_SECS", "LoopbackLink",
            "LoopbackRelay", "Peer", "TelestheteLink", "Transport", "TransportError",
-           "band_of", "from_config", "hub_transport", "link_from", "worker_transport"]
+           "band_door", "band_of", "from_config", "hub_transport", "link_from", "worker_transport"]
 
 
 def link_from(spec: dict) -> TelestheteLink:
@@ -31,6 +32,13 @@ def link_from(spec: dict) -> TelestheteLink:
         raise ValueError("a band needs psk or a set psk_env")
     return TelestheteLink(psk, relay=spec.get("relay"), ws_url=spec.get("ws_url"),
                           keepalive=spec.get("keepalive"), pace=spec.get("pace"))
+
+
+def band_door(site: str) -> str:
+    """The hub's ``/band`` web socket at its site address:
+    ``https://hub.example`` -> ``wss://hub.example/band``."""
+    u = urlsplit(site)
+    return f"{'wss' if u.scheme == 'https' else 'ws'}://{u.netloc}/band"
 
 
 def from_config(cfg: dict, **kw: Any) -> Transport:
