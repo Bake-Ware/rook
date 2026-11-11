@@ -48,6 +48,7 @@ settings:
   sound: { type: bool, where: person, doc: "Your look and feel: Rookie's sounds (a chiptune blip as it changes state). Off until you answer; set by agent.look." }
   rookie: { type: str, where: person, doc: "Your look and feel: Rookie's style beside the house agent (a skin shell/rookie.js ships; none hides it); blank: pixel. Set by agent.look." }
   rookie_theme: { type: str, where: person, doc: "Your look and feel: Rookie's colour theme (one shell/rookie.js ships); blank: its first. Set by agent.look." }
+  chat_side: { type: str, where: person, enum: [left, right], default: right, doc: "Your look and feel: which side of the page the chat is on. Set by agent.look." }
 
 # Stored as kit records (castling-plugins "Records"; castling-caps rule 6):
 # the kit gives the storage, history and the agent.* and
@@ -209,7 +210,8 @@ caps:
       Look and feel on the hub site, the first four first-run questions in this order: sound (yes/no),
       Rookie's style, Rookie's theme, Rookie's name. The name is the house agent's name (the setting
       house_name). Give any of them to set it; blank: just say what you have. chosen says which were
-      answered, next is the first one that wasn't (null when all were).
+      answered, next is the first one that wasn't (null when all were). side: which side of the page
+      the chat is on (left or right), not a first-run question.
     risk: write
     scope: multi-user
     effects: []
@@ -219,6 +221,7 @@ caps:
       rookie: { type: str, doc: "Rookie's style, one of styles (e.g. pixel, kawaii; none hides it)." }
       theme: { type: str, doc: "Rookie's colour theme, one of themes (e.g. stone, gameboy)." }
       name: { type: str, doc: "Rookie's name: the house agent's name from now on." }
+      side: { type: str, doc: "The chat's side of the page: left or right." }
     result: { type: map }
 
 # The house agent beside every page of the hub site: the chat dock, Rookie

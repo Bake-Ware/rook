@@ -50,6 +50,10 @@ Core ships `page/text` (a note), `page/value` (any cap's result, refreshed
 every few seconds if you like), `hub/workers` and
 `journal/recent`; plugins ship more.
 
+A page marks a control an agent may point at with `data-target="<name>"`
+(the Agents page's model dropdown is `agents.house.model`): the site can
+ask the open page for it, and the page scrolls it into view and marks it.
+
 Every call a page makes runs as the person viewing it, and only for the
 caps the page declared. Making or changing a page emits `page.created` or
 `page.updated`.

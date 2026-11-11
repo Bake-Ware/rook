@@ -10,8 +10,10 @@
 //       "page hub/workers" (a hub page); key=value lines pre-fill it, and it
 //       focuses the field the person needs to touch
 //   [[point: vault.value | Enter the password here]]
-//       Rookie walks over to that target in the work pane and back; the
-//       words after | are his speech bubble there (default "Right here")
+//       Rookie walks over to that target and back: a data-target in the
+//       work pane, else one in the open page (agents.house.model on the
+//       Agents page); the words after | are his speech bubble there
+//       (default "Right here")
 //   [[say: The dashboard task is done]]
 //       a speech bubble beside Rookie, a few words (Bake, Nov 9: "I want
 //       rookie to make little chat bubbles too")

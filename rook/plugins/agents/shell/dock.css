@@ -8,10 +8,17 @@
 body.dock-open #dock { display: flex; }
 #dock-head { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; border-bottom: 1px solid var(--line);
   font: 500 11px var(--mono); letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
-/* the chat's X, top right (Bake, Nov 9) */
-#dock-close { width: 34px; height: 34px; padding: 0; flex: none; display: grid; place-items: center; background: none;
-  border: 1px solid transparent; color: var(--dim); font: 300 24px/1 var(--sans); letter-spacing: 0; }
-#dock-close:hover { border-color: var(--line2); color: var(--accent); }
+/* the chat's X, top right (Bake, Nov 9), and beside it: the other side */
+.head-btn { width: 34px; height: 34px; padding: 0; flex: none; display: grid; place-items: center; background: none;
+  border: 1px solid transparent; color: var(--dim); font: 300 18px/1 var(--sans); letter-spacing: 0; }
+#dock-close { font-size: 24px; }
+.head-btn:hover { border-color: var(--line2); color: var(--accent); }
+/* the chat on the left (agent.look side): it, Rookie's corner and the page swap sides */
+@media (min-width: 761px) {
+  body.chat-left #nav { order: -2; }
+  body.chat-left #dock { order: -1; border-left: 0; border-right: 1px solid var(--line); }
+  body.chat-left #rookie-park { right: auto; left: 18px; }
+}
 #dock-skip { letter-spacing: .3px; text-transform: none; }
 #rookie-home { width: 64px; height: 50px; flex: none; }
 .rookie canvas { display: block; }
@@ -132,6 +139,7 @@ body.setup #dock-head { padding: 14px 18px; font-size: 12px; }
 body.setup .msg .text { font-size: 14px; }
 
 @media (max-width: 760px) {
+  #dock-side, #dock-pop { display: none; }
   #dock { position: fixed; z-index: 35; inset: auto 0 0 0; width: 100%; height: 70vh; border-left: 0; border-top: 1px solid var(--line2); }
   body.setup { flex-direction: column; }
   body.setup main { flex: 1 1 45%; min-height: 0; }
@@ -143,3 +151,10 @@ body.setup .msg .text { font-size: 14px; }
 body.setup .rook-art { opacity: .3; }
 #work .work-form, #work .card, #work .secrets, #work .status { background: var(--overlay); }
 @media (prefers-reduced-motion: reduce) { #rookie-say { transition: none; } }
+
+/* the chat in its own window (/?chat): only the chat; the main window's pane is closed meanwhile */
+body.chat-out #dock { display: none !important; }
+body.chat-out .rookie.parked { pointer-events: none; }
+body.setup #dock-pop, body.chat-window #dock-pop, body.chat-window #dock-side { display: none; }
+body.chat-window #nav, body.chat-window main, body.chat-window .rook-art { display: none; }
+body.chat-window #dock { display: flex; position: static; flex: 1; width: 100%; height: 100%; border: 0; }

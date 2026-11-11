@@ -72,7 +72,7 @@ def test_the_shell_draws_the_04_rook_behind_every_page():
 def test_the_chat_has_an_x_and_no_chat_button():
     js = (SHELL / "dock.js").read_text()
     head = js[js.index('<div id="dock-head">'):js.index("</div>", js.index('id="dock-name"'))]
-    assert head.rstrip().endswith('<button id="dock-close" aria-label="Close the chat" title="Close the chat">&times;</button>')
+    assert head.rstrip().endswith('<button id="dock-close" class="head-btn" aria-label="Close the chat" title="Close the chat">&times;</button>')
     bar = js[js.index('$("#bar").insertAdjacentHTML('):js.index('$("#note").insertAdjacentHTML(')]
     assert '<button id="dock-btn" class="offscreen"' in bar        # never shown; the desktop app clicks it
     assert ".offscreen { display: none !important; }" in (SHELL / "dock.css").read_text()

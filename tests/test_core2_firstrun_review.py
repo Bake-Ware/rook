@@ -121,7 +121,7 @@ def test_a_reload_focuses_the_field_again():
 
 def test_an_address_with_no_page_says_so():
     core = (STATIC / "shell.js").read_text()
-    op = core[core.index("async function open(pid)"):core.index("function closePage(")]
+    op = core[core.index("async function openPage(pid)"):core.index("function closePage(")]
     assert "No such page" in op and "message(`No such page: ${pid}.`, true, true)" in op
     message = core[core.index("function message("):core.index("\n}\n", core.index("function message("))]
     assert "Go to the start page" in message

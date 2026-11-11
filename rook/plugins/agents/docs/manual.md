@@ -132,10 +132,28 @@ left there. A hub made by hand with `init` has no guided first run unless
 someone calls `agent.setup {done: false}`. Guided setup does not keep the site
 open: once the owner sets a password, a new browser gets the sign-in page
 even while setup carries on.
-`agent.look {sound?, rookie?, theme?, name?}` sets the look and feel: sound,
+`agent.look {sound?, rookie?, theme?, name?, side?}` sets the look and feel: sound,
 Rookie's style and theme are yours (the per-person settings `sound`,
 `rookie`, `rookie_theme`), the name is the house agent's (`house_name`;
 blank: Rookie). Blank ones haven't been chosen: first-run setup asks them.
+`side` is which side of the page your chat is on (`chat_side`: left or
+right, right until set); the arrows in the chat's head flip it, and the
+agent flips it when you ask. At phone width the chat lies over the page
+and the side does nothing.
+
+The chat pane: the open page (or a setup view) on one side, the chat on
+the other. When the agent writes `[[open: page agent/agents]]` and
+`[[point: agents.house.model | Pick the model here]]`, the page opens and
+Rookie walks over to that control and back; a target is a `data-target`
+in the shell itself first, else one in the open page (the site asks the
+page where it is). The arrow in the chat's head opens the chat in its own
+browser window (`/?chat`): the same conversation, read from the same
+stream; the main window's pane closes and Rookie leaves it for the chat
+window. Pages the agent opens and controls it points at stay in the main
+window, and Rookie leaves the chat window to point there and comes back.
+Closing the chat window puts the pane back, Rookie with it; the two
+windows find each other with a BroadcastChannel, so reloading either one
+keeps one chat.
 
 ## Identity
 

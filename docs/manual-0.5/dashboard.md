@@ -28,8 +28,12 @@ in. `doors: {http: {web: false}}` turns the site off.
 | + agents | the house agent's **chat dock** beside every page. A hub the installer made opens on its guided first run (`agent.setup`); after that, on your first visit it asks how you want to use the site; it builds pages for you and can set your start page. The **Agents** page (under Agents): each agent's engine and model, the default engine, the attention pass. With `trust` in the library, the **Trust map** too |
 | + workbench | **Tasks**, **Projects** and **Knowledge** pages; every page an agent makes is built under a task, so you can review it |
 
-The site opens on your start page, else the hub's, else Workers. On a
-phone, the dock is a sheet behind the Chat button.
+The site opens on your start page, else the hub's, else Workers. The
+chat sits beside the page, on the right or the left (the arrows in its
+head, or ask the agent), and can pop out into its own window (the arrow
+beside them; closing that window puts it back). Ask the agent where
+something is and it opens the page and Rookie points at the control. On a
+phone, the chat is a sheet over the page; tap Rookie in the corner.
 
 ## The sidebar
 

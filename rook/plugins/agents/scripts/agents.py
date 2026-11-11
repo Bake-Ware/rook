@@ -974,7 +974,7 @@ def look_state(ctx) -> dict:
     return {"sound": bool(s["sound"]),
             "rookie": s["rookie"] if s["rookie"] in styles else "pixel",
             "theme": s["rookie_theme"] if s["rookie_theme"] in themes else themes[0],
-            "name": s["house_name"] or HOUSE_NAME, "chosen": chosen,
+            "name": s["house_name"] or HOUSE_NAME, "side": "left" if s["chat_side"] == "left" else "right", "chosen": chosen,
             "next": next((k for k in LOOK_STEPS if not chosen[k]), None),
             "styles": styles, "themes": themes}
 
@@ -1078,13 +1078,13 @@ async def setup(ctx, done=None):
     return setup_state(ctx, install=True)
 
 
-async def look(ctx, sound=None, rookie=None, theme=None, name=None):
+async def look(ctx, sound=None, rookie=None, theme=None, name=None, side=None):
     # Anyone sets anything here, a person or an agent alone; an unknown
-    # style or theme shows as the default (Bake, Nov 6: "Remove all
+    # style, theme or side shows as the default (Bake, Nov 6: "Remove all
     # restrictions and gates"; docs/castling-first-run.md "For the
-    # hardening pass"). Sound, style and theme are the person's own.
+    # hardening pass"). Sound, style, theme and side are the person's own.
     if ctx.person:
-        for key, value in (("sound", sound), ("rookie", rookie), ("rookie_theme", theme)):
+        for key, value in (("sound", sound), ("rookie", rookie), ("rookie_theme", theme), ("chat_side", side)):
             if value is not None:
                 ctx.settings.set(key, bool(value) if key == "sound" else str(value).strip().lower())
     if name is not None:
