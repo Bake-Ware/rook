@@ -33,9 +33,9 @@ without their own gets, and a person's first change starts from it.
 
 A segment someone opened or folded by hand stays that way. Otherwise it
 is open when it holds one of the three pages that person opens most
-(`page.view` counts each open in `<data>/page-opens.json`); with no opens
-yet, the segment of their start page, or every segment when there is no
-start page.
+(`page.view` counts each open in `<data>/page-opens.json`); until they
+have opened three different pages, the segment of their start page, or
+every segment when there is no start page.
 
 A `layout` is a list of components (`[{component, props?, title?, wide?}]`).
 Core ships `page/text` (a note), `page/value` (any cap's result, refreshed

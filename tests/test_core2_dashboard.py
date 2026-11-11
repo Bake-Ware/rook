@@ -606,15 +606,19 @@ def test_the_sidebar_is_each_persons_and_follows_what_they_open(site):
             assert [p["page"] for p in (await sidebar(kim))["pinned"]] == ["token/tokens"]
             assert [p["page"] for p in (await sidebar(bake))["pinned"]] == ["journal/journal"]
 
-            # what kim opens most is open; the rows carry her counts, not bake's
+            # until kim has opened three different pages everything stays open; then what she opens most;
+            # the rows carry her counts, not bake's
             for pid in ("board/board", "board/board", "hub/workers"):
                 assert (await kim.open(pid))["ok"]
+            assert await opened(kim) == ["Machines", "Hub", "Garden"]
+            assert (await kim.open("board/holds"))["ok"]
             s = await sidebar(kim)
             assert [x["segment"] for x in s["segments"] if x["open"]] == ["Machines", "Garden"]
-            assert {p["page"]: p["opens"] for p in flat(s) if p["opens"]} == {"board/board": 2, "hub/workers": 1}
+            assert {p["page"]: p["opens"] for p in flat(s) if p["opens"]} == {
+                "board/board": 2, "hub/workers": 1, "board/holds": 1}
             assert all(p["opens"] == 0 for p in flat(await sidebar(bake)))
             assert json.loads((hub.data / "page-opens.json").read_text())["person:kim"] == {
-                "board/board": 2, "hub/workers": 1}
+                "board/board": 2, "hub/workers": 1, "board/holds": 1}
             # her first change starts from the hub's own layout
             s = await arrange(kim, segment="Hub", open=True)
             assert [p["page"] for p in s["pinned"]] == ["token/tokens"]

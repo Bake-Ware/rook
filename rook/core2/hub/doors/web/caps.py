@@ -204,8 +204,8 @@ class Pages:
         """The sidebar ready to draw: the pinned pages in the order pinned, then
         each segment with its pages and whether it is open. A segment is open
         when the person opened or folded it by hand, else when it holds one of
-        their most-opened pages; with no history, their start page's segment,
-        or every segment when there is no start page."""
+        their most-opened pages; until they have opened that many different
+        pages, their start page's segment, or every segment without one."""
         who = person or EVERYONE
         mine = self.layouts.get(who) or self.layouts.get(EVERYONE) or {}
         marks, folds, opens = mine.get("pages") or {}, mine.get("segments") or {}, self.opens.get(who) or {}
@@ -217,7 +217,8 @@ class Pages:
                  "pinned": "pinned" in marks.get(pid, {})})
         used = sorted((n, pid) for pid, n in opens.items() if pid in live)[-FREQUENT:]
         start = self.start(person)
-        hot = {live[pid].segment for _, pid in used} or ({live[start].segment} if start else set(segments))
+        hot = {live[pid].segment for _, pid in used} if len(used) == FREQUENT else \
+            {live[start].segment} if start else set(segments)
         order = sorted(segments, key=lambda s: (SEGMENTS.index(s) if s in SEGMENTS else len(SEGMENTS), s))
         rows = {r["page"]: r for pages in segments.values() for r in pages}
         pinned = sorted((pid for pid, m in marks.items() if pid in rows and "pinned" in m),

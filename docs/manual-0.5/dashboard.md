@@ -39,8 +39,8 @@ made. **Pinned** at the top holds the pages you pin (a page's ⋯ menu: Pin,
 Unpin), in the order you pinned them; each stays in its segment too.
 Click a segment's heading to open or fold it, and it stays that way. One
 you have not touched is open when it holds one of the three pages you
-open most; before you have opened anything, your start page's segment is
-open, or every segment when you have no start page. A folded segment
+open most; until you have opened three different pages, your start
+page's segment is open, or every segment when you have no start page. A folded segment
 still shows its pages, as one quiet line of links. The sidebar is yours:
 an agent can pin and fold for you too (`page.arrange`, see the
 [page plugin's manual](../../rook/core2/hub/doors/web/builtin/page/docs/manual.md)).
