@@ -54,3 +54,15 @@ and kept on the session, nothing more.
 `speech.status` lists your open sessions and which plugins provide each
 voice contract (an engine's own status cap says why one isn't loaded);
 `speech.voices` the voices every text-to-speech provider offers.
+
+## The Voice page
+
+Under Agents. From the top: your voice (the voices `speech.voices` lists,
+by provider, saved to your own `voice` setting) and **Hear it**, which
+speaks one sentence in it through `voice.tts` and plays it in the page;
+the agent sessions talk to and **Quick answers** (the `talker` setting);
+then, for hearing, speaking, end of turn and who is speaking, which plugin
+provides it and whether it is reachable now, or what its absence means
+("Rook cannot hear you yet"). When several plugins provide one, the first
+is used unless the hub's `contracts:` config picks another. **More
+settings** opens the Settings page.
