@@ -112,9 +112,25 @@ beside it; changing the engine puts back the engine's default model when the
 new engine doesn't offer the old one. An engine that can't run turns now
 says why on its agents' rows. The persona shows as text: changing it would
 only change the label, not the prompt, skills and grants it filled in. Above
-the agents, the default engine; below them, the attention pass on or off
+the agents, the default engine and a link to the Engines page; below them, the attention pass on or off
 (installing the ready-made `attention/attention` job, or switching it), only
 when the jobs plugin offers that job.
+
+## Engines page
+
+Agents > Engines (`pages/engines.html`) shows one card per engine from
+`agent.engines`, the default first and marked so: its title, its plugin's
+one-line doc, and whether it can run a turn now (when it can't, why, in
+bold). Below that, for the keys that engine's settings have
+(`setting.list {plugin}`): its Worker (a dropdown of the band's workers but
+the hub, online ones marked, "Not set" first), its Model and its Light
+model (dream cycles), each a dropdown of `agent.models {engine}` with the
+blank choice first, saying what blank means for that engine (its setting's
+doc), and "Another model id..." last. A change saves at once with
+`setting.set`, "Saved" or the error beside it, and the card asks
+`agent.engines` again so the ready line is true. "More settings for ..."
+opens Settings, where the rest of the engine's settings are. A link at the
+top goes back to the Agents page.
 
 ## On the hub site
 

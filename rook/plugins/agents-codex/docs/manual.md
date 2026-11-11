@@ -1,4 +1,4 @@
-# Codex backend
+# Codex
 
 `agents-codex` lets agents think with the Codex CLI on one of the band's
 workers, under whatever ChatGPT subscription `codex` is signed in with there. It provides the
@@ -47,4 +47,4 @@ Turns run in the folder the agent names, else in
 Install Codex on the worker and sign in once (`codex login`) before agents
 use it. A hub that ran this plugin on a worker (before 0.6): set `worker`
 and copy the other settings from that worker's `worker.yaml` to the hub's,
-as in the Claude Code backend's manual.
+as in Claude Code's manual.

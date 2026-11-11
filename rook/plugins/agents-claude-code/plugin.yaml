@@ -8,7 +8,7 @@
 manifest: 1
 plugin: agents-claude-code
 version: 0.6.1
-title: Claude Code backend
+title: Claude Code
 doc: Agent turns in the Claude Code CLI signed in on one of the band's workers, for the agents package.
 package: agents
 segment: Agents
@@ -19,8 +19,8 @@ uses: [shell.open, shell.env, file.write, stream.read, stream.write, stream.clos
 settings:
   worker: { where: hub, type: worker, doc: "The worker (name) where Claude Code is installed and signed in; turns fail until it is set." }
   claude: { where: hub, default: claude, doc: "The claude program on that worker: a name on PATH or a full path (~ is its home)." }
-  model: { where: hub, default: opus, doc: "System Two's model when the agent names none (opus, sonnet, haiku or a full model id)." }
-  model_three: { where: hub, default: haiku, doc: "System Three's model (dream cycles)." }
+  model: { where: hub, default: opus, doc: "System Two's model when the agent names none (opus, sonnet, haiku or a full model id); blank: Claude Code's own default." }
+  model_three: { where: hub, default: haiku, doc: "System Three's model (dream cycles); blank: Claude Code's own default." }
   permission_mode: { where: hub, doc: "Claude Code's --permission-mode for agent turns (default, acceptEdits, plan, ...); blank: its own default." }
   allowed_tools: { where: hub, type: list, items: { type: str }, doc: "Tools a turn may use without asking (--allowedTools), e.g. Read, Bash(git status:*). Rook's (mcp__rook) is added for a turn given Rook." }
   door_url: { where: hub, type: url, default: "http://127.0.0.1:8741/mcp", doc: "The hub's MCP door as the worker reaches it. Each turn reaches it with that turn's own token (the agent, for the person behind it)." }

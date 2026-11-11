@@ -122,7 +122,7 @@ def test_the_agents_page(tmp_path, monkeypatch):
         assert eng["default"] == "agents-claude-code.turn"
         rows = {e["engine"]: e for e in eng["engines"]}
         assert rows["agents-claude-code.turn"]["ready"] is True
-        assert rows["agents-opencode.turn"] == {"engine": "agents-opencode.turn", "title": "OpenCode backend",
+        assert rows["agents-opencode.turn"] == {"engine": "agents-opencode.turn", "title": "OpenCode",
                                                 "ready": False,
                                                 "why": "no worker is set for it (agents-opencode.worker)"}
         # Claude Code's list needs no worker; the default engine is asked when none is named.

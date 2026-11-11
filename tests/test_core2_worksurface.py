@@ -143,13 +143,13 @@ def test_every_install_combination(tmp_path, combo):
             assert dock["setup"] == {"done": True}       # guided setup only when the installer asks for it
 
         # every page in the sidebar, in its plugin's segment ("nothing is curated out"): the packages
-        # add theirs (the agents package's Agents page and trust map, "it matters most to the agents")
+        # add theirs (the agents package's Agents and Engines pages and trust map, "it matters most to the agents")
         sidebar = (await c.call("page.list"))["result"]
         listed = {p["page"]: (s["segment"], p) for s in sidebar["segments"] for p in s["pages"]}
         work = {"task/tasks", "project/projects", "knowledge/knowledge"}
         assert set(listed) == {"hub/workers", "token/tokens", "board/board", "board/holds", "journal/journal",
                                "setting/settings", "secret/vault"} | \
-            (work if workbench else set()) | ({"agent/agents", "trust/trust"} if agents else set())
+            (work if workbench else set()) | ({"agent/agents", "agent/engines", "trust/trust"} if agents else set())
         assert {pid: seg for pid, (seg, _) in listed.items()} == {
             pid: {"hub": "Machines", "board": "Garden", "task": "Work", "project": "Work", "knowledge": "Work",
                   "agent": "Agents", "trust": "Agents"}.get(pid.partition("/")[0], "Hub") for pid in listed}
