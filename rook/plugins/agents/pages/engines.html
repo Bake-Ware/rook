@@ -74,15 +74,14 @@ async function card(e) {
   const list = mine.model || mine.model_three ? await modelsOf(e.engine) : null;
   const s = said[e.engine] || ["", ""];
   const fields = Object.keys(KEYS).filter((k) => mine[k]).map((k) => {
-    const target = `engines.${esc(name)}.${k}`;
     if (k === "worker") {
       return `<label><span class="label">${KEYS[k]}</span>
-        <select data-key="worker" data-target="${target}">${workerOptions(mine[k].value || "")}</select></label>`;
+        <select data-key="worker" data-target="engines.${esc(name)}.${k}">${workerOptions(mine[k].value || "")}</select></label>`;
     }
     const current = mine[k].value || "", other = current && !(list.models || []).includes(current);
     return `<label><span class="label">${KEYS[k]}</span>
-      <select data-key="${k}" data-target="${target}">${modelOptions(list, mine[k])}</select>
-      <input data-model-id="${k}" data-target="${target}_id" placeholder="A model id" value="${other ? esc(current) : ""}"${other ? "" : " hidden"}></label>`;
+      <select data-key="${k}" data-target="engines.${esc(name)}.${k}">${modelOptions(list, mine[k])}</select>
+      <input data-model-id="${k}" data-target="engines.${esc(name)}.${k}_id" placeholder="A model id" value="${other ? esc(current) : ""}"${other ? "" : " hidden"}></label>`;
   }).join("");
   const notes = list && list.error && e.ready ? `<div class="warn status">Its models aren't known: ${esc(list.error)}</div>` : "";
   return `<section class="card engine" data-engine="${esc(e.engine)}">
@@ -92,7 +91,7 @@ async function card(e) {
     <div class="fields">${fields}</div>
     ${notes}
     <div class="status ${s[1]}" data-status>${esc(s[0])}</div>
-    <div class="more"><a href="#" data-more data-target="${`engines.${esc(name)}.more`}">More settings for ${esc(e.title)}</a></div>
+    <div class="more"><a href="#" data-more data-target="engines.${esc(name)}.more">More settings for ${esc(e.title)}</a></div>
   </section>`;
 }
 

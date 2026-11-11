@@ -83,7 +83,7 @@ function read(s, f) {
 }
 
 function row(s, i) {
-  return `<div class="setting" data-i="${i}" data-target="${esc(name(s))}">
+  return `<div class="setting" data-i="${i}" data-target="${esc(s.plugin)}.${esc(s.key)}">
     <div><div>${esc(s.doc || "")}</div><code class="muted">${esc(name(s))}</code>${s.where === "person" ? '<span class="yours">yours</span>' : ""}</div>
     <div class="row">${control(s)}${s.source === "set" ? '<button data-act="reset">Back to default</button>' : ""}<span class="out muted"></span></div>
   </div>`;

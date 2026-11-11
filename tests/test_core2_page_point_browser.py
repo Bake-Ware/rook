@@ -69,6 +69,11 @@ def test_the_shell_gets_the_box_of_a_target_inside_a_page(tmp_path):
                 assert await shell.evaluate("locate('far.filtered')") is None
                 assert await shell.evaluate("locate('far.nothing')") is None
                 assert await shell.evaluate("locate('far.hidden')") is None
+                # a page that ships: the Vault's save button
+                await shell.goto(f"http://127.0.0.1:{c.port}/#/secret/vault")
+                await until(shell, "typeof current !== 'undefined' && current && current.page === 'secret/vault'")
+                await shell.frame_locator("#stage iframe").locator("[data-target='vault.save']").wait_for(state="attached", timeout=10000)
+                assert await shell.evaluate("locate('vault.save').then(r => r && r.width > 0)")
                 await browser.close()
         finally:
             await hub.stop()

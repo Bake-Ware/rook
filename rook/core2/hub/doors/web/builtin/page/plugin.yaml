@@ -39,7 +39,7 @@ caps:
       page: { type: str, required: true, doc: "plugin/name, e.g. hub/workers or page/uptime." }
     result: { type: map }
   get:
-    doc: One page's details and, for a page an agent made, its note (why it exists, its history).
+    doc: One page's details, the controls it marks that an agent can point at (targets), and, for a page an agent made, its note (why it exists, its history).
     on: hub
     risk: read
     scope: multi-user

@@ -67,33 +67,32 @@ async function loadOne(p) {
 function select(s, opts, blank) {
   const v = s.source === "default" ? "" : s.value || "";
   const all = v && !opts.includes(v) ? [v, ...opts] : opts;
-  return `<select data-key="${esc(s.key)}" data-target="llm.${esc(s.plugin)}.${esc(s.key)}"><option value=""${v ? "" : " selected"}>${esc(blank)}</option>
+  return `<select data-key="${esc(s.key)}" data-target="models.${esc(s.plugin)}.${esc(s.key)}"><option value=""${v ? "" : " selected"}>${esc(blank)}</option>
     ${all.map((o) => `<option${o === v ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
 }
 
 function blankOf(s) { return s.default ? `Default (${s.default})` : "Default"; }
 
 function field(p, s) {
-  const target = `llm.${esc(p)}.${esc(s.key)}`;
   if (s.secret || s.type === "secret") {
     return `<label><span class="label">Key</span>${vault ? select(s, vault, "None")
-      : `<input data-key="${esc(s.key)}" data-target="${target}" placeholder="A vault name" value="${esc(s.source === "default" ? "" : s.value || "")}">`}
+      : `<input data-key="${esc(s.key)}" data-target="models.${esc(p)}.${esc(s.key)}" placeholder="A vault name" value="${esc(s.source === "default" ? "" : s.value || "")}">`}
       <a href="#" data-vault>Add a key on the Vault page</a></label>`;
   }
   if (s.key === "url") {
-    return `<label><span class="label">URL</span><input data-key="url" data-target="${target}" placeholder="${esc(s.default || "")}" value="${esc(s.source === "default" ? "" : s.value || "")}"></label>`;
+    return `<label><span class="label">URL</span><input data-key="url" data-target="models.${esc(p)}.${esc(s.key)}" placeholder="${esc(s.default || "")}" value="${esc(s.source === "default" ? "" : s.value || "")}"></label>`;
   }
   if (s.type === "worker") {
     return `<label><span class="label">Worker</span>${workers ? select(s, workers, "None")
-      : `<input data-key="${esc(s.key)}" data-target="${target}" placeholder="A worker name" value="${esc(s.source === "default" ? "" : s.value || "")}">`}</label>`;
+      : `<input data-key="${esc(s.key)}" data-target="models.${esc(p)}.${esc(s.key)}" placeholder="A worker name" value="${esc(s.source === "default" ? "" : s.value || "")}">`}</label>`;
   }
   const known = state[p].models.models || [], v = s.source === "default" ? "" : s.value || "";
   const other = v && !known.includes(v);
   return `<label><span class="label">${SYSTEMS[s.key]}</span>
-    <select data-model="${esc(s.key)}" data-target="${target}"><option value=""${v ? "" : " selected"}>${esc(blankOf(s))}</option>
+    <select data-model="${esc(s.key)}" data-target="models.${esc(p)}.${esc(s.key)}"><option value=""${v ? "" : " selected"}>${esc(blankOf(s))}</option>
       ${known.map((m) => `<option${m === v ? " selected" : ""}>${esc(m)}</option>`).join("")}
       <option value="${OTHER}"${other ? " selected" : ""}>Another model id…</option></select>
-    <input data-key="${esc(s.key)}" data-target="${target}_id" placeholder="A model id" value="${other ? esc(v) : ""}"${other ? "" : " hidden"}></label>`;
+    <input data-key="${esc(s.key)}" data-target="models.${esc(p)}.${esc(s.key)}_id" placeholder="A model id" value="${other ? esc(v) : ""}"${other ? "" : " hidden"}></label>`;
 }
 
 function card(p) {
@@ -107,8 +106,8 @@ function card(p) {
       ${a.ok && s.models.error ? `<span class="muted">Its models aren't known: ${esc(s.models.error)}</span>` : ""}</div>
     <div class="fields">${hands.map((x) => field(p, x)).join("")}</div>
     <div class="row actions">
-      ${p === chosen ? "" : `<button class="primary" data-choose data-target="llm.${esc(p)}.choose">Use this one</button>`}
-      <button data-check data-target="llm.${esc(p)}.check">Check again</button>
+      ${p === chosen ? "" : `<button class="primary" data-choose data-target="models.${esc(p)}.choose">Use this one</button>`}
+      <button data-check data-target="models.${esc(p)}.check">Check again</button>
       <a href="#" data-more>More settings for ${esc(title)}</a>
       <span class="status ${said_[1]}" data-status="${esc(p)}">${esc(said_[0])}</span>
     </div>

@@ -10,14 +10,12 @@ which page they are looking at.
 
 **Show, don't describe.** When the person asks where something is, open the
 page and point at it: `[[open: page agent/agents]]` then
-`[[point: agents.house.model | Pick the model here]]` (a page marks what you
-can point at with `data-target="<name>"`).
-- Agents page (`agent/agents`): `agents.<agent>.engine`, `agents.<agent>.model`,
-  `agents.default` (the default engine), `agents.attention`.
-- Settings page (`setting/settings`): a setting's own name, `<plugin>.<key>`
-  (`agent.warm`); a folded segment opens for you.
-- Any other page: `page.get {page}` does not list its targets, so point at
-  the page itself (`[[point: page | ...]]`) unless you know the name.
+`[[point: agents.house.model | Pick the model here]]`. `page.get {page}`
+answers its `targets`, the names you can point at; in a name with `<...>`
+put the thing's own name as the page shows it (`jobs.<...>.enabled` is
+`jobs.nightly.enabled`). Settings rows are `<plugin>.<key>` (`agent.warm`).
+A folded part opens for you; with no target, point at the page itself
+(`[[point: page | ...]]`).
 
 **Pick the form.** Static, durable information (a postmortem, a comparison,
 what ran overnight) is a knowledge page. Something ongoing and data-backed
@@ -46,6 +44,8 @@ like.
    more than you or the viewer may), `rook.on(pattern, fn)` for declared
    events, `rook.open("plugin/name")` to go to another page, and the base
    style (`.card`, `.row`, `.muted`, `.ok`, `.bad`, tables, buttons).
+   Mark its controls with `data-target="<page>.<thing>"` so you can point
+   at them later.
 4. The `note` is the provenance: why the page exists, who asked, what it
    watches, when it can go. Every change (`page.update {page, change, ...}`)
    is added to its history.

@@ -12,14 +12,14 @@
 <p id="err" class="bad" hidden></p>
 <section>
   <h2>Jobs</h2>
-  <div class="scroll"><table>
+  <div class="scroll" data-target="jobs.list"><table>
     <thead><tr><th>Job</th><th>When</th><th>Calls</th><th>Runs as</th><th>Last run</th><th>On</th><th></th></tr></thead>
     <tbody id="rows"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
   </table></div>
 </section>
 <section>
   <h2>Ready-made</h2>
-  <div class="scroll"><table>
+  <div class="scroll" data-target="jobs.ready-made"><table>
     <thead><tr><th>Job</th><th>When</th><th>Calls</th><th></th></tr></thead>
     <tbody id="templates"></tbody>
   </table></div>
@@ -56,8 +56,8 @@ function render() {
     let html = `<tr class="click" data-id="${esc(j.id)}"><td>${esc(j.name)}<div class="muted">${esc(j.doc)}</div></td>
       <td>${when(j.trigger)}</td><td><code>${esc(j.call)}</code>${j.worker ? ` <span class="muted">on ${esc(j.worker)}</span>` : ""}</td>
       <td>${esc(as)}</td><td>${result(last[j.id])}</td>
-      <td><input type="checkbox" data-toggle="${esc(j.id)}"${j.enabled ? " checked" : ""}></td>
-      <td><button data-run="${esc(j.id)}">Run now</button></td></tr>`;
+      <td><input type="checkbox" data-toggle="${esc(j.id)}" data-target="jobs.${esc(j.name)}.enabled"${j.enabled ? " checked" : ""}></td>
+      <td><button data-run="${esc(j.id)}" data-target="jobs.${esc(j.name)}.run">Run now</button></td></tr>`;
     if (open.has(j.id)) {
       const list = runs[j.id];
       html += `<tr class="detail"><td colspan="7">${!list ? "Loading…" : !list.length ? '<span class="muted">No runs.</span>'
@@ -91,7 +91,7 @@ async function load() {
     document.getElementById("templates").innerHTML = ts.length ? ts.map((t) => `<tr>
       <td>${esc(t.template)}<div class="muted">${esc(t.doc)}</div></td><td>${when(t.trigger)}</td>
       <td><code>${esc(t.call)}</code></td>
-      <td>${t.installed ? '<span class="muted">installed</span>' : `<button data-install="${esc(t.template)}">Install</button>`}</td></tr>`).join("")
+      <td>${t.installed ? '<span class="muted">installed</span>' : `<button data-install="${esc(t.template)}" data-target="jobs.${esc(t.template)}.install">Install</button>`}</td></tr>`).join("")
       : '<tr><td colspan="4" class="muted">None.</td></tr>';
   } catch (x) {
     document.getElementById("templates").innerHTML = `<tr><td colspan="4" class="bad">${esc(x.message)}</td></tr>`;
