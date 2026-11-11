@@ -113,6 +113,31 @@ def test_a_fresh_hub_asks_sound_style_theme_name_first_and_the_name_is_the_house
     assert "already picked the look and feel" in brief and "step 5" in brief
 
 
+def test_the_chat_side_is_each_persons_and_the_agent_can_flip_it(tmp_path):
+    """The site design, point 1: "The person can put the chat pane on the left
+    or the right (per-person setting; the agent can flip it when asked)":
+    agent.look side, right until set, not a first-run question."""
+    async def go(hub, tokens):
+        bake, kim = Client(hub), Client(hub)
+        await bake.sign_in(tokens["bake"])
+        await kim.sign_in(tokens["kim"])
+        look = (await bake.call("agent.site"))["result"]["look"]
+        assert look["side"] == "right" and look["next"] == "sound"
+        out = await bake.call("agent.look", {"side": "left"})
+        assert out["ok"] and out["result"]["side"] == "left" and out["result"]["next"] == "sound", out
+        assert (await bake.call("agent.site"))["result"]["look"]["side"] == "left"
+        assert (await kim.call("agent.site"))["result"]["look"]["side"] == "right"     # kim's own
+        # the house agent flips it back for the person it acts for
+        house = hub.add_token(Caller(person="person:bake", agent="agent:house"))
+        out = await ws_bearer(bake, house, "agent.look", side="right")
+        assert out["ok"] and out["result"]["side"] == "right", out
+        # the generated Settings page shows it as a choice of two, under Agents
+        rows = (await ws_bearer(bake, tokens["bake"], "setting.list", plugin="agent"))["result"]["settings"]
+        row = next(r for r in rows if r["key"] == "chat_side")
+        assert row["enum"] == ["left", "right"] and row["segment"] == "Agents" and row["value"] == "right"
+    ws_serve(tmp_path, go, ("agents",))
+
+
 def test_the_activity_feed_has_every_call_as_journaled(site):
     """The site's live feed Rookie reads: every call on the hub, start and
     end, with its args and why (Bake, Nov 6: "Remove all restrictions and

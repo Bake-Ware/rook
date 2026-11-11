@@ -678,6 +678,12 @@ function applyLook(look) {
     if (rookie.inst.setTheme) rookie.inst.setTheme(look.theme);
   }
   document.body.classList.toggle("no-rookie", look.rookie === "none");
+  const left = look.side === "left";
+  if (left !== document.body.classList.contains("chat-left")) {
+    document.body.classList.toggle("chat-left", left);
+    $("#dock-side").title = `Move the chat to the ${left ? "right" : "left"}`;
+    if (rookie.holder && rookie.holder.classList.contains("parked")) goHome();     // over to the other corner
+  }
 }
 
 const LOOK_TITLES = { sound: "Sound", rookie: "Style", theme: "Theme", name: "Name" };
@@ -1023,7 +1029,7 @@ function mountDock() {
     '<button id="dock-btn" class="offscreen" tabindex="-1" aria-hidden="true">Chat</button>');
   $("#note").insertAdjacentHTML("beforebegin", '<section id="work" hidden></section>');
   $("main").insertAdjacentHTML("afterend", `<aside id="dock" hidden>
-  <div id="dock-head"><div id="rookie-home"></div><span id="dock-name"></span><span class="grow"></span><button id="dock-skip" class="link" hidden>Skip to the hub</button><button id="dock-close" aria-label="Close the chat" title="Close the chat">&times;</button></div>
+  <div id="dock-head"><div id="rookie-home"></div><span id="dock-name"></span><span class="grow"></span><button id="dock-skip" class="link" hidden>Skip to the hub</button><button id="dock-side" class="head-btn" aria-label="Move the chat to the other side" title="Move the chat to the left">&#8644;</button><button id="dock-close" class="head-btn" aria-label="Close the chat" title="Close the chat">&times;</button></div>
   <div id="dock-log" aria-live="polite"></div>
   <form id="dock-form"><textarea id="dock-text" rows="2" placeholder="Ask, or tell it what to set up"></textarea><button>Send</button></form>
 </aside>
@@ -1054,6 +1060,15 @@ function mountDock() {
     }
   };
   $("#dock-skip").onclick = () => $("#dock-close").onclick();
+  $("#dock-side").onclick = async () => {
+    try {
+      site.look = await call("agent.look", { side: rookie.look.side === "left" ? "right" : "left" },
+        "The person moved the chat to the other side of the page.");
+    } catch (x) {
+      return bubble("bad", x.message);
+    }
+    applyLook(site.look);
+  };
   $("#dock-btn").onclick = () => dockOpen(true);          // never shown: the desktop app's "ask about this page"
   $("#rookie-say").onclick = () => {                       // the chat, at that message
     $("#rookie-say").hidden = true;
