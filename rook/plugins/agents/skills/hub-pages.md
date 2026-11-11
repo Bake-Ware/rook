@@ -12,6 +12,12 @@ which page they are looking at.
 page and point at it: `[[open: page agent/agents]]` then
 `[[point: agents.house.model | Pick the model here]]` (a page marks what you
 can point at with `data-target="<name>"`).
+- Agents page (`agent/agents`): `agents.<agent>.engine`, `agents.<agent>.model`,
+  `agents.default` (the default engine), `agents.attention`.
+- Settings page (`setting/settings`): a setting's own name, `<plugin>.<key>`
+  (`agent.warm`); a folded segment opens for you.
+- Any other page: `page.get {page}` does not list its targets, so point at
+  the page itself (`[[point: page | ...]]`) unless you know the name.
 
 **Pick the form.** Static, durable information (a postmortem, a comparison,
 what ran overnight) is a knowledge page. Something ongoing and data-backed

@@ -21,6 +21,9 @@ PAGE = """<!doctype html><html><head><title>Far</title></head><body>
 <div style="height:2400px">A long page</div>
 <label>Model <select data-target="far.model"><option>opus</option></select></label>
 <div data-target="far.hidden" hidden>not shown</div>
+<details><summary>Folded</summary><details><summary>Deeper</summary>
+<input data-target="far.folded" value="inside"></details></details>
+<details hidden><summary>Filtered out</summary><input data-target="far.filtered"></details>
 </body></html>"""
 
 
@@ -58,7 +61,12 @@ def test_the_shell_gets_the_box_of_a_target_inside_a_page(tmp_path):
                 marked = await frame.locator("[data-target='far.model']").evaluate(
                     "e => e.classList.contains('pointed')")
                 assert marked
-                # nothing there, or nothing shown: null, not a box
+                # inside closed <details>: opened, scrolled to, its box answered
+                folded = await shell.evaluate("locate('far.folded').then(r => r && r.width > 0 && r.top >= current.frame.getBoundingClientRect().top)")
+                assert folded
+                assert await frame.locator("details").first.evaluate("e => e.open")
+                # nothing there, nothing shown, or hidden by the page's own filter: null, not a box
+                assert await shell.evaluate("locate('far.filtered')") is None
                 assert await shell.evaluate("locate('far.nothing')") is None
                 assert await shell.evaluate("locate('far.hidden')") is None
                 await browser.close()

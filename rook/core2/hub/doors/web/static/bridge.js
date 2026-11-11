@@ -9,8 +9,8 @@
 //   rook.open("journal/journal");                        // go to another page
 //
 // A control marked data-target="<name>" can be asked for by the shell: the
-// page scrolls it into view, marks it a few seconds (.pointed, page.css) and
-// answers its box.
+// page opens any closed <details> around it, scrolls it into view, marks it a
+// few seconds (.pointed, page.css) and answers its box.
 //
 // A component (manifest components:) is a script that registers its render
 // function; a layout page mounts each one into its card:
@@ -57,6 +57,9 @@
 
   function locate(id, target) {
     var t = document.querySelector('[data-target="' + CSS.escape(target) + '"]');
+    if (t && !t.closest("[hidden]")) {            // folded away: open it (a page's own filter: leave it)
+      for (var d = t.closest("details:not([open])"); d; d = d.parentElement.closest("details:not([open])")) d.open = true;
+    }
     if (!t || !t.getClientRects().length) return send({ kind: "located", id: id, box: null });
     t.scrollIntoView({ block: "center", behavior: "smooth" });
     t.classList.add("pointed");
