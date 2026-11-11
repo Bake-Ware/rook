@@ -100,8 +100,8 @@ function bubble(cls, text, live, seq) {
       row.append(choices(part));
     } else if (part.kind === "open") {
       work.last = part;
-      if (live) later.push(() => openView(part.view, part.arg, part.args, true));
-    } else if (part.kind === "point" && live) {
+      if (live && !pop.window) later.push(() => openView(part.view, part.arg, part.args, true));
+    } else if (part.kind === "point" && live && !pop.window) {
       said = said || part.say;
       later.push(() => setTimeout(() => point(part.target, part.say), 700));
     } else if (part.kind === "say") {
@@ -481,9 +481,16 @@ function placeRookie() {
 
 // The target's box once it is in view: one shown here (a work view, the shell;
 // "page" is the open page itself), else a control in the open page (locate).
-async function where(target) {
+async function targetBox(target) {
   const t = target === "page" ? current && current.frame : document.querySelector(`[data-target="${CSS.escape(target)}"]`);
-  if (!t || !t.getClientRects().length) return locate(target);
+  if (!t || !t.getClientRects().length) {
+    for (let tries = 0; tries < 10; tries++) {              // a page just opened may not have drawn it yet
+      const box = await locate(target);
+      if (box) return box;
+      await sleep(500);
+    }
+    return null;
+  }
   t.scrollIntoView({ block: "center", behavior: "smooth" });
   t.classList.add("pointed");
   setTimeout(() => t.classList.remove("pointed"), 6000);
@@ -498,9 +505,10 @@ function beside(r, w, ht) {
 }
 
 async function point(target, said) {
-  const r = await where(target);
+  const r = await targetBox(target);
   const h = rookie.holder;
   if (!r || !h || !rookie.inst || document.body.classList.contains("no-rookie")) return;
+  if (pop.out) return visit(r, said);
   clearTimeout(rookie.back);
   const me = h.getBoundingClientRect(), to = beside(r, me.width, me.height);
   travel(to.x, to.y, () => {
@@ -531,7 +539,7 @@ function shortLine(text) {
 function speak(text, seq) {
   text = String(text || "").trim().slice(0, 120);
   const box = $("#rookie-say"), h = rookie.holder;
-  if (!text || !box || !h || document.body.classList.contains("no-rookie")) return;
+  if (!text || !box || !h || !rookie.here || document.body.classList.contains("no-rookie")) return;
   box.textContent = text;
   bubbleState.seq = seq == null ? null : seq;
   box.hidden = false;
@@ -595,12 +603,13 @@ function thinking(on) {
 // Exactly one live Rookie on a page (Bake, Nov 9: "only one instance of it on
 // any page at a time"): the one in the chat's head. The tab icon copies his
 // frames; pickers draw static thumbnails (Rookie.bake), never a live one.
-const rookie = { inst: null, driver: null, holder: null, travelling: false, entering: false,
+// here: he is in this window (not while the chat is out in its own).
+const rookie = { inst: null, driver: null, holder: null, travelling: false, entering: false, here: true,
   look: { sound: false, rookie: "pixel", theme: "stone", name: "Rookie" } };
 
 const rookieBoth = {
-  set(s) { if (rookie.inst && !rookie.travelling) rookie.inst.set(s); },
-  say(text, o) { if (rookie.inst && !rookie.travelling) rookie.inst.say(text, o); },
+  set(s) { if (rookie.inst && !rookie.travelling && rookie.here) rookie.inst.set(s); },
+  say(text, o) { if (rookie.inst && !rookie.travelling && rookie.here) rookie.inst.say(text, o); },
 };
 
 // The tab icon: the live Rookie's canvas, copied (no second instance).
@@ -645,7 +654,7 @@ function rookieInit() {
   rookieFavicon();
   setInterval(() => rookie.driver.tick(), 1000);
   applyLook(rookie.look);
-  if (rookie.inst.enter) {            // his first appearance: the transporter, once
+  if (rookie.inst.enter && rookie.here) {     // his first appearance: the transporter, once
     rookie.entering = true;
     setTimeout(() => (rookie.entering = false), 1200);
     rookie.inst.enter(rookie.driver.state());
@@ -857,6 +866,7 @@ async function refresh() {
       if (site.look.next) lookStep(site.look.next);
       else lookDone(site.look);
     }
+    if (pop.window) return;
     await loadNav();
     if (current && !pages.some((p) => p.page === current.page)) {      // archived meanwhile
       history.replaceState(null, "", location.pathname);
@@ -885,7 +895,8 @@ async function read(wait) {
 // words for it when there are some ("Saved my account"). `note`: a line of
 // context the agent gets ahead of what the person typed.
 async function say(text, quiet, shown, note) {
-  const where = current ? ` on the page ${current.page} (${$("#title").textContent})` : "";
+  const at = pop.window ? pop.where : here();
+  const where = at ? ` on the page ${at.page} (${at.title})` : "";
   const body = quiet ? `${SITE} ${text}` + (shown ? `\n${SHOWN} ${shown}` : "")
     : `${SITE} The person is${where || " on the hub site"}.${note ? " " + note : ""}\n${text}`;
   thinking(true);
@@ -990,7 +1001,9 @@ async function startDock(agent) {
     $("#dock").hidden = true;
     return;
   }
-  if (setupMode()) {                // a new hub: the chat is the whole site until setup is done
+  if (pop.window) {                 // the chat in its own window: just the chat
+    open = true;
+  } else if (setupMode()) {         // a new hub: the chat is the whole site until setup is done
     open = true;
     if (lookStart()) {             // the look and feel first, on the left; no agent turn yet
     } else if (!dock.replies) {    // a new hub, or the agent never got to answer
@@ -1029,7 +1042,7 @@ function mountDock() {
     '<button id="dock-btn" class="offscreen" tabindex="-1" aria-hidden="true">Chat</button>');
   $("#note").insertAdjacentHTML("beforebegin", '<section id="work" hidden></section>');
   $("main").insertAdjacentHTML("afterend", `<aside id="dock" hidden>
-  <div id="dock-head"><div id="rookie-home"></div><span id="dock-name"></span><span class="grow"></span><button id="dock-skip" class="link" hidden>Skip to the hub</button><button id="dock-side" class="head-btn" aria-label="Move the chat to the other side" title="Move the chat to the left">&#8644;</button><button id="dock-close" class="head-btn" aria-label="Close the chat" title="Close the chat">&times;</button></div>
+  <div id="dock-head"><div id="rookie-home"></div><span id="dock-name"></span><span class="grow"></span><button id="dock-skip" class="link" hidden>Skip to the hub</button><button id="dock-pop" class="head-btn" aria-label="Open the chat in its own window" title="Open the chat in its own window">&#8599;</button><button id="dock-side" class="head-btn" aria-label="Move the chat to the other side" title="Move the chat to the left">&#8644;</button><button id="dock-close" class="head-btn" aria-label="Close the chat" title="Close the chat">&times;</button></div>
   <div id="dock-log" aria-live="polite"></div>
   <form id="dock-form"><textarea id="dock-text" rows="2" placeholder="Ask, or tell it what to set up"></textarea><button>Send</button></form>
 </aside>
@@ -1069,6 +1082,15 @@ function mountDock() {
     }
     applyLook(site.look);
   };
+  $("#dock-pop").onclick = () => {                         // it goes out once the window says so (popHeard)
+    if (!window.open("/?chat", "rook-chat", "popup,width=460,height=760")) bubble("bad", "The browser blocked the chat window.");
+  };
+  $("#dock-log").addEventListener("click", (e) => {        // in the chat window, a link opens in the main one
+    const a = pop.window && e.target.closest("a[href]");
+    if (!a) return;
+    e.preventDefault();
+    popSend("go", { href: a.getAttribute("href") });
+  });
   $("#dock-btn").onclick = () => dockOpen(true);          // never shown: the desktop app's "ask about this page"
   $("#rookie-say").onclick = () => {                       // the chat, at that message
     $("#rookie-say").hidden = true;
@@ -1084,6 +1106,7 @@ function mountDock() {
     if (rookie.holder && rookie.holder.classList.contains("parked") && rookie.holder.contains(e.target)) dockOpen(true);
   });
   $("#dock-close").onclick = () => {
+    if (pop.window) return window.close();                // docks it back (pagehide)
     if (document.body.classList.contains("setup")) {
       skipped = true;
       setupMode();
@@ -1094,16 +1117,125 @@ function mountDock() {
   };
 }
 
+// -- the chat in its own window ------------------------------------------------------
+// The site design: "The chat can pop out into its own browser window: same
+// chat, same stream; closing the window docks it back; Rookie leaves one
+// window and arrives in the other". The chat window is the site at /?chat
+// showing only this dock, reading the same conversation; the two windows
+// talk over a BroadcastChannel. The chat window says "out" every 2 s and
+// "in" as it goes; the main window takes the chat back when it hears "in" or
+// nothing for 5 s. Opening pages and pointing stay in the main window.
+const pop = { window: new URLSearchParams(location.search).has("chat"), out: false, seen: 0, chan: null, where: null };
+const LEAVE_MS = 2300;          // rookie.js's exit: 14 frames of 150 ms
+
+function popSend(kind, more) {
+  if (pop.chan) pop.chan.postMessage({ kind, ...more });
+}
+
+function here() {
+  return current ? { page: current.page, title: $("#title").textContent } : null;
+}
+
+async function popStart() {
+  if (!window.BroadcastChannel) return;
+  pop.chan = new BroadcastChannel("rook.chat");
+  pop.chan.onmessage = (e) => popHeard(e.data || {});
+  if (pop.window) {
+    document.body.classList.add("chat-window");
+    popSend("out");
+    setInterval(() => popSend("out"), 2000);
+    addEventListener("pagehide", () => popSend("in"));
+    return;
+  }
+  setInterval(() => pop.out && Date.now() - pop.seen > 5000 && comeBack(), 1000);
+  popSend("hello");
+  await sleep(250);                 // a chat window that is out answers by then
+}
+
+function popHeard(m) {
+  if (pop.window) {
+    if (m.kind === "hello") popSend("out");
+    else if (m.kind === "here") pop.where = m.where;
+    else if (m.kind === "lend") leave();
+    else if (m.kind === "return") arrive();
+  } else if (m.kind === "out") {
+    pop.seen = Date.now();
+    if (!pop.out) goOut();
+    popSend("here", { where: here() });
+  } else if (m.kind === "in") {
+    pop.seen = Date.now() - 3500;   // back in 1.5 s, unless a reloaded chat window says out again
+  } else if (m.kind === "go" && /^[#/]/.test(String(m.href))) {
+    location.assign(m.href);
+  }
+}
+
+function goOut() {
+  pop.out = true;
+  leave();
+  document.body.classList.add("chat-out");
+}
+
+function comeBack() {
+  pop.out = false;
+  document.body.classList.remove("chat-out");
+  document.body.classList.add("dock-open");
+  dockOpen(true);
+  arrive();
+}
+
+function leave() {              // Rookie leaves this window (rookie.js's exit)
+  if (!rookie.here) return;
+  rookie.here = false;
+  clearTimeout(rookie.back);
+  $("#rookie-say").hidden = true;
+  if (!rookie.holder || !rookie.inst) return;
+  liftOff();
+  rookie.inst.exit();
+}
+
+function arrive() {             // and arrives in this one (rookie.js's entrance)
+  if (rookie.here) return;
+  rookie.here = true;
+  if (!rookie.holder || !rookie.inst) return;
+  settle();
+  rookie.inst.enter(rookie.driver.state());
+  rookie.driver.shown = rookie.driver.state();
+}
+
+// The chat is out: Rookie leaves the chat window, arrives here beside the
+// target, points, and goes back the same way.
+function visit(r, said) {
+  const h = rookie.holder;
+  clearTimeout(rookie.back);
+  popSend("lend");
+  rookie.back = setTimeout(() => {
+    h.classList.remove("parked", "staged");
+    h.classList.add("away");
+    document.body.append(h);
+    const to = beside(r, h.offsetWidth, h.offsetHeight);
+    Object.assign(h.style, { transition: "none", left: to.x + "px", top: to.y + "px" });
+    rookie.here = true;
+    rookie.inst.enter("talking");
+    speak(said || "Right here");
+    rookie.back = setTimeout(() => {
+      leave();
+      rookie.back = setTimeout(() => popSend("return"), LEAVE_MS);
+    }, 5000);
+  }, LEAVE_MS);
+}
+
 // The shell's start: the agent in the dock (agent.site); none, no dock. In
-// setup the chat is the whole site, so the start page stays closed.
+// setup the chat is the whole site, so the start page stays closed; in the
+// chat window, always.
 if (typeof shellHooks !== "undefined") {
   shellHooks.starting.push(async () => {
     Object.assign(site, await call("agent.site"));
     if (site.look) rookie.look = site.look;
     if (!site.dock) return false;
     mountDock();
+    await popStart();
     shellHooks.opening.push(hideWork);                // a hub page replaces a work view
     startDock(site.dock).catch((x) => bubble("bad", x.message));
-    return !!(site.setup && !site.setup.done);
+    return pop.window || !!(site.setup && !site.setup.done);
   });
 }

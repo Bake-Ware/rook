@@ -139,7 +139,7 @@ body.setup #dock-head { padding: 14px 18px; font-size: 12px; }
 body.setup .msg .text { font-size: 14px; }
 
 @media (max-width: 760px) {
-  #dock-side { display: none; }
+  #dock-side, #dock-pop { display: none; }
   #dock { position: fixed; z-index: 35; inset: auto 0 0 0; width: 100%; height: 70vh; border-left: 0; border-top: 1px solid var(--line2); }
   body.setup { flex-direction: column; }
   body.setup main { flex: 1 1 45%; min-height: 0; }
@@ -151,3 +151,10 @@ body.setup .msg .text { font-size: 14px; }
 body.setup .rook-art { opacity: .3; }
 #work .work-form, #work .card, #work .secrets, #work .status { background: var(--overlay); }
 @media (prefers-reduced-motion: reduce) { #rookie-say { transition: none; } }
+
+/* the chat in its own window (/?chat): only the chat; the main window's pane is closed meanwhile */
+body.chat-out #dock { display: none !important; }
+body.chat-out .rookie.parked { pointer-events: none; }
+body.setup #dock-pop, body.chat-window #dock-pop, body.chat-window #dock-side { display: none; }
+body.chat-window #nav, body.chat-window main, body.chat-window .rook-art { display: none; }
+body.chat-window #dock { display: flex; position: static; flex: 1; width: 100%; height: 100%; border: 0; }

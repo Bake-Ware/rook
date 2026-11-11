@@ -66,7 +66,7 @@
       var r = t.getBoundingClientRect();
       still = last !== null && r.top === last ? still + 1 : 0;
       last = r.top;
-      if ((still < 3 || frames < 6) && ++frames < 120) return requestAnimationFrame(settle);
+      if ((still < 3 || frames < 6) && ++frames < 60) return requestAnimationFrame(settle);
       send({ kind: "located", id: id, box: { left: r.left, top: r.top, width: r.width, height: r.height } });
     })();
   }

@@ -141,6 +141,20 @@ right, right until set); the arrows in the chat's head flip it, and the
 agent flips it when you ask. At phone width the chat lies over the page
 and the side does nothing.
 
+The chat pane: the open page (or a setup view) on one side, the chat on
+the other. When the agent writes `[[open: page agent/agents]]` and
+`[[point: agents.house.model | Pick the model here]]`, the page opens and
+Rookie walks over to that control and back; a target is a `data-target`
+in the shell itself first, else one in the open page (the site asks the
+page where it is). The arrow in the chat's head opens the chat in its own
+browser window (`/?chat`): the same conversation, read from the same
+stream; the main window's pane closes and Rookie leaves it for the chat
+window. Pages the agent opens and controls it points at stay in the main
+window, and Rookie leaves the chat window to point there and comes back.
+Closing the chat window puts the pane back, Rookie with it; the two
+windows find each other with a BroadcastChannel, so reloading either one
+keeps one chat.
+
 ## Identity
 
 Each agent is `agent:<name>` on the hub, with its own grants plus

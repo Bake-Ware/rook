@@ -1,6 +1,7 @@
 """The fake house agent: "make a page <name>", "archive <page>", "who are
 you" (its system prompt's first line), "are we in setup" (whether the turn
-carried the first-run skill), the site's first-visit note, else an echo."""
+carried the first-run skill), "where do I change the model" (opens the
+Agents page and points), the site's first-visit note, else an echo."""
 import json
 
 
@@ -17,6 +18,9 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
         return {"text": "Welcome! How do you want to use the site?", "session": "s1"}
     if said == "who are you":                 # the first line of its system prompt
         return {"text": (system or "").strip().splitlines()[0], "session": session or "s1"}
+    if said == "where do I change the model":
+        return {"text": "On the Agents page.\n[[open: page agent/agents]]\n"
+                        "[[point: agents.house.model | Pick the model here]]", "session": session or "s1"}
     words = said.split()
     if said.startswith("make a page ") and len(words) == 4:
         name = words[3]

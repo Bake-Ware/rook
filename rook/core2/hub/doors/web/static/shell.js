@@ -369,7 +369,7 @@ function locate(target) {
       resolve(new DOMRect(f.left + box.left, f.top + box.top, box.width, box.height));
     };
     toFrame(cur, { kind: "locate", id, target: String(target) });
-    setTimeout(() => locating[id] && locating[id](null), 3000);
+    setTimeout(() => locating[id] && locating[id](null), 2000);
   });
 }
 
