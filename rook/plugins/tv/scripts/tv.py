@@ -74,6 +74,7 @@ GET_SETTINGS = "settings/getSystemSettings"
 INSERT_TEXT = "com.webos.service.ime/insertText"
 ENTER_KEY = "com.webos.service.ime/sendEnterKey"
 CAPTURE = "tv/executeOneShot"
+POINTER_IDLE = 60.0     # a pointer socket stays open this long after the last button press
 CAPTURE_MAX = 8 << 20   # a 960x540 JPEG is ~100 KB; refuse anything absurd
 MEDIA = {"play": "media.controls/play", "pause": "media.controls/pause",
          "stop": "media.controls/stop", "rewind": "media.controls/rewind",
@@ -184,17 +185,15 @@ class Session:
             raise SSAPError(str(body.get("errorText") or "request failed"))
         return body
 
-    async def button(self, name: str) -> None:
-        """Press one remote button over the pointer-input socket."""
+    async def pointer(self) -> WebSocket:
+        """The TV's pointer-input socket, open (close it)."""
         path = (await self.request(POINTER_SOCKET)).get("socketPath")
         u = urllib.parse.urlsplit(str(path or ""))
         if u.scheme not in ("ws", "wss") or not u.hostname:
             raise SSAPError("the TV gave no input socket")
-        ws = await WebSocket.connect(self.tv.ctx, self.tv.ctx.worker["id"], u.hostname,
-                                     u.port or (443 if u.scheme == "wss" else 80), u.path or "/",
-                                     tls=u.scheme == "wss", verify=False, timeout=CONNECT_TIMEOUT)
-        async with ws:
-            await ws.send(f"type:button\nname:{name}\n\n")
+        return await WebSocket.connect(self.tv.ctx, self.tv.ctx.worker["id"], u.hostname,
+                                       u.port or (443 if u.scheme == "wss" else 80), u.path or "/",
+                                       tls=u.scheme == "wss", verify=False, timeout=CONNECT_TIMEOUT)
 
     async def close(self) -> None:
         ws, self.ws = self.ws, None
@@ -206,6 +205,68 @@ class Session:
 
     async def __aexit__(self, *exc):
         await self.close()
+
+
+class _Pointer:
+    """One TV's pointer-input socket (and the session it came from), kept open
+    between button presses: opening costs some twenty calls to the delegate,
+    a press on an open socket one write. Closed after POINTER_IDLE without a
+    press; a press that finds it dead opens another."""
+
+    def __init__(self):
+        self.loop = asyncio.get_running_loop()
+        self.lock = asyncio.Lock()
+        self.session: Session | None = None
+        self.ws: WebSocket | None = None
+        self.used = 0.0
+        self.timer: asyncio.TimerHandle | None = None
+
+    def fresh(self) -> bool:
+        return self.ws is not None and time.monotonic() - self.used < POINTER_IDLE
+
+    def bind(self, ctx) -> None:
+        """Its stream calls ride the call in hand, not the one that opened it."""
+        for ws in (self.ws, self.session.ws if self.session else None):
+            if ws is not None:
+                ws.stream.ctx = ctx
+        if self.session is not None:
+            self.session.tv.ctx = ctx
+
+    def keep(self, session: Session | None = None, ws: WebSocket | None = None) -> None:
+        if ws is not None:
+            self.session, self.ws = session, ws
+        self.used = time.monotonic()
+        if self.timer is not None:
+            self.timer.cancel()
+        self.timer = self.loop.call_later(POINTER_IDLE, lambda: asyncio.ensure_future(self.expire()))
+
+    async def expire(self) -> None:
+        async with self.lock:
+            if not self.fresh():
+                await self.drop()
+
+    async def drop(self) -> None:
+        ws, session, self.ws, self.session = self.ws, self.session, None, None
+        if self.timer is not None:
+            self.timer.cancel()
+            self.timer = None
+        for conn in (ws, session):
+            if conn is not None:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+
+
+_POINTERS: dict[tuple, _Pointer] = {}
+
+
+def _pointer(tv: "_TV") -> _Pointer:
+    key = (tv.ctx.worker["id"], tv.host, tv.port, tv.key)
+    slot = _POINTERS.get(key)
+    if slot is None or slot.loop is not asyncio.get_running_loop():
+        slot = _POINTERS[key] = _Pointer()
+    return slot
 
 
 class _TV:
@@ -522,11 +583,29 @@ async def key(ctx, key: str, mods: list | None = None) -> dict:
     key = KEY_NAMES.get(key, key)
     if key not in BUTTONS:
         raise ctx.Error(f"unknown button {key!r}; one of {', '.join(BUTTONS)}")
-    async with await _live(tv) as c:
+    press = f"type:button\nname:{key}\n\n"
+    slot = _pointer(tv)
+    async with slot.lock:
+        if slot.fresh():
+            try:
+                slot.bind(ctx)
+                await slot.ws.send(press)
+                slot.keep()
+                return {"ok": True, "button": key}
+            except Exception:
+                pass        # the TV closed it (standby, a restart): open another
+        await slot.drop()
+        c = await _live(tv)
+        ws = None
         try:
-            await c.button(key)
+            ws = await c.pointer()
+            await ws.send(press)
         except Exception as e:
+            for conn in (ws, c):
+                if conn is not None:
+                    await conn.close()
             raise ctx.Error(f"{tv.name}: {_why(e)}") from None
+        slot.keep(c, ws)
     return {"ok": True, "button": key}
 
 
