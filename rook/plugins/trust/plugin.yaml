@@ -46,6 +46,5 @@ pages:
     file: pages/trust.html
     caps: [trust.map, "trust.level.*", hub.sacred, hub.status, hub.workers, "project.list", "agent.list", "agent.update", setting.set, approval.list, journal.search]
     events: ["worker.*", "hold.*", "approval.*"]
-    nav: { section: Trust }
 
 docs: { manual: docs/manual.md }

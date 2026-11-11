@@ -1490,7 +1490,7 @@ hooks:
   start: scripts/greet.py:start
   stop: scripts/greet.py:stop
 pages:
-  board: {{ title: Board, file: pages/board.html, caps: [greet.hello], nav: {{ section: Greet }} }}
+  board: {{ title: Board, file: pages/board.html, caps: [greet.hello] }}
 """
 
 GREET_PY = """\
@@ -1547,7 +1547,7 @@ def test_hub_load_brings_a_library_plugin_to_life_without_a_restart(hubs, tmp_pa
             assert (await call("greet.ping", worker="kaiju"))["result"] == "1.0.0"     # the worker's new cap
             _, caps = await http(hub, "GET", "/caps?worker=kaiju", token=(hub.data / "owner.token").read_text().strip())
             assert "greet.ping" in caps["workers"]["kaiju"]["caps"]
-            pages = (await call("page.list"))["result"]["pages"]
+            pages = [p for s in (await call("page.list"))["result"]["segments"] for p in s["pages"]]
             assert any(p["page"] == "greet/board" for p in pages), pages
             assert (marks / "started-1.0.0").exists()
 

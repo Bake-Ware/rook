@@ -29,7 +29,7 @@ def test_the_trust_page_is_the_04_one():
     assert "prompt(" not in page and "confirm(" not in page and "alert(" not in page   # no modals in the sandbox
     assert ":root" not in page                       # the base style's tokens, not its own
     manifest = yaml.safe_load((TRUST / "plugin.yaml").read_text())
-    assert manifest["package"] == "agents" and manifest["pages"]["trust"]["nav"] == {"section": "Trust"}
+    assert (manifest["package"], manifest["segment"]) == ("agents", "Agents")
     assert {"trust.map", "hub.sacred", "trust.level.*", "agent.update"} <= set(manifest["pages"]["trust"]["caps"])
 
 

@@ -148,9 +148,10 @@ and `.archived`. Scripts use `ctx.records.<type>`.
 
 ## Pages, components and the shell
 
-- `pages:` name: `{title, file, caps, events, nav: {section}}`: a sandboxed
-  page (no network) that calls only the caps it lists, as whoever views it
-  ([The hub site](dashboard.md)).
+- `pages:` name: `{title, file, caps, events}`: a sandboxed page (no
+  network) that calls only the caps it lists, as whoever views it
+  ([The hub site](dashboard.md)). It sits in the sidebar under the
+  plugin's `segment`.
 - `components:` name: `{title, doc, file, props, caps}`: a part a layout
   page mounts (`page.components` lists them).
 - `shell:` name: `{file, caps}`: script and style files the hub site's own

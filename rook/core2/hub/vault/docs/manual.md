@@ -30,7 +30,7 @@ when it needs it.
 
 ## The Vault page
 
-The site's Vault page (under More, at `#/secret/vault`) lists the secrets by
+The site's Vault page (under Hub, at `#/secret/vault`) lists the secrets by
 name, what each is for, who set it and when; never a value. Save adds one,
 or replaces the value of one with the same name (Replace fills in the name).
 Delete erases one.

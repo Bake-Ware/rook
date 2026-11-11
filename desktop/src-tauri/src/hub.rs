@@ -454,32 +454,30 @@ fn safe_page(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
 }
 
-/// `page.list` grouped by section, in the hub's order. A page's `hash` is
+/// `page.list`'s segments, in the hub's order. A page's `hash` is
 /// `/<page id>`, so the dashboard path is `/#/<page id>`.
 pub fn page_sections(v: &Value) -> Vec<Section> {
     let mut out: Vec<Section> = vec![];
-    for p in v.get("pages").and_then(Value::as_array).into_iter().flatten() {
-        let id = text(p, "page");
-        if !safe_page(&id) {
-            continue;
-        }
-        let title = Some(text(p, "title"))
-            .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| id.clone());
-        let section = Some(text(p, "section"))
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "Pages".into());
-        let page = Page {
-            hash: format!("/{id}"),
-            title,
-        };
-        match out.iter_mut().find(|s| s.title == section) {
-            Some(s) => s.pages.push(page),
-            None => out.push(Section {
-                id: section.to_lowercase().replace(' ', "-"),
-                title: section,
-                pages: vec![page],
-            }),
+    for seg in v.get("segments").and_then(Value::as_array).into_iter().flatten() {
+        let title = text(seg, "segment");
+        let pages: Vec<Page> = seg
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|p| (text(p, "page"), text(p, "title")))
+            .filter(|(id, _)| safe_page(id))
+            .map(|(id, title)| Page {
+                hash: format!("/{id}"),
+                title: if title.is_empty() { id } else { title },
+            })
+            .collect();
+        if !pages.is_empty() {
+            out.push(Section {
+                id: title.to_lowercase().replace(' ', "-"),
+                title,
+                pages,
+            });
         }
     }
     out
@@ -548,21 +546,21 @@ mod tests {
     }
 
     #[test]
-    fn pages_group_by_section_and_drop_odd_ids() {
-        let v = json!({"pages": [
-            {"page": "token/tokens", "title": "Tokens", "section": "Hub"},
-            {"page": "task/tasks", "title": "Tasks", "section": "Work"},
-            {"page": "hub/workers", "title": "Workers", "section": "Hub"},
-            {"page": "made/x y", "title": "Bad"},
-            {"page": "../etc", "title": "Bad"},
-            {"page": "agent/notes", "title": ""}]});
+    fn pages_come_by_segment_and_drop_odd_ids() {
+        let v = json!({"pinned": [], "segments": [
+            {"segment": "Machines", "open": true, "pages": [{"page": "hub/workers", "title": "Workers"}]},
+            {"segment": "Work", "open": false, "pages": [{"page": "made/x y", "title": "Bad"}]},
+            {"segment": "Hub", "open": true, "pages": [
+                {"page": "token/tokens", "title": "Tokens"},
+                {"page": "../etc", "title": "Bad"},
+                {"page": "agent/notes", "title": ""}]}]});
         let s = page_sections(&v);
         assert_eq!(
             s.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(),
-            ["Hub", "Work", "Pages"]
+            ["Machines", "Hub"]
         );
-        assert_eq!(s[0].pages.len(), 2);
-        assert_eq!(s[0].pages[1].hash, "/hub/workers");
-        assert_eq!(s[2].pages[0].title, "agent/notes");
+        assert_eq!(s[0].pages[0].hash, "/hub/workers");
+        assert_eq!(s[1].pages.len(), 2);
+        assert_eq!(s[1].pages[1].title, "agent/notes");
     }
 }

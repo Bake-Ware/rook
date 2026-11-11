@@ -12,8 +12,9 @@ is reversible and kept in ``<data>/pages.json``.
 Components are the canned tier (manifest ``components:``): small cap-backed
 scripts a package ships, which any agent (a weak local model too) arranges
 into a page by giving ``layout`` instead of ``html``. Each person's start
-page (or the hub's, set by an agent or job acting alone) is kept in
-``pages.json`` too. Making or changing one emits ``page.created`` or
+page and sidebar layout (or the hub's, set by an agent or job acting alone)
+are kept in ``pages.json`` too, and how often each opens a page in
+``page-opens.json``. Making or changing one emits ``page.created`` or
 ``page.updated``.
 """
 from __future__ import annotations
@@ -44,7 +45,9 @@ NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 MAX_HTML = 512 * 1024
 MAX_NOTE = 64 * 1024
 MAX_LAYOUT = 50
-EVERYONE = "*"                       # the hub's own start page (pages.json)
+EVERYONE = "*"                       # the hub's own start page and layout (pages.json)
+SEGMENTS = ("Agents", "Machines", "Work", "Hub")   # the sidebar's first segments, in order; any other after, by name
+FREQUENT = 3                         # the segments of a person's most-opened pages start open
 
 
 @dataclass
@@ -54,15 +57,13 @@ class Page:
     file: Path
     caps: list = field(default_factory=list)
     events: list = field(default_factory=list)
-    section: str = "Pages"
+    segment: str = "Pages"
     made: dict | None = None     # agent-made: {authors: [{person, agent}], created}
-    nav: bool = True             # in the sidebar; every page opens by its address either way
     layout: list | None = None   # arranged from components instead of its own html
 
     def view(self) -> dict:
         return {"page": self.id, "title": self.title, "caps": list(self.caps), "events": list(self.events),
-                "section": self.section, "made": self.made is not None,
-                "nav": self.nav}
+                "segment": self.segment, "made": self.made is not None}
 
 
 @dataclass
@@ -95,6 +96,12 @@ class Pages:
         # them at /public/<page> without signing in, acting as whoever made them
         # public. page -> {at, by, person}.
         self.public: dict = state.get("public", {})
+        # The sidebar's layout (site design point 2): per person:<name>, or * for
+        # the hub's own, only what differs from the default:
+        # {pages: {page: {pinned: <when>}}, segments: {segment: {open: bool}}}.
+        self.layouts: dict = state.get("layout", {})
+        self._opens_path = Path(hub.data) / "page-opens.json"
+        self.opens: dict = _read_json(self._opens_path)       # person:<name> or * -> {page: times opened}
 
     def all(self) -> dict[str, Page]:
         out = {}
@@ -105,8 +112,7 @@ class Pages:
                 out[f"{p.name}/{name}"] = Page(
                     f"{p.name}/{name}", spec.get("title") or name, Path(p.folder) / spec["file"],
                     list(spec.get("caps") or ()), list(spec.get("events") or ()),
-                    (spec.get("nav") or {}).get("section") or p.manifest.get("title") or p.name,
-                    nav="nav" in spec)
+                    p.manifest.get("segment") or "Hub")
         made = sorted(self.folder.glob("*/meta.json")) if self.folder.is_dir() else ()
         components = self.components() if made else {}
         for meta_path in made:
@@ -121,7 +127,7 @@ class Pages:
                 c = components.get(item.get("component"))
                 caps += [x for x in (c.caps if c else ()) if x not in caps]
             out[pid] = Page(pid, m.get("title") or name, meta_path.parent / "page.html", caps,
-                            list(m.get("events") or ()), m.get("section") or "Pages",
+                            list(m.get("events") or ()), m.get("segment") or m.get("section") or "Pages",
                             {k: m.get(k) for k in ("authors", "created")}, layout=layout)
         return out
 
@@ -194,9 +200,41 @@ class Pages:
                 return pid
         return None
 
+    def sidebar(self, person: str | None) -> dict:
+        """The sidebar ready to draw: the pinned pages in the order pinned, then
+        each segment with its pages and whether it is open. A segment is open
+        when the person opened or folded it by hand, else when it holds one of
+        their most-opened pages; until they have opened that many different
+        pages, their start page's segment, or every segment without one."""
+        who = person or EVERYONE
+        mine = self.layouts.get(who) or self.layouts.get(EVERYONE) or {}
+        marks, folds, opens = mine.get("pages") or {}, mine.get("segments") or {}, self.opens.get(who) or {}
+        live = {pid: p for pid, p in self.all().items() if pid not in self.archived}
+        segments: dict[str, list] = {}
+        for pid, page in sorted(live.items(), key=lambda kv: kv[1].title.lower()):
+            segments.setdefault(page.segment, []).append(
+                {**page.view(), "public": pid in self.public, "opens": opens.get(pid, 0),
+                 "pinned": "pinned" in marks.get(pid, {})})
+        used = sorted((n, pid) for pid, n in opens.items() if pid in live)[-FREQUENT:]
+        start = self.start(person)
+        hot = {live[pid].segment for _, pid in used} if len(used) == FREQUENT else \
+            {live[start].segment} if start else set(segments)
+        order = sorted(segments, key=lambda s: (SEGMENTS.index(s) if s in SEGMENTS else len(SEGMENTS), s))
+        rows = {r["page"]: r for pages in segments.values() for r in pages}
+        pinned = sorted((pid for pid, m in marks.items() if pid in rows and "pinned" in m),
+                        key=lambda pid: marks[pid]["pinned"])
+        return {"pinned": [rows[pid] for pid in pinned],
+                "segments": [{"segment": s, "open": (folds.get(s) or {}).get("open", s in hot),
+                              "pages": segments[s]} for s in order]}
+
+    def opened(self, person: str | None, pid: str) -> None:
+        mine = self.opens.setdefault(person or EVERYONE, {})
+        mine[pid] = mine.get(pid, 0) + 1
+        _write(self._opens_path, json.dumps(self.opens))
+
     def save_state(self) -> None:
         _write(self._state_path, json.dumps({"archived": self.archived, "start": self.starts,
-                                             "public": self.public}, indent=1))
+                                             "public": self.public, "layout": self.layouts}, indent=1))
 
 
 def public_path(pid: str) -> str:
@@ -245,7 +283,7 @@ def install(hub) -> None:
                   "page.create": h.pages_create, "page.update": h.pages_update,
                   "page.archive": h.pages_archive, "page.restore": h.pages_restore,
                   "page.components": h.pages_components, "page.site": h.pages_site,
-                  "page.start": h.pages_start, "page.public": h.pages_public},
+                  "page.start": h.pages_start, "page.public": h.pages_public, "page.arrange": h.pages_arrange},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
                 "hub.door": h.hub_door, "hub.sacred": h.hub_sacred, "hub.person": h.hub_person,
                 "hub.load": h.hub_load, "hub.joins": h.hub_joins, "hub.join": h.hub_join, "hub.join_code": h.hub_join_code},
@@ -272,19 +310,42 @@ class _Handlers:
 
     async def pages_list(self, ctx, archived: bool = False) -> dict:
         pages = self.hub.pages
+        if not archived:
+            return pages.sidebar(ctx.caller.person)
         out = []
-        for pid, page in sorted(pages.all().items(), key=lambda kv: (kv[1].section, kv[1].title)):
-            if (pid in pages.archived) != archived:
-                continue
-            row = page.view()
-            row["public"] = pid in pages.public
-            if archived:
-                row["archived"] = pages.archived[pid]
-            out.append(row)
+        for pid, page in sorted(pages.all().items(), key=lambda kv: (kv[1].segment, kv[1].title)):
+            if pid in pages.archived:
+                out.append({**page.view(), "public": pid in pages.public, "archived": pages.archived[pid]})
         return {"pages": out}
 
     async def pages_view(self, ctx, page: str) -> dict:
-        return self.hub.pages.openable(page).view()
+        out = self.hub.pages.openable(page).view()
+        self.hub.pages.opened(ctx.caller.person, page)
+        return out
+
+    async def pages_arrange(self, ctx, page: str | None = None, pinned: bool | None = None,
+                            segment: str | None = None, open: bool | None = None) -> dict:
+        """Change the caller's sidebar: pin or unpin a page, open or fold a
+        segment. A person's first change starts from the hub's own layout."""
+        if (page is None or pinned is None) and (segment is None or open is None):
+            raise KitError("bad args: give {page, pinned} or {segment, open}")
+        pages = self.hub.pages
+        who = ctx.caller.person or EVERYONE
+        mine = pages.layouts.setdefault(who, copy.deepcopy(pages.layouts.get(EVERYONE) or {}))
+        if page is not None and pinned is not None:
+            pages.get(page)
+            marks = mine.setdefault("pages", {})
+            entry = marks.setdefault(page, {})
+            if pinned:
+                entry.setdefault("pinned", time.time())
+            else:
+                entry.pop("pinned", None)
+            if not entry:
+                del marks[page]
+        if segment is not None and open is not None:
+            mine.setdefault("segments", {})[segment] = {"open": bool(open)}
+        pages.save_state()
+        return {"for": who, **pages.sidebar(ctx.caller.person)}
 
     async def pages_get(self, ctx, page: str) -> dict:
         pages = self.hub.pages
@@ -301,7 +362,7 @@ class _Handlers:
 
     async def pages_create(self, ctx, name: str, title: str, note: str, html: str | None = None,
                            layout: list | None = None, caps: list | None = None, events: list | None = None,
-                           section: str | None = None) -> dict:
+                           segment: str | None = None) -> dict:
         if not NAME.fullmatch(name):
             raise KitError("bad args: name is lowercase letters, digits, - and _ (64 at most)")
         folder = self.hub.pages.folder / name
@@ -310,7 +371,7 @@ class _Handlers:
         if (html is None) == (layout is None):
             raise KitError("bad args: give the page's html or a layout of components (page.components lists them)")
         _check_sizes(html or "", note)
-        meta = {"title": title, "caps": _patterns(caps), "events": _patterns(events), "section": section or "Pages",
+        meta = {"title": title, "caps": _patterns(caps), "events": _patterns(events), "segment": segment or "Pages",
                 "layout": self._layout(layout), "authors": [_author(ctx)], "created": time.time(),
                 "note": note, "history": [_history(ctx, "made the page")]}
         folder.mkdir(parents=True, exist_ok=True)
@@ -323,7 +384,7 @@ class _Handlers:
 
     async def pages_update(self, ctx, page: str, change: str, title: str | None = None, html: str | None = None,
                            layout: list | None = None, note: str | None = None, caps: list | None = None,
-                           events: list | None = None, section: str | None = None) -> dict:
+                           events: list | None = None, segment: str | None = None) -> dict:
         p = self.hub.pages.get(page)
         if not p.made:
             raise KitError(f"{page} comes with a plugin: change the plugin instead")
@@ -332,7 +393,7 @@ class _Handlers:
         folder = p.file.parent
         meta = _read_json(folder / "meta.json")
         _check_sizes(html or "", note or "")
-        for key, value in (("title", title), ("note", note), ("section", section)):
+        for key, value in (("title", title), ("note", note), ("segment", segment)):
             if value is not None:
                 meta[key] = value
         for key, value in (("caps", caps), ("events", events)):

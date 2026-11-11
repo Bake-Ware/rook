@@ -17,7 +17,10 @@ source: https://github.com/Bake-Ware/rook
 
 caps:
   list:
-    doc: The pages on the hub site, by section. Archived ones only with archived=true.
+    doc: >-
+      Your sidebar: {pinned: [page...], segments: [{segment, open, pages: [page...]}]}, segments in order
+      Agents, Machines, Work, Hub, then any other by name; each page with its segment, how often you
+      opened it (opens) and whether it is pinned. archived=true: {pages: [...]}, the archived ones.
     on: hub
     risk: read
     scope: multi-user
@@ -64,7 +67,7 @@ caps:
       note: { type: str, required: true, doc: "Markdown: why the page exists, who asked, what it watches." }
       caps: { type: list, items: { type: str }, doc: "Cap patterns the page may call." }
       events: { type: list, items: { type: str }, doc: "Event patterns the page hears." }
-      section: { type: str, doc: "Sidebar section; blank: Pages." }
+      segment: { type: str, doc: "Sidebar segment; blank: Pages." }
     result: { type: map }
   update:
     doc: Change a page an agent made. Each change is added to its note's history.
@@ -81,7 +84,7 @@ caps:
       note: { type: str, doc: "A new note body (the history is kept)." }
       caps: { type: list, items: { type: str } }
       events: { type: list, items: { type: str } }
-      section: { type: str }
+      segment: { type: str }
     result: { type: map }
   archive:
     doc: Take a page off the site. Nothing is lost; restore brings it back.
@@ -140,6 +143,20 @@ caps:
     effects: []
     args:
       page: { type: str, doc: "plugin/name; blank: the default." }
+    result: { type: map }
+  arrange:
+    doc: >-
+      Change your sidebar (or the hub's own, acting for nobody): {page, pinned} pins or unpins a page;
+      {segment, open} opens or folds a segment, which then stays that way. Returns the sidebar as page.list does.
+    on: hub
+    risk: write
+    scope: multi-user
+    effects: []
+    args:
+      page: { type: str, doc: "plugin/name." }
+      pinned: { type: bool }
+      segment: { type: str, doc: "A segment's name, e.g. Work." }
+      open: { type: bool }
     result: { type: map }
 
 components:

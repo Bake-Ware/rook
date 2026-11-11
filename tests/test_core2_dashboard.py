@@ -72,7 +72,7 @@ caps:
     scope: self
     run: scripts/board.py:motto
 pages:
-  board: { title: Board, file: pages/board.html, caps: ["board.count", "board.motto"], events: ["board.*"], nav: { section: Home } }
+  board: { title: Board, file: pages/board.html, caps: ["board.count", "board.motto"], events: ["board.*"] }
   holds: { title: Holds, file: pages/board.html, caps: [approval.list], events: ["hold.*"] }
 emits:
   board.inbox: { doc: A message came in from outside., taints: true, payload: { text: { type: str } } }
@@ -94,6 +94,11 @@ def motto(ctx):
 """
 
 BOARD_HTML = "<!doctype html><html><head><title>Board</title></head><body><p id=n></p></body></html>"
+
+
+def flat(sidebar: dict) -> list:
+    """Every page in page.list's sidebar, segment by segment."""
+    return [p for s in sidebar["segments"] for p in s["pages"]]
 
 
 def run(coro, timeout=60):
@@ -431,12 +436,12 @@ def test_a_page_plugin_renders_sandboxed_with_the_bridge(site):
         try:
             c = Client(hub)
             await c.sign_in(tokens["bake"])
-            listed = (await c.call("page.list"))["result"]["pages"]
+            listed = flat((await c.call("page.list"))["result"])
             ids = [p["page"] for p in listed]
             assert {"board/board", "hub/workers", "journal/journal",
                     "setting/settings"} <= set(ids)
             board = next(p for p in listed if p["page"] == "board/board")
-            assert board["section"] == "Home" and board["caps"] == ["board.count", "board.motto"]
+            assert board["segment"] == "Garden" and board["caps"] == ["board.count", "board.motto"]
             opened = await c.open("board/board")
             assert opened["ok"] and opened["page"]["title"] == "Board"
             status, headers, body = await c.req("GET", opened["frame"])
@@ -521,7 +526,7 @@ def test_archive_and_restore_are_caps_and_lose_nothing(site):
             t = (await c.open("board/board"))["token"]
             out = await c.call("page.archive", {"page": "board/board", "reason": "done with it"})
             assert out["ok"], out
-            live = [p["page"] for p in (await c.call("page.list"))["result"]["pages"]]
+            live = [p["page"] for p in flat((await c.call("page.list"))["result"])]
             gone = (await c.call("page.list", {"archived": True}))["result"]["pages"]
             assert "board/board" not in live
             assert gone[0]["page"] == "board/board" and gone[0]["archived"]["by"] == "person:bake"
@@ -529,13 +534,123 @@ def test_archive_and_restore_are_caps_and_lose_nothing(site):
             assert "archived" in (await c.page(t, "board.count"))["error"]   # open pages stop too
             assert (await c.call("page.restore", {"page": "board/board"}))["ok"]
             assert (await c.open("board/board"))["ok"]
-            assert json.loads((hub.data / "pages.json").read_text()) == {"archived": {}, "start": {}, "public": {}}
+            assert json.loads((hub.data / "pages.json").read_text()) == {"archived": {}, "start": {}, "public": {}, "layout": {}}
             # an agent (or a job) archives the same way, through the HTTP door
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.archive",
                                                     "args": {"page": "journal/journal"}, "why": WHY},
                                   bearer=tokens["claude"])
             assert out["ok"], out
             assert hub.pages.archived["journal/journal"]["by"] == "agent:claude"
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_the_sidebar_is_each_persons_and_follows_what_they_open(site):
+    async def go():
+        hub, tokens = await site()
+        try:
+            bake, kim = Client(hub), Client(hub)
+            await bake.sign_in(tokens["bake"])
+            await kim.sign_in(tokens["kim"])
+
+            async def sidebar(c, **args):
+                out = await c.call("page.list", args)
+                assert out["ok"], out
+                return out["result"]
+
+            async def opened(c):
+                return [x["segment"] for x in (await sidebar(c))["segments"] if x["open"]]
+
+            async def arrange(c, **args):
+                out = await c.call("page.arrange", args)
+                assert out["ok"], out
+                return out["result"]
+
+            # a new hub: nothing pinned, every segment open, the four first, a plugin's new segment after
+            s = await sidebar(bake)
+            assert s["pinned"] == [] and [x["segment"] for x in s["segments"]] == ["Machines", "Hub", "Garden"]
+            assert all(x["open"] for x in s["segments"])
+            board = next(p for p in flat(s) if p["page"] == "board/board")
+            assert board["segment"] == "Garden" and board["opens"] == 0 and board["pinned"] is False
+            assert [p["page"] for p in s["segments"][0]["pages"]] == ["hub/workers"]
+            # no history but a start page: its segment open
+            assert (await bake.call("page.start", {"page": "board/board"}))["ok"]
+            assert await opened(bake) == ["Garden"]
+
+            # pin through page.arrange: the strip in the order pinned, each still in its segment
+            await arrange(bake, page="journal/journal", pinned=True)
+            s = await arrange(bake, page="board/board", pinned=True)
+            assert [p["page"] for p in s["pinned"]] == ["journal/journal", "board/board"] and s["for"] == "person:bake"
+            assert next(p for p in flat(s) if p["page"] == "board/board")["pinned"]
+            s = await arrange(bake, page="board/board", pinned=False)
+            assert [p["page"] for p in s["pinned"]] == ["journal/journal"]
+            # opened or folded by hand wins; a folded segment still lists its pages
+            s = await arrange(bake, segment="Hub", open=True)
+            s = await arrange(bake, segment="Garden", open=False)
+            assert [(x["segment"], x["open"]) for x in s["segments"]] == [("Machines", False), ("Hub", True),
+                                                                           ("Garden", False)]
+            assert [p["page"] for p in s["segments"][2]["pages"]] == ["board/board", "board/holds"]
+            # only what differs from the default is kept, per person, beside the start page
+            state = json.loads((hub.data / "pages.json").read_text())
+            assert state["start"] == {"person:bake": "board/board"}
+            mine = state["layout"]["person:bake"]
+            assert list(mine["pages"]) == ["journal/journal"] and set(mine["pages"]["journal/journal"]) == {"pinned"}
+            assert mine["segments"] == {"Hub": {"open": True}, "Garden": {"open": False}}
+
+            # an agent alone arranges the hub's own, which anyone without their own gets
+            _, out = await bake.json("POST", "/call", {"worker": "rook", "cap": "page.arrange", "why": WHY,
+                                                       "args": {"page": "token/tokens", "pinned": True}},
+                                     bearer=tokens["narrow"])
+            assert out["ok"] and out["result"]["for"] == "*", out
+            assert [p["page"] for p in (await sidebar(kim))["pinned"]] == ["token/tokens"]
+            assert [p["page"] for p in (await sidebar(bake))["pinned"]] == ["journal/journal"]
+
+            # until kim has opened three different pages everything stays open; then what she opens most;
+            # the rows carry her counts, not bake's
+            for pid in ("board/board", "board/board", "hub/workers"):
+                assert (await kim.open(pid))["ok"]
+            assert await opened(kim) == ["Machines", "Hub", "Garden"]
+            assert (await kim.open("board/holds"))["ok"]
+            s = await sidebar(kim)
+            assert [x["segment"] for x in s["segments"] if x["open"]] == ["Machines", "Garden"]
+            assert {p["page"]: p["opens"] for p in flat(s) if p["opens"]} == {
+                "board/board": 2, "hub/workers": 1, "board/holds": 1}
+            assert all(p["opens"] == 0 for p in flat(await sidebar(bake)))
+            assert json.loads((hub.data / "page-opens.json").read_text())["person:kim"] == {
+                "board/board": 2, "hub/workers": 1, "board/holds": 1}
+            # her first change starts from the hub's own layout
+            s = await arrange(kim, segment="Hub", open=True)
+            assert [p["page"] for p in s["pinned"]] == ["token/tokens"]
+            assert [x["segment"] for x in s["segments"] if x["open"]] == ["Machines", "Hub", "Garden"]
+
+            assert "bad args" in (await bake.call("page.arrange", {"page": "board/board"}))["error"]
+            assert "no page" in (await bake.call("page.arrange", {"page": "x/y", "pinned": True}))["error"]
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_an_agent_made_page_lives_in_the_segment_it_was_made_with(site):
+    async def go():
+        hub, tokens = await site()
+        try:
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            made = {"title": "Uptime", "html": "<p>up</p>", "note": "Bake asked."}
+            assert (await c.call("page.create", {**made, "name": "uptime", "segment": "Reports"}))["ok"]
+            assert (await c.call("page.create", {**made, "name": "plain"}))["ok"]
+            # a page made before segments has section in its meta.json: that is its segment
+            old = hub.data / "pages" / "old"
+            old.mkdir()
+            (old / "page.html").write_text("<p>old</p>")
+            (old / "meta.json").write_text(json.dumps({"title": "Old", "section": "Reports", "note": "x"}))
+            s = (await c.call("page.list"))["result"]
+            assert [x["segment"] for x in s["segments"]] == ["Machines", "Hub", "Garden", "Pages", "Reports"]
+            assert [p["page"] for p in s["segments"][-1]["pages"]] == ["page/old", "page/uptime"]
+            assert (await c.call("page.update", {"page": "page/old", "change": "moved", "segment": "Garden"}))["ok"]
+            got = (await c.call("page.get", {"page": "page/old"}))["result"]
+            assert got["segment"] == "Garden"
         finally:
             await hub.stop()
     run(go())
@@ -772,7 +887,7 @@ def test_workers_journal_and_settings_pages(site):
             assert {s["key"]: s["type"] for s in listed if s["plugin"] == "board"}["printer"] == "worker"
             assert {s["key"]: s["type"] for s in listed if s["plugin"] == "board"}["key"] == "secret"
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.list", "why": WHY}, bearer=tokens["bake"])
-            page = next(p for p in out["result"]["pages"] if p["page"] == "setting/settings")
+            page = next(p for p in flat(out["result"]) if p["page"] == "setting/settings")
             served = hub.dispatcher.workers[hub.node].caps
             assert all(any(fnmatch.fnmatch(cap, c) for cap in served) for c in page["caps"]), page["caps"]
             assert "rook" in [w["name"] for w in (await c.page(t, "hub.workers"))["result"]["workers"]]
@@ -844,7 +959,7 @@ def test_people_are_added_given_passwords_and_removed_on_the_settings_page(site,
         try:
             c = Client(hub)
             await c.sign_in(tokens["bake"])
-            page = next(p for p in (await c.call("page.list"))["result"]["pages"] if p["page"] == "setting/settings")
+            page = next(p for p in flat((await c.call("page.list"))["result"]) if p["page"] == "setting/settings")
             assert set(page["caps"]) - {"setting.*"} <= set(hub.dispatcher.workers[hub.node].caps)
             t = (await c.open("setting/settings"))["token"]
             # the calls the page makes, with its args
@@ -873,8 +988,8 @@ def test_the_vault_page_calls_only_what_the_vault_serves(site):
         try:
             c = Client(hub)
             await c.sign_in(tokens["bake"])
-            page = next(p for p in (await c.call("page.list"))["result"]["pages"] if p["page"] == "secret/vault")
-            assert not page["nav"]                                       # under More, like Journal and Settings
+            page = next(p for p in flat((await c.call("page.list"))["result"]) if p["page"] == "secret/vault")
+            assert page["segment"] == "Hub"                              # its plugin's segment, like Journal and Settings
             assert set(page["caps"]) <= set(hub.dispatcher.workers[hub.node].caps)
             t = (await c.open("secret/vault"))["token"]
             # the calls the page makes, with its args
@@ -962,7 +1077,7 @@ def test_every_builtin_cap_is_known():
         declared |= set(load(folder).data["caps"])
     assert declared == {
         "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore", "page.public",
-        "page.components", "page.site", "page.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.joins", "hub.join", "hub.join_code", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
+        "page.arrange", "page.components", "page.site", "page.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.joins", "hub.join", "hub.join_code", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke",
         "hub.sacred", "hub.person", "hub.load"}
 

@@ -170,6 +170,6 @@ skills:
 docs: { manual: docs/manual.md }
 
 pages:
-  tasks: { title: Tasks, file: pages/tasks.html, caps: ["task.list", "task.get", "task.comment", "task.comment.list", "project.list"], events: ["task.*"], nav: { section: Work } }
+  tasks: { title: Tasks, file: pages/tasks.html, caps: ["task.list", "task.get", "task.comment", "task.comment.list", "project.list"], events: ["task.*"] }
 components:
   list: { title: Tasks, file: components/list.js, doc: "Open tasks (or those in one state), by project or assignee.", caps: [task.list], props: { project: { type: str, doc: Project id. }, state: { type: str }, assignee: { type: str }, limit: { type: int, min: 1, max: 50, default: 10 } } }

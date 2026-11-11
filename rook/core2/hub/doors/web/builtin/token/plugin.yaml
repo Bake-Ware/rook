@@ -44,6 +44,6 @@ caps:
     result: { type: map }
 
 pages:
-  tokens: { title: Tokens, file: pages/tokens.html, caps: ["token.*"], nav: { section: Hub } }
+  tokens: { title: Tokens, file: pages/tokens.html, caps: ["token.*"] }
 
 docs: { manual: docs/manual.md }

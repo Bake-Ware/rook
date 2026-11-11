@@ -289,6 +289,5 @@ pages:
     file: pages/agents.html
     caps: [agent.list, agent.get, agent.update, agent.engines, agent.models, setting.set, job.templates, job.install, job.list, job.update]
     events: ["agent.agent.*"]
-    nav: { section: Agents }
 
 docs: { manual: docs/manual.md }

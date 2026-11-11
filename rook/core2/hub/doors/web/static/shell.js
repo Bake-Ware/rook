@@ -58,7 +58,7 @@ function message(text, bad, home) {
 
 // -- the page list ---------------------------------------------------------
 
-let pages = [];
+let pages = [];              // every live page, from the sidebar page.list draws
 let site = { start: null };
 
 // A page in the sidebar: its link and a ... menu with what can be done to it
@@ -113,6 +113,16 @@ function pageMenu(trigger, p) {
     menuBox.append(b);
     return b;
   };
+  item(p.pinned ? "Unpin" : "Pin", async () => {
+    hideMenu();
+    try {
+      await call("page.arrange", { page: p.page, pinned: !p.pinned }, p.pinned ?
+        "The person unpinned a page from the sidebar." : "The person pinned a page to the sidebar.");
+    } catch (x) {
+      return message(x.message, true);
+    }
+    await loadNav();
+  }).dataset.target = "page.arrange";
   const pub = item(p.public ? "\u2713 Public" : "Make public", async () => {
     try {
       await call("page.public", { page: p.page, public: !p.public }, p.public ?
@@ -168,25 +178,48 @@ function pageMenu(trigger, p) {
   menuBox.style.top = Math.max(8, Math.min(innerHeight - menuBox.offsetHeight - 8, r.bottom + 4)) + "px";
 }
 
+// A segment: its heading opens or folds it (kept through page.arrange); folded,
+// its pages are one quiet line of links, so what exists still shows.
+function segment(s) {
+  const head = el("button", { type: "button", className: "section seg-head" }, s.segment);
+  head.setAttribute("aria-expanded", String(s.open));
+  head.dataset.target = "page.arrange";
+  head.onclick = async () => {
+    try {
+      await call("page.arrange", { segment: s.segment, open: !s.open }, s.open ?
+        "The person folded a sidebar segment." : "The person opened a sidebar segment.");
+    } catch (x) {
+      return message(x.message, true);
+    }
+    await loadNav();
+  };
+  const box = el("div", { className: "segment" + (s.open ? "" : " folded") });
+  box.append(head);
+  if (s.open) {
+    for (const p of s.pages) box.append(link(p));
+  } else {
+    const line = el("div", { className: "folded-pages" });
+    s.pages.forEach((p, i) => {
+      const a = el("a", { href: "#/" + p.page }, p.title);
+      a.dataset.page = p.page;
+      line.append(...(i ? [" \u00b7 ", a] : [a]));
+    });
+    box.append(line);
+  }
+  return box;
+}
+
 async function loadNav() {
   const [live, gone] = await Promise.all([call("page.list"), call("page.list", { archived: true })]);
-  pages = live.pages;
-  const box = $("#pages"), more = $("#more div");
+  pages = live.segments.flatMap((s) => s.pages);
+  const box = $("#pages");
   box.replaceChildren();
-  more.replaceChildren();
-  let section = null;
-  for (const p of pages) {
-    if (!p.nav) {                   // off the sidebar; its address still opens it
-      more.append(link(p));
-      continue;
-    }
-    if (p.section !== section) {
-      section = p.section;
-      box.append(el("div", { className: "section" }, section));
-    }
-    box.append(link(p));
+  if (live.pinned.length) {
+    const pinned = el("div", { className: "segment pinned" });
+    pinned.append(el("div", { className: "section" }, "Pinned"), ...live.pinned.map(link));
+    box.append(pinned);
   }
-  $("#more").hidden = more.children.length === 0;
+  box.append(...live.segments.map(segment));
   const list = $("#archived ul");
   list.replaceChildren();
   for (const p of gone.pages) {
@@ -215,7 +248,7 @@ function wanted() {
   if (h) return h;
   const has = (pid) => pid && pages.some((p) => p.page === pid);
   if (has(site.start)) return site.start;
-  const first = pages.find((p) => p.page === "hub/workers") || pages.find((p) => p.nav) || pages[0];
+  const first = pages.find((p) => p.page === "hub/workers") || pages[0];
   return first ? first.page : "";
 }
 
