@@ -1,6 +1,6 @@
 ---
-description: Build, change and retire pages on the hub site for the person - ready-made components or your own sandboxed HTML.
-when: the person wants to keep an eye on something, asks for a page or a dashboard, or a page has outlived its purpose; also on their first visit to the site.
+description: Build, change and retire pages on the hub site for the person - ready-made components or your own sandboxed HTML - and keep their sidebar.
+when: the person wants to keep an eye on something, asks for a page or a dashboard, a page has outlived its purpose, or they want their sidebar changed; also on their first visit to the site.
 ---
 # Hub pages
 
@@ -41,7 +41,18 @@ like.
 5. Tell the person where it is, ask them to look, and close the task when
    they are happy.
 
-**Retire a page.** `page.archive {page, reason}` takes it off the site
+**Keep their sidebar.** You own the layout; it is per person.
+`page.list` is their sidebar, with how often they open each page (`opens`).
+Pin what they keep coming back to, and say that you did. Hide, rename, move
+and group when they ask, or when you offer and they say yes; a new segment
+is just a name. Every one of these is `page.arrange {page, pinned | hidden |
+title | segment}` and all of it can be put back (`false`, or a blank title
+or segment). Working alone (the attention pass, a job), name them:
+`page.list {person}`, `page.arrange {person, ...}`.
+
+**Retire a page.** Never archive a page that came with a plugin: hide it for
+the person who does not want it. Archive is for pages you or another agent
+made: `page.archive {page, reason}` takes it off the site for everyone
 without losing anything; `page.restore` brings it back. When they say "when
 the experiment ends, get rid of it", wire a trigger that calls
 `page.archive` rather than remembering to.

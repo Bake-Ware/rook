@@ -18,15 +18,17 @@ source: https://github.com/Bake-Ware/rook
 caps:
   list:
     doc: >-
-      Your sidebar: {pinned: [page...], segments: [{segment, open, pages: [page...]}]}, segments in order
-      Agents, Machines, Work, Hub, then any other by name; each page with its segment, how often you
-      opened it (opens) and whether it is pinned. archived=true: {pages: [...]}, the archived ones.
+      Your sidebar: {pinned: [page...], segments: [{segment, open, pages: [page...]}], hidden: [page...]},
+      segments in order Agents, Machines, Work, Hub, then any other by name; each page under the title and
+      in the segment you see it with (own_title and home: its own, when you renamed or moved it), how
+      often you opened it (opens) and whether it is pinned. archived=true: {pages: [...]}, the archived ones.
     on: hub
     risk: read
     scope: multi-user
     idempotent: true
     args:
       archived: { type: bool, default: false, doc: "List the archived pages instead." }
+      person: { type: str, doc: "Whose sidebar (a name); blank: yours." }
     result: { type: map }
   view:
     doc: Open a page (the dashboard calls this when a person opens one). Returns what it may call and hear.
@@ -146,8 +148,11 @@ caps:
     result: { type: map }
   arrange:
     doc: >-
-      Change your sidebar (or the hub's own, acting for nobody): {page, pinned} pins or unpins a page;
-      {segment, open} opens or folds a segment, which then stays that way. Returns the sidebar as page.list does.
+      Change your sidebar, a person's (person), or the hub's own (acting for nobody). With page: pinned
+      pins or unpins it; hidden takes it off that sidebar (its address still opens it, nobody else loses
+      it); title shows it under another name; segment moves it there, a new name making a new segment.
+      A blank title or segment puts its own back. {segment, open} without page opens or folds a segment,
+      which then stays that way. Returns the sidebar as page.list does.
     on: hub
     risk: write
     scope: multi-user
@@ -155,8 +160,11 @@ caps:
     args:
       page: { type: str, doc: "plugin/name." }
       pinned: { type: bool }
-      segment: { type: str, doc: "A segment's name, e.g. Work." }
+      hidden: { type: bool }
+      title: { type: str, doc: "The name to show the page under; blank: its own." }
+      segment: { type: str, doc: "A segment's name, e.g. Work; with page, where to move it (blank: its home)." }
       open: { type: bool }
+      person: { type: str, doc: "Whose sidebar (a name); blank: yours." }
     result: { type: map }
 
 components:

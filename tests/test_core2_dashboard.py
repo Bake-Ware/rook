@@ -631,6 +631,111 @@ def test_the_sidebar_is_each_persons_and_follows_what_they_open(site):
     run(go())
 
 
+def test_the_layout_hides_renames_moves_and_groups_pages_per_person(site):
+    """Site design point 2: "The agent can move, hide, rename, group ... per
+    person; it never deletes a plugin's page, only hides it." All of it is
+    page.arrange, for the caller, the hub's own, or a person by name, and
+    putting each back leaves nothing behind."""
+    async def go():
+        hub, tokens = await site()
+        try:
+            bake, kim = Client(hub), Client(hub)
+            await bake.sign_in(tokens["bake"])
+            await kim.sign_in(tokens["kim"])
+
+            async def arrange(c, **args):
+                out = await c.call("page.arrange", args)
+                assert out["ok"], out
+                return out["result"]
+
+            async def alone(**args):            # an agent working alone (the attention pass, a job)
+                _, out = await bake.json("POST", "/call", {"worker": "rook", "cap": "page.arrange", "why": WHY,
+                                                           "args": args}, bearer=tokens["narrow"])
+                assert out["ok"], out
+                return out["result"]
+
+            def row(s, pid):
+                return next(p for p in flat(s) if p["page"] == pid)
+
+            def layout(who):
+                return json.loads((hub.data / "pages.json").read_text())["layout"].get(who, {}).get("pages", {})
+
+            # hide: off bake's sidebar and Pinned strip, into his hidden list; still opens; kim still has it
+            await arrange(bake, page="board/board", pinned=True)
+            s = await arrange(bake, page="board/board", hidden=True)
+            assert "board/board" not in [p["page"] for p in flat(s)] and s["pinned"] == []
+            assert [p["page"] for p in s["hidden"]] == ["board/board"]
+            assert (await bake.open("board/board"))["ok"]
+            assert "board/board" in [p["page"] for p in flat((await kim.call("page.list"))["result"])]
+            assert "board/board" not in hub.pages.archived
+
+            # rename: the name bake sees, with the page's own beside it
+            s = await arrange(bake, page="journal/journal", title="Log")
+            j = row(s, "journal/journal")
+            assert j["title"] == "Log" and j["own_title"] == "Journal"
+            # move: to another segment, and a name that is not one yet makes one (group)
+            s = await arrange(bake, page="hub/workers", segment="Garden")
+            w = row(s, "hub/workers")
+            assert w["segment"] == "Garden" and w["home"] == "Machines"
+            assert "Machines" not in [x["segment"] for x in s["segments"]]
+            await arrange(bake, page="board/holds", segment="Watching")
+            s = await arrange(bake, page="journal/journal", segment="Watching")
+            seg = next(x for x in s["segments"] if x["segment"] == "Watching")
+            assert [p["page"] for p in seg["pages"]] == ["board/holds", "journal/journal"]
+            assert [x["segment"] for x in s["segments"]][-1] == "Watching"
+            # a page left alone carries no own_title or home
+            assert "own_title" not in row(s, "token/tokens") and "home" not in row(s, "token/tokens")
+            # kim sees none of it
+            k = (await kim.call("page.list"))["result"]
+            assert row(k, "journal/journal")["title"] == "Journal" and row(k, "hub/workers")["segment"] == "Machines"
+            assert k["hidden"] == []
+
+            # putting each back leaves no entry behind
+            for args in ({"hidden": False}, {"pinned": False}):
+                await arrange(bake, page="board/board", **args)
+            await arrange(bake, page="journal/journal", title="", segment="")
+            await arrange(bake, page="board/holds", segment="Garden")        # its own home: nothing to keep
+            s = await arrange(bake, page="hub/workers", segment=" ")
+            assert layout("person:bake") == {}
+            assert s["hidden"] == [] and "Watching" not in [x["segment"] for x in s["segments"]]
+            assert row(s, "journal/journal")["title"] == "Journal" and "own_title" not in row(s, "journal/journal")
+            assert row(s, "hub/workers")["segment"] == "Machines" and "home" not in row(s, "hub/workers")
+
+            # the hub's own, acting for nobody: anyone without their own gets it
+            s = await alone(page="hub/workers", title="Machines", hidden=False, segment="Work")
+            assert s["for"] == "*" and row(s, "hub/workers")["title"] == "Machines"
+            assert row((await kim.call("page.list"))["result"], "hub/workers")["segment"] == "Work"
+            await alone(page="hub/workers", title="", segment="")
+            assert layout("*") == {}
+
+            # another person by name: an agent reads what kim uses and tailors her sidebar
+            assert (await kim.open("board/board"))["ok"]
+            _, out = await bake.json("POST", "/call", {"worker": "rook", "cap": "page.list", "why": WHY,
+                                                       "args": {"person": "kim"}}, bearer=tokens["narrow"])
+            assert out["ok"] and row(out["result"], "board/board")["opens"] == 1, out
+            s = await alone(person="kim", page="board/board", pinned=True)
+            assert s["for"] == "person:kim" and [p["page"] for p in s["pinned"]] == ["board/board"]
+            s = await alone(person="kim", page="board/holds", hidden=True)
+            await alone(person="kim", page="journal/journal", title="Log", segment="Mine")
+            k = (await kim.call("page.list"))["result"]
+            assert [p["page"] for p in k["pinned"]] == ["board/board"]
+            assert [p["page"] for p in k["hidden"]] == ["board/holds"]
+            assert row(k, "journal/journal")["title"] == "Log" and row(k, "journal/journal")["segment"] == "Mine"
+            assert (await bake.call("page.list"))["result"]["hidden"] == []
+            # bake (an owner, acting for himself) can do the same through the site with person
+            await arrange(bake, person="kim", page="board/holds", hidden=False)
+            await arrange(bake, person="kim", page="board/board", pinned=False)
+            await arrange(bake, person="person:kim", page="journal/journal", title="", segment="")
+            assert layout("person:kim") == {}
+
+            assert "bad args" in (await bake.call("page.arrange", {"page": "board/board", "open": True}))["error"]
+            assert "no person" in (await bake.call("page.arrange", {"person": "zed", "page": "board/board",
+                                                                     "hidden": True}))["error"]
+        finally:
+            await hub.stop()
+    run(go())
+
+
 def test_an_agent_made_page_lives_in_the_segment_it_was_made_with(site):
     async def go():
         hub, tokens = await site()

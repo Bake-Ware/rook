@@ -58,7 +58,7 @@ function message(text, bad, home) {
 
 // -- the page list ---------------------------------------------------------
 
-let pages = [];              // every live page, from the sidebar page.list draws
+let pages = [];              // every live page, from page.list: the sidebar's and the hidden ones
 let site = { start: null };
 
 // A page in the sidebar: its link and a ... menu with what can be done to it
@@ -80,7 +80,8 @@ function link(p) {
   return row;
 }
 
-// The ... menu: Archive, and Make public (with the public link to copy).
+// The ... menu: Pin, Make public (with the public link to copy), Hide, and Archive
+// on a page an agent made ("it never deletes a plugin's page, only hides it").
 const menuBox = el("div", { id: "page-menu", className: "page-menu" });
 menuBox.setAttribute("role", "menu");
 menuBox.hidden = true;
@@ -158,19 +159,30 @@ function pageMenu(trigger, p) {
     box.append(el("div", { className: "muted" }, "Anyone with this link can view it, no sign-in."), field, copy);
     menuBox.append(box);
   }
-  item("Archive", async () => {
+  item("Hide", async () => {
     hideMenu();
     try {
-      await call("page.archive", { page: p.page }, "The person archived a page from the sidebar.");
+      await call("page.arrange", { page: p.page, hidden: true }, "The person hid a page from their sidebar.");
     } catch (x) {
       return message(x.message, true);
     }
     await loadNav();
-    if (current && current.page === p.page) {
-      history.replaceState(null, "", location.pathname);
-      open(wanted());
-    }
-  }, "danger");
+  }).dataset.target = "page.arrange";
+  if (p.made) {
+    item("Archive", async () => {
+      hideMenu();
+      try {
+        await call("page.archive", { page: p.page }, "The person archived a page from the sidebar.");
+      } catch (x) {
+        return message(x.message, true);
+      }
+      await loadNav();
+      if (current && current.page === p.page) {
+        history.replaceState(null, "", location.pathname);
+        open(wanted());
+      }
+    }, "danger");
+  }
   menuBox.hidden = false;
   trigger.setAttribute("aria-expanded", "true");
   const r = trigger.getBoundingClientRect();
@@ -209,9 +221,32 @@ function segment(s) {
   return box;
 }
 
+// A fold at the bottom of the sidebar (Archived, Hidden): one row per page with
+// the button that brings it back.
+function fold(id, list, label, back) {
+  const ul = $("#" + id + " ul");
+  ul.replaceChildren();
+  for (const p of list) {
+    const li = el("li");
+    const b = el("button", { className: "link" }, label);
+    b.onclick = async () => {
+      try {
+        await back(p);
+      } catch (x) {
+        return message(x.message, true);
+      }
+      await loadNav();
+      location.hash = "#/" + p.page;
+    };
+    li.append(el("span", {}, p.title), b);
+    ul.append(li);
+  }
+  $("#" + id).hidden = list.length === 0;
+}
+
 async function loadNav() {
   const [live, gone] = await Promise.all([call("page.list"), call("page.list", { archived: true })]);
-  pages = live.segments.flatMap((s) => s.pages);
+  pages = live.segments.flatMap((s) => s.pages).concat(live.hidden);
   const box = $("#pages");
   box.replaceChildren();
   if (live.pinned.length) {
@@ -220,27 +255,19 @@ async function loadNav() {
     box.append(pinned);
   }
   box.append(...live.segments.map(segment));
-  const list = $("#archived ul");
-  list.replaceChildren();
-  for (const p of gone.pages) {
-    const li = el("li");
-    const restore = el("button", { className: "link" }, "Restore");
-    restore.onclick = async () => {
-      await call("page.restore", { page: p.page });
-      await loadNav();
-      location.hash = "#/" + p.page;
-    };
-    li.append(el("span", {}, p.title), restore);
-    list.append(li);
-  }
-  $("#archived").hidden = gone.pages.length === 0;
+  fold("hidden", live.hidden, "Show", (p) =>
+    call("page.arrange", { page: p.page, hidden: false }, "The person put a hidden page back in their sidebar."));
+  fold("archived", gone.pages, "Restore", (p) => call("page.restore", { page: p.page }));
   mark();
 }
 
+// The open page's link lit, and its title bar under the name the person gave it.
 function mark() {
   for (const a of document.querySelectorAll("#nav a")) {
     a.classList.toggle("on", !!current && a.dataset.page === current.page);
   }
+  const row = current && pages.find((p) => p.page === current.page);
+  if (row) $("#title").textContent = row.title;
 }
 
 function wanted() {

@@ -202,30 +202,44 @@ class Pages:
 
     def sidebar(self, person: str | None) -> dict:
         """The sidebar ready to draw: the pinned pages in the order pinned, then
-        each segment with its pages and whether it is open. A segment is open
-        when the person opened or folded it by hand, else when it holds one of
-        their most-opened pages; until they have opened that many different
-        pages, their start page's segment, or every segment without one."""
+        each segment with its pages and whether it is open, then the pages the
+        person hid. Each page shows under the name and in the segment the
+        person gave it (``title``, ``segment``), with its own beside them
+        (``own_title``, ``home``). A segment is open when the person opened or
+        folded it by hand, else when it holds one of their most-opened pages;
+        until they have opened that many different pages, their start page's
+        segment, or every segment without one."""
         who = person or EVERYONE
         mine = self.layouts.get(who) or self.layouts.get(EVERYONE) or {}
         marks, folds, opens = mine.get("pages") or {}, mine.get("segments") or {}, self.opens.get(who) or {}
-        live = {pid: p for pid, p in self.all().items() if pid not in self.archived}
+        rows, hidden = {}, []
+        for pid, page in self.all().items():
+            if pid in self.archived:
+                continue
+            mark = marks.get(pid, {})
+            row = {**page.view(), "public": pid in self.public, "opens": opens.get(pid, 0), "pinned": "pinned" in mark}
+            if mark.get("title"):
+                row.update(title=mark["title"], own_title=page.title)
+            if mark.get("segment"):
+                row.update(segment=mark["segment"], home=page.segment)
+            if mark.get("hidden"):
+                hidden.append(row)
+            else:
+                rows[pid] = row
         segments: dict[str, list] = {}
-        for pid, page in sorted(live.items(), key=lambda kv: kv[1].title.lower()):
-            segments.setdefault(page.segment, []).append(
-                {**page.view(), "public": pid in self.public, "opens": opens.get(pid, 0),
-                 "pinned": "pinned" in marks.get(pid, {})})
-        used = sorted((n, pid) for pid, n in opens.items() if pid in live)[-FREQUENT:]
+        for row in sorted(rows.values(), key=lambda r: r["title"].lower()):
+            segments.setdefault(row["segment"], []).append(row)
+        used = sorted((n, pid) for pid, n in opens.items() if pid in rows)[-FREQUENT:]
         start = self.start(person)
-        hot = {live[pid].segment for _, pid in used} if len(used) == FREQUENT else \
-            {live[start].segment} if start else set(segments)
+        hot = {rows[pid]["segment"] for _, pid in used} if len(used) == FREQUENT else \
+            {rows[start]["segment"]} if start in rows else set(segments)
         order = sorted(segments, key=lambda s: (SEGMENTS.index(s) if s in SEGMENTS else len(SEGMENTS), s))
-        rows = {r["page"]: r for pages in segments.values() for r in pages}
         pinned = sorted((pid for pid, m in marks.items() if pid in rows and "pinned" in m),
                         key=lambda pid: marks[pid]["pinned"])
         return {"pinned": [rows[pid] for pid in pinned],
                 "segments": [{"segment": s, "open": (folds.get(s) or {}).get("open", s in hot),
-                              "pages": segments[s]} for s in order]}
+                              "pages": segments[s]} for s in order],
+                "hidden": sorted(hidden, key=lambda r: r["title"].lower())}
 
     def opened(self, person: str | None, pid: str) -> None:
         mine = self.opens.setdefault(person or EVERYONE, {})
@@ -240,6 +254,16 @@ class Pages:
 def public_path(pid: str) -> str:
     """Where a public page opens without signing in."""
     return "/public/" + pid
+
+
+def _person(hub, ctx, person: str | None) -> str | None:
+    """``person`` as ``person:<name>`` (a known one), else the caller."""
+    if not person:
+        return ctx.caller.person
+    who = person if person.startswith("person:") else f"person:{person}"
+    if hub.identities.user(who) is None:
+        raise KitError(f"no person {person} on this hub")
+    return who
 
 
 def _owners(hub) -> list:
@@ -308,10 +332,10 @@ class _Handlers:
 
     # -- pages ------------------------------------------------------------------
 
-    async def pages_list(self, ctx, archived: bool = False) -> dict:
+    async def pages_list(self, ctx, archived: bool = False, person: str | None = None) -> dict:
         pages = self.hub.pages
         if not archived:
-            return pages.sidebar(ctx.caller.person)
+            return pages.sidebar(_person(self.hub, ctx, person))
         out = []
         for pid, page in sorted(pages.all().items(), key=lambda kv: (kv[1].segment, kv[1].title)):
             if pid in pages.archived:
@@ -324,28 +348,45 @@ class _Handlers:
         return out
 
     async def pages_arrange(self, ctx, page: str | None = None, pinned: bool | None = None,
-                            segment: str | None = None, open: bool | None = None) -> dict:
-        """Change the caller's sidebar: pin or unpin a page, open or fold a
-        segment. A person's first change starts from the hub's own layout."""
-        if (page is None or pinned is None) and (segment is None or open is None):
-            raise KitError("bad args: give {page, pinned} or {segment, open}")
+                            hidden: bool | None = None, title: str | None = None, segment: str | None = None,
+                            open: bool | None = None, person: str | None = None) -> dict:
+        """Change a sidebar: the caller's, the named person's, or the hub's own
+        (acting for nobody). With page: pin, hide, rename or move it (a blank
+        title or segment puts its own back). Without: open or fold a segment.
+        A person's first change starts from the hub's own layout."""
+        if (page is None and (segment is None or open is None)) or \
+                (page is not None and pinned is None and hidden is None and title is None and segment is None):
+            raise KitError("bad args: give {page, pinned|hidden|title|segment} or {segment, open}")
         pages = self.hub.pages
-        who = ctx.caller.person or EVERYONE
+        who = _person(self.hub, ctx, person) or EVERYONE
         mine = pages.layouts.setdefault(who, copy.deepcopy(pages.layouts.get(EVERYONE) or {}))
-        if page is not None and pinned is not None:
-            pages.get(page)
+        if page is not None:
+            p = pages.get(page)
             marks = mine.setdefault("pages", {})
             entry = marks.setdefault(page, {})
-            if pinned:
-                entry.setdefault("pinned", time.time())
-            else:
-                entry.pop("pinned", None)
+            if pinned is not None:
+                if pinned:
+                    entry.setdefault("pinned", time.time())
+                else:
+                    entry.pop("pinned", None)
+            if hidden is not None:
+                if hidden:
+                    entry["hidden"] = True
+                else:
+                    entry.pop("hidden", None)
+            for key, value, own in (("title", title, p.title), ("segment", segment, p.segment)):
+                if value is None:
+                    continue
+                if value.strip() and value.strip() != own:
+                    entry[key] = value.strip()
+                else:
+                    entry.pop(key, None)
             if not entry:
                 del marks[page]
-        if segment is not None and open is not None:
+        else:
             mine.setdefault("segments", {})[segment] = {"open": bool(open)}
         pages.save_state()
-        return {"for": who, **pages.sidebar(ctx.caller.person)}
+        return {"for": who, **pages.sidebar(who)}
 
     async def pages_get(self, ctx, page: str) -> dict:
         pages = self.hub.pages
@@ -786,7 +827,7 @@ class Settings:
             source = "set" if key in self.stored.get(name, {}) else \
                 "config" if key in self.base.get(name, {}) else "default"
             out.append({**_row(manifest, key, spec), "value": values.get(key, spec.get("default")), "source": source})
-        who = self._person(ctx, person)
+        who = _person(self.hub, ctx, person)
         if who and who != ctx.caller.person and not ctx.caller.owner:
             raise KitError("denied: only an owner reads someone else's settings")
         if who:
@@ -828,7 +869,7 @@ class Settings:
         return {"plugin": plugin, "key": key, "value": live.get(key, spec.get("default"))}
 
     def _set_personal(self, ctx, plugin: str, key: str, value, spec: dict, person: str | None) -> dict:
-        who = self._person(ctx, person)
+        who = _person(self.hub, ctx, person)
         if not who:
             raise KitError("a per-person setting needs a person: give person")
         if who != ctx.caller.person and not ctx.caller.owner:
@@ -845,15 +886,6 @@ class Settings:
         self.personal = {w: ps for w, ps in self.personal.items() if ps}
         _write(self.people_path, json.dumps(self.personal, indent=1))
         return {"plugin": plugin, "key": key, "person": who, "value": mine.get(key, spec.get("default"))}
-
-    def _person(self, ctx, person: str | None) -> str | None:
-        """``person`` as ``person:<name>`` (a known one), else the caller."""
-        if not person:
-            return ctx.caller.person
-        who = person if person.startswith("person:") else f"person:{person}"
-        if self.hub.identities.user(who) is None:
-            raise KitError(f"no person {person} on this hub")
-        return who
 
 
 def _row(manifest: dict, key: str, spec: dict) -> dict:
