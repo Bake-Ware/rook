@@ -187,3 +187,17 @@ def test_a_turn_reaches_rook_with_its_own_door_token(tmp_path, bins, home):
     assert not any("mcp_servers.rook" in a for a in bins.calls("codex")[1]["argv"])
     with pytest.raises(KitError, match="door_url"):
         turn(tmp_path, {"door_url": ""}, prompt="hi", door=ref)
+
+
+def test_its_models_are_the_ones_codex_lists(bins, home):
+    """codex debug models on the worker: the ones Codex shows in its own picker."""
+    bins.add("codex", """
+print(json.dumps({"models": [{"slug": "gpt-a", "visibility": "list"}, {"slug": "hidden", "visibility": "hide"},
+                             {"slug": "gpt-b", "visibility": "list"}]}))
+""")
+    out, _ = on_worker("agents-codex", "agents-codex.models", settings={**SETTINGS, "model": "gpt-b"})
+    assert out == {"models": ["gpt-a", "gpt-b"], "default": "gpt-b"}
+    assert bins.calls("codex")[0]["argv"] == ["debug", "models"]
+    bins.add("codex", "sys.stderr.write('not logged in\\\\n'); sys.exit(2)")
+    with pytest.raises(KitError, match=r"codex debug models failed \(exit 2\): not logged in"):
+        on_worker("agents-codex", "agents-codex.models", settings=SETTINGS)

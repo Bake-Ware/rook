@@ -156,6 +156,24 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
     return st.result(ctx, code)
 
 
+async def models(ctx):
+    """The models OpenCode offers on its worker (``opencode models``: provider/model, one a line)."""
+    ctx = itself(ctx)
+    w = worker(ctx)
+    place = await Place.of(ctx, w)
+    names: list[str] = []
+
+    def keep(text: str) -> None:
+        if "/" in text and _WORD.fullmatch(text.strip()):
+            names.append(text.strip())
+    code, tail = await stream(ctx, w, [place.expand(ctx.settings["opencode"] or "opencode"), "models"], stdin="",
+                              timeout="1m", name="OpenCode", setting="agents-opencode.opencode",
+                              env={"OPENCODE_DISABLE_AUTOUPDATE": "1"}, line=keep)
+    if code:
+        raise ctx.Error(f"opencode models failed (exit {code}): {tail.strip()[-300:] or 'no output'}")
+    return {"models": names, "default": ctx.settings["model"] or ""}
+
+
 class _Turn:
     def __init__(self):
         self.session, self.steps, self.usage = None, [[]], {}

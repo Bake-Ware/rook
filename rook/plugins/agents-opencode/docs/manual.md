@@ -16,6 +16,10 @@ stdin. The
 next turn continues the same OpenCode session (`--session <id>`). The reply
 (the text of the turn's last step), the session id and token usage come back.
 
+`agents-opencode.models` answers the models its `model` setting and an
+agent's model take: `opencode models` on the worker (`provider/model`, one a
+line), and `default`, the `model` setting (blank: OpenCode's own).
+
 OpenCode's free models refuse a custom system prompt, so the agent's
 instructions go at the head of a new session's first message, inside
 `<instructions>`. When the model fails (the free tier's usage limit, say),

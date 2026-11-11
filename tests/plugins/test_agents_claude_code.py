@@ -157,3 +157,9 @@ with open(os.path.join(os.path.dirname(sys.argv[0]), "mcp.seen"), "w") as f:
     assert bins.calls("claude")[0]["env"]["ROOK_DOOR_TOKEN"] == ref        # the fake worker resolves nothing
     with pytest.raises(KitError, match="door_url"):
         turn({"door_url": ""}, prompt="hi", door=ref)
+
+
+def test_its_models_need_no_worker():
+    """The aliases the CLI takes (its own list), and the model setting; the worker isn't asked."""
+    out, seen = on_worker("agents-claude-code", "agents-claude-code.models", settings={"worker": ""})
+    assert out == {"models": ["sonnet", "opus", "haiku", "fable"], "default": "opus"} and seen == []

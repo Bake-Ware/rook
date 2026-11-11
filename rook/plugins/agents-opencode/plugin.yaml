@@ -6,7 +6,7 @@
 # scripts/opencode.py.
 manifest: 1
 plugin: agents-opencode
-version: 0.6.0
+version: 0.6.1
 title: OpenCode backend
 doc: Agent turns in the OpenCode CLI on one of the band's workers (free models need no account), for the agents package.
 package: agents
@@ -44,6 +44,14 @@ caps:
         text: { type: str, required: true }
         session: { type: str, required: true }
         usage: { type: map, items: { type: int } }
+  models:
+    doc: "The models the model setting and an agent's model take, as provider/model (opencode models on the worker), and the model setting."
+    risk: exec
+    scope: local
+    idempotent: true
+    timeout: 1m
+    run: scripts/opencode.py:models
+    result: { type: map }
 provides:
   agent.backend: agents-opencode.turn
 docs: { manual: docs/manual.md }
