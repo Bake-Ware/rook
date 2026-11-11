@@ -139,4 +139,28 @@ mod tests {
         );
         assert_eq!(super::band_door("hub.example"), None);
     }
+
+    #[test]
+    fn a_band_that_names_its_web_socket_keeps_it() {
+        let home = std::env::temp_dir().join(format!("rook-config-{}", crate::link::hex(&crate::link::random::<4>())));
+        std::fs::create_dir_all(home.join("data")).unwrap();
+        std::fs::write(
+            home.join("worker.yaml"),
+            "data: data\nworker_id: 00000000000000000000000000000000\n",
+        )
+        .unwrap();
+        std::fs::write(home.join("data/enrollment.json"), r#"{"url": "https://rook.example"}"#).unwrap();
+        let band = |extra: &str| format!(r#"{{"b": {{"psk": "p", "relay": "127.0.0.1:9"{extra}}}}}"#);
+        std::fs::write(home.join("data/bands.json"), band("")).unwrap();
+        let derived = super::load(&home.join("worker.yaml")).unwrap().ws_url;
+        std::fs::write(
+            home.join("data/bands.json"),
+            band(r#", "ws_url": "ws://10.0.0.2:8740/band""#),
+        )
+        .unwrap();
+        let named = super::load(&home.join("worker.yaml")).unwrap().ws_url;
+        std::fs::remove_dir_all(&home).unwrap();
+        assert_eq!(derived.as_deref(), Some("wss://rook.example/band"));
+        assert_eq!(named.as_deref(), Some("ws://10.0.0.2:8740/band"));
+    }
 }

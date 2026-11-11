@@ -685,6 +685,21 @@ def test_band_door_is_the_hubs_own_address():
     assert band_door("http://192.168.1.5:8750/") == "ws://192.168.1.5:8750/band"
 
 
+def test_a_worker_falls_back_to_its_hubs_address_unless_its_band_names_another(tmp_path):
+    """The home band's web socket: the enrollment address's /band, or the
+    band's own ws_url in <data>/bands.json when one is written there."""
+    from types import SimpleNamespace
+    from rook.core2.worker.runtime import Worker
+    me = SimpleNamespace(data=tmp_path, trust=SimpleNamespace(home=SimpleNamespace(band=BAND)))
+    (tmp_path / "enrollment.json").write_text(json.dumps({"url": "http://192.168.1.5:8750"}))
+    (tmp_path / "bands.json").write_text(json.dumps({BAND: {"psk": PSK, "relay": "r:1"}}))
+    assert Worker._joined(me, with_door=True)[BAND]["ws_url"] == "ws://192.168.1.5:8750/band"
+    assert "ws_url" not in Worker._joined(me)[BAND]
+    (tmp_path / "bands.json").write_text(json.dumps({BAND: {"psk": PSK, "relay": "r:1",
+                                                            "ws_url": "wss://rook.example/band"}}))
+    assert Worker._joined(me, with_door=True)[BAND]["ws_url"] == "wss://rook.example/band"
+
+
 def test_a_link_whose_udp_and_web_socket_both_fail_goes_back_to_its_caller(monkeypatch):
     """UDP that hears nothing gives way to the web socket; a web socket that
     never comes up raises, so the band's retry tries UDP first again."""
