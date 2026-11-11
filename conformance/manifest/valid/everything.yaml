@@ -94,7 +94,7 @@ personas:
 skills: { reply: skills/reply.md }
 docs: { manual: docs/manual.md }
 pages:
-  inbox: { title: Inbox, file: pages/inbox.html, caps: ["telegram.*"], events: ["telegram.*"], nav: { section: home } }
+  inbox: { title: Inbox, file: pages/inbox.html, caps: ["telegram.*"], events: ["telegram.*"] }
 components:
   chat-card: { file: pages/chat-card.js, props: { id: { type: str } }, caps: [telegram.chat.get] }
 jobs:

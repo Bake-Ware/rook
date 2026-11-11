@@ -145,6 +145,6 @@ hooks:
   on: [ { event: "*", run: scripts/jobs.py:on_event } ]
 
 pages:
-  jobs: { title: Jobs, file: pages/jobs.html, caps: [job.list, job.update, job.run, job.run.list, job.templates, job.install], events: ["job.*"], nav: { section: Hub } }
+  jobs: { title: Jobs, file: pages/jobs.html, caps: [job.list, job.update, job.run, job.run.list, job.templates, job.install], events: ["job.*"] }
 
 docs: { manual: docs/manual.md }

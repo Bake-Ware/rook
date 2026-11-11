@@ -137,4 +137,4 @@ skills:
 docs: { manual: docs/manual.md }
 
 pages:
-  knowledge: { title: Knowledge, file: pages/knowledge.html, caps: ["knowledge.list", "knowledge.search", "knowledge.get", "knowledge.create", "knowledge.update", "knowledge.archive", "knowledge.history", "knowledge.review"], events: ["knowledge.*"], nav: { section: Work } }
+  knowledge: { title: Knowledge, file: pages/knowledge.html, caps: ["knowledge.list", "knowledge.search", "knowledge.get", "knowledge.create", "knowledge.update", "knowledge.archive", "knowledge.history", "knowledge.review"], events: ["knowledge.*"] }

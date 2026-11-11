@@ -48,7 +48,7 @@ def test_a_person_uses_the_workers_page(band):
     status, _, shell = b.request("GET", "/")
     assert status == 200 and b"/web/static/shell.js" in shell
 
-    pages = b.post("/web/api/call", {"cap": "page.list"})["result"]["pages"]
+    pages = [p for s in b.post("/web/api/call", {"cap": "page.list"})["result"]["segments"] for p in s["pages"]]
     assert "hub/workers" in [p["page"] for p in pages]
     opened = b.post("/web/api/open", {"page": "hub/workers"})
     assert opened["ok"], opened

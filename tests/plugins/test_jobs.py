@@ -440,8 +440,9 @@ def test_the_jobs_page_calls_only_what_the_plugin_serves(cfg):
     async def body():
         rig = await Rig(cfg).start()
         try:
-            page = next(p for p in (await rig.bake.ok("page.list"))["pages"] if p["page"] == "job/jobs")
-            assert page["section"] == "Hub"
+            sidebar = await rig.bake.ok("page.list")
+            page = next(p for s in sidebar["segments"] for p in s["pages"] if p["page"] == "job/jobs")
+            assert page["segment"] == "Hub"
             served = rig.hub.dispatcher.workers[rig.hub.node].caps
             assert set(page["caps"]) <= set(served), set(page["caps"]) - set(served)
             job = await rig.bake.ok("job.create", name="nightly", trigger={"manual": True}, call="probe.echo")

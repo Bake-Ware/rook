@@ -108,8 +108,9 @@ def test_the_agents_page(tmp_path, monkeypatch):
             return out["result"]
         await until(lambda: "shell.open" in set(getattr(hub.dispatcher.workers.get(WID), "caps", ())), 10)
 
-        page = next(p for p in (await ok("page.list", "List pages."))["pages"] if p["page"] == "agent/agents")
-        assert page["section"] == "Agents" and page["title"] == "Agents"
+        sidebar = await ok("page.list", "List pages.")
+        page = next(p for s in sidebar["segments"] for p in s["pages"] if p["page"] == "agent/agents")
+        assert page["segment"] == "Agents" and page["title"] == "Agents"
         served = hub.dispatcher.workers[hub.node].caps
         assert set(page["caps"]) <= set(served), set(page["caps"]) - set(served)
         grants += page["caps"]

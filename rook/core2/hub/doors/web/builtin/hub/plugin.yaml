@@ -119,7 +119,7 @@ emits:
     payload: { plugin: { type: str, required: true }, version: { type: str }, was: { type: str, doc: "The version it replaced." } }
 
 pages:
-  workers: { title: Workers, file: pages/workers.html, caps: [hub.workers, hub.joins, hub.join], events: ["worker.*"], nav: { section: Hub } }
+  workers: { title: Workers, file: pages/workers.html, caps: [hub.workers, hub.joins, hub.join], events: ["worker.*"] }
 
 components:
   workers: { title: Workers, file: components/workers.js, doc: "The band's workers: online or not, last seen.", caps: [hub.workers], props: { only: { type: list, items: { type: str }, doc: "Worker names to show; blank: all." } } }

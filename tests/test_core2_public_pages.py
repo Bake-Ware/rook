@@ -29,7 +29,8 @@ def test_a_public_page_opens_without_signing_in(site):
 
             out = await owner.call("page.public", {"page": "hub/workers"})
             assert out["ok"] and out["result"] == {"page": "hub/workers", "public": True, "url": "/public/hub/workers"}
-            row = next(p for p in (await owner.call("page.list"))["result"]["pages"] if p["page"] == "hub/workers")
+            sidebar = (await owner.call("page.list"))["result"]
+            row = next(p for s in sidebar["segments"] for p in s["pages"] if p["page"] == "hub/workers")
             assert row["public"] is True
             got = (await owner.call("page.get", {"page": "hub/workers"}))["result"]
             assert got["public"]["person"] == "person:bake" and got["public_url"] == "/public/hub/workers"

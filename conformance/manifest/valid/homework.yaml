@@ -24,6 +24,5 @@ pages:
     file: pages/bulletin.html
     caps: ["homework.item.*"]
     events: ["homework.*"]
-    nav: { section: home }
 presets:
   child: { grants: [homework.item.list] }
