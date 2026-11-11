@@ -364,6 +364,7 @@ class Hub:
         self.known: dict[str, Known] = {}
         self.manifests: dict[str, dict] = {}     # hash -> parsed manifest
         self._norm: dict[str, dict] = {}         # hash -> normalized
+        self._library_names: dict[Path, tuple] = {}   # plugin.yaml -> ((mtime, size), plugin)
         self.doors: list = []
         self.listeners: list = []                # fn(event, payload, source) for every event
         self.asks = Asks(self._emit, lambda p: self.identities.is_owner(p), self.clock)   # approval.ask (C4)
@@ -1654,16 +1655,35 @@ class Hub:
 
     def _library_folder(self, name: str) -> Path | None:
         """The library folder whose plugin.yaml names ``name``, read now: a
-        new version dropped into the library is pushed without a restart."""
+        new version dropped into the library is pushed without a restart. A
+        plugin.yaml is parsed again only when it changed (hub.manifests asks
+        once per plugin, on the event loop: parsing the whole library each
+        time stalled the hub for tens of seconds)."""
         lib = self.cfg.library
+        seen, found = {}, None
         for folder in sorted(lib.iterdir()) if lib and lib.is_dir() else ():
+            path = folder / "plugin.yaml"
             try:
-                raw = yaml.safe_load((folder / "plugin.yaml").read_text(encoding="utf-8"))
-            except (OSError, yaml.YAMLError):
+                st = path.stat()
+            except OSError:
                 continue
-            if isinstance(raw, dict) and raw.get("plugin") == name:
-                return folder
-        return None
+            stamp = (st.st_mtime_ns, st.st_size)
+            was = self._library_names.get(path)
+            if was is not None and was[0] == stamp:
+                plugin = was[1]
+            else:
+                try:
+                    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+                except OSError:
+                    continue
+                except yaml.YAMLError:
+                    raw = None
+                plugin = raw.get("plugin") if isinstance(raw, dict) else None
+            seen[path] = (stamp, plugin)
+            if found is None and plugin is not None and plugin == name:
+                found = folder
+        self._library_names = seen
+        return found
 
 
 def _read_doors(data: Path) -> list:
