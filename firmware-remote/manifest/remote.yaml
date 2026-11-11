@@ -1,0 +1,63 @@
+# The Rook remote's own manifest (builtin: implemented in the firmware,
+# announced by the device, never pushed). scripts/gen_manifest.py turns it
+# into the canonical JSON the firmware embeds and serves from core.manifests;
+# the announce carries its hash.
+manifest: 1
+plugin: remote
+version: 0.1.0
+title: Rook remote
+doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
+package: core
+builtin: true
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  state:
+    doc: The remote's buttons (names, which are held), the last presses, what the screen shows, Wi-Fi and hub status.
+    risk: read
+    scope: local
+    idempotent: true
+    result: { type: map }
+  display:
+    doc: Show text on the remote's screen (4 lines of 21 characters; newlines split lines, long lines wrap). seconds > 0 goes back to the status screen after that long; 0 keeps it until replaced.
+    risk: write
+    scope: local
+    args:
+      text: { type: str, required: true }
+      seconds: { type: int, default: 0, min: 0, max: 86400 }
+    result: { type: map }
+  ask:
+    doc: Ask the person holding the remote a question and wait for their answer. The screen shows the prompt and the options; they step through options with the navigation buttons and pick one with OK. Answers {choice, index, button}, or {timeout true} when nobody answered in time.
+    risk: write
+    scope: local
+    args:
+      prompt: { type: str, required: true }
+      options: { type: list, items: { type: str }, doc: "The choices; blank: Yes and No." }
+      timeout: { type: int, default: 60, min: 5, max: 600, doc: Seconds to wait for an answer. }
+    result: { type: map }
+  wait:
+    doc: Wait for the next button press on the remote. Answers {button, action, held_ms}, or {timeout true}. buttons narrows it to those button names.
+    risk: read
+    scope: local
+    args:
+      timeout: { type: int, default: 30, min: 1, max: 600, doc: Seconds to wait. }
+      buttons: { type: list, items: { type: str } }
+    result: { type: map }
+  map:
+    doc: Name the buttons. names lists one name per button, in the order remote.state lists them; blank keeps the current names.
+    risk: write
+    scope: self
+    effects: [persists]
+    args:
+      names: { type: list, items: { type: str } }
+    result: { type: map }
+
+emits:
+  remote.button:
+    doc: A button on the remote was pressed (action press) or held down (action long, once while held).
+    payload:
+      button: { type: str, required: true, doc: The button's name. }
+      action: { type: str, required: true, doc: press or long. }
+      index: { type: int, doc: The button's position in remote.state. }
+      held_ms: { type: int }
