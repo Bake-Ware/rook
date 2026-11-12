@@ -25,6 +25,8 @@ void set_name(const std::string& n);
 std::vector<std::pair<std::string, std::string>> wifi();
 void wifi_add(const std::string& ssid, const std::string& pass);
 void wifi_clear();
+std::string wifi_last();                       // the network that last let us in: tried first
+void set_wifi_last(const std::string& ssid);
 
 // The worker key seed (32 bytes), made once on first boot.
 void seed(uint8_t out[32]);

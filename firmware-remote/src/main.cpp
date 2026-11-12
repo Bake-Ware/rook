@@ -10,7 +10,9 @@
 #include <WiFi.h>
 #include <WiFiMulti.h>
 #include <Wire.h>
+#include <algorithm>
 #include <deque>
+#include <esp_wifi.h>
 #include <time.h>
 #include "buttons.h"
 #include "rc_sig.h"
@@ -20,7 +22,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.2.1"
+#define FW_VERSION "0.2.5"
 static const int PIN_SDA = 5, PIN_SCL = 6;
 static const uint8_t PCF_ADDR = 0x20, OLED_ADDR = 0x3C;
 
@@ -31,6 +33,7 @@ static SemaphoreHandle_t ev_mu;
 static std::deque<ButtonEvent> recent;      // last presses, for state and wait
 static volatile int ask_answer = -1;        // set by the button handler while asking
 static std::string last_note;
+static volatile bool wifi_hold = false;     // the scan command has the radio: no joining meanwhile
 // What the buttons do now: the TV's (events to the hub), the menu's (the input
 // button opens it: pick the device the events are for, or the game), the game's.
 enum Mode { REMOTE, MENU, GAME };
@@ -294,7 +297,20 @@ static void handle_line(const std::string& line) {
         out["networks"] = (int)settings::wifi().size();
     } else if (cmd == "scan") {
         // What the radio hears (2.4 GHz only), and the saved networks' names.
-        int n = WiFi.scanNetworks();
+        // A join in flight owns the radio (its own scan, up to 8 s): wait it out,
+        // then scan alone at full power, hidden networks too, 300 ms a channel.
+        bool joined = WiFi.status() == WL_CONNECTED;
+        wifi_hold = true;
+        if (!joined) {
+            delay(9000);
+            WiFi.disconnect();
+            delay(200);
+            WiFi.setTxPower(WIFI_POWER_19_5dBm);
+        }
+        int n = WiFi.scanNetworks(false, true, false, 300);
+        out["count"] = n;                 // below 0: the scan itself failed
+        out["tx_power"] = (int)WiFi.getTxPower();
+        out["was_joined"] = joined;
         JsonArray a = out["heard"].to<JsonArray>();
         for (int i = 0; i < n; i++) {
             JsonObject o = a.add<JsonObject>();
@@ -303,6 +319,7 @@ static void handle_line(const std::string& line) {
             o["ch"] = WiFi.channel(i);
         }
         WiFi.scanDelete();
+        wifi_hold = false;
         JsonArray sv = out["saved"].to<JsonArray>();
         for (auto& w : settings::wifi()) sv.add(w.first);
         out["status"] = (int)WiFi.status();
@@ -386,19 +403,80 @@ static void rook_task(void*) {
 }
 
 // Joining Wi-Fi blocks for seconds; keep it off the button/serial loop.
-// Transmit power: full power fails to authenticate right next to an AP
-// (reasons 2/202 at -25 dBm) and its bursts upset the PCF8574 lines, while
-// 8.5 dBm doesn't reach across the house. Try low first, then full after a
-// failed join, and keep whichever worked.
+// One join: drop whatever the radio was trying (a scan fails while it is still
+// connecting, which is how WiFiMulti went deaf away from the last network),
+// scan, and connect to the saved network that last let us in, else the
+// strongest (its strongest access point); each
+// failed attempt moves on to the next saved network heard, so one that won't
+// have us doesn't shadow a weaker one that will.
+// - A WPA2/WPA3 network is joined as WPA2 (no PMF): the WPA3 handshake to the
+//   house mesh never completes on this radio, and says nothing while it fails.
+// - Transmit power: full power fails to authenticate right next to an AP
+//   (reasons 2/202 at -25 dBm) and its bursts upset the PCF8574 lines, so a
+//   strong network is joined at 8.5 dBm and a weaker one at full power; a
+//   second round over the networks tries the other power.
+struct WifiCandidate {
+    std::string ssid, pass;
+    int ch, rssi;
+    uint8_t bssid[6];
+};
+
+static bool wifi_join(unsigned attempt) {
+    WiFi.disconnect();
+    vTaskDelay(pdMS_TO_TICKS(200));
+    int n = WiFi.scanNetworks(false, true, false, 300);
+    if (n < 0) {
+        logf("wifi: scan failed (%d)", n);
+        return false;
+    }
+    std::vector<WifiCandidate> heard;
+    for (auto& net : settings::wifi()) {
+        int best = -1;
+        for (int i = 0; i < n; i++)
+            if (net.first == WiFi.SSID(i).c_str() && (best < 0 || WiFi.RSSI(i) > WiFi.RSSI(best))) best = i;
+        if (best < 0) continue;
+        WifiCandidate c{net.first, net.second, (int)WiFi.channel(best), (int)WiFi.RSSI(best), {}};
+        memcpy(c.bssid, WiFi.BSSID(best), 6);
+        heard.push_back(c);
+    }
+    WiFi.scanDelete();
+    if (heard.empty()) {
+        logf("wifi: heard %d networks, none of them saved", n);
+        return false;
+    }
+    // The network that last let us in first, then the strongest.
+    std::string last = settings::wifi_last();
+    std::sort(heard.begin(), heard.end(), [&](const WifiCandidate& x, const WifiCandidate& y) {
+        if ((x.ssid == last) != (y.ssid == last)) return x.ssid == last;
+        return x.rssi > y.rssi;
+    });
+    const WifiCandidate& c = heard[attempt % heard.size()];
+    bool low = (c.rssi > -45) != (((attempt / heard.size()) & 1) != 0);
+    logf("wifi: joining %s (ch %d, %d dBm) at %s power", c.ssid.c_str(), c.ch, c.rssi, low ? "low" : "full");
+    WiFi.begin(c.ssid.c_str(), c.pass.c_str(), c.ch, c.bssid, false);
+    wifi_config_t conf;
+    if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
+        conf.sta.pmf_cfg.capable = false;
+        conf.sta.pmf_cfg.required = false;
+        esp_wifi_set_config(WIFI_IF_STA, &conf);
+    }
+    WiFi.setTxPower(low ? WIFI_POWER_8_5dBm : WIFI_POWER_19_5dBm);
+    esp_wifi_connect();
+    for (int t = 0; t < 150 && WiFi.status() != WL_CONNECTED; t++) vTaskDelay(pdMS_TO_TICKS(100));
+    if (WiFi.status() != WL_CONNECTED) return false;
+    settings::set_wifi_last(c.ssid);
+    return true;
+}
+
 static void wifi_task(void*) {
-    bool low = true;
+    unsigned attempt = 0;
     for (;;) {
-        if (WiFi.status() != WL_CONNECTED && !settings::wifi().empty()) {
-            WiFi.setTxPower(low ? WIFI_POWER_8_5dBm : WIFI_POWER_19_5dBm);
-            wifi.run(8000);
-            if (WiFi.status() != WL_CONNECTED) {
-                low = !low;
-                logf("wifi: join failed; next try at %s power", low ? "low" : "full");
+        if (!wifi_hold && WiFi.status() != WL_CONNECTED && !settings::wifi().empty()) {
+            if (wifi_join(attempt)) {
+                attempt = 0;
+            } else {
+                attempt++;
+                logf("wifi: join failed (status %d)", (int)WiFi.status());
             }
         }
         vTaskDelay(pdMS_TO_TICKS(5000));
@@ -443,6 +521,7 @@ void setup() {
             logf("wifi: connected to %s, ip %s", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
     });
     WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(false);     // wifi_task rejoins: it picks the strongest network each time
     WiFi.setHostname(settings::name().c_str());
     for (auto& n : settings::wifi()) wifi.addAP(n.first.c_str(), n.second.c_str());
     configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");

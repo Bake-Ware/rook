@@ -201,4 +201,10 @@ int rotation() { return prefs.getInt("rot", 3) & 3; }
 
 void set_rotation(int r) { prefs.putInt("rot", r & 3); }
 
+std::string wifi_last() { return get("wifi_last"); }
+
+void set_wifi_last(const std::string& ssid) {
+    if (get("wifi_last") != ssid) put("wifi_last", ssid);
+}
+
 }  // namespace settings
