@@ -170,7 +170,7 @@ async def _tool(hub, token, params):
 def add_routes(app, hub):
     async def post(request):
         try:
-            message = json.loads(await request.read())
+            message = json.loads(await request.content.read())   # no size limit: arguments carry files
         except ValueError:
             return _rpc(None, 400, error={"code": -32700, "message": "The body is not JSON."})
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
