@@ -162,6 +162,14 @@ class Auth:
     def _check(self, jwt, scope=None):
         """The token's row if the JWT is good, else HubError. The lock is held.
         A check is not a use: it leaves last_used alone."""
+        row = self._row(jwt)
+        refusal = self._refusal(row, scope)
+        if refusal is not None:
+            raise refusal
+        return row
+
+    def _row(self, jwt):
+        """The row of a JWT this hub minted, else HubError token_invalid. The lock is held."""
         invalid = HubError("token_invalid", "That is not a token this hub minted.", _TRY_AGAIN)
         try:
             header, payload, signature = jwt.split(".")
@@ -178,18 +186,22 @@ class Auth:
         row = self.db.execute("SELECT * FROM tokens WHERE guid = ?", (claims.get("jti"),)).fetchone()
         if row is None:
             raise invalid
+        return row
+
+    def _refusal(self, row, scope):
+        """Why a recognised token cannot be used now (a HubError), or None."""
         name = row["moniker"]
         if row["revoked_at"] is not None:
-            raise HubError("token_revoked", f"Token {name} was revoked.", _TRY_AGAIN)
+            return HubError("token_revoked", f"Token {name} was revoked.", _TRY_AGAIN)
         if row["spent_at"] is not None:
-            raise HubError("token_spent", f"Token {name} was already used, and it works once.",
-                           "Mint a new join token for the next worker.")
+            return HubError("token_spent", f"Token {name} was already used, and it works once.",
+                            "Mint a new join token for the next worker.")
         if row["expires_at"] is not None and self.hub.clock() >= row["expires_at"]:
-            raise HubError("token_expired", f"Token {name} expired.", _TRY_AGAIN)
+            return HubError("token_expired", f"Token {name} expired.", _TRY_AGAIN)
         if scope is not None and scope not in row["scope"].split():
-            raise HubError("token_scope", f"Token {name} is a {row['purpose']} token and cannot be used for this.",
-                           f"Use a token with the {scope} scope.")
-        return row
+            return HubError("token_scope", f"Token {name} is a {row['purpose']} token and cannot be used for this.",
+                            f"Use a token with the {scope} scope.")
+        return None
 
     def verify(self, jwt, scope=None):
         """The token's record if it is good (optionally: carries `scope`), else HubError."""
@@ -197,8 +209,19 @@ class Auth:
             return self._record(self._check(jwt, scope))
 
     def use(self, jwt, scope):
-        """Check a token and record the use (T6); spend it if it works once. The lock is held."""
-        row = self._check(jwt, scope)
+        """Check a token and record the use (T6); spend it if it works once. The lock is held.
+
+        A recognised token that is refused (revoked, spent, expired, wrong scope)
+        is journaled under its owner with the reason (L1), and committed at once,
+        so the entry stays when the caller's transaction rolls back. Every caller
+        uses the token before it writes anything, so nothing else is committed early.
+        A token the hub does not recognise is not journaled: there is no one to attribute it to."""
+        row = self._row(jwt)
+        refusal = self._refusal(row, scope)
+        if refusal is not None:
+            self.hub._journal("auth", (row["owner"], row["guid"]), None, {"refused": refusal.message["code"]})
+            self.db.commit()
+            raise refusal
         now = self.hub.clock()
         self.db.execute("UPDATE tokens SET last_used = ?, spent_at = CASE WHEN once THEN ? END WHERE guid = ?",
                         (now, now, row["guid"]))

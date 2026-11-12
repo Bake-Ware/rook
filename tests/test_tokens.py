@@ -29,6 +29,12 @@ def claims(jwt):
     return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
 
 
+def refusals(hub):
+    """The auth entries for refused tokens: (user, token, reason)."""
+    return [(e["user"], e["token"], json.loads(e["result"])["refused"]) for e in journal(hub)
+            if e["kind"] == "auth" and "refused" in json.loads(e["result"])]
+
+
 def refused(hub, jwt, scope=None):
     with pytest.raises(HubError) as e:
         hub.auth.verify(jwt, scope)
@@ -99,6 +105,7 @@ async def scenario(tmp_path):
             await second.run()
         assert e.value.message["code"] == "token_spent" and e.value.message["next"]
         assert second.identity is None and hub.list_pending() == [] and len(hub.list_workers()) == 1
+        assert refusals(hub) == [(alice, join_id, "token_spent")]    # journaled under its owner (L1)
 
         # 5. A join token past its lifetime is refused the same way (T2).
         late = hub.auth.mint("join", user=alice)
@@ -108,6 +115,7 @@ async def scenario(tmp_path):
             await third.run()
         assert e.value.message["code"] == "token_expired" and e.value.message["next"]
         assert hub.list_pending() == [] and len(hub.list_workers()) == 1
+        assert refusals(hub)[-1] == (alice, hub.auth.list_tokens()[-1]["guid"], "token_expired")
 
         # 6. A call made with the agent token is journaled with token and user,
         #    and the token's last-used time moves (L1, T6).
@@ -125,15 +133,23 @@ async def scenario(tmp_path):
         alice_spare = hub.auth.mint("agent", user=alice)
         hub.auth.revoke_token(agent_id, user=alice)
         assert refused(hub, agent) == "token_revoked"
+        with pytest.raises(HubError) as e:                 # acting with it is refused and journaled
+            hub.auth.mint("join", token=agent)
+        assert e.value.message["code"] == "token_revoked"
+        assert refusals(hub)[-1] == (alice, agent_id, "token_revoked")
         bob = hub.auth.create_user("Bob")["guid"]
         bob_agent = hub.auth.mint("agent", user=bob)
         bob_join = hub.auth.mint("join", token=bob_agent)
         hub.auth.revoke_user(bob, token=alice_spare)
         assert refused(hub, bob_agent) == "token_revoked" and refused(hub, bob_join) == "token_revoked"
+        bob_join_id = hub.auth.list_tokens()[-1]["guid"]
+        revoked_user_entry = journal(hub)[-1]
+        assert hub.knock(knock(bob_join))["code"] == "token_revoked"   # the knock path journals too
+        assert refusals(hub)[-1] == (bob, bob_join_id, "token_revoked")
         assert hub.auth.verify(alice_spare)["owner"] == alice
         assert [t["revoked_at"] is None for t in hub.auth.list_tokens() if t["owner"] == alice] == [
             False, True, True, True]                       # only the agent token revoked by hand
-        entry = journal(hub)[-1]
+        entry = revoked_user_entry
         assert json.loads(entry["result"]) == {"revoked_user": bob, "revoked_tokens": [
             hub.auth.list_tokens()[-2]["guid"], hub.auth.list_tokens()[-1]["guid"]]}
 
@@ -179,6 +195,9 @@ def test_scopes_keep_tokens_to_their_mechanism(hub):
     reply = hub.knock(knock(agent))                # an agent token cannot join
     assert reply["code"] == "token_scope"
     assert hub.list_pending() == [] and hub.list_workers() == []
+    agent_id, join_id = (t["guid"] for t in hub.auth.list_tokens())
+    assert refusals(hub) == [(alice, join_id, "token_scope"), (alice, join_id, "token_scope"),
+                             (alice, agent_id, "token_scope")]
     assert hub.knock(knock(join))["status"] == "approved"
 
 
@@ -194,7 +213,11 @@ def test_forged_or_foreign_tokens_are_invalid(hub, tmp_path):
     other.close()
     assert refused(hub, foreign) == "token_invalid"
     assert hub.knock(knock("not a token"))["code"] == "token_invalid"
+    assert hub.knock(knock(foreign))["code"] == "token_invalid"
+    with pytest.raises(HubError):
+        hub.auth.mint("agent", token=foreign)
     assert hub.list_pending() == []
+    assert refusals(hub) == []                     # unrecognised tokens are not journaled
 
 
 def test_checking_a_token_is_not_using_it(hub):
