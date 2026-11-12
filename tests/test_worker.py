@@ -1,9 +1,14 @@
 """Worker edges the lifecycle scenario does not reach."""
 
 import asyncio
+import json
 import os
 import stat
 import time
+
+import pytest
+from nacl.exceptions import BadSignatureError
+from nacl.signing import SigningKey
 
 from memory_link import link_pair
 from rook_protocol import decode, encode, validate
@@ -57,3 +62,27 @@ def test_worker_answers_a_cap_it_does_not_serve(tmp_path):
         worker.stop()
         await running
     asyncio.run(go())
+
+
+def test_worker_keeps_no_identity_whose_signature_does_not_verify(tmp_path):
+    # R5: the worker checks the hub's signature with hub_key before persisting.
+    worker = Worker(tmp_path, "http://unused", no_connect)
+    other = SigningKey.generate()
+    forged = other.sign(b"rook-worker-key:" + bytes.fromhex(worker.key)).signature.hex()
+    hub_key = SigningKey.generate().verify_key.encode().hex()   # not the key that signed
+    worker._post = lambda body: {"type": "knock_reply", "protocol": 1, "status": "approved",
+                                 "guid": "g", "moniker": "a-b-c", "signature": forged, "hub_key": hub_key}
+    with pytest.raises(BadSignatureError):
+        asyncio.run(worker.run())
+    assert worker.identity is None and not (tmp_path / "identity.json").exists()
+
+    real_key = other.verify_key.encode().hex()
+    worker._post = lambda body: {"type": "knock_reply", "protocol": 1, "status": "approved",
+                                 "guid": "g", "moniker": "a-b-c", "signature": forged, "hub_key": real_key}
+
+    async def connect(key):
+        raise ConnectionError("stop after the identity is stored")
+    worker.connect = connect
+    with pytest.raises(ConnectionError):
+        asyncio.run(worker.run())
+    assert json.loads((tmp_path / "identity.json").read_text())["hub_key"] == real_key

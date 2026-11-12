@@ -81,8 +81,9 @@ A worker that has not been approved repeats the same knock, with the same key, u
 | `guid` | string | when approved | The worker's identity, minted at first approval (W7, G1). |
 | `moniker` | string | when approved | Its unique three-word moniker (W7, G1). |
 | `signature` | string | when approved | The hub's Ed25519 signature over the worker key, hex (R5). |
+| `hub_key` | string | when approved | The hub's Ed25519 public key, 64 lowercase hex characters (R5, U9). |
 
-The signed bytes are the ASCII text `rook-worker-key:` followed by the 32 raw key bytes. The worker keeps `guid`, `moniker` and `signature` in its state with its key (W7, U2).
+The signed bytes are the ASCII text `rook-worker-key:` followed by the 32 raw key bytes. Before keeping anything, the worker verifies `signature` with `hub_key`; if it does not verify, the worker keeps nothing. It then stores `guid`, `moniker`, `signature` and `hub_key` in its state with its key (W7, U2). The hub key is what it will later check signed builds with (U9).
 
 A knock with a revoked key, or one that is not valid, gets an `error` instead.
 
@@ -182,7 +183,8 @@ worker                                   hub
   |<-- knock_reply{pending} ---------------|
   |          ... person or agent approves K ...
   | POST /knock  knock{key K}              |
-  |<-- knock_reply{approved, guid, moniker, signature}
+  |<-- knock_reply{approved, guid, moniker, signature, hub_key}
+  |    worker verifies signature with hub_key, then stores its identity
   | link (keyed by K)                      |
   |--- heartbeat ------------------------->|   connect = first heartbeat
   |<-- heartbeat_reply{interval} ----------|

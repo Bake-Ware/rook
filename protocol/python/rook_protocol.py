@@ -154,6 +154,7 @@ MESSAGES = {
         "guid": (_string, OPT),
         "moniker": (_string, OPT),
         "signature": (_string, OPT),
+        "hub_key": (_key, OPT),
     },
     # Worker -> hub (H1, H4, S4).
     "heartbeat": {
@@ -225,7 +226,7 @@ def validate(message):
         raise ProtocolError(f"unknown message type {kind!r}")
     _struct(MESSAGES[kind])(message, kind)
     if kind == "knock_reply" and message["status"] == "approved":
-        for name in ("guid", "moniker", "signature"):
+        for name in ("guid", "moniker", "signature", "hub_key"):
             if name not in message:
                 raise ProtocolError(f"knock_reply.{name} is required when status is approved")
     return message

@@ -1,7 +1,7 @@
 """A minimal Rook worker core in Python: register, heartbeat, answer calls (W2).
 
 State directory (W7, U2): `key` holds the private key the worker generated,
-`identity.json` the GUID, moniker and hub signature it got on approval. Both
+`identity.json` the GUID, moniker, hub signature and hub key it got on approval. Both
 survive restarts, so a restarted worker is the same identity (R5).
 
 The worker never sees a transport. `connect(key)` returns its link to the hub:
@@ -21,7 +21,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from nacl.signing import SigningKey
+from nacl.signing import SigningKey, VerifyKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
@@ -75,7 +75,8 @@ class Worker:
 
     async def run(self):
         """Knock until approved (first start only), then connect, heartbeat and
-        answer calls until the link closes. Raises Refused if the hub refuses the key."""
+        answer calls until the link closes. Raises Refused if the hub refuses the key,
+        and BadSignatureError if the approval's signature does not verify."""
         if self.identity is None:
             self.identity = await self._knock_until_approved()
             (self.state_dir / "identity.json").write_text(json.dumps(self.identity))
@@ -106,7 +107,11 @@ class Worker:
             if reply["type"] == "error":
                 raise Refused(reply)
             if reply["status"] == "approved":
-                return {name: reply[name] for name in ("guid", "moniker", "signature")}
+                # R5: check the hub signed our key before keeping the identity.
+                # Raises nacl.exceptions.BadSignatureError if it did not.
+                VerifyKey(bytes.fromhex(reply["hub_key"])).verify(
+                    b"rook-worker-key:" + bytes.fromhex(self.key), bytes.fromhex(reply["signature"]))
+                return {name: reply[name] for name in ("guid", "moniker", "signature", "hub_key")}
             await asyncio.sleep(self.knock_every)
 
     def _post(self, body):

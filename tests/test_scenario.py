@@ -6,7 +6,6 @@ import json
 import uuid
 
 import pytest
-from nacl.signing import VerifyKey
 
 from helpers import Clock, eventually
 from memory_link import connector
@@ -73,9 +72,11 @@ async def lifecycle(tmp_path):
         assert first.identity["guid"] == guid and first.identity["moniker"] == moniker
         stored = json.loads((tmp_path / "state" / "identity.json").read_text())
         assert stored == first.identity
-        VerifyKey(bytes.fromhex(hub.public_key)).verify(
-            b"rook-worker-key:" + bytes.fromhex(first.key), bytes.fromhex(stored["signature"]))
+        assert stored["hub_key"] == hub.public_key   # the worker verified the signature with it
         assert hub.get_worker(moniker)["guid"] == guid  # either ID is accepted (G1)
+        [entry] = journal(hub)                     # approval is journaled (L1)
+        assert (entry["kind"], entry["actor"], entry["worker"]) == ("auth", "bake", guid)
+        assert json.loads(entry["result"]) == {"approved": first.key}
 
         # 3. The worker heartbeats its full state; the hub stores it, replies
         #    with the interval and keeps the raw history (H1, H2, H4, H5 raw).
@@ -107,7 +108,7 @@ async def lifecycle(tmp_path):
         reply = await hub.call("bake", "no-such-worker", "demo.echo", {}, "try a worker that does not exist")
         assert reply["code"] == "unknown_worker" and reply["next"]
 
-        rows = journal(hub)
+        rows = [r for r in journal(hub) if r["kind"] == "call"]
         assert [(r["actor"], r["worker"], r["cap"], r["why"]) for r in rows] == [
             ("bake", guid, "demo.echo", "check the echo"),
             ("bake", guid, "video.capture", "try a cap it lacks"),
@@ -166,6 +167,9 @@ async def lifecycle(tmp_path):
         reply = await hub.call("bake", guid, "demo.echo", {"n": 2}, "call with the new key")
         assert reply["result"] == {"n": 2}
         assert journal(hub)[:len(history)] == history
+        entry = journal(hub)[len(history)]       # attaching is journaled with what it revoked (L1)
+        assert (entry["kind"], entry["actor"], entry["worker"]) == ("auth", "claude", guid)
+        assert json.loads(entry["result"]) == {"attached": fresh.key, "revoked": [first.key]}
 
         keys = hub.seen(guid)["keys"]
         assert [(k["key"], k["revoked_at"] is None) for k in keys] == [(first.key, False), (fresh.key, True)]

@@ -72,11 +72,12 @@ CREATE INDEX IF NOT EXISTS heartbeats_worker_at ON heartbeats (worker, at);
 CREATE TABLE IF NOT EXISTS journal (
     id     INTEGER PRIMARY KEY,
     at     REAL NOT NULL,
+    kind   TEXT NOT NULL,            -- call or auth
     actor  TEXT NOT NULL,
     worker TEXT,
     cap    TEXT,
     why    TEXT,
-    result TEXT NOT NULL             -- the reply message, JSON
+    result TEXT NOT NULL             -- call: the reply message; auth: what happened (JSON)
 );
 """
 
@@ -157,7 +158,8 @@ class Hub:
                              "Generate a new key, knock with it, and ask a person or agent to attach it.")
             if row:
                 return {"type": "knock_reply", "protocol": PROTOCOL, "status": "approved",
-                        "guid": row["guid"], "moniker": row["moniker"], "signature": row["signature"]}
+                        "guid": row["guid"], "moniker": row["moniker"], "signature": row["signature"],
+                        "hub_key": self.public_key}
             now = self.clock()
             self._db.execute(
                 "INSERT INTO knocks (key, name, macs, caps, protocol, first_at, last_at) "
@@ -252,6 +254,7 @@ class Hub:
             self._see(guid, "moniker", [moniker], now)
             self._see(guid, "mac", json.loads(knock["macs"]), now)
             self._db.execute("DELETE FROM knocks WHERE key = ?", (key,))
+            self._journal("auth", actor, guid, {"approved": key})
         return self.get_worker(guid)
 
     def attach(self, actor, key, worker):
@@ -260,15 +263,24 @@ class Hub:
         with self._lock, self._db:
             knock = self._pending(key)
             guid, now = self._resolve(worker)["guid"], self.clock()
+            revoked = [row[0] for row in self._db.execute(
+                "SELECT key FROM keys WHERE worker = ? AND revoked_at IS NULL ORDER BY attached_at", (guid,))]
             self._db.execute("UPDATE keys SET revoked_at = ? WHERE worker = ? AND revoked_at IS NULL",
                              (now, guid))
             self._attach_key(guid, key, now)
             self._see(guid, "mac", json.loads(knock["macs"]), now)
             self._db.execute("DELETE FROM knocks WHERE key = ?", (key,))
+            self._journal("auth", actor, guid, {"attached": key, "revoked": revoked})
         link = self._links.get(guid)
         if link is not None and link.key != key:
             link.close()  # the old key's link ends; the old key is refused from now on
         return self.get_worker(guid)
+
+    def _journal(self, kind, actor, worker, result, cap=None, why=None):
+        """One journal entry (L1). The caller holds the lock and the transaction."""
+        self._db.execute(
+            "INSERT INTO journal (at, kind, actor, worker, cap, why, result) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (self.clock(), kind, actor, worker, cap, why, json.dumps(result)))
 
     def _attach_key(self, guid, key, now):
         # R5: approval is the hub signing the worker's key (docs/protocol.md, knock_reply).
@@ -443,6 +455,5 @@ class Hub:
         except HubError as e:
             reply = dict(e.message, id=call_id)
         with self._lock, self._db:
-            self._db.execute("INSERT INTO journal (at, actor, worker, cap, why, result) VALUES (?, ?, ?, ?, ?, ?)",
-                             (self.clock(), actor, guid, cap, why, json.dumps(reply)))
+            self._journal("call", actor, guid, reply, cap, why)
         return reply
