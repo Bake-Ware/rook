@@ -22,6 +22,9 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
+from .auth import Auth
+from .errors import HubError, error
+
 DEFAULT_INTERVAL = 15    # seconds; the hub can change it per worker (H2)
 MISSED_HEARTBEATS = 3    # H3
 
@@ -73,29 +76,18 @@ CREATE TABLE IF NOT EXISTS journal (
     id     INTEGER PRIMARY KEY,
     at     REAL NOT NULL,
     kind   TEXT NOT NULL,            -- call or auth
-    actor  TEXT NOT NULL,
+    user   TEXT NOT NULL,            -- the acting user (L1)
+    token  TEXT,                     -- the token they acted through, if any (L1)
     worker TEXT,
     cap    TEXT,
     why    TEXT,
     result TEXT NOT NULL             -- call: the reply message; auth: what happened (JSON)
 );
+CREATE TABLE IF NOT EXISTS monikers (    -- one home, so monikers are unique hub-wide (G1)
+    moniker TEXT PRIMARY KEY,
+    guid    TEXT NOT NULL UNIQUE
+);
 """
-
-
-def error(code, message, next_step, call_id=None):
-    """An `error` message (C3: it always says what to try next)."""
-    reply = {"type": "error", "code": code, "message": message, "next": next_step}
-    if call_id is not None:
-        reply["id"] = call_id
-    return reply
-
-
-class HubError(Exception):
-    """A hub function could not do what it was asked. `.message` is an `error` message."""
-
-    def __init__(self, code, message, next_step):
-        super().__init__(message)
-        self.message = error(code, message, next_step)
 
 
 def _load_words():
@@ -120,6 +112,7 @@ class Hub:
         self._db = sqlite3.connect(self.state_dir / "hub.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
+        self.auth = Auth(self)
         self._signing_key = self._load_signing_key()
         self.public_key = self._signing_key.verify_key.encode().hex()
         self._adjectives, self._nouns = _load_words()
@@ -146,20 +139,25 @@ class Hub:
     # ---------------------------------------------------------------- knock
 
     def knock(self, message):
-        """Answer a knock (R2, R5): pending until approved, then the identity."""
+        """Answer a knock (R2, R5): pending until approved, then the identity.
+        A knock carrying a good join token is approved at once (R3)."""
         key = message["key"]
         with self._lock, self._db:
             row = self._db.execute(
-                "SELECT k.signature, k.revoked_at, w.guid, w.moniker FROM keys k "
+                "SELECT k.revoked_at, w.moniker FROM keys k "
                 "JOIN workers w ON w.guid = k.worker WHERE k.key = ?", (key,)).fetchone()
             if row and row["revoked_at"] is not None:
                 return error("key_revoked",
                              f"This key was revoked from {row['moniker']}.",
                              "Generate a new key, knock with it, and ask a person or agent to attach it.")
             if row:
-                return {"type": "knock_reply", "protocol": PROTOCOL, "status": "approved",
-                        "guid": row["guid"], "moniker": row["moniker"], "signature": row["signature"],
-                        "hub_key": self.public_key}
+                return self._approved_reply(key)
+            actor = None
+            if "token" in message:
+                try:
+                    actor = self.auth.use(message["token"], "join")
+                except HubError as e:
+                    return e.message
             now = self.clock()
             self._db.execute(
                 "INSERT INTO knocks (key, name, macs, caps, protocol, first_at, last_at) "
@@ -168,7 +166,18 @@ class Hub:
                 "last_at = excluded.last_at",
                 (key, message["name"], json.dumps([m.lower() for m in message["macs"]]),
                  json.dumps(message["caps"]), message["protocol"], now, now))
+            if actor is not None:
+                self._approve(key, actor)
+                return self._approved_reply(key)
         return {"type": "knock_reply", "protocol": PROTOCOL, "status": "pending"}
+
+    def _approved_reply(self, key):
+        row = self._db.execute(
+            "SELECT k.signature, w.guid, w.moniker FROM keys k "
+            "JOIN workers w ON w.guid = k.worker WHERE k.key = ?", (key,)).fetchone()
+        return {"type": "knock_reply", "protocol": PROTOCOL, "status": "approved",
+                "guid": row["guid"], "moniker": row["moniker"], "signature": row["signature"],
+                "hub_key": self.public_key}
 
     def serve_knocks(self, host, port):
         """Serve `POST /knock` over HTTP in background threads. Returns (host, port)."""
@@ -187,7 +196,7 @@ class Hub:
                     reply = hub.knock(message)
                 except ProtocolError as e:
                     reply = error("bad_message", str(e), "Send a knock as docs/protocol.md defines it.")
-                status = {"bad_message": 400, "key_revoked": 403}.get(reply.get("code"), 200)
+                status = 200 if reply["type"] == "knock_reply" else 400 if reply["code"] == "bad_message" else 403
                 data = encode(reply)
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
@@ -230,7 +239,7 @@ class Hub:
                 for guid, found in matches.items()]
 
     def _moniker(self, guid):
-        return self._db.execute("SELECT moniker FROM workers WHERE guid = ?", (guid,)).fetchone()[0]
+        return self._db.execute("SELECT moniker FROM monikers WHERE guid = ?", (guid,)).fetchone()[0]
 
     def _pending(self, key):
         row = self._db.execute("SELECT * FROM knocks WHERE key = ?", (key,)).fetchone()
@@ -239,28 +248,35 @@ class Hub:
                            "List the pending knocks and use a key from there.")
         return row
 
-    def approve(self, actor, key):
+    def approve(self, key, *, user=None, token=None):
         """Approve a pending knock as a new worker: mint its GUID and moniker,
-        sign its key and record `actor` as its owner (R2, R5, W6, W7, G1)."""
+        sign its key and record the acting user as its owner (R2, R5, W6, W7, G1).
+        The actor is a user acting directly, or a client token (T4)."""
         with self._lock, self._db:
-            knock = self._pending(key)
-            guid, now = str(uuid.uuid4()), self.clock()
-            moniker = self._new_moniker()
-            self._db.execute(
-                "INSERT INTO workers (guid, moniker, name, owner, approved_at, interval, protocol) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (guid, moniker, knock["name"], actor, now, DEFAULT_INTERVAL, knock["protocol"]))
-            self._attach_key(guid, key, now)
-            self._see(guid, "moniker", [moniker], now)
-            self._see(guid, "mac", json.loads(knock["macs"]), now)
-            self._db.execute("DELETE FROM knocks WHERE key = ?", (key,))
-            self._journal("auth", actor, guid, {"approved": key})
+            guid = self._approve(key, self.auth.actor(user, token))
         return self.get_worker(guid)
 
-    def attach(self, actor, key, worker):
+    def _approve(self, key, actor):
+        """Approve with the lock and transaction held. `actor` is (user, token)."""
+        knock = self._pending(key)
+        guid, now = str(uuid.uuid4()), self.clock()
+        moniker = self._new_moniker(guid)
+        self._db.execute(
+            "INSERT INTO workers (guid, moniker, name, owner, approved_at, interval, protocol) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (guid, moniker, knock["name"], actor[0], now, DEFAULT_INTERVAL, knock["protocol"]))
+        self._attach_key(guid, key, now)
+        self._see(guid, "moniker", [moniker], now)
+        self._see(guid, "mac", json.loads(knock["macs"]), now)
+        self._db.execute("DELETE FROM knocks WHERE key = ?", (key,))
+        self._journal("auth", actor, guid, {"approved": key})
+        return guid
+
+    def attach(self, key, worker, *, user=None, token=None):
         """Attach a pending knock's key to a known identity and revoke the keys it
         held. Owner, config and journal history stay with the identity (W7, R5)."""
         with self._lock, self._db:
+            actor = self.auth.actor(user, token)
             knock = self._pending(key)
             guid, now = self._resolve(worker)["guid"], self.clock()
             revoked = [row[0] for row in self._db.execute(
@@ -277,10 +293,11 @@ class Hub:
         return self.get_worker(guid)
 
     def _journal(self, kind, actor, worker, result, cap=None, why=None):
-        """One journal entry (L1). The caller holds the lock and the transaction."""
+        """One journal entry (L1). `actor` is (user, token or None).
+        The caller holds the lock and the transaction."""
         self._db.execute(
-            "INSERT INTO journal (at, kind, actor, worker, cap, why, result) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (self.clock(), kind, actor, worker, cap, why, json.dumps(result)))
+            "INSERT INTO journal (at, kind, user, token, worker, cap, why, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (self.clock(), kind, actor[0], actor[1], worker, cap, why, json.dumps(result)))
 
     def _attach_key(self, guid, key, now):
         # R5: approval is the hub signing the worker's key (docs/protocol.md, knock_reply).
@@ -295,12 +312,15 @@ class Hub:
                 "ON CONFLICT (worker, kind, value) DO UPDATE SET last_at = excluded.last_at",
                 (guid, kind, value.lower() if kind == "mac" else value, now, now))
 
-    def _new_moniker(self):
+    def _new_moniker(self, guid):
+        """A three-word moniker no other hub object holds, recorded for `guid` (G1).
+        The caller holds the lock and the transaction."""
         while True:
             first, second = secrets.choice(self._adjectives), secrets.choice(self._adjectives)
             moniker = f"{first}-{second}-{secrets.choice(self._nouns)}"
             if first != second and not self._db.execute(
-                    "SELECT 1 FROM workers WHERE moniker = ?", (moniker,)).fetchone():
+                    "SELECT 1 FROM monikers WHERE moniker = ?", (moniker,)).fetchone():
+                self._db.execute("INSERT INTO monikers (moniker, guid) VALUES (?, ?)", (moniker, guid))
                 return moniker
 
     # -------------------------------------------------------------- workers
@@ -422,11 +442,18 @@ class Hub:
 
     # ---------------------------------------------------------------- calls
 
-    async def call(self, actor, worker, cap, args, why):
+    async def call(self, worker, cap, args, why, *, user=None, token=None):
         """Call `cap` on `worker` (GUID or moniker) and return the reply message:
-        `result`, `stream_open` or `error` (C3, W5). Every call is journaled (L1)."""
+        `result`, `stream_open` or `error` (C3, W5). The caller is a user acting
+        directly or a client token (T4). Every call is journaled with both (L1);
+        a caller who cannot be identified gets an error and no call is made."""
         call_id = uuid.uuid4().hex
         guid = None
+        try:
+            with self._lock, self._db:
+                actor = self.auth.actor(user, token)
+        except HubError as e:
+            return dict(e.message, id=call_id)
         try:
             request = encode({"type": "call", "id": call_id, "cap": cap, "args": args})
             record = self.get_worker(worker)

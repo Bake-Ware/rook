@@ -35,6 +35,7 @@ def heartbeat(key, name="box", caps=(ECHO,), hostname="box", **extra):
 @pytest.fixture
 def hub(tmp_path):
     hub = Hub(tmp_path / "hub", clock=Clock())
+    hub.bake = hub.auth.create_user("Bake")["guid"]
     yield hub
     hub.close()
 
@@ -42,7 +43,7 @@ def hub(tmp_path):
 def approved(hub, name="box", macs=()):
     key = new_key()
     hub.knock(knock(key, name, macs))
-    return key, hub.approve("bake", key)
+    return key, hub.approve(key, user=hub.bake)
 
 
 async def connected(hub, key, **beat):
@@ -88,12 +89,12 @@ def test_likely_rekey_by_reported_hostname(hub):
 
 def test_approve_and_attach_need_a_pending_key(hub):
     with pytest.raises(HubError) as e:
-        hub.approve("bake", new_key())
+        hub.approve(new_key(), user=hub.bake)
     assert e.value.message["code"] == "unknown_key" and e.value.message["next"]
     key = new_key()
     hub.knock(knock(key))
     with pytest.raises(HubError) as e:
-        hub.attach("bake", key, "no-such-worker")
+        hub.attach(key, "no-such-worker", user=hub.bake)
     assert e.value.message["code"] == "unknown_worker"
     assert len(hub.list_pending()) == 1
 
@@ -107,15 +108,19 @@ def test_monikers_are_unique_three_words(hub):
         assert first in adjectives and second in adjectives and first != second and noun in nouns
 
 
-def test_hub_restart_keeps_workers_and_signing_key(tmp_path):
+def test_hub_restart_keeps_workers_keys_and_tokens(tmp_path):
     hub = Hub(tmp_path / "hub")
+    hub.bake = hub.auth.create_user("Bake")["guid"]
     key, record = approved(hub)
+    agent = hub.auth.mint("agent", user=hub.bake)
     public_key = hub.public_key
     hub.close()
     hub = Hub(tmp_path / "hub")
     assert hub.public_key == public_key
-    assert hub.get_worker(record["moniker"])["owner"] == "bake"
+    [bake] = hub.auth.list_users()
+    assert hub.get_worker(record["moniker"])["owner"] == bake["guid"]
     assert hub.knock(knock(key))["guid"] == record["guid"]
+    assert hub.auth.verify(agent)["purpose"] == "agent"
     hub.close()
 
 
@@ -163,7 +168,7 @@ def test_call_fails_cleanly_when_the_link_drops(hub):
     async def go():
         key, record = approved(hub)
         link, _ = await connected(hub, key)
-        call = asyncio.create_task(hub.call("bake", record["guid"], "demo.echo", {}, "drop mid-call"))
+        call = asyncio.create_task(hub.call(record["guid"], "demo.echo", {}, "drop mid-call", user=hub.bake))
         assert decode(await link.recv())["type"] == "call"
         link.close()
         reply = await call
@@ -176,7 +181,7 @@ def test_stream_cap_call_returns_the_stream_handle(hub):
     async def go():
         key, record = approved(hub)
         link, _ = await connected(hub, key, caps=(SHELL,))
-        call = asyncio.create_task(hub.call("bake", record["guid"], "shell.open", {}, "open a shell"))
+        call = asyncio.create_task(hub.call(record["guid"], "shell.open", {}, "open a shell", user=hub.bake))
         request = decode(await link.recv())
         await link.send(encode({"type": "stream_open", "id": request["id"], "stream": "s1",
                                 "title": "shell", "description": "a test shell"}))
@@ -189,7 +194,7 @@ def test_bad_call_arguments_are_an_error_not_an_exception(hub):
     async def go():
         key, record = approved(hub)
         await connected(hub, key)
-        reply = await hub.call("bake", record["guid"], "demo.echo", ["not", "an", "object"], "bad args")
+        reply = await hub.call(record["guid"], "demo.echo", ["not", "an", "object"], "bad args", user=hub.bake)
         assert reply["code"] == "bad_message" and reply["next"]
     asyncio.run(go())
 
