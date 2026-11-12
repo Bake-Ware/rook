@@ -49,7 +49,7 @@ def test_users_tokens_and_unattended_joins(tmp_path):
 async def scenario(tmp_path):
     clock = Clock()
     hub = Hub(tmp_path / "hub", clock=clock)
-    host, port = hub.serve_knocks("127.0.0.1", 0)
+    host, port = await hub.serve("127.0.0.1", 0)
     connect = connector(hub)
 
     def worker(state, token=None, name="box"):
@@ -166,6 +166,7 @@ async def scenario(tmp_path):
             w_.stop()
         await asyncio.gather(running, running_plain)
     finally:
+        await hub.stop_serving()
         hub.close()
 
 

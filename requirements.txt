@@ -1,2 +1,5 @@
 PyNaCl>=1.5
+aiohttp>=3.9
+# For the tests only: a real MCP client, and pytest.
+mcp>=2.3
 pytest>=7

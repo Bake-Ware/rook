@@ -200,9 +200,13 @@ def test_bad_call_arguments_are_an_error_not_an_exception(hub):
 
 
 def test_knock_endpoint_rejects_bad_requests(hub):
-    host, port = hub.serve_knocks("127.0.0.1", 0)
+    asyncio.run(knock_endpoint(hub))
 
-    def post(body):
+
+async def knock_endpoint(hub):
+    host, port = await hub.serve("127.0.0.1", 0)
+
+    def send(body):
         request = urllib.request.Request(f"http://{host}:{port}/knock", data=body, method="POST")
         try:
             with urllib.request.urlopen(request) as response:
@@ -210,9 +214,15 @@ def test_knock_endpoint_rejects_bad_requests(hub):
         except urllib.error.HTTPError as e:
             return e.code, decode(e.read())
 
-    status, reply = post(b"{}")
-    assert status == 400 and reply["code"] == "bad_message"
-    status, reply = post(encode(heartbeat(new_key())))
-    assert status == 400 and "expected a knock" in reply["message"]
-    status, reply = post(encode(knock(new_key())))
-    assert status == 200 and reply["status"] == "pending"
+    async def post(body):
+        return await asyncio.to_thread(send, body)
+
+    try:
+        status, reply = await post(b"{}")
+        assert status == 400 and reply["code"] == "bad_message"
+        status, reply = await post(encode(heartbeat(new_key())))
+        assert status == 400 and "expected a knock" in reply["message"]
+        status, reply = await post(encode(knock(new_key())))
+        assert status == 200 and reply["status"] == "pending"
+    finally:
+        await hub.stop_serving()
