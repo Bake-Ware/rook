@@ -22,6 +22,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
+from . import caps
 from .auth import Auth
 from .errors import HubError, error
 
@@ -443,7 +444,8 @@ class Hub:
     # ---------------------------------------------------------------- calls
 
     async def call(self, worker, cap, args, why, *, user=None, token=None):
-        """Call `cap` on `worker` (GUID or moniker) and return the reply message:
+        """Call `cap` on `worker` (GUID or moniker, or `hub` for the hub's own caps)
+        and return the reply message:
         `result`, `stream_open` or `error` (C3, W5). The caller is a user acting
         directly or a client token (T4). Every call is journaled with both (L1);
         a caller who cannot be identified gets an error and no call is made."""
@@ -456,31 +458,36 @@ class Hub:
             return dict(e.message, id=call_id)
         try:
             request = encode({"type": "call", "id": call_id, "cap": cap, "args": args})
-            record = self.get_worker(worker)
-            guid, moniker = record["guid"], record["moniker"]
-            link = self._links.get(guid)
-            if link is None or not record["online"]:
-                reply = error("worker_offline", f"{moniker} is not connected.",
-                              f"Wait for {moniker} to come back online, or call another worker "
-                              f"that announces {cap}.", call_id)
-            elif cap not in {c["name"] for c in record["caps"]}:
-                reply = error("unknown_cap", f"{moniker} does not announce {cap}.",
-                              f"List the caps {moniker} announces and call one of those.", call_id)
+            if worker == caps.HUB:      # the hub's own caps (caps.py)
+                guid = caps.HUB
+                result = caps.run(self, cap, args, {"user": user, "token": token})
+                reply = {"type": "result", "id": call_id, "result": result}
             else:
-                future = asyncio.get_running_loop().create_future()
-                self._calls[call_id] = (guid, future)
-                try:
-                    await link.send(request)
-                    reply = await future
-                except EOFError:
-                    reply = error("worker_disconnected", f"{moniker}'s link closed before the call was sent.",
-                                  "Check whether the worker is online, then call again.", call_id)
-                finally:
-                    self._calls.pop(call_id, None)
+                record = self.get_worker(worker)
+                guid, moniker = record["guid"], record["moniker"]
+                link = self._links.get(guid)
+                if link is None or not record["online"]:
+                    reply = error("worker_offline", f"{moniker} is not connected.",
+                                  f"Wait for {moniker} to come back online, or call another worker "
+                                  f"that announces {cap}.", call_id)
+                elif cap not in {c["name"] for c in record["caps"]}:
+                    reply = error("unknown_cap", f"{moniker} does not announce {cap}.",
+                                  f"List the caps {moniker} announces and call one of those.", call_id)
+                else:
+                    future = asyncio.get_running_loop().create_future()
+                    self._calls[call_id] = (guid, future)
+                    try:
+                        await link.send(request)
+                        reply = await future
+                    except EOFError:
+                        reply = error("worker_disconnected", f"{moniker}'s link closed before the call was sent.",
+                                      "Check whether the worker is online, then call again.", call_id)
+                    finally:
+                        self._calls.pop(call_id, None)
         except ProtocolError as e:
             reply = error("bad_message", str(e), "Fix the cap name or arguments and call again.", call_id)
         except HubError as e:
             reply = dict(e.message, id=call_id)
         with self._lock, self._db:
-            self._journal("call", actor, guid, reply, cap, why)
+            self._journal("call", actor, guid, caps.for_journal(reply) if guid == caps.HUB else reply, cap, why)
         return reply
