@@ -1,0 +1,25 @@
+# Words for three-word monikers (G1): adjective-adjective-noun.
+# Written for this repository; same licence as the rest of it.
+[adjectives]
+agile amber ample arctic bold brave breezy bright brisk bubbly calm candid
+careful cheery chilly clever cosy crisp curious daring dapper deft dusty
+eager early easy fancy fast fluffy fond frank fresh friendly frosty fuzzy
+gentle giant glad golden grand happy hardy hasty hearty honest humble icy
+jolly keen kind lanky lively loyal lucky mellow merry mighty mild misty
+modest neat nimble noble patient peppy plucky polite proud quick quiet
+rapid ready rosy rugged rustic sandy shiny silky silver simple sleek
+smooth snappy snug soft speedy spry steady stout sturdy sunny super sweet
+swift tidy tiny trusty upbeat urban vivid warm wavy wise witty woolly
+young zesty
+[nouns]
+acorn anchor anvil apple badger basket beacon beaver bell bison blimp
+breeze brook button cabin camel candle canoe castle cedar cherry clover
+comet compass cookie copper coral cricket crow daisy dolphin donkey dragon
+eagle ember falcon feather fern ferret finch fox gadget garden gecko
+ginger goose harbor hazel heron iguana island jasper kettle kiwi koala
+lantern lemon lily lynx maple meadow mint moose muffin mule nectar newt
+oak olive orchid otter owl panda parrot pebble pelican pepper pickle
+pigeon pine planet plum pony prairie pretzel puffin quail rabbit raven
+reef river robin rocket saddle salmon sparrow spruce squirrel star
+stream thistle tiger toucan tulip turnip turtle valley violet walnut
+whale willow wren yak zebra
