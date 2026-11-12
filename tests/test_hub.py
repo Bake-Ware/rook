@@ -35,7 +35,7 @@ def heartbeat(key, name="box", caps=(ECHO,), hostname="box", **extra):
 @pytest.fixture
 def hub(tmp_path):
     hub = Hub(tmp_path / "hub", clock=Clock())
-    hub.bake = hub.auth.create_user("Bake")["guid"]
+    hub.bake = hub.auth.create_user("Bake", "a password")["guid"]
     yield hub
     hub.close()
 
@@ -110,7 +110,7 @@ def test_monikers_are_unique_three_words(hub):
 
 def test_hub_restart_keeps_workers_keys_and_tokens(tmp_path):
     hub = Hub(tmp_path / "hub")
-    hub.bake = hub.auth.create_user("Bake")["guid"]
+    hub.bake = hub.auth.create_user("Bake", "a password")["guid"]
     key, record = approved(hub)
     agent = hub.auth.mint("agent", user=hub.bake)
     public_key = hub.public_key

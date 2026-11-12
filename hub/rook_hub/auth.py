@@ -1,6 +1,10 @@
-"""Users and tokens: the token half of T4.
+"""Users and tokens: both front doors of T4.
 
-Users own workers (W6) and tokens (T5). Every token is a JWT (T1), signed by
+Users own workers (W6) and tokens (T5). A person logs in with their name and
+password (T4). The hub keeps only a salted scrypt hash of each password, and
+never puts a password in the journal, an error, a log line or a return value.
+
+ Every token is a JWT (T1), signed by
 the hub with HS256, and also a row in the `tokens` table (K6), so revocation
 and one use are the hub's record, not the claims alone.
 
@@ -21,6 +25,7 @@ import hashlib
 import hmac
 import json
 import os
+import unicodedata
 import uuid
 
 from .errors import HubError
@@ -30,6 +35,8 @@ CREATE TABLE IF NOT EXISTS users (
     guid       TEXT PRIMARY KEY,
     moniker    TEXT NOT NULL UNIQUE,
     name       TEXT NOT NULL,
+    name_key   TEXT NOT NULL UNIQUE,   -- the name as login compares it (_name_key)
+    password   TEXT NOT NULL,          -- salted scrypt hash, never the password
     created_at REAL NOT NULL,
     revoked_at REAL
 );
@@ -62,6 +69,27 @@ CREATE INDEX IF NOT EXISTS tokens_owner ON tokens (owner);
 _TRY_AGAIN = "Ask the user it belongs to, or an agent of theirs, to mint a new token."
 
 
+def _name_key(name):
+    """How names are compared, at login and for uniqueness: Unicode NFKC, then case-folded."""
+    return unicodedata.normalize("NFKC", name).casefold()
+
+
+_SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1}
+
+
+def _hash_password(password):
+    """`scrypt$n$r$p$salt$hash`, with a fresh random salt each time."""
+    salt = os.urandom(16)
+    digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, **_SCRYPT)
+    return f"scrypt${_SCRYPT['n']}${_SCRYPT['r']}${_SCRYPT['p']}${salt.hex()}${digest.hex()}"
+
+
+def _password_matches(password, stored):
+    _, n, r, p, salt, digest = stored.split("$")
+    got = hashlib.scrypt(password.encode("utf-8"), salt=bytes.fromhex(salt), n=int(n), r=int(r), p=int(p))
+    return hmac.compare_digest(got, bytes.fromhex(digest))
+
+
 def _b64(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
@@ -89,14 +117,54 @@ class Auth:
 
     # ---------------------------------------------------------------- users
 
-    def create_user(self, name):
-        """A new user, with a GUID and a three-word moniker (G1)."""
-        guid = str(uuid.uuid4())
+    def create_user(self, name, password):
+        """A new user with a password (T4), a GUID and a three-word moniker (G1).
+        Names identify users at login, so no two users share one."""
+        guid, hashed = str(uuid.uuid4()), _hash_password(password)
         with self.hub._lock, self.db:
+            if self.db.execute("SELECT 1 FROM users WHERE name_key = ?", (_name_key(name),)).fetchone():
+                raise HubError("name_taken", f"A user is already called {name!r}.",
+                               "Choose a different name for the new user.")
             moniker = self.hub._new_moniker(guid)
-            self.db.execute("INSERT INTO users (guid, moniker, name, created_at) VALUES (?, ?, ?, ?)",
-                            (guid, moniker, name, self.hub.clock()))
+            self.db.execute(
+                "INSERT INTO users (guid, moniker, name, name_key, password, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (guid, moniker, name, _name_key(name), hashed, self.hub.clock()))
         return self.get_user(guid)
+
+    def login(self, name, password):
+        """The user with this name and password (T4), or HubError. A wrong password
+        and a name nobody has get the same error. A login against a real user is
+        journaled under that user, whether it worked or not (L1)."""
+        with self.hub._lock, self.db:
+            row = self.db.execute("SELECT * FROM users WHERE name_key = ?", (_name_key(name),)).fetchone()
+            if row is not None:
+                if not _password_matches(password, row["password"]):
+                    outcome = "wrong_password"
+                elif row["revoked_at"] is not None:
+                    outcome = "user_revoked"
+                else:
+                    outcome = "ok"
+                self.hub._journal("auth", (row["guid"], None), None, {"login": outcome})
+        if row is None or outcome == "wrong_password":
+            raise HubError("login_failed", "No user has that name and password.",
+                           "Check the name and the password, and try again.")
+        if outcome == "user_revoked":
+            raise HubError("user_revoked", f"User {row['moniker']} was revoked and cannot log in.",
+                           "Ask someone on this hub to create a new user for you.")
+        return self._user_record(row)
+
+    def change_password(self, target, password, *, user=None, token=None):
+        """Set a user's password (T4). Journaled, without the password (L1)."""
+        hashed = _hash_password(password)
+        with self.hub._lock, self.db:
+            actor = self.actor(user, token)
+            row = self._user(target)
+            self.db.execute("UPDATE users SET password = ? WHERE guid = ?", (hashed, row["guid"]))
+            self.hub._journal("auth", actor, None, {"password_changed": row["guid"]})
+
+    def _user_record(self, row):
+        """A user as the hub hands it out: never the password hash."""
+        return {name: row[name] for name in ("guid", "moniker", "name", "created_at", "revoked_at")}
 
     def _user(self, user):
         row = self.db.execute("SELECT * FROM users WHERE guid = ? OR moniker = ?", (user, user)).fetchone()
@@ -107,11 +175,11 @@ class Auth:
 
     def get_user(self, user):
         with self.hub._lock:
-            return dict(self._user(user))
+            return self._user_record(self._user(user))
 
     def list_users(self):
         with self.hub._lock:
-            return [dict(row) for row in self.db.execute("SELECT * FROM users ORDER BY created_at")]
+            return [self._user_record(row) for row in self.db.execute("SELECT * FROM users ORDER BY created_at")]
 
     def revoke_user(self, target, *, user=None, token=None):
         """Revoke a user and every token that chains back to them (T5)."""

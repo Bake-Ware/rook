@@ -41,7 +41,7 @@ async def lifecycle(tmp_path):
     hub = Hub(tmp_path / "hub", clock=clock)
     host, port = hub.serve_knocks("127.0.0.1", 0)
     connect = connector(hub)
-    bake = hub.auth.create_user("Bake")["guid"]
+    bake = hub.auth.create_user("Bake", "a password")["guid"]
 
     def worker(state):
         return Worker(tmp_path / state, f"http://{host}:{port}", connect, name="test-box",
@@ -148,7 +148,7 @@ async def lifecycle(tmp_path):
         # 7. A worker that lost its key knocks fresh under the same name; the hub
         #    flags a likely rekey. Attaching is an explicit call. The old key is
         #    refused afterwards; owner and journal history stay (W7).
-        sam = hub.auth.create_user("Sam")["guid"]      # someone other than the owner attaches
+        sam = hub.auth.create_user("Sam", "a password")["guid"]      # someone other than the owner attaches
         sam_agent = hub.auth.mint("agent", user=sam)
         history = journal(hub)
         fresh = worker("lost-key")
