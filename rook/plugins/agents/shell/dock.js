@@ -654,7 +654,7 @@ function rookieInit() {
   rookieFavicon();
   setInterval(() => rookie.driver.tick(), 1000);
   applyLook(rookie.look);
-  if (rookie.inst.enter && rookie.here) {     // his first appearance: the transporter, once
+  if (rookie.inst.enter && rookie.here) {     // his first appearance: one enter variant, once
     rookie.entering = true;
     setTimeout(() => (rookie.entering = false), 1200);
     rookie.inst.enter(rookie.driver.state());
