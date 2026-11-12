@@ -16,13 +16,12 @@ import sqlite3
 import threading
 import time
 import uuid
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import caps
+from . import caps, web
 from .auth import Auth
 from .errors import HubError, error
 
@@ -109,7 +108,7 @@ class Hub:
         self.state_dir = pathlib.Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.clock = clock
-        self._lock = threading.Lock()  # the knock endpoint runs in its own threads
+        self._lock = threading.Lock()  # every entry point takes it before touching the database
         self._db = sqlite3.connect(self.state_dir / "hub.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
@@ -119,7 +118,7 @@ class Hub:
         self._adjectives, self._nouns = _load_words()
         self._links = {}  # worker guid -> its live link
         self._calls = {}  # call id -> (worker guid, future)
-        self._http = None
+        self._runner = None  # the HTTP server, while serving
 
     def _load_signing_key(self):
         path = self.state_dir / "hub.key"
@@ -130,9 +129,7 @@ class Hub:
         return SigningKey(bytes.fromhex(path.read_text().strip()))
 
     def close(self):
-        if self._http:
-            self._http.shutdown()
-            self._http.server_close()
+        """Close links and the database. Call stop_serving() first if serving."""
         for link in list(self._links.values()):
             link.close()
         self._db.close()
@@ -180,37 +177,16 @@ class Hub:
                 "guid": row["guid"], "moniker": row["moniker"], "signature": row["signature"],
                 "hub_key": self.public_key}
 
-    def serve_knocks(self, host, port):
-        """Serve `POST /knock` over HTTP in background threads. Returns (host, port)."""
-        hub = self
+    async def serve(self, host, port):
+        """Serve the hub over HTTP: the knock endpoint and the MCP door (web.py).
+        Returns the (host, port) it listens on."""
+        self._runner, address = await web.serve(self, host, port)
+        return address
 
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self):
-                if self.path != "/knock":
-                    self.send_error(404)
-                    return
-                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                try:
-                    message = decode(body)
-                    if message["type"] != "knock":
-                        raise ProtocolError(f"expected a knock, got {message['type']}")
-                    reply = hub.knock(message)
-                except ProtocolError as e:
-                    reply = error("bad_message", str(e), "Send a knock as docs/protocol.md defines it.")
-                status = 200 if reply["type"] == "knock_reply" else 400 if reply["code"] == "bad_message" else 403
-                data = encode(reply)
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-
-            def log_message(self, *args):
-                pass
-
-        self._http = ThreadingHTTPServer((host, port), Handler)
-        threading.Thread(target=self._http.serve_forever, daemon=True).start()
-        return self._http.server_address
+    async def stop_serving(self):
+        if self._runner is not None:
+            await self._runner.cleanup()
+            self._runner = None
 
     def list_pending(self):
         """Pending knocks with name and offered caps, read-only (R4), each flagged

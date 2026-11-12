@@ -39,7 +39,7 @@ def test_worker_lifecycle(tmp_path):
 async def lifecycle(tmp_path):
     clock = Clock()
     hub = Hub(tmp_path / "hub", clock=clock)
-    host, port = hub.serve_knocks("127.0.0.1", 0)
+    host, port = await hub.serve("127.0.0.1", 0)
     connect = connector(hub)
     bake = hub.auth.create_user("Bake", "a password")["guid"]
 
@@ -187,4 +187,5 @@ async def lifecycle(tmp_path):
         fresh.stop()
         await running
     finally:
+        await hub.stop_serving()
         hub.close()
