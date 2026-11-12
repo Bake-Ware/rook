@@ -1,0 +1,7 @@
+.worktrees/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+target/
