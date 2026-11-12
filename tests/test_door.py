@@ -215,3 +215,42 @@ def test_door_edges(tmp_path):
             await hub.stop_serving()
             hub.close()
     asyncio.run(go())
+
+
+def test_attach_through_the_door(tmp_path):
+    # W7: an agent attaches a likely rekey to the known worker with the worker.attach hub cap.
+    from nacl.signing import SigningKey
+
+    def knock(name):
+        key = SigningKey.generate().verify_key.encode().hex()
+        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": key, "macs": [], "caps": []})
+        return key
+
+    async def go():
+        host, port = await hub.serve("127.0.0.1", 0)
+        try:
+            async with mcp_client(f"http://{host}:{port}/mcp", agent) as session:
+                old = knock("lab-box")
+                failed, approved = await tool(session, "call", worker="hub", cap="worker.approve",
+                                              args={"key": old}, why="approve the lab box")
+                moniker = approved["approved"]["moniker"]
+                new = knock("lab-box")                     # the same box, after losing its key
+                failed, listing = await tool(session, "workers")
+                assert listing["knocking"][0]["likely_rekey_of"] == [{"moniker": moniker, "matched": ["name lab-box"]}]
+                failed, attached = await tool(session, "call", worker="hub", cap="worker.attach",
+                                              args={"key": new, "worker": moniker}, why="the lab box was reinstalled")
+                assert not failed and attached["attached_to"]["moniker"] == moniker
+                assert [(k["key"], k["revoked_at"] is None) for k in hub.seen(moniker)["keys"]] == [
+                    (old, False), (new, True)]
+                failed, text = await tool(session, "call", worker="hub", cap="worker.attach",
+                                          args={"key": new}, why="forget the worker argument")
+                assert failed and "args.worker is required" in text and "Next:" in text
+        finally:
+            await hub.stop_serving()
+
+    hub = Hub(tmp_path / "hub")
+    agent = hub.auth.mint("agent", user=hub.auth.create_user("Alice", "a password")["guid"])
+    try:
+        asyncio.run(go())
+    finally:
+        hub.close()
