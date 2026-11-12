@@ -59,7 +59,7 @@ async def scenario(tmp_path):
     try:
         # 1. A user mints an agent token. It verifies and lists with its scope,
         #    owner and no last-used time (T1, T2, T5, T6).
-        alice = hub.auth.create_user("Alice")["guid"]
+        alice = hub.auth.create_user("Alice", "a password")["guid"]
         agent = hub.auth.mint("agent", user=alice)
         record = hub.auth.verify(agent)
         assert (record["purpose"], record["scopes"], record["owner"], record["last_used"]) == (
@@ -137,7 +137,7 @@ async def scenario(tmp_path):
             hub.auth.mint("join", token=agent)
         assert e.value.message["code"] == "token_revoked"
         assert refusals(hub)[-1] == (alice, agent_id, "token_revoked")
-        bob = hub.auth.create_user("Bob")["guid"]
+        bob = hub.auth.create_user("Bob", "a password")["guid"]
         bob_agent = hub.auth.mint("agent", user=bob)
         bob_join = hub.auth.mint("join", token=bob_agent)
         hub.auth.revoke_user(bob, token=alice_spare)
@@ -184,7 +184,7 @@ def knock(token):
 
 
 def test_scopes_keep_tokens_to_their_mechanism(hub):
-    alice = hub.auth.create_user("Alice")["guid"]
+    alice = hub.auth.create_user("Alice", "a password")["guid"]
     agent = hub.auth.mint("agent", user=alice)
     join = hub.auth.mint("join", user=alice)
     with pytest.raises(HubError) as e:
@@ -202,14 +202,14 @@ def test_scopes_keep_tokens_to_their_mechanism(hub):
 
 
 def test_forged_or_foreign_tokens_are_invalid(hub, tmp_path):
-    alice = hub.auth.create_user("Alice")["guid"]
+    alice = hub.auth.create_user("Alice", "a password")["guid"]
     agent = hub.auth.mint("agent", user=alice)
     header, payload, signature = agent.split(".")
     tampered = base64.urlsafe_b64encode(json.dumps(dict(claims(agent), sub="someone-else")).encode())
     assert refused(hub, f"{header}.{tampered.decode().rstrip('=')}.{signature}") == "token_invalid"
     assert refused(hub, "not a token") == "token_invalid"
     other = Hub(tmp_path / "other")
-    foreign = other.auth.mint("agent", user=other.auth.create_user("Eve")["guid"])
+    foreign = other.auth.mint("agent", user=other.auth.create_user("Eve", "a password")["guid"])
     other.close()
     assert refused(hub, foreign) == "token_invalid"
     assert hub.knock(knock("not a token"))["code"] == "token_invalid"
@@ -221,7 +221,7 @@ def test_forged_or_foreign_tokens_are_invalid(hub, tmp_path):
 
 
 def test_checking_a_token_is_not_using_it(hub):
-    alice = hub.auth.create_user("Alice")["guid"]
+    alice = hub.auth.create_user("Alice", "a password")["guid"]
     agent = hub.auth.mint("agent", user=alice)
     hub.auth.verify(agent)
     hub.auth.verify(agent, "client")
@@ -229,15 +229,15 @@ def test_checking_a_token_is_not_using_it(hub):
 
 
 def test_only_purposes_with_defaults_are_minted(hub):
-    alice = hub.auth.create_user("Alice")["guid"]
+    alice = hub.auth.create_user("Alice", "a password")["guid"]
     with pytest.raises(HubError) as e:
         hub.auth.mint("dongle", user=alice)
     assert e.value.message["code"] == "unknown_purpose" and "agent, join" in e.value.message["next"]
 
 
 def test_a_revoked_user_cannot_act(hub):
-    alice = hub.auth.create_user("Alice")["guid"]
-    bob = hub.auth.create_user("Bob")
+    alice = hub.auth.create_user("Alice", "a password")["guid"]
+    bob = hub.auth.create_user("Bob", "a password")
     hub.auth.revoke_user(bob["moniker"], user=alice)
     with pytest.raises(HubError) as e:
         hub.auth.mint("agent", user=bob["guid"])
@@ -246,7 +246,7 @@ def test_a_revoked_user_cannot_act(hub):
 
 
 def test_acting_needs_exactly_one_of_user_or_token(hub):
-    alice = hub.auth.create_user("Alice")["guid"]
+    alice = hub.auth.create_user("Alice", "a password")["guid"]
     agent = hub.auth.mint("agent", user=alice)
     for kwargs in ({}, {"user": alice, "token": agent}):
         with pytest.raises(HubError) as e:
@@ -256,7 +256,7 @@ def test_acting_needs_exactly_one_of_user_or_token(hub):
 
 def test_users_and_tokens_have_monikers_unique_hub_wide(hub):
     # G1: every hub object has a GUID and a moniker, unique across all of them.
-    alice = hub.auth.create_user("Alice")
+    alice = hub.auth.create_user("Alice", "a password")
     agent = hub.auth.mint("agent", user=alice["moniker"])
     token = hub.auth.verify(agent)
     assert len(alice["moniker"].split("-")) == 3 and len(token["moniker"].split("-")) == 3
