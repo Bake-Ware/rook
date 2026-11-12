@@ -20,7 +20,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.2.0"
+#define FW_VERSION "0.2.1"
 static const int PIN_SDA = 5, PIN_SCL = 6;
 static const uint8_t PCF_ADDR = 0x20, OLED_ADDR = 0x3C;
 
@@ -386,14 +386,20 @@ static void rook_task(void*) {
 }
 
 // Joining Wi-Fi blocks for seconds; keep it off the button/serial loop.
+// Transmit power: full power fails to authenticate right next to an AP
+// (reasons 2/202 at -25 dBm) and its bursts upset the PCF8574 lines, while
+// 8.5 dBm doesn't reach across the house. Try low first, then full after a
+// failed join, and keep whichever worked.
 static void wifi_task(void*) {
+    bool low = true;
     for (;;) {
         if (WiFi.status() != WL_CONNECTED && !settings::wifi().empty()) {
-            // Full power fails to authenticate next to an AP (reasons 2/202 at
-            // -25 dBm) and its bursts upset the PCF8574 lines; 8.5 dBm is plenty.
-            WiFi.setTxPower(WIFI_POWER_8_5dBm);
+            WiFi.setTxPower(low ? WIFI_POWER_8_5dBm : WIFI_POWER_19_5dBm);
             wifi.run(8000);
-            WiFi.setTxPower(WIFI_POWER_8_5dBm);
+            if (WiFi.status() != WL_CONNECTED) {
+                low = !low;
+                logf("wifi: join failed; next try at %s power", low ? "low" : "full");
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
