@@ -257,3 +257,23 @@ def test_attach_through_the_door(tmp_path):
         asyncio.run(go())
     finally:
         hub.close()
+
+
+def test_no_body_limit_on_the_door(tmp_path):
+    # Call arguments will carry file contents: /mcp takes any size; /knock keeps aiohttp's default.
+    async def go():
+        hub = Hub(tmp_path / "hub")
+        host, port = await hub.serve("127.0.0.1", 0)
+        agent = hub.auth.mint("agent", user=hub.auth.create_user("Alice", "a password")["guid"])
+        big = "x" * (2 * 1024 * 1024)
+        try:
+            async with httpx2.AsyncClient() as http:
+                reply = await post(http, f"http://{host}:{port}/mcp", agent, "tools/call",
+                                   {"name": "workers", "arguments": {"padding": big}})
+                assert reply.status_code == 200 and not reply.json()["result"]["isError"]
+                knock = await http.post(f"http://{host}:{port}/knock", content=big.encode())
+                assert knock.status_code == 413
+        finally:
+            await hub.stop_serving()
+            hub.close()
+    asyncio.run(go())
