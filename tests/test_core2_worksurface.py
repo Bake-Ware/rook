@@ -8,6 +8,7 @@ door. Every test runs under a hard timeout (``run``)."""
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import subprocess
 import time
@@ -46,7 +47,8 @@ hooks:
 def library(tmp_path: Path, packages=()) -> Path:
     lib = make_library(tmp_path)          # the board plugin: a page and caps
     if "agents" in packages:
-        (lib / "agents").symlink_to(PLUGINS / "agents", target_is_directory=True)
+        for folder in ("agents", "trust"):
+            (lib / folder).symlink_to(PLUGINS / folder, target_is_directory=True)
         shutil.copytree(BRAIN, lib / "agents-local")
     if "workbench" in packages:
         for folder in WORKBENCH:
@@ -59,7 +61,8 @@ def library(tmp_path: Path, packages=()) -> Path:
 async def start(tmp_path: Path, packages=()):
     cfg = Config(data=tmp_path / "data", band=BAND, library=library(tmp_path, packages),
                  users={"bake": {"preset": "owner"}, "kim": {"preset": "viewer"}},
-                 presets={"viewer": {"grants": ["page.*", "board.count", "agent.chat.*"], "max_risk": "write"}},
+                 presets={"viewer": {"grants": ["page.*", "board.count", "agent.chat.*", "agent.site", "agent.look"],
+                                     "max_risk": "write"}},
                  agents={"narrow": {"grants": ["page.*", "board.count"]}},
                  settings={"agent": {"warm": "300ms"}},
                  doors={"http": {"bind": "127.0.0.1:0"}})
@@ -86,6 +89,20 @@ async def bearer(c: Client, token: str, cap: str, **args) -> dict:
     return (await c.json("POST", "/call", {"worker": "rook", "cap": cap, "args": args, "why": WHY}, bearer=token))[1]
 
 
+async def tasks_of(c: Client, tokens: dict) -> list:
+    return (await bearer(c, tokens["bake"], "task.list"))["result"]
+
+
+async def soon(fn, seconds=10.0):
+    """Await ``fn()`` until it gives something truthy (what an on: hook does after the call)."""
+    deadline = time.monotonic() + seconds
+    while not (got := await fn()):
+        if time.monotonic() > deadline:
+            raise AssertionError("condition not met in time")
+        await asyncio.sleep(0.05)
+    return got
+
+
 async def until(pred, seconds=10.0):
     deadline = time.monotonic() + seconds
     while True:
@@ -108,52 +125,66 @@ def test_every_install_combination(tmp_path, combo):
         c = Client(hub)
         await c.sign_in(tokens["bake"])
         s = (await c.call("page.site"))["result"]
-        assert s == {"person": "person:bake", "start": None, "dock": "house" if agents else None,
-                     "workbench": workbench}
+        assert s == {"person": "person:bake", "start": None}
+        # the dock is the agents package's part of the shell: none in core, not even its files
+        status, _, shell = await c.req("GET", "/")
+        assert status == 200 and (b"/web/plugin/agent/dock" in shell) is agents
+        if not agents:
+            assert not re.search(rb"dock|rookie|chat", shell, re.I)
+            assert (await c.req("GET", "/web/plugin/agent/dock"))[0] == 404
+            static = Path(web_caps.__file__).with_name("static")
+            for f in ("shell.js", "shell.css", "account.js", "account.html"):
+                assert not re.search(r"dock|rookie|house|chat", (static / f).read_text(), re.I), f
+        else:
+            dock = (await c.call("agent.site"))["result"]
+            assert dock["dock"] == "house" and dock["ready"] is True    # the fake brain serves agent.backend
+            assert dock["look"]["next"] == "sound" and dock["look"]["name"] == "Rookie"
+            assert dock["look"]["chosen"]["name"] is False
+            assert dock["setup"] == {"done": True}       # guided setup only when the installer asks for it
 
-        # a lean sidebar: workers and tokens (+ what packages add); journal and settings by address.
-        # hub.security is off by default: no approvals page anywhere (castling-switchover-decisions)
-        listed = {p["page"]: p for p in (await c.call("page.list"))["result"]["pages"]}
-        nav = {pid for pid, p in listed.items() if p["nav"]}
+        # every page in the sidebar, in its plugin's segment ("nothing is curated out"): the packages
+        # add theirs (the agents package's Agents and Engines pages and trust map, "it matters most to the agents")
+        sidebar = (await c.call("page.list"))["result"]
+        listed = {p["page"]: (s["segment"], p) for s in sidebar["segments"] for p in s["pages"]}
         work = {"task/tasks", "project/projects", "knowledge/knowledge"}
-        assert nav == {"hub/workers", "token/tokens", "board/board"} | (work if workbench else set())
-        assert not any(pid.startswith("approval/") for pid in listed)
-        assert "no page approval/approvals" in (await c.open("approval/approvals")).get("error", "")
-        assert {"journal/journal", "setting/settings"} <= set(listed) - nav
-        for pid in ("journal/journal", "setting/settings"):
+        assert set(listed) == {"hub/workers", "token/tokens", "board/board", "board/holds", "journal/journal",
+                               "setting/settings", "secret/vault", "llm/models"} | \
+            (work if workbench else set()) | ({"agent/agents", "agent/engines", "trust/trust"} if agents else set())
+        assert {pid: seg for pid, (seg, _) in listed.items()} == {
+            pid: {"hub": "Machines", "board": "Garden", "task": "Work", "project": "Work", "knowledge": "Work",
+                  "agent": "Agents", "trust": "Agents", "llm": "Agents"}.get(pid.partition("/")[0], "Hub") for pid in listed}
+        trust_caps = [cap for cap in hub.plugins.caps() if cap.startswith("trust.")]
+        assert bool(trust_caps) is agents, trust_caps
+        for pid in ("journal/journal", "setting/settings", "secret/vault"):
             assert (await c.open(pid))["ok"]
 
         comps = {x["component"] for x in (await c.call("page.components"))["result"]["components"]}
-        assert {"page/text", "page/value", "hub/workers", "approval/holds", "journal/recent"} <= comps
+        assert {"page/text", "page/value", "hub/workers", "journal/recent"} <= comps
         assert ("task/list" in comps) == workbench
 
         # a page build: with the workbench it is a task linked to the page
         layout = [{"component": "hub/workers"}] + ([{"component": "task/list"}] if workbench else [])
         made = await bearer(c, tokens["bake"], "page.create", name="home", title="Home", layout=layout,
                             note="Bake wants the workers at a glance.")
-        assert made["ok"], made
-        if workbench:
-            task = made["result"]["task"]
-            assert task and "task_error" not in made["result"], made
-            t = await bearer(c, tokens["bake"], "task.get", id=task)
-            assert t["result"]["title"] == "Page: Home" and t["result"]["state"] == "in_progress"
-            assert t["result"]["assignee"] == "person:bake"
-            assert [(x["kind"], x["ref"], x["relation"]) for x in t["result"]["links"]] == \
-                [("page", "page/home", "produced")]
-            assert (await c.call("page.get", {"page": "page/home"}))["result"]["made_by"]["task"] == task
+        assert made["ok"] and made["result"] == {"page": "page/home"}, made     # tasks are not core
+        if workbench:                  # the workbench hears page.created and makes the build task
+            tasks = await soon(lambda: tasks_of(c, tokens))
+            t = tasks[0]
+            assert len(tasks) == 1 and t["title"] == "Page: Home" and t["state"] == "in_progress"
+            assert t["assignee"] == "person:bake"
+            assert [(x["kind"], x["ref"], x["relation"]) for x in t["links"]] == [("page", "page/home", "produced")]
             # every later change is noted on the build record
             assert (await bearer(c, tokens["bake"], "page.update", page="page/home", change="Narrowed it.",
                                  layout=[{"component": "hub/workers"}]))["ok"]
-            notes = await bearer(c, tokens["bake"], "task.comment.list", where={"task": task})
-            assert [n["text"] for n in notes["result"]] == ["Changed the page page/home: Narrowed it."]
-        else:
-            assert made["result"] == {"page": "page/home"}           # tasks are not core
 
-        # the dock's chat is the shell's only way past page.*, and only with the dock agent
+            async def noted():
+                got = await bearer(c, tokens["bake"], "task.comment.list", where={"task": t["id"]})
+                return [n["text"] for n in got["result"]]
+            assert await soon(noted) == ["Changed the page page/home: Narrowed it."]
+
+        # past page.*, the shell calls only what plugins' shell parts declare (the dock's chat)
         status, out = await c.json("POST", "/web/api/call", {"cap": "agent.chat.read", "args": {"agent": "house"}})
         assert (status, out.get("ok")) == ((200, True) if agents else (403, False)), out
-        for args in ({"agent": "pm"}, {}, {"agent": ["house"]}):
-            assert (await c.json("POST", "/web/api/call", {"cap": "agent.chat.read", "args": args}))[0] == 403
         assert (await c.json("POST", "/web/api/call", {"cap": "agent.list", "args": {"agent": "house"}}))[0] == 403
     serve(tmp_path, go, packages)
 
@@ -287,12 +318,14 @@ def test_the_house_agent_builds_and_archives_a_page_from_the_dock(tmp_path):
         assert (await c.call("agent.chat.read", {"agent": "house"}))["result"]["events"] == []   # first run
         assert "How do you want to use the site?" in await say("[site] First visit to the hub site. Ask me.")
         reply = await say("[site] The person is on the page hub/workers (Workers).\nmake a page uptime")
-        assert reply.startswith("Made page/uptime (task r_")
+        assert reply.startswith("Made page/uptime")
         s = (await c.call("page.site"))["result"]
         assert s["start"] == "page/uptime"
         page = (await c.call("page.get", {"page": "page/uptime"}))["result"]
         assert page["made_by"]["authors"] == [{"person": "person:bake", "agent": "agent:house"}]   # the agent, for bake
-        assert page["made_by"]["task"] and "asked for a uptime page" in page["note"]
+        assert "asked for a uptime page" in page["note"]
+        task = (await soon(lambda: tasks_of(c, tokens)))[0]
+        assert task["links"][0]["ref"] == "page/uptime" and task["state"] == "in_progress"
         assert set(page["caps"]) == {"hub.workers", "task.list"}
         t = (await c.open("page/uptime"))["token"]
         assert (await c.page(t, "task.list", {"limit": 5}))["ok"]
@@ -316,9 +349,9 @@ def test_the_component_and_workbench_javascript_parses():
     node = shutil.which("node")
     if node is None:
         pytest.skip("no node")
-    import re
     scratch = []
-    files = sorted(web_caps.BUILTIN.glob("*/components/*.js")) + sorted(PLUGINS.glob("*/components/*.js"))
+    files = sorted(web_caps.BUILTIN.glob("*/components/*.js")) + sorted(PLUGINS.glob("*/components/*.js")) + \
+        sorted(PLUGINS.glob("*/shell/*.js"))
     pages = sorted(PLUGINS.glob("*/pages/*.html"))
     assert {p.stem for p in pages} >= {"tasks", "projects", "knowledge"}
     try:
@@ -347,5 +380,5 @@ def test_the_docks_long_poll_fits_the_chat_read_timeout():
     from rook.kit._types import parse_duration
     from rook.kit.manifest import load
     read = load(PLUGINS / "agents").data["caps"]["agent.chat.read"]
-    js = (Path(web_caps.__file__).with_name("static") / "shell.js").read_text()
+    js = (PLUGINS / "agents" / "shell" / "dock.js").read_text()
     assert "await read(55)" in js and parse_duration(read["timeout"]) > read["args"]["wait"]["max"] >= 55

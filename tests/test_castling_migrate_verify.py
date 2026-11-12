@@ -1,5 +1,5 @@
-"""The cutover's lossless check: migrate carries chat rooms, huddles, jobs and
-change records, archives the whole copy, and ``--verify`` accounts for every
+"""The cutover's lossless check: migrate carries chat rooms, huddles and
+change records, puts 0.4 jobs in its report, archives the whole copy, and ``--verify`` accounts for every
 0.4 artifact (castling-switchover-decisions, "Fly it"). Also the read-only
 smoke checker (castling/switchover/smoke.py)."""
 from __future__ import annotations
@@ -101,7 +101,11 @@ def test_apply_then_verify_accounts_for_everything(tmp_path, full04):
     r = migrate(full04, cfg, apply=True)
     assert _hashes(full04) == before
     assert r["rooms"] == {"rooms": 1, "huddles": 1, "messages": 3, "posts": 3, "skipped": 0}
-    assert r["jobs"]["jobs"] == 2 and r["jobs"]["renamed"] == [{"from": "Odd Name!", "to": "odd-name"}]
+    assert [(j["id04"], j["name"], j["enabled04"]) for j in r["jobs"]["jobs"]] == [
+        ("j_1", "nightly-audit", True), ("j_2", "Odd Name!", False)]
+    j1 = r["jobs"]["jobs"][0]
+    assert j1["definition04"] == DEFINITION and j1["owner04"] == "token:x"
+    assert [t["kind"] for t in j1["triggers04"]] == ["cron"]
     assert r["changes"]["changes"] == 1
     data = cfg.parent / "data"
     # the archive: every file but the vault key, byte for byte, read-only
@@ -134,10 +138,10 @@ def test_apply_then_verify_accounts_for_everything(tmp_path, full04):
     h = rec.execute('SELECT * FROM "r:huddle.huddle"').fetchone()
     assert (h["title"], h["state"], h["stream"], json.loads(h["roles"])) == (
         "Huddle: lab", "closed", streams["hud1"][0], ["qa"])
-    jobs = {j["name"]: j for j in rec.execute('SELECT * FROM "r:job.job"')}
-    j = jobs["nightly-audit"]
-    assert j["enabled"] in (0, False, "false") and json.loads(j["trigger"]) == {"manual": True}
-    assert json.loads(j["vars"])["definition04"] == DEFINITION and j["person"] == "bake"
+    tables = {t for (t,) in rec.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert not any(t.startswith("r:job.") for t in tables)                            # no job records
+    assert json.loads((data / "migrate" / "report.json").read_text())["jobs"] == r["jobs"]
+    assert "`nightly-audit`" in (data / "migrate" / "report.md").read_text()
     c = rec.execute('SELECT * FROM "r:change.change"').fetchone()
     assert (c["what"], c["why"], json.loads(c["workers"])) == ("Rotate the log", "disk", ["nas"])
     assert "kept" in c["outcome"] and c["created"] == NOW
@@ -150,7 +154,7 @@ def test_apply_then_verify_accounts_for_everything(tmp_path, full04):
     assert k["chat messages -> text events"]["moved"] == 3
     assert k["huddle posts and questions -> status events"]["moved"] == 3
     assert k["merge votes (motions, rounds, ballots, artifacts, cards)"]["left"] == 1
-    assert k["jobs (disabled, 0.4 definition kept)"]["moved"] == 2
+    assert (k["jobs"]["moved"], k["jobs"]["left"]) == (0, 2)
     assert k["job runs and history"]["left"] == 1
     assert k["secrets (names + value hashes)"]["moved"] == 2
     assert k["files (whole copy, byte for byte in archive/0.4)"]["left"] == 1         # vault.key
@@ -159,7 +163,7 @@ def test_apply_then_verify_accounts_for_everything(tmp_path, full04):
     assert "VERIFIED" in text and SECRET not in text and SECRET not in json.dumps(v)
 
     again = migrate(full04, cfg, apply=True)                                           # a re-run adds nothing
-    assert again["rooms"]["skipped"] == 2 and again["jobs"]["skipped"] == 2 and again["changes"]["skipped"] == 1
+    assert again["rooms"]["skipped"] == 2 and again["changes"]["skipped"] == 1
     assert again["archive"]["written"] == 0
     assert verify.verify(full04, cfg)["ok"]
 
@@ -178,17 +182,12 @@ def test_verify_finds_what_did_not_survive(tmp_path, full04):
     playbook.write_text("changed\n")
     from rook.core2.hub.vault import Vault
     Vault(data).unlock().set("pikvm", "a-different-value", by="test")
-    rec = sqlite3.connect(data / "records.db")
-    rec.execute('DELETE FROM "r:job.job" WHERE name=?', ("odd-name",))
-    rec.commit()
-    rec.close()
     v = verify.verify(full04, cfg)
     k = _kinds(v)
     assert not v["ok"]
     assert k["chat messages -> text events"]["missing"] == 1
     assert k["files (whole copy, byte for byte in archive/0.4)"]["examples"] == ["plugins/home/playbook.md"]
     assert k["secrets (names + value hashes)"]["examples"] == ["pikvm"]
-    assert k["jobs (disabled, 0.4 definition kept)"]["examples"] == ["Odd Name!"]
     out = verify.render(v)
     assert "NOT VERIFIED" in out and "a-different-value" not in out and "kvm-pass-123" not in out
 
@@ -416,12 +415,12 @@ def test_the_move_follows_singular_plugin_names(tmp_path, full04, monkeypatch):
         rec = sqlite3.connect(cfg.parent / "data" / "records.db")
         tables = {r[0] for r in rec.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         rec.close()
-        assert {"r:job.job", "r:agent.memory"} <= tables
-        assert not {"r:jobs.jobs", "r:agents.memory", "r:agents.note"} & tables
+        assert "r:agent.memory" in tables
+        assert not {"r:job.job", "r:jobs.jobs", "r:agents.memory", "r:agents.note"} & tables
         v = verify.verify(full04, cfg)
         assert v["ok"], verify.render(v)
-        assert _kinds(v)["jobs (disabled, 0.4 definition kept)"]["moved"] == 2
+        assert _kinds(v)["jobs"]["left"] == 2
         assert _kinds(v)["house agent memory (active -> memory or notepad)"]["moved"] == 4
-        assert "job.list" in [c for c, _ in _smoke().RECORDS]          # the smoke checks name the same caps
+        assert "change.list" in [c for c, _ in _smoke().RECORDS]       # the smoke checks name the same caps
     finally:
         names.manifest.cache_clear()

@@ -3,7 +3,7 @@
 # A person links their Telegram account with a one-time code (/link CODE to
 # the bot), so the hub knows which chat is theirs; a typed chat id would let
 # anyone claim someone else's chat. Inbound messages become telegram.message
-# events, tainted (outside content). Bot API over HTTPS, long-polled
+# events (outside content). Bot API over HTTPS, long-polled
 # getUpdates; no Telegram library. Code: scripts/telegram.py.
 manifest: 1
 plugin: telegram
@@ -11,6 +11,7 @@ version: 0.5.1
 title: Telegram
 doc: The band's Telegram bot, a notify channel; inbound messages become events.
 package: core
+segment: Hub
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
@@ -65,7 +66,7 @@ caps:
     on: hub
     risk: write
     scope: self
-    effects: [persists]
+    effects: []
     run: scripts/telegram.py:link
     result: { type: map }
   unlink:

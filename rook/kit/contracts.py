@@ -8,8 +8,8 @@ and the plugins that provide them (castling-manifest-2, "Contracts and provides"
     provides: [screen.capture]       # or: the cap is declared under the contract's name
 
 The hub serves each contract as a cap of its own name; a call to it is routed
-to the chosen provider: the one picked in the hub setting (house agent or
-user), else the first installed. The provider runs with the original caller's
+to the chosen provider: the one picked in the hub config's ``contracts:``,
+else the first installed. The provider runs with the original caller's
 rights, as if they had called it directly.
 
 A contract with ``route: target`` (device contracts: ``screen.capture``,
@@ -107,15 +107,6 @@ class Contracts:
             raise KitError(f"nothing provides {contract}; install a plugin that does")
         chosen = self.choices.get(contract)
         return chosen if chosen in installed else installed[0]
-
-    def set_choice(self, contract: str, cap: str | None) -> None:
-        """Pick a provider (None clears it back to the default)."""
-        if cap is None:
-            self.choices.pop(contract, None)
-            return
-        if cap not in self.providers(contract):
-            raise KitError(f"{cap} doesn't provide {contract}")
-        self.choices[contract] = cap
 
     async def route(self, contract: str, args: Mapping, caller: Caller,
                     dispatch: Callable[[str, dict, Caller], Any]) -> Any:

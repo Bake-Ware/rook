@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import _yaml
-from .validate import ACTION_KEYS, ACTION_TYPES, Issue, cap_name, provided, record_caps, validate
+from .validate import Issue, cap_name, provided, record_caps, validate
 
 MANIFEST_FILE = "plugin.yaml"
 
@@ -72,8 +72,7 @@ def load(path, contracts: dict | None = None) -> Manifest:
 
 def _field_defaults(fields: dict):
     for spec in fields.values():
-        if "schema" not in spec:
-            spec.setdefault("type", "str")
+        spec.setdefault("type", "str")
         spec.setdefault("required", False)
 
 
@@ -84,33 +83,31 @@ def normalize(data: dict) -> dict:
     plugin = out["plugin"]
     runs_on = out.setdefault("runs_on", "worker")
     out.setdefault("builtin", False)
-    for key in ("uses", "replaces", "check"):
+    out.setdefault("segment", "Hub")
+    for key in ("uses", "check"):
         out.setdefault(key, [])
     for spec in out.setdefault("settings", {}).values():
         spec.setdefault("type", "secret" if spec.get("secret") else "str")
-        spec.setdefault("where", "worker")
+        spec.setdefault("where", "hub" if runs_on == "hub" else "worker")
         spec.setdefault("apply", "live")
         spec.setdefault("required", False)
         spec.setdefault("secret", spec["type"] == "secret")
     caps = {}
     for rel, cap in out.get("caps", {}).items():
-        c = {"effects": [], "tags": [], "args": {}, "idempotent": False, "elevation": "never",
+        c = {"effects": [], "args": {}, "idempotent": False, "elevation": "never",
              "on": runs_on, "aliases": [], **cap}
         if "platforms" in out:
             c.setdefault("platforms", out["platforms"])
         _field_defaults(c["args"])
         if c.get("timeout") == "none":
             c["timeout"] = None  # never times out; absent = the host's default
-        unknown = sorted(set(c.get("action", {})) - set(ACTION_TYPES) - set(ACTION_KEYS))
-        if unknown:
-            c["unavailable"] = f"unknown action type: {', '.join(unknown)}"
         caps[cap_name(plugin, rel)] = c
     for name, c in record_caps(out).items():
-        caps[name] = {"tags": [], "args": {}, "idempotent": c["risk"] == "read",
+        caps[name] = {"args": {}, "idempotent": c["risk"] == "read",
                       "elevation": "never", "aliases": [], **c}
     out["caps"] = caps
     # provides as {contract: full cap name}; each such cap lists the
-    # contracts it answers to (a call by a contract's name, spec 4.1).
+    # contracts it answers to (a call by a contract's name, spec 3.3).
     out["provides"] = provided(out)
     for contract, cap in out["provides"].items():
         if cap in caps:
@@ -119,8 +116,6 @@ def normalize(data: dict) -> dict:
         _field_defaults(rec["fields"])
     for contract in out.get("contracts", {}).values():
         contract.setdefault("route", "provider")
-    for route in out.get("routes", {}).values():
-        route.setdefault("auth", "user")
     for ev in out.get("emits", {}).values():
         ev.setdefault("taints", False)
         _field_defaults(ev.setdefault("payload", {}))

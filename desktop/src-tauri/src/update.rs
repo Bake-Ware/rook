@@ -24,8 +24,6 @@ pub struct Update {
 pub fn platform() -> &'static str {
     if cfg!(windows) {
         "windows"
-    } else if cfg!(target_os = "macos") {
-        "macos"
     } else {
         "linux"
     }
@@ -55,12 +53,11 @@ pub fn newer(a: &str, b: &str) -> bool {
 }
 
 /// How this copy was installed decides which file to offer: the setup
-/// program on Windows, the disk image on macOS, the AppImage when running as
+/// program on Windows, the AppImage when running as
 /// one (it sets `APPIMAGE`), else the .deb.
 fn preference(platform: &str, appimage: bool) -> &'static [&'static str] {
     match platform {
         "windows" => &["-setup.exe", ".msi"],
-        "macos" => &[".dmg"],
         _ if appimage => &[".AppImage", ".deb"],
         _ => &[".deb", ".AppImage"],
     }
@@ -166,7 +163,6 @@ mod tests {
             "rook-desktop-0.2.0-amd64.AppImage",
             "rook-desktop-0.2.0-amd64.deb",
             "rook-desktop-0.2.0-x64-setup.exe",
-            "rook-desktop-0.2.0-aarch64.dmg",
         ]);
         assert_eq!(
             pick(&u, "0.1.0", "windows", false).unwrap().name,
@@ -180,7 +176,6 @@ mod tests {
             pick(&u, "0.1.0", "linux", true).unwrap().name,
             "rook-desktop-0.2.0-amd64.AppImage"
         );
-        assert_eq!(pick(&u, "0.1.0", "macos", false).unwrap().version, "0.2.0");
         // Up to date, or only older files: nothing to offer.
         assert_eq!(pick(&u, "0.2.0", "windows", false), None);
         assert_eq!(pick(&u, "0.3.0", "linux", false), None);

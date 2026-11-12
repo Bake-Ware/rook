@@ -1,6 +1,6 @@
 """rook.core2.worker host + loader: plugin folders become callable caps.
 
-Fixtures: tests/fixtures/castling/echo (YAML only) and counter (run: + hooks).
+Fixtures: tests/fixtures/castling/echo (settings, an unavailable cap) and counter (hooks).
 Every test runs under a hard asyncio timeout.
 """
 
@@ -19,7 +19,6 @@ from rook.kit.ctx import Caller
 
 FIX = Path(__file__).resolve().parent.parent / "fixtures" / "castling"
 ME = Caller(person="bake", agent="claude", band="b1", why="testing the host")
-needs_echo = pytest.mark.skipif(shutil.which("echo") is None, reason="no echo binary")
 
 
 def go(body, timeout=15):
@@ -53,10 +52,9 @@ async def until(cond, timeout=3.0):
     raise AssertionError("condition never became true")
 
 
-# -- YAML-only plugin -----------------------------------------------------------
+# -- a plugin's caps ---------------------------------------------------------------
 
-@needs_echo
-def test_yaml_plugin_calls_and_aliases():
+def test_plugin_calls_and_aliases():
     async def body():
         host = Host(os_name="linux")
         p = await host.load(FIX / "echo")
@@ -69,26 +67,6 @@ def test_yaml_plugin_calls_and_aliases():
 
 
 
-@needs_echo
-def test_action_processes_go_through_core_launch(monkeypatch):
-    # spec 7.1: a root worker with no normal account refuses to launch, actions included
-    from rook.core2.worker import security
-
-    def refuse(argv, lease, **kw):
-        raise security.LaunchRefused("worker runs as root but no normal account (run_as) is set")
-    monkeypatch.setattr(security, "launch_plan", refuse)
-
-    async def body():
-        host = Host(os_name="linux")
-        await host.load(FIX / "echo")
-        try:
-            with pytest.raises(CallError, match="LaunchRefused"):
-                await host.call("echo.say", {"text": "hi"}, ME)
-        finally:
-            await host.close()
-    go(body)
-
-@needs_echo
 def test_bad_args_and_unknown_cap():
     async def body():
         host = Host(os_name="linux")
@@ -109,23 +87,13 @@ def test_unavailable_caps_have_reasons():
     async def body():
         host = Host(os_name="linux", hardware=["gpu"])
         p = await host.load(FIX / "echo")
-        assert p.unavailable == {
-            "echo.gone": "missing bin: rook-no-such-binary",
-            "echo.windows": "not on linux (runs on windows)",
-            "echo.lamp": "missing hardware: lamp",
-            "echo.motto": "setting not set: motto",
-        }
-        with pytest.raises(CallError, match=r"^unavailable: echo.lamp: missing hardware: lamp$"):
-            await host.call("echo.lamp", {}, ME)
-        assert "echo.lamp" not in host.caps()
+        assert p.unavailable == {"echo.windows": "not on linux (runs on windows)"}
+        with pytest.raises(CallError, match=r"^unavailable: echo.windows: not on linux \(runs on windows\)$"):
+            await host.call("echo.windows", {}, ME)
+        assert "echo.windows" not in host.caps()
         ann = await host.announce()
-        assert ann["unavailable"]["echo.gone"] == "missing bin: rook-no-such-binary"
+        assert ann["unavailable"]["echo.windows"] == "not on linux (runs on windows)"
         await host.close()
-
-        lamp = Host(os_name="linux", hardware=["lamp"])
-        p = await lamp.load(FIX / "echo")
-        assert "echo.lamp" in p.caps and "echo.lamp" not in p.unavailable
-        await lamp.close()
     go(body)
 
 
@@ -133,17 +101,24 @@ def test_plugin_level_requirements_disable_every_cap_and_hooks(tmp_path):
     async def body():
         src = counter(tmp_path)
         y = src / "plugin.yaml"
-        y.write_text(y.read_text().replace("doc: Counts.", "doc: Counts.\nplatforms: [macos]"))
+        y.write_text(y.read_text().replace("doc: Counts.", "doc: Counts.\nplatforms: [windows]"))
         host = Host(os_name="linux")
         p = await host.load(src)
         assert p.caps == {}
-        assert set(p.unavailable.values()) == {"not on linux (runs on macos)"}
+        assert set(p.unavailable.values()) == {"not on linux (runs on windows)"}
         assert "counter" not in host.scheduler.plugins   # hooks never started
+        await host.close()
+
+        y.write_text(y.read_text().replace("platforms: [windows]", "requires: { settings: [key] }"))
+        host = Host(os_name="linux")
+        p = await host.load(src)
+        assert set(p.unavailable.values()) == {"setting not set: key"}
+        await host.set_settings("counter", hub={"key": "k"})      # a required setting rebinds
+        assert host.plugins["counter"].unavailable == {}
         await host.close()
     go(body)
 
 
-@needs_echo
 def test_secret_settings_come_from_the_hub_per_call(tmp_path):
     """castling-enrollment (Bake): "Secrets: referenced only by vault name;
     the hub sends the value with each call; never written to worker disk."
@@ -158,9 +133,8 @@ def test_secret_settings_come_from_the_hub_per_call(tmp_path):
         assert (await host.call("echo.secret", {}, ME, carry={"settings": {"token": "s3cret-1"}})).strip() == "s3cret-1"
         # rotated in the vault: the next call carries the new value
         assert (await host.call("echo.secret", {}, ME, carry={"settings": {"token": "s3cret-2"}})).strip() == "s3cret-2"
-        with pytest.raises(CallError, match="the hub sent none"):
-            await host.call("echo.secret", {}, ME)
-        await host.call("echo.greet", {}, ME)   # doesn't name the secret: nothing needed
+        assert await host.call("echo.secret", {}, ME) is None    # nothing carried: no value, not the worker's
+        await host.call("echo.greet", {}, ME)
         assert asked == []
         assert "s3cret" not in json.dumps(host.plugins["echo"].settings)
         assert not any("s3cret" in f.read_text(errors="replace") for f in tmp_path.rglob("*") if f.is_file())
@@ -168,17 +142,14 @@ def test_secret_settings_come_from_the_hub_per_call(tmp_path):
     go(body)
 
 
-@needs_echo
-def test_settings_merge_and_requires_settings():
+def test_settings_merge():
     async def body():
         host = Host(os_name="linux")
         await host.set_settings("echo", local={"greeting": "hi", "motto": "local!"})
-        p = await host.load(FIX / "echo")
+        await host.load(FIX / "echo")
         assert (await host.call("echo.greet", {"name": "bake"}, ME)).strip() == "hi bake"
-        # motto is where: hub, so the local value doesn't count.
-        assert p.unavailable["echo.motto"] == "setting not set: motto"
+        # motto is where: hub, so the hub's value is the one used.
         await host.set_settings("echo", hub={"motto": "be kind", "greeting": "yo"})
-        assert "echo.motto" not in host.plugins["echo"].unavailable
         assert (await host.call("echo.motto", {}, ME)).strip() == "be kind"
         # greeting is where: worker: the local value wins over the hub's.
         assert (await host.call("echo.greet", {}, ME)).strip() == "hi world"
@@ -209,28 +180,6 @@ def test_merge_settings_rules():
     out = merge_settings(decls, {"a": 1, "b": 1, "d": 1, "z": 1}, {"a": 2, "b": 2, "c": 2})
     assert out == {"a": 1, "b": 2, "c": 2, "d": 1}
     assert merge_settings(decls, {}, {"a": 2}) == {"a": 2}
-
-
-@needs_echo
-def test_actions_get_the_cap_spec(tmp_path):
-    """Arg join/map and result coercion (manifest 1.1) need the cap's spec."""
-    (tmp_path / "plugin.yaml").write_text(
-        "manifest: 1\nplugin: spec\nversion: 1.0.0\ncaps:\n"
-        "  keys:\n    doc: Joined keys.\n    risk: read\n    scope: self\n"
-        "    args: { keys: { type: list, items: { type: str, enum: [a, b] }, join: ',' } }\n"
-        "    action: { exec: { argv: [echo, '{{args.keys}}'] }, parse: text }\n"
-        "  level:\n    doc: A number.\n    risk: read\n    scope: self\n"
-        "    args: { word: { type: str, enum: [one, two], map: { one: '1', two: '2' } } }\n"
-        "    result: { type: int }\n"
-        "    action: { exec: { argv: [echo, '{{args.word}}'] }, parse: text }\n")
-
-    async def body():
-        host = Host(os_name="linux")
-        await host.load(tmp_path)
-        assert await host.call("spec.keys", {"keys": ["a", "b"]}, ME) == "a,b"
-        assert await host.call("spec.level", {"word": "two"}, ME) == 2
-        await host.close()
-    go(body)
 
 
 # -- run: plugin ---------------------------------------------------------------
@@ -537,7 +486,9 @@ def test_load_folder_skips_hub_caps_and_refuses_builtin(tmp_path):
         "manifest: 1\nplugin: rec\nversion: 1.0.0\n"
         "records:\n  note:\n    fields:\n      title: { type: str }\n"
         "caps:\n  ping:\n    doc: Ping.\n    risk: read\n    scope: self\n    on: hub\n"
-        "    action:\n      http: { url: 'http://127.0.0.1:9/' }\n")
+        "    run: scripts/ping.py:ping\n")
+    (d / "scripts").mkdir()
+    (d / "scripts" / "ping.py").write_text("def ping(ctx):\n    return 1\n")
     p = load_folder(d, os_name="linux")
     assert p.caps == {} and p.unavailable == {}   # all hub-side: not this worker's business
     b = tmp_path / "b"
@@ -547,7 +498,7 @@ def test_load_folder_skips_hub_caps_and_refuses_builtin(tmp_path):
         load_folder(b, os_name="linux")
 
 
-# -- appliances (spec 5.7) --------------------------------------------------------
+# -- appliances (spec 10.8) --------------------------------------------------------
 
 LAMP_YAML = """\
 manifest: 1
@@ -563,14 +514,12 @@ caps:
     doc: The URL it would call.
     risk: read
     scope: local
-    action:
-      exec: { argv: [echo, "http://{{appliance.host}}:{{appliance.port}}/{{appliance.name}}"] }
+    run: scripts/lamp.py:url
   leak:
     doc: Says its key.
     risk: read
     scope: local
-    action:
-      exec: { argv: [sh, -c, "echo key {{appliance.key}} >&2; exit 3"] }
+    run: scripts/lamp.py:leak
   seen:
     doc: What ctx.appliance holds.
     risk: read
@@ -579,6 +528,13 @@ caps:
 """
 
 LAMP_PY = """\
+def url(ctx):
+    a = ctx.appliance
+    return f"http://{a['host']}:{a['port']}/{a['name']}"
+
+def leak(ctx):
+    raise ctx.Error("key " + ctx.appliance["key"])
+
 def seen(ctx):
     a = dict(ctx.appliance)
     return {"name": a["name"], "host": a["host"], "port": a["port"], "key": "set" if a["key"] else None,
@@ -594,10 +550,9 @@ def lamp(tmp_path):
     return d
 
 
-@needs_echo
-def test_appliance_instances_render_from_what_the_hub_carries(tmp_path):
-    """castling-manifest-appliance: "{{appliance.x}} sees the instance's host,
-    port and name from onboarding with its instance settings on top"."""
+def test_appliance_instances_from_what_the_hub_carries(tmp_path):
+    """castling-manifest-appliance: ctx.appliance is the instance's host, port
+    and name from onboarding with its instance settings on top."""
     async def body():
         host = Host(os_name="linux")
         await host.load(lamp(tmp_path))
@@ -612,14 +567,13 @@ def test_appliance_instances_render_from_what_the_hub_carries(tmp_path):
         with pytest.raises(CallError) as e:
             await host.call("lamp.leak", {}, ME, carry=carry, appliance="den-lamp")
         assert "k3y-v4lue" not in e.value.message
-        # No instance: an appliance template has nothing to fill.
+        # No instance: nothing to read.
         with pytest.raises(CallError):
             await host.call("lamp.url", {}, ME)
         await host.close()
     go(body)
 
 
-@needs_echo
 def test_an_appliance_call_needs_an_appliance_plugin():
     async def body():
         host = Host(os_name="linux")

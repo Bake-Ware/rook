@@ -1,25 +1,29 @@
-# An agent.backend provider: one agent turn in the Codex CLI on this worker,
-# under the ChatGPT subscription it is signed in with (castling-inference:
-# "Day one: support Claude Code and Codex as backends"). `codex exec --json`,
+# An agent.backend provider: one agent turn in the Codex CLI under the
+# ChatGPT subscription it is signed in with (castling-inference: "Day one:
+# support Claude Code and Codex as backends"). The plugin runs on the hub; the
+# CLI runs on the worker named by the `worker` setting. `codex exec --json`,
 # resumed by session id (`codex exec resume <id>`); the prompt goes in on
 # stdin. Code: scripts/codex.py.
 manifest: 1
 plugin: agents-codex
-version: 0.5.1
-title: Codex backend
-doc: Agent turns in the Codex CLI, for the agents package.
+version: 0.6.1
+title: Codex
+doc: Agent turns in the Codex CLI signed in on one of the band's workers, for the agents package.
 package: agents
+segment: Agents
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-platforms: [linux, macos, windows]
+runs_on: hub
+uses: [shell.open, shell.env, file.write, stream.read, stream.write, stream.close]
 settings:
-  codex: { default: codex, doc: "The codex program: a name on PATH or a full path." }
-  model: { doc: "System Two's model when the agent names none (a Codex model id); blank: Codex's own default." }
-  model_three: { default: gpt-6-luna, doc: "System Three's model (dream cycles): a light one; blank: Codex's own default." }
-  sandbox: { enum: [read-only, workspace-write, danger-full-access], doc: "Codex's sandbox for the commands a turn runs; blank: its own default (read-only)." }
-  door_url: { type: url, default: "http://127.0.0.1:8741/mcp", doc: "The hub's MCP door as this worker reaches it. Each turn reaches it with that turn's own token (the agent, for the person behind it)." }
-  config: { type: list, items: { type: str }, doc: "Extra Codex config overrides, one key=value each (passed as -c), e.g. other MCP servers. Rook itself comes from door_url, with the turn's token." }
-  isolate: { type: bool, default: true, doc: "Leave out the signed-in user's own Codex config and rules (--ignore-user-config --ignore-rules; sign-in still comes from CODEX_HOME): a turn reaches only what config gives it." }
+  worker: { where: hub, type: worker, doc: "The worker (name) where Codex is installed and signed in; turns fail until it is set." }
+  codex: { where: hub, default: codex, doc: "The codex program on that worker: a name on PATH or a full path (~ is its home)." }
+  model: { where: hub, doc: "System Two's model when the agent names none (a Codex model id); blank: Codex's own default." }
+  model_three: { where: hub, default: gpt-6-luna, doc: "System Three's model (dream cycles): a light one; blank: Codex's own default." }
+  sandbox: { where: hub, enum: [read-only, workspace-write, danger-full-access], doc: "Codex's sandbox for the commands a turn runs; blank: its own default (read-only)." }
+  door_url: { where: hub, type: url, default: "http://127.0.0.1:8741/mcp", doc: "The hub's MCP door as the worker reaches it. Each turn reaches it with that turn's own token (the agent, for the person behind it)." }
+  config: { where: hub, type: list, items: { type: str }, doc: "Extra Codex config overrides, one key=value each (passed as -c), e.g. other MCP servers. Rook itself comes from door_url, with the turn's token." }
+  isolate: { where: hub, type: bool, default: true, doc: "Leave out the signed-in user's own Codex config and rules (--ignore-user-config --ignore-rules; sign-in still comes from CODEX_HOME): a turn reaches only what config gives it." }
 caps:
   turn:
     doc: One agent turn in Codex; pass session back to continue the conversation.
@@ -30,18 +34,26 @@ caps:
     args:
       prompt: { type: str, required: true }
       session: { type: str, doc: "The Codex session id to resume; blank: a new session." }
-      cwd: { type: str, doc: "The folder Codex works in; blank: this plugin's work folder." }
+      cwd: { type: str, doc: "The folder on the worker Codex works in; blank: ~/.rook-plugins/agents-codex/work there." }
       model: { type: str, doc: "A Codex model id, or two/three for System Two/Three; blank: the model setting." }
       effort: { type: str, doc: "Codex's model_reasoning_effort (minimal, low, medium, high, xhigh); blank: its own." }
       system: { type: str, doc: Codex's developer instructions for the turn. }
       timeout: { type: duration, default: 20m, doc: How long the turn may take. }
-      door: { type: secret, doc: "The turn's door token, from the agents runtime: the turn's Rook MCP server uses it. Never journaled." }
+      door: { type: secret, doc: "The turn's door token by name ({{secret:turn-...}}), from the agents runtime: the turn's Rook MCP server uses it." }
     result:
       type: map
       fields:
         text: { type: str, required: true }
         session: { type: str, required: true }
         usage: { type: map, items: { type: int } }
+  models:
+    doc: "The models the model setting and an agent's model take (codex debug models on the worker; a full model id works too), and the model setting."
+    risk: exec
+    scope: local
+    idempotent: true
+    timeout: 1m
+    run: scripts/codex.py:models
+    result: { type: map }
 provides:
   agent.backend: agents-codex.turn
 docs: { manual: docs/manual.md }

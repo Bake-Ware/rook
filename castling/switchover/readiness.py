@@ -45,7 +45,7 @@ GATES = [
      ("cap", "rook/core2/builtin/worker.yaml:update")),
     ("R7", "speech on the hub (the voice assistant)", ("file", "rook/plugins/speech/plugin.yaml")),
     ("R8", "the phone app runs 0.5", ("file", "android/app/src/main/java/systems/bake/rook/Castling.kt")),
-    ("R9", "the desktop app runs 0.5", ("file", "desktop/src-tauri/src/hub05.rs")),
+    ("R9", "the desktop app runs 0.5", ("file", "desktop/src-tauri/src/hub.rs")),
     ("R10", "the desktop app updates on 0.5", ("todo", "desktop-updates")),
     ("R11", "the soak results are written up", ("file", "docs/castling-soak.md")),
     ("R12", "the hardening review's report is in", ("file", "castling/review.md")),

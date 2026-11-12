@@ -50,7 +50,7 @@ from rook.kit.manifest import load  # noqa: E402
 from rook.kit.records import RecordStore  # noqa: E402
 
 PLUGINS = Path(__file__).resolve().parents[2] / "rook" / "plugins"
-FOLDERS = ("concepts", "projects", "knowledge", "tasks", "whiteboard")
+FOLDERS = ("concepts", "projects", "knowledge", "tasks", "whiteboard", "trust")
 TASK_STATES = {"todo", "in_progress", "blocked", "paused", "done", "cancelled"}
 PAGE_KINDS = {"fact", "decision", "procedure", "observation", "question", "summary", "skill"}
 JOTS = (("goal", "Goal"), ("decision", "Decisions"), ("open", "Open"), ("note", "Notes"))

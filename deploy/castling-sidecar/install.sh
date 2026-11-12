@@ -45,16 +45,20 @@ rm -rf "$SRC.old"
 chmod -R go-w "$SRC"
 say "venv: $VENV"
 [ -x "$PY" ] || uv venv -q --python 3.12 "$VENV"
-uv pip install -q --python "$PY" -e "$SRC[manifest,desktop]"
+uv pip install -q --python "$PY" -e "${SRC}[manifest]"
 
 # -- the units ------------------------------------------------------------------------
 say "units: ${UNITS[*]} (not enabled at boot)"
+# The relay's web socket (workers whose UDP is blocked, through the site's /band):
+# a new hub gets it; an upgraded one only if its hub.yaml has the door's band: line.
+WS_PORT=$((RELAY_PORT + 1)) ws_arg=""
+if [ $upgrade = 0 ] || grep -q "^    band: ws://" "$HUB_CFG"; then ws_arg="127.0.0.1 $WS_PORT"; fi
 cat > "$UNIT_DIR/rook-castling-relay.service" <<EOF
 [Unit]
-Description=Rook 0.5 sidecar: band relay (UDP 127.0.0.1:$RELAY_PORT)
+Description=Rook 0.5 sidecar: band relay (UDP 127.0.0.1:$RELAY_PORT${ws_arg:+, web socket 127.0.0.1:$WS_PORT})
 
 [Service]
-ExecStart=$PY $SRC/tests/e2e/relay.py $RELAY_PORT
+ExecStart=$PY -m rook.core2.relay $RELAY_PORT $ws_arg
 Restart=on-failure
 RestartSec=3
 
@@ -116,40 +120,44 @@ fi
 plugins="$SRC/rook/plugins"
 # The library: the hub's trusted plugin folders (hub plugins run there; the
 # worker ones are pushable). The worker loads its own straight from the code.
-HUB_PLUGINS="agents notify changes tasks projects knowledge concepts whiteboard"
-WORKER_PLUGINS="shell file notification-desktop screen-desktop torrent agents-claude-code agents-codex llm-cli"
+HUB_PLUGINS="agents notify changes tasks projects knowledge concepts whiteboard
+             battery notification-desktop screen-desktop torrent camera hid-desktop adb llm-cli
+             agents-claude-code agents-codex"
+WORKER_PLUGINS="shell file"
 mkdir -p "$ROOT/hub/library"
 find "$ROOT/hub/library" -maxdepth 1 -type l -delete
 for p in $HUB_PLUGINS $WORKER_PLUGINS; do
     [ -f "$plugins/$p/plugin.yaml" ] && ln -s "$plugins/$p" "$ROOT/hub/library/$p"
 done
-"$PY" - "$HUB_CFG" "$MCP_BIND" <<'EOF'
-import sys, yaml
+"$PY" - "$HUB_CFG" "$MCP_BIND" "$WORKER_NAME" "$upgrade" "$WS_PORT" <<'EOF'
+import os, shutil, sys, yaml
 from pathlib import Path
-path, mcp = Path(sys.argv[1]), sys.argv[2]
+path, mcp, worker, upgrade, ws = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 text = path.read_text()
 head = "".join(l for l in text.splitlines(True) if l.startswith("#"))
 cfg = yaml.safe_load(text)
 cfg.setdefault("agents", {}).setdefault("claude-code", {"grants": ["*"], "max_risk": "exec"})
+# The engines run on the hub; their CLIs on this machine's worker.
+door = f"http://{mcp}/mcp"
+for plugin, program in (("agents-claude-code", "claude"), ("agents-codex", "codex")):
+    found = shutil.which(program) or os.path.expanduser(f"~/.local/bin/{program}")
+    cfg.setdefault("settings", {}).setdefault(plugin, {"worker": worker, program: found, "door_url": door})
 cfg["doors"]["mcp"] = {"bind": mcp}
+if upgrade == "0":
+    cfg["doors"]["http"]["band"] = f"ws://127.0.0.1:{ws}/band"
 cfg["log"] = {"level": "info", "format": "text"}
 path.write_text(head + yaml.safe_dump(cfg, sort_keys=False))
 EOF
 chmod 600 "$HUB_CFG"
 
 "$PY" - "$WORKER_CFG" "$WORKER_NAME" "$plugins" "$WORKER_PLUGINS" <<'EOF'
-import os, shutil, sys, yaml
+import os, sys, yaml
 from pathlib import Path
 path, name, plugins, wanted = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), sys.argv[4].split()
 cfg = yaml.safe_load(path.read_text()) if path.exists() else {}
 cfg.setdefault("data", "./data")
 cfg.setdefault("name", name)
 cfg["plugins"] = [str(plugins / p) for p in wanted if (plugins / p / "plugin.yaml").is_file()]
-claude = shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
-cfg.setdefault("settings", {}).setdefault("agents-claude-code", {"claude": claude})
-if (plugins / "agents-codex" / "plugin.yaml").is_file():
-    codex = shutil.which("codex") or os.path.expanduser("~/.local/bin/codex")
-    cfg["settings"].setdefault("agents-codex", {"codex": codex})
 if os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"):
     cfg["hardware"] = sorted(set(cfg.get("hardware") or []) | {"display"})   # screen + notification ports
 cfg["log"] = {"level": "info", "format": "text"}

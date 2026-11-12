@@ -125,13 +125,11 @@ def pub_text(sk) -> str:
 
 
 def manifest_hash(manifest: dict) -> str:
-    """Hex SHA-256 of a parsed manifest's canonical JSON (spec 5.4).
-    TODO(castling:manifest): use rook.kit.manifest's hash once it lands, if
-    it hashes the same bytes."""
+    """Hex SHA-256 of a parsed manifest's canonical JSON (spec 4.2)."""
     return hashlib.sha256(canonical(manifest)).hexdigest()
 
 
-# -- signed objects (spec 3.3) ----------------------------------------------
+# -- signed objects (spec 10.1) ----------------------------------------------
 
 PREFIX = {
     "rook-ticket": b"rook-ticket-v2\n",
@@ -141,10 +139,10 @@ PREFIX = {
     "rook-announce": b"rook-announce-v2\n",
     "rook-plugin": b"rook-plugin-v2\n",
     "rook-release": b"rook-release-v2\n",
-    "rook-request": b"rook-request-v2\n",     # signed by the worker's own key (5.8)
+    "rook-request": b"rook-request-v2\n",     # signed by the worker's own key (10.2)
 }
 
-# Keys that ride on a signed object without being signed (spec 3.3).
+# Keys that ride on a signed object without being signed (spec 10.1).
 UNSIGNED = ("sig", "hubkey")
 
 
@@ -189,7 +187,7 @@ def negotiate(mine: Any, theirs: Any) -> str | None:
     return f"{a[1]}.{min(int(a[2]), int(b[2]))}"
 
 
-# -- hub keys (spec 5.2) -----------------------------------------------------
+# -- hub keys (spec 10.3) -----------------------------------------------------
 
 GRANT_GRACE = 3600
 
@@ -213,7 +211,7 @@ def verify_hubkey(grant: Any, root_pub: str, band: str, now: int) -> str | None:
         return None
 
 
-# -- tickets (spec 6) --------------------------------------------------------
+# -- tickets (spec 10.1) --------------------------------------------------------
 
 SKEW = 30              # seconds of clock difference tolerated either way
 MIN_LIFETIME = 60      # exp - iat bounds
@@ -225,7 +223,7 @@ _HEX32 = re.compile(r"[0-9a-f]{32}")
 WHY_MAX = 500
 
 # Core caps every trusted hub of a band may call whatever its ceiling, and
-# the ones only the home hub may call (spec 9.2).
+# the ones only the home hub may call (spec 10.10).
 ALWAYS = ("core.manifests", "core.lease.drop")
 HOME_ONLY = ("core.trust.set",)
 
@@ -269,7 +267,7 @@ def _ticket_shape(t: Any) -> bool:
 
 def verify_ticket(ticket: Any, request: dict, worker: dict, now: int,
                   replay: ReplayCache) -> tuple[bool, str]:
-    """Worker-side ticket check (spec 6.3). ``worker`` holds ``worker_id``,
+    """Worker-side ticket check (spec 10.1). ``worker`` holds ``worker_id``,
     ``band`` (the band the request arrived on), ``name``, ``trust`` ({hub_id:
     {"band", "role", "keys": {kid: pub}, "ceiling": Rights}}) and ``caps`` ({cap:
     {"risk", "effects", "contracts"}}, from its manifests). Returns (ok, reason); the
@@ -330,7 +328,7 @@ def verify_ticket(ticket: Any, request: dict, worker: dict, now: int,
     return True, "ok"
 
 
-# -- elevation leases (spec 7) -----------------------------------------------
+# -- elevation leases (spec 10.9) -----------------------------------------------
 
 LEASE_SECS = 900
 
@@ -360,7 +358,7 @@ def verify_lease(lease: Any, ticket: dict, keys: dict, now: int) -> tuple[bool, 
     return True, "ok"
 
 
-# -- memberships (spec 9.3) --------------------------------------------------
+# -- memberships (spec 10.10) --------------------------------------------------
 
 ROLES = ("home", "co-owner", "guest", "removed")
 
@@ -390,7 +388,7 @@ def verify_membership(doc: Any, home_hub: str, home_keys: dict, worker_id: str) 
     return True, "ok"
 
 
-# -- worker keys (spec 5.8, 13.1) ------------------------------------------
+# -- worker keys (spec 10.2) ------------------------------------------
 
 REQUEST_SKEW = 60      # |now - ts| tolerated on a worker's request proof
 _PUB = re.compile(r"ed25519:[A-Za-z0-9+/]{43}=")

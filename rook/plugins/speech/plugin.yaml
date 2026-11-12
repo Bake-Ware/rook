@@ -17,6 +17,7 @@ version: 0.5.1
 title: Speech
 doc: Talk to your agents by voice - sessions, a fast front talker, the agent's brain behind it.
 package: agents
+segment: Agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
@@ -40,7 +41,7 @@ caps:
     doc: Start a voice session with an agent. Send what you say with speech.hear; read the replies with speech.read.
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     run: scripts/speech.py:open_session
     args:
       agent: { type: str, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "blank: the speech.agent setting." }
@@ -57,7 +58,7 @@ caps:
     doc: "One utterance: audio (or typed text) into the session. Answers what was heard, the speaker, and System One's spoken reply; the agent's reply follows in speech.read."
     risk: write
     scope: multi-user
-    effects: [persists, personal]
+    effects: []
     timeout: 2m
     run: scripts/speech.py:hear
     args:
@@ -105,5 +106,13 @@ caps:
 
 hooks:
   stop: scripts/speech.py:stop
+
+# The Voice page: your voice (and hearing it), the agent sessions talk to,
+# quick answers, and what provides each voice contract and whether it is reachable.
+pages:
+  voice:
+    title: Voice
+    file: pages/voice.html
+    caps: [speech.voices, speech.status, setting.list, setting.set, agent.list, hub.manifests, hub.workers, voice.tts]
 
 docs: { manual: docs/manual.md }

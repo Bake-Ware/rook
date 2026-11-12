@@ -1,16 +1,18 @@
-# LG webOS TVs as appliances: a delegate worker on the TV's network carries
-# each call; the host, the pairing key and the MAC belong to the instance
-# (spec 5.7). SSAP is a stateful websocket (register, then request/response),
-# so every cap is scripts/tv.py, which keeps one connection per TV.
+# LG webOS TVs as appliances: scripts/tv.py runs on the hub and speaks SSAP (a
+# websocket: register, then request/response) over a TCP or TLS stream from a
+# delegate worker on the TV's network, one connection per call; Wake-on-LAN
+# goes out over the delegate's UDP socket. The host, the pairing key and the
+# MAC belong to the instance.
 manifest: 1
 plugin: tv
-version: 0.5.1
+version: 0.6.0
 title: LG webOS TVs
 doc: Drive LG webOS TVs (apps, inputs, volume, remote buttons, typing, power) over their control API.
 package: devices
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-requires: { python: ["websockets>=12"] }
+runs_on: hub
+uses: [net.open, net.udp, stream.read, stream.write, stream.close, file.read]
 appliance:
   discover:
     - ssdp: urn:lge-com:service:webos-second-screen:1
@@ -23,6 +25,7 @@ appliance:
   pair: tv.pair
 caps:
   status:
+    on: worker
     doc: "Live state: {on, power, app, app_id, volume, muted, screen, sound_output, reachable, paired, wake_on_lan, macs, model}. A sound_output not starting tv_ means the sound goes only to a soundbar or receiver, whose own volume the TV may not control."
     risk: read
     scope: local
@@ -30,6 +33,7 @@ caps:
     timeout: 30s
     run: scripts/tv.py:status
   app.list:
+    on: worker
     doc: "Installed apps the TV can launch: {items: [{id, title}]}."
     risk: read
     scope: local
@@ -37,6 +41,7 @@ caps:
     timeout: 20s
     run: scripts/tv.py:app_list
   inputs:
+    on: worker
     doc: "External inputs (HDMI...): {items: [{id, label, app, connected}]}."
     risk: read
     scope: local
@@ -44,6 +49,7 @@ caps:
     timeout: 20s
     run: scripts/tv.py:inputs
   notification.post:
+    on: worker
     doc: Show a short notification on the TV screen.
     risk: write
     scope: local
@@ -54,6 +60,7 @@ caps:
       title: { type: str, max: 100, doc: Shown before the text. }
     run: scripts/tv.py:notify
   app.launch:
+    on: worker
     doc: 'Launch an app by id or title ("YouTube", "netflix", "disney plus"), with optional launch params. A YouTube video: params={"contentTarget": "https://www.youtube.com/tv?v=<id>"}.'
     risk: write
     scope: local
@@ -64,6 +71,7 @@ caps:
       params: { type: json }
     run: scripts/tv.py:launch
   set_input:
+    on: worker
     doc: Switch to an external input by id or label ("HDMI 1", "HDMI_2").
     risk: write
     scope: local
@@ -73,6 +81,7 @@ caps:
       input: { type: str, required: true, max: 50 }
     run: scripts/tv.py:set_input
   sound.set:
+    on: worker
     doc: Set the volume to level (0-100) or move it by step (+3, -2); mute=true/false mutes or unmutes. Give level or step, and/or mute.
     risk: write
     scope: local
@@ -84,6 +93,7 @@ caps:
       mute: { type: bool }
     run: scripts/tv.py:sound
   media.play:
+    on: worker
     doc: Play (or resume) in the current app.
     risk: write
     scope: local
@@ -92,6 +102,7 @@ caps:
     bind: { action: play }
     run: scripts/tv.py:media
   media.pause:
+    on: worker
     doc: Pause the current app's media.
     risk: write
     scope: local
@@ -100,6 +111,7 @@ caps:
     bind: { action: pause }
     run: scripts/tv.py:media
   media.stop:
+    on: worker
     doc: Stop the current app's media.
     risk: write
     scope: local
@@ -108,6 +120,7 @@ caps:
     bind: { action: stop }
     run: scripts/tv.py:media
   media.seek:
+    on: worker
     doc: The TV's own skip, as its remote does - forward (fast-forward) when by is blank or positive, back (rewind) when negative. webOS has no position seek, so the size of by is not used.
     risk: write
     scope: local
@@ -117,6 +130,7 @@ caps:
       by: { type: int, doc: Seconds; only the sign counts here. }
     run: scripts/tv.py:seek
   hid.key:
+    on: worker
     doc: "Press a remote button: home, back, up, down, left, right, enter, menu, exit, info, red, green, yellow, blue, play, pause, stop, rewind, fastforward, volumeup, volumedown, mute, channelup, channeldown, 0-9. escape is back."
     risk: write
     scope: local
@@ -133,6 +147,7 @@ caps:
         doc: Must be empty; a remote has no modifiers.
     run: scripts/tv.py:key
   hid.type:
+    on: worker
     doc: Type text into the text field open on the TV (a search box), as the on-screen keyboard would. replace clears the field first; enter presses Enter after it. app types only if that app is in front ("YouTube"). The reply names the app the text went to.
     risk: write
     scope: local
@@ -145,6 +160,7 @@ caps:
       app: { type: str, max: 200, doc: Type only if this app is in front. }
     run: scripts/tv.py:type_text
   app.open_url:
+    on: worker
     doc: Open an http(s) URL in the TV's web browser.
     risk: write
     scope: local
@@ -154,6 +170,7 @@ caps:
       url: { type: str, required: true, max: 2000, pattern: "^[Hh][Tt][Tt][Pp][Ss]?://" }
     run: scripts/tv.py:open_url
   screen.capture:
+    on: worker
     doc: What the TV shows, as a JPEG (960x540 on a CX). The remote's pointer is not in it, and apps that protect their video (Netflix...) may show black.
     risk: read
     scope: local
@@ -165,6 +182,7 @@ caps:
     result: { type: file, doc: A JPEG. }
     run: scripts/tv.py:capture
   screen.on:
+    on: worker
     doc: Turn the screen back on after screen.off.
     risk: write
     scope: local
@@ -172,6 +190,7 @@ caps:
     timeout: 20s
     run: scripts/tv.py:screen_on
   screen.off:
+    on: worker
     doc: Turn just the screen off; sound keeps playing.
     risk: write
     scope: local
@@ -179,6 +198,7 @@ caps:
     timeout: 20s
     run: scripts/tv.py:screen_off
   power.off:
+    on: worker
     doc: Turn the TV off. A TV that is already off is not an error. force is accepted and changes nothing (a TV has one way off).
     risk: write
     scope: local
@@ -188,6 +208,7 @@ caps:
       force: { type: bool, default: false }
     run: scripts/tv.py:power_off
   power.on:
+    on: worker
     doc: Turn the TV on with Wake-on-LAN and wait up to wait seconds (0-60) for it to answer, resending meanwhile; wait=0 only sends. Needs the TV's MAC (the instance's mac, or learned by tv.status while it was on), its Turn on via Wi-Fi setting (tv.status wake_on_lan), and the delegate on the TV's network.
     risk: write
     scope: local
@@ -197,17 +218,15 @@ caps:
       wait: { type: int, default: 20, min: 0, max: 60 }
     run: scripts/tv.py:power_on
   pair:
+    on: worker
     doc: 'Pair with the TV (onboarding). Without key the TV shows an "allow this device?" prompt that a person must accept with the remote within timeout seconds; with key, check a key paired elsewhere. Returns {paired, settings: {client_key}} for onboarding to keep in the vault as the instance''s client_key.'
     risk: admin
     scope: local
-    effects: [physical, sensitive, persists]
+    effects: [physical, sensitive]
     timeout: 120s
     args:
       key: { type: secret, doc: A key paired elsewhere. }
       timeout: { type: int, default: 60, min: 10, max: 110 }
     run: scripts/tv.py:pair
 provides: [notification.post, app.launch, sound.set, media.play, media.pause, media.stop, media.seek, hid.key, hid.type, screen.on, screen.capture, power.off]
-hooks:
-  stop: scripts/tv.py:stop
 docs: { manual: docs/manual.md }
-# No check: an install has no appliance instance to call (castling/coverage.md N4).

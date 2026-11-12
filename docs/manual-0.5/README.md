@@ -3,8 +3,7 @@
 Rook gives an agent more access where it matters: your machines, your
 devices and your accounts, reached through one hub that decides what may
 run and keeps a journal of everything that did. This is the manual for
-Rook 0.5 ("Castling"). The 0.4 manual is in `docs/manual/` and stays as it
-is until 0.5 ships.
+Rook 0.5 ("Castling"). The 0.4 manual is in the `v0.4.0` tag.
 
 0.5 is a clean cut from 0.4: no 0.4 machine talks to a 0.5 one, and a band
 moves over all at once.
@@ -13,7 +12,7 @@ moves over all at once.
 
 1. [How Rook fits together](concepts.md): bands, the hub, workers, caps, people and agents.
 2. [Install and first run](install.md): a hub, a relay, your first sign-in.
-3. [Adding machines](enrollment.md): enrolling a worker, joining another band.
+3. [Adding machines](enrollment.md): enrolling a worker.
 4. [People and presets](people.md): owners, adults, children, guests, agents and tokens.
 5. [Workers and appliances](workers.md): what a worker runs, ceilings, sacred machines, devices without a worker.
 6. [Plugins](plugins.md): installing, updating and rolling back, and every plugin that ships.
@@ -26,7 +25,7 @@ moves over all at once.
 13. [The workbench](workbench.md): tasks, projects, knowledge, concepts and whiteboards.
 14. [Jobs](jobs.md): things that run on a schedule or an event.
 15. [Streams](streams.md): terminals, processes and other live things.
-16. [Security plugins](security.md): the gates that watch every call.
+16. [Security](security.md): the switch, the hard stops, the kill switch.
 
 ## For agents
 
@@ -35,13 +34,13 @@ moves over all at once.
 
 ## For plugin authors
 
-- [Writing a plugin](authoring.md): the manifest, config caps (Deluge), appliances (PiKVM), `run:` scripts, testing.
+- [Writing a plugin](authoring.md): every manifest key; the walk-through is the [plugins skill](../../rook/plugins/agents/skills/plugins.md).
 - [Caps](caps.md) and [Holds](holds.md): choosing a cap's risk, scope and effects.
 
 ## Reference
 
 - [Reference](reference.md): `hub.yaml`, `worker.yaml`, the command line, the HTTP door.
-- The protocol: `docs/spec/core-v2.md`. The manifest schema: `conformance/manifest/manifest.schema.json`.
+- The protocol: `docs/spec/core-v2.md`; the least a worker must speak: `docs/spec/worker-profile.md`. The manifest schema: `conformance/manifest/manifest.schema.json`.
 - Running a real 0.5 band on localhost for testing: `docs/castling-e2e.md`.
 
 ## Writing these pages

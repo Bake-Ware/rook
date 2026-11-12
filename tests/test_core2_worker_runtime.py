@@ -649,6 +649,8 @@ def test_stream_caps_drive_a_shell_terminal(setup):
             if b"castling" in seen:
                 break
         assert b"castling" in seen
+        raw = await hub.call("stream.write", {"stream": sid, "body": {"bytes": "AP8="}})
+        assert not raw["ok"] and "not on this worker" in raw["error"], raw        # the Rust worker's input
 
         # Someone else's stream doesn't exist for them.
         other = await hub.call("stream.read", {"stream": sid}, person="person:mallory")
@@ -707,3 +709,142 @@ def test_worker_and_stream_caps_keep_bands_apart(setup):
         await guest.t.close()
     go(body, 30)
 
+
+
+ENGINE_YAML = """manifest: 1
+plugin: engine
+version: 1.0.0
+caps:
+  turn:
+    doc: A fake agent engine's turn; it calls back through the door with the turn's token.
+    risk: exec
+    scope: local
+    run: scripts/engine.py:turn
+    args:
+      prompt: { type: str, required: true }
+      session: { type: str }
+      cwd: { type: str }
+      model: { type: str }
+      effort: { type: str }
+      system: { type: str }
+      timeout: { type: duration }
+      door: { type: secret }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true }
+        session: { type: str, required: true }
+        usage: { type: map, items: { type: int } }
+  whoami:
+    doc: Who called.
+    risk: read
+    scope: self
+    run: scripts/engine.py:whoami
+provides:
+  agent.backend: engine.turn
+"""
+
+ENGINE_PY = """
+import asyncio, json, os, urllib.request
+
+def ask(token):
+    req = urllib.request.Request(os.environ["ENGINE_DOOR"] + "/call", method="POST", data=json.dumps(
+        {"worker": "kaiju", "cap": "engine.whoami", "why": "The engine checks its turn token."}).encode())
+    req.add_header("Authorization", "Bearer " + token)
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read())
+
+async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout=None,
+               door=None):
+    if system and "curate an agent's memory" in system:
+        return {"text": json.dumps({"add": []}), "session": "dream"}
+    out = await asyncio.to_thread(ask, door)
+    return {"text": json.dumps(out["result"]), "session": "s1"}
+
+def whoami(ctx):
+    return {"person": ctx.person, "agent": ctx.agent}
+"""
+
+
+def test_secrets_reach_a_worker_by_name(setup, tmp_path, monkeypatch):
+    """A vault reference in shell.exec's env reaches the command on this
+    worker (secret_env). The agents runtime passes the turn token as
+    {{secret:<turn name>}}; the hub resolves it on the hop to the worker,
+    the engine there calls back through the door as the agent for the
+    person, and no journal entry of the turn holds the token."""
+    from rook.core2.hub.identity import Caller as HubCaller
+    from rook.core2.hub.runtime import Config as HubConfig, Hub
+    from test_core2_minimal_worker import secret_env
+
+    relay, cfg, make = setup
+    engine = tmp_path / "local" / "engine"
+    (engine / "scripts").mkdir(parents=True)
+    (engine / "plugin.yaml").write_text(ENGINE_YAML)
+    (engine / "scripts" / "engine.py").write_text(ENGINE_PY)
+    (tmp_path / "local" / "shell").symlink_to(REPO / "rook/plugins/shell", target_is_directory=True)
+    library = tmp_path / "library"
+    library.mkdir()
+    (library / "agents").symlink_to(REPO / "rook/plugins/agents", target_is_directory=True)
+    keys = tmp_path / "hub" / "keys"
+    keys.mkdir(parents=True)
+    (keys / "root.key").write_text(bytes(ROOT).hex())
+    (keys / "op.key").write_text(bytes(OP).hex())
+    node = secrets.token_hex(16)
+    (tmp_path / "hub" / "hub.json").write_text(json.dumps({"node": node}))
+    hub_cfg = HubConfig(data=tmp_path / "hub", band=BAND, users={"bake": {"preset": "owner"}}, library=library,
+                        doors={"http": {"bind": "127.0.0.1:0"}})
+    bake = HubCaller(person="person:bake")
+    minted, resolved = [], []
+
+    async def body():
+        w = make()
+        await w.start()
+        hub = Hub(hub_cfg, transport=Transport(node, [relay.link(PSK)]))
+        await hub.start()
+        monkeypatch.setenv("ENGINE_DOOR", f"http://127.0.0.1:{hub.doors[0].port}")
+        mint, look = hub.identities.add_turn_token, hub.identities.turn_token
+
+        def spy_mint(*a, **k):
+            minted.append(mint(*a, **k))
+            return minted[-1]
+
+        def spy_look(name):
+            resolved.append(look(name))
+            return resolved[-1]
+        monkeypatch.setattr(hub.identities, "add_turn_token", spy_mint)
+        monkeypatch.setattr(hub.identities, "turn_token", spy_look)
+        caps = lambda: set(getattr(hub.dispatcher.workers.get(WID), "caps", ()))   # noqa: E731
+        await until(lambda: {"engine.turn", "shell.exec"} <= caps(), 10)
+
+        async def call(cap, args=None, worker="rook"):
+            return await hub.call(bake, {"worker": worker, "cap": cap, "args": args,
+                                         "why": "Checking secrets by name."}, "test")
+
+        async def on_worker(cap, **args):
+            return await call(cap, args, worker="kaiju")
+        await secret_env(hub, on_worker)
+        made = await call("agent.create", {"name": "tester", "title": "Tester", "grants": ["engine.whoami"]})
+        assert made["ok"], made
+        await until(lambda: "tester" in hub.identities.run_by, 10)
+        out = await call("agent.chat.send", {"agent": "tester", "text": "who am I?"})
+        assert out["ok"], out
+        assert json.loads(out["result"]["text"]) == {"person": "person:bake", "agent": "agent:tester"}
+        [turn] = minted
+        [token] = [v for v in resolved if v]                  # resolved once, on the hop to the worker
+        assert look(turn) is None and hub.identities._turns == {}     # ended with the turn
+        outer = hub.journal.query(cap="agent.backend", limit=1)[0]
+        assert outer["args"]["door"] == "{{secret:%s}}" % turn
+        inner = hub.journal.query(cap="engine.turn", limit=1)[0]
+        assert inner["args"]["door"] == "{{secret:%s}}" % turn and inner["contract"] == "agent.backend"
+        back = hub.journal.query(cap="engine.whoami", limit=1)[0]
+        assert (back["person"], back["agent"], back["ok"]) == ("person:bake", "agent:tester", True)
+        # The name is dead after the turn: a worker call naming it fails, nothing runs.
+        dead = await call("engine.whoami", {"x": "{{secret:%s}}" % turn}, worker="kaiju")
+        assert dead["error"] == f"secret: {turn} is not in the vault", dead
+        entries = hub.journal.query(limit=500)
+        assert len(entries) > 5 and not [e for e in entries if token in json.dumps(e)]
+        assert token not in json.dumps(out)
+        await hub.stop()
+        await w.stop()
+    go(body, 60)

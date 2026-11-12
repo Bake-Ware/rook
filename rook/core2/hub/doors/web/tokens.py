@@ -3,7 +3,7 @@ token.revoke) behind the Tokens page.
 
 Bake (castling-switchover-decisions, "Claude connects itself"): "an agent
 can generate a token for the MCP". A token always acts for the person the
-caller calls for, so it never gets more than that person may (spec 8.3:
+caller calls for, so it never gets more than that person may (spec 6.2:
 each call gets only what both the person and the agent may). A new agent
 name gets the minting agent's rights (every grant, ``*``, when a person
 mints it on the dashboard), which the person's rights then narrow; it is kept beside the token in ``<data>/tokens.json`` (only
@@ -94,18 +94,6 @@ class Tokens:
                          "by": rec.get("by")})
         rows.sort(key=lambda r: r.get("created") or 0, reverse=True)
         return {"tokens": rows, "mcp_url": self.mcp_url()}
-
-    async def approve(self, ctx, code: str) -> dict:
-        """An owner approves the code a connector's sign-in page shows: that
-        connector gets a token for this owner (mcp_oauth, approve by code)."""
-        if not ctx.caller.owner:
-            raise KitError("only an owner approves a connector's code")
-        door = next((d for d in getattr(self.hub, "doors", ()) if d.name == "mcp"), None)
-        if door is None or getattr(door, "oauth", None) is None:
-            raise KitError("the MCP door has no OAuth address (doors.mcp.oauth)")
-        if not door.oauth.approve(code, ctx.caller.person, by=ctx.caller.agent or ctx.caller.person):
-            raise KitError(f"no connector is waiting with code {code}")
-        return {"approved": code}
 
     async def revoke(self, ctx, id: str) -> dict:
         stored = self._stored()

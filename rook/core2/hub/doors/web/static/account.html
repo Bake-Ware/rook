@@ -4,22 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rook: your account</title>
+<link rel="icon" href="/web/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/web/static/fonts.css">
 <link rel="stylesheet" href="/web/static/shell.css">
 </head>
 <body>
 <div class="login">
-  <div class="brand">Rook</div>
+  <div class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h3v2h2V3h4v2h2V3h3v5l-2 2v7l2 2v2H5v-2l2-2v-7L5 8z"/></svg><span>ROOK</span></div>
   <div>Signed in as <b id="who"></b>. <a href="/">Back to the hub</a></div>
   <div id="first" class="muted" hidden>This password was made for you when the hub was set up. Pick your own now, or keep it and go back to the hub.</div>
   <form id="change" class="login inner">
-    <h2>Change your password</h2>
-    <label for="current">Current password</label>
+    <h2 id="change-title">Change your password</h2>
+    <div id="none" class="muted" hidden>You don't have a password yet. Pick one: from then on, you sign in with your user name and this password.</div>
+    <label for="current" id="current-label">Current password</label>
     <input id="current" type="password" autocomplete="current-password" required>
     <label for="new">New password</label>
     <input id="new" type="password" autocomplete="new-password" required>
     <label for="again">New password again</label>
     <input id="again" type="password" autocomplete="new-password" required>
-    <button type="submit">Change password</button>
+    <button type="submit" id="change-btn">Change password</button>
     <div id="out" class="muted" aria-live="polite"></div>
   </form>
   <div id="connector" hidden>

@@ -4,8 +4,10 @@ Drives LG webOS TVs over their own control API (SSAP, the "second screen"
 websocket on port 3000, or 3001 with TLS on newer firmware). A TV is an
 **appliance**: it runs no Rook worker. Onboard it once (the hub finds it by
 SSDP, `urn:lge-com:service:webos-second-screen:1`) and pair it; a worker on
-the TV's network carries its calls. Name the TV in the call; the caps don't
-take a host.
+the TV's network carries its calls: the plugin runs on the hub, opens one
+websocket per call over a stream from that worker (`net.open`), and sends
+Wake-on-LAN from its UDP socket (`net.udp`); the Rust worker serves both.
+Name the TV in the call; the caps don't take a host.
 
 | Cap | What it does |
 |---|---|

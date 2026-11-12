@@ -19,7 +19,7 @@ import logging
 import secrets
 from typing import Awaitable, Callable
 
-from rook.core.backoff import Backoff
+from rook.core2.transport.backoff import Backoff
 
 log = logging.getLogger("rook.worker.events")
 

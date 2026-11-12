@@ -15,6 +15,7 @@ version: 0.5.1
 title: Speech engine
 doc: Speech recognition, spoken voices, end-of-turn detection and speaker ID from the voice service.
 package: agents
+segment: Agents
 builtin: true
 runs_on: worker
 license: Apache-2.0
@@ -25,7 +26,7 @@ caps:
     doc: Speech to text with Whisper. Quiet or unintelligible audio is an empty text with the reason.
     risk: read
     scope: local
-    effects: [personal]
+    effects: []
     timeout: 30s
     args:
       audio: { type: file, required: true, doc: "At most 30 s." }
@@ -60,7 +61,7 @@ caps:
     doc: Who is speaking, against the enrolled voices (advisory, shadow mode).
     risk: read
     scope: local
-    effects: [personal]
+    effects: []
     timeout: 10s
     args:
       audio: { type: file, required: true, doc: "At least 0.6 s of speech." }

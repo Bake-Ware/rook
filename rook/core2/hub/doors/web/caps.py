@@ -12,9 +12,10 @@ is reversible and kept in ``<data>/pages.json``.
 Components are the canned tier (manifest ``components:``): small cap-backed
 scripts a package ships, which any agent (a weak local model too) arranges
 into a page by giving ``layout`` instead of ``html``. Each person's start
-page (or the hub's, set by an agent or job acting alone) is kept in
-``pages.json`` too. With the workbench installed, each page an agent makes
-is built under a task linked to the page (castling-dashboard, provenance).
+page and sidebar layout (or the hub's, set by an agent or job acting alone)
+are kept in ``pages.json`` too, and how often each opens a page in
+``page-opens.json``. Making or changing one emits ``page.created`` or
+``page.updated``.
 """
 from __future__ import annotations
 
@@ -29,11 +30,12 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from rook.kit.ctx import KitError
+from rook.kit.ctx import Caller as KitCaller, KitError
 from rook.kit.manifest import compile_fields
 from rook.kit.manifest.types import setting_spec
 
 from rook.core2 import CORE_VERSION
+from rook.core2.hub import passwords
 from rook.core2.hub.identity import Caller
 from rook.core2.hub.doors.web.tokens import Tokens
 
@@ -43,13 +45,9 @@ NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 MAX_HTML = 512 * 1024
 MAX_NOTE = 64 * 1024
 MAX_LAYOUT = 50
-EVERYONE = "*"                       # the hub's own start page (pages.json)
-SECURITY_PLUGINS = ("approval",)     # their pages exist only with hub.security on
-
-
-def _security_off(hub) -> bool:
-    off = getattr(hub, "security_off", None)
-    return bool(off()) if callable(off) else False
+EVERYONE = "*"                       # the hub's own start page and layout (pages.json)
+SEGMENTS = ("Agents", "Machines", "Work", "Hub")   # the sidebar's first segments, in order; any other after, by name
+FREQUENT = 3                         # the segments of a person's most-opened pages start open
 
 
 @dataclass
@@ -59,16 +57,13 @@ class Page:
     file: Path
     caps: list = field(default_factory=list)
     events: list = field(default_factory=list)
-    sizes: list = field(default_factory=list)
-    section: str = "Pages"
-    made: dict | None = None     # agent-made: {authors: [{person, agent}], created, task}
-    nav: bool = True             # in the sidebar; every page opens by its address either way
+    segment: str = "Pages"
+    made: dict | None = None     # agent-made: {authors: [{person, agent}], created}
     layout: list | None = None   # arranged from components instead of its own html
 
     def view(self) -> dict:
         return {"page": self.id, "title": self.title, "caps": list(self.caps), "events": list(self.events),
-                "sizes": list(self.sizes), "section": self.section, "made": self.made is not None,
-                "nav": self.nav}
+                "segment": self.segment, "made": self.made is not None}
 
 
 @dataclass
@@ -96,23 +91,28 @@ class Pages:
         state = _read_json(self._state_path)
         self.archived: dict = state.get("archived", {})
         self.starts: dict = state.get("start", {})          # person:<name> or * -> page
+        # Public pages (Bake, Nov 9: "a way to make a given page publicly
+        # accessible for things like reports or reference"): anyone opens
+        # them at /public/<page> without signing in, acting as whoever made them
+        # public. page -> {at, by, person}.
+        self.public: dict = state.get("public", {})
+        # The sidebar's layout (site design point 2): per person:<name>, or * for
+        # the hub's own, only what differs from the default:
+        # {pages: {page: {pinned: <when>}}, segments: {segment: {open: bool}}}.
+        self.layouts: dict = state.get("layout", {})
+        self._opens_path = Path(hub.data) / "page-opens.json"
+        self.opens: dict = _read_json(self._opens_path)       # person:<name> or * -> {page: times opened}
 
     def all(self) -> dict[str, Page]:
         out = {}
-        # Security off: no approvals page anywhere (castling-switchover-decisions, "Usable first,
-        # security later": "I don't want a fucking approvals page"); back when an owner turns it on.
-        hidden = SECURITY_PLUGINS if _security_off(self.hub) else ()
         for p in list(self.hub.plugins.plugins.values()):
-            if p.name in hidden:
-                continue
             for name, spec in (p.manifest.get("pages") or {}).items():
                 if p.folder is None:
                     continue
                 out[f"{p.name}/{name}"] = Page(
                     f"{p.name}/{name}", spec.get("title") or name, Path(p.folder) / spec["file"],
-                    list(spec.get("caps") or ()), list(spec.get("events") or ()), list(spec.get("sizes") or ()),
-                    (spec.get("nav") or {}).get("section") or p.manifest.get("title") or p.name,
-                    nav="nav" in spec)
+                    list(spec.get("caps") or ()), list(spec.get("events") or ()),
+                    p.manifest.get("segment") or "Hub")
         made = sorted(self.folder.glob("*/meta.json")) if self.folder.is_dir() else ()
         components = self.components() if made else {}
         for meta_path in made:
@@ -127,8 +127,8 @@ class Pages:
                 c = components.get(item.get("component"))
                 caps += [x for x in (c.caps if c else ()) if x not in caps]
             out[pid] = Page(pid, m.get("title") or name, meta_path.parent / "page.html", caps,
-                            list(m.get("events") or ()), ["page"], m.get("section") or "Pages",
-                            {k: m.get(k) for k in ("authors", "created", "task")}, layout=layout)
+                            list(m.get("events") or ()), m.get("segment") or m.get("section") or "Pages",
+                            {k: m.get(k) for k in ("authors", "created")}, layout=layout)
         return out
 
     def components(self) -> dict[str, Component]:
@@ -200,15 +200,88 @@ class Pages:
                 return pid
         return None
 
+    def sidebar(self, person: str | None) -> dict:
+        """The sidebar ready to draw: the pinned pages in the order pinned, then
+        each segment with its pages and whether it is open, then the pages the
+        person hid. Each page shows under the name and in the segment the
+        person gave it (``title``, ``segment``), with its own beside them
+        (``own_title``, ``home``). A segment is open when the person opened or
+        folded it by hand, else when it holds one of their most-opened pages;
+        until they have opened that many different pages, their start page's
+        segment, or every segment without one."""
+        who = person or EVERYONE
+        mine = self.layouts.get(who) or self.layouts.get(EVERYONE) or {}
+        marks, folds, opens = mine.get("pages") or {}, mine.get("segments") or {}, self.opens.get(who) or {}
+        rows, hidden = {}, []
+        for pid, page in self.all().items():
+            if pid in self.archived:
+                continue
+            mark = marks.get(pid, {})
+            row = {**page.view(), "public": pid in self.public, "opens": opens.get(pid, 0), "pinned": "pinned" in mark}
+            if mark.get("title"):
+                row.update(title=mark["title"], own_title=page.title)
+            if mark.get("segment"):
+                row.update(segment=mark["segment"], home=page.segment)
+            if mark.get("hidden"):
+                hidden.append(row)
+            else:
+                rows[pid] = row
+        segments: dict[str, list] = {}
+        for row in sorted(rows.values(), key=lambda r: r["title"].lower()):
+            segments.setdefault(row["segment"], []).append(row)
+        used = sorted((n, pid) for pid, n in opens.items() if pid in rows)[-FREQUENT:]
+        start = self.start(person)
+        hot = {rows[pid]["segment"] for _, pid in used} if len(used) == FREQUENT else \
+            {rows[start]["segment"]} if start in rows else set(segments)
+        order = sorted(segments, key=lambda s: (SEGMENTS.index(s) if s in SEGMENTS else len(SEGMENTS), s))
+        pinned = sorted((pid for pid, m in marks.items() if pid in rows and "pinned" in m),
+                        key=lambda pid: marks[pid]["pinned"])
+        return {"pinned": [rows[pid] for pid in pinned],
+                "segments": [{"segment": s, "open": (folds.get(s) or {}).get("open", s in hot),
+                              "pages": segments[s]} for s in order],
+                "hidden": sorted(hidden, key=lambda r: r["title"].lower())}
+
+    def opened(self, person: str | None, pid: str) -> None:
+        mine = self.opens.setdefault(person or EVERYONE, {})
+        mine[pid] = mine.get(pid, 0) + 1
+        _write(self._opens_path, json.dumps(self.opens))
+
     def save_state(self) -> None:
-        _write(self._state_path, json.dumps({"archived": self.archived, "start": self.starts}, indent=1))
+        _write(self._state_path, json.dumps({"archived": self.archived, "start": self.starts,
+                                             "public": self.public, "layout": self.layouts}, indent=1))
 
 
-def dock_agent(hub) -> str | None:
-    """The agent in the site's chat dock: the ``page.dock`` setting, when
-    the agents package is installed."""
-    name = hub.plugins.settings.get("page", {}).get("dock", "house")
-    return name if name and "agent" in hub.plugins.plugins else None
+TARGET = re.compile(r"""data-target(?:=|"\s*[:,]\s*)(["`])(.*?)\1""")
+
+
+def targets(html: str) -> list[str]:
+    """The names a page marks with ``data-target`` (what the house agent can
+    point at), in order; a part a template fills in reads ``<...>``."""
+    out = []
+    for _, value in TARGET.findall(html):
+        name = re.sub(r"\$\{[^}]*\}", "<...>", value)
+        if name and not re.search(r"\s", name) and name not in out:
+            out.append(name)
+    return out
+
+
+def public_path(pid: str) -> str:
+    """Where a public page opens without signing in."""
+    return "/public/" + pid
+
+
+def _person(hub, ctx, person: str | None) -> str | None:
+    """``person`` as ``person:<name>`` (a known one), else the caller."""
+    if not person:
+        return ctx.caller.person
+    who = person if person.startswith("person:") else f"person:{person}"
+    if hub.identities.user(who) is None:
+        raise KitError(f"no person {person} on this hub")
+    return who
+
+
+def _owners(hub) -> list:
+    return [f"person:{u.name}" for u in hub.identities.users.values() if u.preset == "owner"]
 
 
 def _plugin_folder(hub, pid: str) -> Path:
@@ -241,23 +314,24 @@ def install(hub) -> None:
     """Register the builtin plugins on the hub node and load stored settings."""
     hub.pages = Pages(hub)
     settings = Settings(hub)
-    h = _Handlers(hub, settings)
+    h = _Handlers(hub)
     tokens = Tokens(hub)
     table = {
         "page": {"page.list": h.pages_list, "page.view": h.pages_view, "page.get": h.pages_get,
                   "page.create": h.pages_create, "page.update": h.pages_update,
                   "page.archive": h.pages_archive, "page.restore": h.pages_restore,
                   "page.components": h.pages_components, "page.site": h.pages_site,
-                  "page.start": h.pages_start},
+                  "page.start": h.pages_start, "page.public": h.pages_public, "page.arrange": h.pages_arrange},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
-                "hub.door": h.hub_door},
+                "hub.door": h.hub_door, "hub.sacred": h.hub_sacred, "hub.person": h.hub_person,
+                "hub.load": h.hub_load, "hub.joins": h.hub_joins, "hub.join": h.hub_join, "hub.join_code": h.hub_join_code},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
                      "approval.ask": h.approval_ask, "approval.get": h.approval_get},
         "journal": {"journal.search": h.journal_search},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
-        "llm": {"llm.providers": h.llm_providers, "llm.models": h.llm_models, "llm.status": h.llm_status},
-        "token": {"token.create": tokens.create, "token.list": tokens.list, "token.revoke": tokens.revoke,
-                  "token.approve": tokens.approve},
+        "llm": {"llm.providers": h.llm_providers, "llm.choose": h.llm_choose, "llm.models": h.llm_models,
+                "llm.status": h.llm_status},
+        "token": {"token.create": tokens.create, "token.list": tokens.list, "token.revoke": tokens.revoke},
     }
     for plugin, handlers in table.items():
         hub.plugins.add_builtin(BUILTIN / plugin, handlers)
@@ -268,30 +342,73 @@ def _who(ctx) -> Caller:
 
 
 class _Handlers:
-    def __init__(self, hub, settings):
-        self.hub, self.settings = hub, settings
+    def __init__(self, hub):
+        self.hub = hub
 
     # -- pages ------------------------------------------------------------------
 
-    async def pages_list(self, ctx, archived: bool = False) -> dict:
+    async def pages_list(self, ctx, archived: bool = False, person: str | None = None) -> dict:
         pages = self.hub.pages
+        if not archived:
+            return pages.sidebar(_person(self.hub, ctx, person))
         out = []
-        for pid, page in sorted(pages.all().items(), key=lambda kv: (kv[1].section, kv[1].title)):
-            if (pid in pages.archived) != archived:
-                continue
-            row = page.view()
-            if archived:
-                row["archived"] = pages.archived[pid]
-            out.append(row)
+        for pid, page in sorted(pages.all().items(), key=lambda kv: (kv[1].segment, kv[1].title)):
+            if pid in pages.archived:
+                out.append({**page.view(), "public": pid in pages.public, "archived": pages.archived[pid]})
         return {"pages": out}
 
     async def pages_view(self, ctx, page: str) -> dict:
-        return self.hub.pages.openable(page).view()
+        out = self.hub.pages.openable(page).view()
+        self.hub.pages.opened(ctx.caller.person, page)
+        return out
+
+    async def pages_arrange(self, ctx, page: str | None = None, pinned: bool | None = None,
+                            hidden: bool | None = None, title: str | None = None, segment: str | None = None,
+                            open: bool | None = None, person: str | None = None) -> dict:
+        """Change a sidebar: the caller's, the named person's, or the hub's own
+        (acting for nobody). With page: pin, hide, rename or move it (a blank
+        title or segment puts its own back). Without: open or fold a segment.
+        A person's first change starts from the hub's own layout."""
+        if (page is None and (segment is None or open is None)) or \
+                (page is not None and pinned is None and hidden is None and title is None and segment is None):
+            raise KitError("bad args: give {page, pinned|hidden|title|segment} or {segment, open}")
+        pages = self.hub.pages
+        who = _person(self.hub, ctx, person) or EVERYONE
+        mine = pages.layouts.setdefault(who, copy.deepcopy(pages.layouts.get(EVERYONE) or {}))
+        if page is not None:
+            p = pages.get(page)
+            marks = mine.setdefault("pages", {})
+            entry = marks.setdefault(page, {})
+            if pinned is not None:
+                if pinned:
+                    entry.setdefault("pinned", time.time())
+                else:
+                    entry.pop("pinned", None)
+            if hidden is not None:
+                if hidden:
+                    entry["hidden"] = True
+                else:
+                    entry.pop("hidden", None)
+            for key, value, own in (("title", title, p.title), ("segment", segment, p.segment)):
+                if value is None:
+                    continue
+                if value.strip() and value.strip() != own:
+                    entry[key] = value.strip()
+                else:
+                    entry.pop(key, None)
+            if not entry:
+                del marks[page]
+        else:
+            mine.setdefault("segments", {})[segment] = {"open": bool(open)}
+        pages.save_state()
+        return {"for": who, **pages.sidebar(who)}
 
     async def pages_get(self, ctx, page: str) -> dict:
         pages = self.hub.pages
         p = pages.get(page)
-        out = {**p.view(), "archived": pages.archived.get(page)}
+        out = {**p.view(), "archived": pages.archived.get(page), "public": pages.public.get(page),
+               "public_url": public_path(page) if page in pages.public else None,
+               "targets": targets(pages.html(p))}
         if p.made:
             out.update(made_by=p.made, note=pages.note(p), layout=p.layout)
         else:
@@ -302,7 +419,7 @@ class _Handlers:
 
     async def pages_create(self, ctx, name: str, title: str, note: str, html: str | None = None,
                            layout: list | None = None, caps: list | None = None, events: list | None = None,
-                           section: str | None = None, task: str | None = None) -> dict:
+                           segment: str | None = None) -> dict:
         if not NAME.fullmatch(name):
             raise KitError("bad args: name is lowercase letters, digits, - and _ (64 at most)")
         folder = self.hub.pages.folder / name
@@ -311,23 +428,20 @@ class _Handlers:
         if (html is None) == (layout is None):
             raise KitError("bad args: give the page's html or a layout of components (page.components lists them)")
         _check_sizes(html or "", note)
-        meta = {"title": title, "caps": _patterns(caps), "events": _patterns(events), "section": section or "Pages",
-                "layout": self._layout(layout), "authors": [_author(ctx)], "created": time.time(), "task": task,
+        meta = {"title": title, "caps": _patterns(caps), "events": _patterns(events), "segment": segment or "Pages",
+                "layout": self._layout(layout), "authors": [_author(ctx)], "created": time.time(),
                 "note": note, "history": [_history(ctx, "made the page")]}
         folder.mkdir(parents=True, exist_ok=True)
         _write(folder / "page.html", html or "")
         self._save(folder, meta)
         pid = f"{MADE}/{name}"
-        out = {"page": pid}
-        if self._workbench():
-            out.update(await self._built_under(ctx, pid, meta))
-            if out.get("task") != task:
-                self._save(folder, {**meta, "task": out.get("task")})
-        return out
+        self.hub._emit("page.created", {"page": pid, "title": title, "note": note, "by": ctx.caller.actor,
+                                        "person": ctx.caller.person}, "page")
+        return {"page": pid}
 
     async def pages_update(self, ctx, page: str, change: str, title: str | None = None, html: str | None = None,
                            layout: list | None = None, note: str | None = None, caps: list | None = None,
-                           events: list | None = None, section: str | None = None) -> dict:
+                           events: list | None = None, segment: str | None = None) -> dict:
         p = self.hub.pages.get(page)
         if not p.made:
             raise KitError(f"{page} comes with a plugin: change the plugin instead")
@@ -336,7 +450,7 @@ class _Handlers:
         folder = p.file.parent
         meta = _read_json(folder / "meta.json")
         _check_sizes(html or "", note or "")
-        for key, value in (("title", title), ("note", note), ("section", section)):
+        for key, value in (("title", title), ("note", note), ("segment", segment)):
             if value is not None:
                 meta[key] = value
         for key, value in (("caps", caps), ("events", events)):
@@ -351,11 +465,9 @@ class _Handlers:
             meta["layout"] = None
             _write(folder / "page.html", html)
         self._save(folder, meta)
-        out = {"page": page}
-        if meta.get("task") and self._workbench():       # the build record hears every change
-            out.update(await self._task_call(ctx, "task.comment", id=meta["task"],
-                                             text=f"Changed the page {page}: {change.strip()}"))
-        return out
+        self.hub._emit("page.updated", {"page": page, "change": change, "by": ctx.caller.actor,
+                                        "person": ctx.caller.person}, "page")
+        return {"page": page}
 
     def _layout(self, layout: list | None) -> list | None:
         """A layout's items, checked against the components as they are now."""
@@ -384,36 +496,6 @@ class _Handlers:
             out.append({k: item[k] for k in ("component", "props", "title", "wide") if k in item})
         return out
 
-    # -- the workbench: a page build is a task --------------------------------------
-
-    def _workbench(self) -> bool:
-        return "task" in self.hub.plugins.plugins
-
-    async def _built_under(self, ctx, pid: str, meta: dict) -> dict:
-        """Link the page to the task it was built under; with none given, make
-        that task (the person reviews the page, then it closes)."""
-        task = meta.get("task")
-        if not task:
-            made = await self._task_call(ctx, "task.create", title=f"Page: {meta['title']}", body=meta["note"],
-                                         state="in_progress", assignee=ctx.caller.person or "",
-                                         criteria=["The person has looked at the page and it shows what they asked for."])
-            task = (made.pop("result", None) or {}).get("id")
-            if not task:
-                return {"task": None, **made}
-        linked = await self._task_call(ctx, "task.link", id=task, kind="page", ref=pid, relation="produced",
-                                       note=meta["title"])
-        linked.pop("result", None)
-        return {"task": task, **linked}
-
-    async def _task_call(self, ctx, cap: str, **args) -> dict:
-        """A workbench call as the caller. A refusal never undoes the page:
-        it comes back as ``task_error``."""
-        args = {k: v for k, v in args.items() if v not in ("", None)}
-        reply = await self.hub.call_as(ctx.caller, cap, args)
-        if reply.get("ok"):
-            return {"result": reply.get("result")}
-        return {"task_error": f"{cap}: {reply.get('error') or 'failed'}"}
-
     def _save(self, folder: Path, meta: dict) -> None:
         _write(folder / "meta.json", json.dumps(meta, indent=1))
         lines = [f"# {meta['title']}", "", meta.get("note") or "", "", "## History", ""]
@@ -434,15 +516,27 @@ class _Handlers:
             pages.save_state()
         return {"page": page, "archived": False}
 
+    async def pages_public(self, ctx, page: str, public: bool = True) -> dict:
+        """Make a page readable by anyone at /public/<page>, no sign-in; its calls
+        act as the person who made it public (an agent alone: the hub's first
+        owner). Off makes it private again (Bake, Nov 9)."""
+        pages = self.hub.pages
+        pages.get(page)
+        if public:
+            person = ctx.caller.person or next(iter(_owners(self.hub)), None)
+            pages.public[page] = {"at": time.time(), "by": ctx.caller.actor, "person": person}
+        else:
+            pages.public.pop(page, None)
+        pages.save_state()
+        return {"page": page, "public": bool(public), "url": public_path(page) if public else None}
+
     async def pages_components(self, ctx) -> dict:
         return {"components": [c.view() for _, c in sorted(self.hub.pages.components().items())]}
 
     async def pages_site(self, ctx) -> dict:
-        """What the shell needs: the caller's start page and the agent in
-        the dock (with the agents package)."""
+        """What the shell needs: the caller's start page."""
         pages = self.hub.pages
-        return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person), "dock": dock_agent(self.hub),
-                "workbench": self._workbench()}
+        return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person)}
 
     async def pages_start(self, ctx, page: str | None = None) -> dict:
         pages = self.hub.pages
@@ -460,7 +554,7 @@ class _Handlers:
 
     async def hub_status(self, ctx) -> dict:
         hub = self.hub
-        out = {"hub": hub.hub_id, "node": hub.node, "band": hub.band, "core": CORE_VERSION,
+        out = {"hub": hub.hub_id, "node": hub.node, "band": hub.band, **hub.enroll.address(), "core": CORE_VERSION,
                "doors": [d.name for d in hub.doors], "closed_doors": sorted(hub.dispatcher.closed_doors),
                "plugins": [{"plugin": p.name, "version": str(p.manifest["version"]),
                             "title": p.manifest.get("title") or p.name, "builtin": bool(p.manifest.get("builtin")),
@@ -471,7 +565,8 @@ class _Handlers:
         if ctx.caller.owner:
             out["people"] = [{"name": u.name, "preset": u.preset, "grants": list(u.grants)}
                              for u in sorted(hub.identities.users.values(), key=lambda u: u.name)]
-            out["agents"] = sorted(hub.identities.agents)
+            out["agents"] = [{"name": n, "grants": list(r.get("grants") or [])}
+                             for n, r in sorted(hub.identities.agents.items())]
         return out
 
     async def hub_door(self, ctx, door: str, open: bool) -> dict:
@@ -480,8 +575,58 @@ class _Handlers:
             raise KitError(out["error"])
         return {"closed": out["closed"]}
 
+    async def hub_sacred(self, ctx, worker: str, sacred: bool = True) -> dict:
+        hub = self.hub
+        k = hub.known.get(worker) or next((k for k in hub.known.values() if k.name == worker), None)
+        name = k.name if k else worker
+        names = [n for n in hub.cfg.sacred if n != name] + ([name] if sacred else [])
+        hub.cfg.sacred = names
+        for w in hub.dispatcher.workers.values():
+            if w.name == name and w.id != hub.node:
+                w.sacred = bool(sacred)
+        saved = _save_config(hub.cfg, "sacred")
+        return {"worker": name, "sacred": bool(sacred), "sacred_machines": list(names), "saved": saved}
+
+    async def hub_person(self, ctx, name: str, preset: str | None = None, password: str | None = None,
+                         remove: bool = False) -> dict:
+        hub = self.hub
+        if remove:
+            hub.cfg.users.pop(name, None)
+            hub.identities.users.pop(name, None)
+        elif preset:
+            u = hub.cfg.users.get(name) or {"created": int(time.time())}
+            hub.identities.add_user(name, preset, u.get("grants") or [], u.get("created", 0))
+            hub.cfg.users[name] = {**u, "preset": preset}
+        if password and not remove:
+            passwords.set_password(hub.data, name, password, by=ctx.caller.person or "site")
+        return {"person": name, "removed": bool(remove), "preset": (hub.cfg.users.get(name) or {}).get("preset"),
+                "password": bool(password and not remove), "saved": _save_config(hub.cfg, "users")}
+
+    async def hub_load(self, ctx, plugin: str) -> dict:
+        hub = self.hub
+        folder = hub._library_folder(plugin)
+        if folder is None:
+            raise KitError(f"{plugin} is not in the hub's library ({hub.cfg.library})")
+        out = await hub.load_plugin(folder)
+        hub._emit("hub.loaded", {k: out[k] for k in ("plugin", "version", "was")}, "hub")
+        return out
+
     async def hub_workers(self, ctx) -> dict:
-        return {"workers": (await self.hub.workers_view(_who(ctx)))["workers"]}
+        """The workers, the hub first; ``now`` is the hub's clock (heartbeat
+        ages on the Workers page), ``bands`` names the bands."""
+        hub = self.hub
+        named = ((getattr(hub.cfg, "transport", None) or {}).get("bands") or [{}])[0]
+        return {"workers": (await hub.workers_view(_who(ctx)))["workers"], "now": hub.clock(),
+                "bands": {hub.band: (named.get("name") if isinstance(named, dict) else None) or "home"}}
+
+    async def hub_joins(self, ctx) -> dict:
+        return _or_raise(await self.hub.enroll.pending(_who(ctx)))
+
+    async def hub_join(self, ctx, request: str, refuse: bool = False) -> dict:
+        return _or_raise(await self.hub.enroll.approve(_who(ctx), request, refuse))
+
+    async def hub_join_code(self, ctx) -> dict:
+        return _or_raise(await self.hub.enroll.new_code(_who(ctx)))
 
     async def hub_manifests(self, ctx, section: str | None = None) -> dict:
         """Hub plugins first, then what workers announce. ``folder`` (where the
@@ -534,7 +679,6 @@ class _Handlers:
             raise KitError(out["error"])
         return {"entries": out["entries"]}
 
-
     # -- llm: the llm.complete providers ------------------------------------------
 
     async def llm_providers(self, ctx) -> dict:
@@ -543,6 +687,12 @@ class _Handlers:
         chosen = contracts.choose("llm.complete") if caps else None
         return {"chosen": chosen and _plugin_of(chosen),
                 "providers": [{"provider": _plugin_of(c), "cap": c, "chosen": c == chosen} for c in caps]}
+
+    async def llm_choose(self, ctx, provider: str) -> dict:
+        plugin = self._llm_provider(provider)
+        self.hub.cfg.contracts["llm.complete"] = next(
+            c for c in self.hub.contracts.providers("llm.complete") if _plugin_of(c) == plugin)
+        return {**await self.llm_providers(ctx), "saved": _save_config(self.hub.cfg, "contracts")}
 
     async def llm_models(self, ctx, provider: str | None = None) -> dict:
         plugin = self._llm_provider(provider)
@@ -571,10 +721,38 @@ class _Handlers:
         return provider
 
     async def _llm_call(self, ctx, plugin: str) -> dict:
-        reply = await self.hub.call_as(ctx.caller, f"{plugin}.models", {})
+        """As the llm plugin itself (its uses), not bounded by the page asking,
+        as agent.models asks the engines."""
+        me = KitCaller(plugin="llm", band=ctx.caller.band, why=ctx.caller.why)
+        reply = await self.hub.call_as(me, f"{plugin}.models", {}, uses=self.hub.plugins.uses("llm"))
         if not reply.get("ok"):
             raise KitError(str(reply.get("error") or "failed"))
         return reply.get("result") or {}
+
+
+def _or_raise(out: dict) -> dict:
+    if not out.pop("ok"):
+        raise KitError(out["error"])
+    return out
+
+
+def _save_config(cfg, key: str) -> str | None:
+    """Write ``key`` (sacred, users, contracts) into the hub's YAML file, keeping its comment
+    lines at the top (as install.sh does). None when the hub has no file."""
+    import yaml
+    path = getattr(cfg, "file", None)
+    if not path:
+        return None
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    head = "".join(line for line in text.splitlines(True) if line.startswith("#"))
+    raw = yaml.safe_load(text) or {}
+    raw[key] = copy.deepcopy(getattr(cfg, key))
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(head + yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    os.chmod(tmp, path.stat().st_mode & 0o7777)
+    os.replace(tmp, path)
+    return str(path)
 
 
 def _plugin_of(cap: str) -> str:
@@ -604,6 +782,20 @@ class Settings:
             hub.plugins.settings.setdefault(plugin, {}).update(values)
         hub.plugins.people = self
 
+    def store(self, plugin: str, key: str, value, person: str | None) -> None:
+        """``ctx.settings.set``: a hub plugin writes its own setting, a
+        ``where: person`` one for the person it acts for."""
+        spec = (self.hub.plugins.plugins[plugin].manifest.get("settings") or {}).get(key) or {}
+        if spec.get("where") == "person":
+            if not person:
+                raise KitError(f"{plugin}.{key} is a per-person setting: there's no person here")
+            self.personal.setdefault(person, {}).setdefault(plugin, {})[key] = value
+            _write(self.people_path, json.dumps(self.personal, indent=1))
+            return
+        self.stored.setdefault(plugin, {})[key] = value
+        self.hub.plugins.settings.setdefault(plugin, {})[key] = copy.deepcopy(value)
+        _write(self.path, json.dumps(self.stored, indent=1))
+
     # -- the people view hub plugins get --------------------------------------
 
     def owners(self) -> list:
@@ -623,21 +815,22 @@ class Settings:
     def run_agent(self, plugin: str, name: str, grants: list | None) -> None:
         self.hub.run_agent(plugin, name, grants)
 
-    def turn_token(self, plugin: str, person: str | None, name: str, seconds: float, tainted: bool = False) -> str:
-        return self.hub.turn_token(plugin, person, name, seconds, tainted)
+    def turn_token(self, plugin: str, person: str | None, name: str, seconds: float) -> str:
+        return self.hub.turn_token(plugin, person, name, seconds)
 
-    def end_turn_token(self, token: str) -> None:
-        self.hub.end_turn_token(token)
+    def end_turn_token(self, name: str) -> None:
+        self.hub.end_turn_token(name)
 
     # -- caps -------------------------------------------------------------------
 
     def _specs(self, plugin: str | None = None, where: str = "hub"):
+        """``(manifest, key, spec)`` of every setting kept ``where``."""
         for p in sorted(list(self.hub.plugins.plugins.values()), key=lambda p: p.name):
             if plugin and p.name != plugin:
                 continue
             for key, spec in (p.manifest.get("settings") or {}).items():
                 if spec.get("where") == where:
-                    yield p.name, key, spec
+                    yield p.manifest, key, spec
         if where != "hub":
             return
         # Worker plugins' hub-kept settings: ``where: hub`` ones and every
@@ -649,28 +842,25 @@ class Settings:
                 continue
             for key, spec in (manifest.get("settings") or {}).items():
                 if spec.get("where") == "hub" or spec.get("secret") is True or spec.get("type") == "secret":
-                    yield name, key, spec
+                    yield manifest, key, spec
 
     async def list(self, ctx, plugin: str | None = None, person: str | None = None) -> dict:
         out = []
-        for name, key, spec in self._specs(plugin):
+        for manifest, key, spec in self._specs(plugin):
+            name = manifest["plugin"]
             values = self.hub.plugins.settings.get(name, {})
             source = "set" if key in self.stored.get(name, {}) else \
                 "config" if key in self.base.get(name, {}) else "default"
-            out.append({"plugin": name, "key": key, "type": spec.get("type"), "doc": spec.get("doc", ""),
-                        "default": spec.get("default"), "secret": bool(spec.get("secret")),
-                        "value": values.get(key, spec.get("default")), "source": source,
-                        **({"enum": list(spec["enum"])} if spec.get("enum") else {})})
-        who = self._person(ctx, person)
+            out.append({**_row(manifest, key, spec), "value": values.get(key, spec.get("default")), "source": source})
+        who = _person(self.hub, ctx, person)
         if who and who != ctx.caller.person and not ctx.caller.owner:
             raise KitError("denied: only an owner reads someone else's settings")
         if who:
             mine = self.settings(who)
-            for name, key, spec in self._specs(plugin, "person"):
+            for manifest, key, spec in self._specs(plugin, "person"):
+                name = manifest["plugin"]
                 have = key in mine.get(name, {})
-                out.append({"plugin": name, "key": key, "type": spec.get("type"), "doc": spec.get("doc", ""),
-                            "default": spec.get("default"), "secret": bool(spec.get("secret")),
-                            "value": mine[name][key] if have else spec.get("default"),
+                out.append({**_row(manifest, key, spec), "value": mine[name][key] if have else spec.get("default"),
                             "source": "set" if have else "default", "where": "person", "person": who})
         return {"settings": out}
 
@@ -704,7 +894,7 @@ class Settings:
         return {"plugin": plugin, "key": key, "value": live.get(key, spec.get("default"))}
 
     def _set_personal(self, ctx, plugin: str, key: str, value, spec: dict, person: str | None) -> dict:
-        who = self._person(ctx, person)
+        who = _person(self.hub, ctx, person)
         if not who:
             raise KitError("a per-person setting needs a person: give person")
         if who != ctx.caller.person and not ctx.caller.owner:
@@ -722,14 +912,16 @@ class Settings:
         _write(self.people_path, json.dumps(self.personal, indent=1))
         return {"plugin": plugin, "key": key, "person": who, "value": mine.get(key, spec.get("default"))}
 
-    def _person(self, ctx, person: str | None) -> str | None:
-        """``person`` as ``person:<name>`` (a known one), else the caller."""
-        if not person:
-            return ctx.caller.person
-        who = person if person.startswith("person:") else f"person:{person}"
-        if self.hub.identities.user(who) is None:
-            raise KitError(f"no person {person} on this hub")
-        return who
+
+def _row(manifest: dict, key: str, spec: dict) -> dict:
+    """What a settings page needs to group and draw one setting: its
+    plugin's segment, title and doc, then the setting's own type, doc,
+    default, known values (``enum``) and a list's or map's item type."""
+    return {"plugin": manifest["plugin"], "segment": manifest["segment"],
+            "title": manifest.get("title") or manifest["plugin"], "plugin_doc": manifest.get("doc", ""),
+            "key": key, "type": spec.get("type"), "doc": spec.get("doc", ""), "default": spec.get("default"),
+            "secret": bool(spec.get("secret")), **({"enum": list(spec["enum"])} if spec.get("enum") else {}),
+            **({"items": spec["items"]} if spec.get("items") else {})}
 
 
 def _worker_manifests(hub) -> dict:

@@ -1,4 +1,4 @@
-"""Who a call is for and who makes it (spec 8.1, 8.5 of docs/spec/core-v2.md).
+"""Who a call is for and who makes it (spec 6.2 of docs/spec/core-v2.md).
 
 A door authenticates its caller into a :class:`Caller`: ``person`` (the
 person the call is for, ``person:<name>``) and/or ``agent`` (``agent:<name>``
@@ -29,7 +29,7 @@ from rook.kit._types import parse_duration
 from .. import rights
 
 NONE = {"grants": []}
-# system: identities are hub internals; they only call core caps (spec 13).
+# system: identities are hub internals; they only call core caps (spec 9).
 SYSTEM_RIGHTS = {"grants": ["core.*"]}
 PREFIXES = {"person": ("person:",), "agent": ("agent:", "system:")}
 
@@ -72,6 +72,7 @@ class Identities:
         self.components: dict[str, dict] = {}                 # system:<name> -> rights beyond core.*
         self._tokens: dict[str, Caller] = {}                  # sha256(token) -> caller
         self._turns: dict[str, tuple[Caller, float]] = {}    # sha256(turn token) -> (caller, expiry)
+        self._turn_names: dict[str, str] = {}                 # turn name -> turn token
 
     # -- setup -----------------------------------------------------------
 
@@ -101,6 +102,7 @@ class Identities:
         del self.agents[name], self.run_by[name]
         for d in [d for d, (c, _) in self._turns.items() if c.agent == f"agent:{name}"]:
             del self._turns[d]
+        self._turn_names = {n: t for n, t in self._turn_names.items() if digest(t) in self._turns}
 
     def add_component(self, name: str, r: dict) -> None:
         """Rights for ``system:<name>``, a hub component acting on its own (a
@@ -112,7 +114,9 @@ class Identities:
     def add_plugin_presets(self, plugin: str, presets: dict) -> None:
         """A manifest's ``presets:`` section ({preset: {grants: [...]}}).
         Patterns outside the plugin's namespace are dropped when rights are
-        computed (rights.preset_rights)."""
+        computed (rights.preset_rights). Replaces what the plugin gave before."""
+        for given in self.plugin_grants.values():
+            given.pop(plugin, None)
         for preset, body in (presets or {}).items():
             self.plugin_grants.setdefault(preset, {})[plugin] = list((body or {}).get("grants", ()))
 
@@ -144,23 +148,32 @@ class Identities:
         hits = [c for d, c in self._tokens.items() if d.startswith(token_id)]
         return hits[0] if len(hits) == 1 else None
 
-    def revoke_token(self, token: str) -> None:
-        self._tokens.pop(digest(token), None)
-        self._turns.pop(digest(token), None)
-
     def add_turn_token(self, caller: Caller, expires: float, now: float) -> str:
         """A door token for one turn of a Rook-run agent (``caller.agent``),
-        for the person behind it if any. In memory only; expired ones are
-        dropped as new ones are made."""
+        for the person behind it if any, returned by its name: a
+        ``{{secret:<name>}}`` reference in a call to a worker resolves to it
+        (:meth:`turn_token`). In memory only; expired ones are dropped as new
+        ones are made."""
         if caller.problem():
             raise ValueError(caller.problem())
         if (caller.agent or "").partition(":")[2] not in self.run_by:
             raise ValueError("turn tokens are for Rook-run agents")
         for d in [d for d, (_, exp) in self._turns.items() if exp <= now]:
             del self._turns[d]
-        token = secrets.token_urlsafe(32)
+        self._turn_names = {n: t for n, t in self._turn_names.items() if digest(t) in self._turns}
+        token, name = secrets.token_urlsafe(32), f"turn-{secrets.token_hex(16)}"
         self._turns[digest(token)] = (caller, expires)
-        return token
+        self._turn_names[name] = token
+        return name
+
+    def turn_token(self, name: str) -> str | None:
+        """The token a turn name stands for, until the turn ends."""
+        return self._turn_names.get(name)
+
+    def end_turn(self, name: str) -> None:
+        token = self._turn_names.pop(name, None)
+        if token is not None:
+            self._turns.pop(digest(token), None)
 
     def authenticate(self, token: str, now: float | None = None) -> Caller | None:
         if not isinstance(token, str):
@@ -202,7 +215,7 @@ class Identities:
         return self.agents.get(name, NONE) if kind == "agent" else NONE
 
     def layers(self, caller: Caller) -> list:
-        """[[layer, rights], ...] for the intersection rule (spec 8.3)."""
+        """[[layer, rights], ...] for the intersection rule (spec 6.2)."""
         out = []
         if caller.person:
             out.append(["person", self.person_rights(caller.person)])

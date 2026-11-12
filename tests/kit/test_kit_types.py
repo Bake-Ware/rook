@@ -21,7 +21,6 @@ from rook.kit._types import check, parse_duration
     ({"type": "map", "items": {"type": "bool"}}, {"a": True}),
     ({"type": "ref", "to": "work.project"}, "p_1"),
     ({"type": "json"}, {"anything": [1, "x"]}),
-    ({"schema": {"type": "string", "format": "uri"}}, "https://x"),
     ({}, "plain str"),
 ])
 def test_fits(spec, value):
@@ -42,7 +41,6 @@ def test_fits(spec, value):
     ({"type": "duration"}, "soon", "does not match"),
     ({"type": "nope"}, 1, "f: unknown type 'nope'"),
     ({"type": "int", "pattern": "x"}, 1, "pattern does not apply to type int"),
-    ({"schema": {"type": "nonsense"}}, 1, "f: bad schema"),
 ])
 def test_refused(spec, value, msg):
     with pytest.raises(ValueError, match=msg):

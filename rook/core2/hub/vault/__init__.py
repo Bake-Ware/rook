@@ -11,7 +11,8 @@ data key. The data key is random and kept twice, sealed:
 
 Names, descriptions, times and who set them are plain (they show in
 ``secret.list``). Values are only decrypted for one use: a ``{{secret:NAME}}``
-reference in a call to a worker (:func:`resolver`), a hub plugin's secret
+reference in a call to a worker (:func:`resolver`, which also resolves a
+turn token by its name), a hub plugin's secret
 setting (:meth:`Vault.setting`), or ``secret.reveal``, a hard stop. Nothing
 here caches a value, so the CLI can change the file while the hub runs.
 
@@ -38,9 +39,6 @@ NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 # A reference anywhere in a string: "Bearer {{secret:gh-token}}" works.
 REF = re.compile(r"\{\{\s*secret:\s*([A-Za-z0-9][A-Za-z0-9._-]{0,63})\s*\}\}")
 LONE_REF = re.compile(r"\s*" + REF.pattern + r"\s*")
-# Band keys belong to enrollment's membership flow (core.trust.set, an owner
-# in person); the vault never hands one out.
-RESERVED = re.compile(r"band-psk-.*")
 
 ROOT = b"rook-vault-v1"          # BLAKE2b personalisation: the root key's vault key
 RECOVERY = b"rook-vault-rk1"     # ... and the recovery key's
@@ -271,8 +269,6 @@ class Vault:
 def _check_name(name: Any) -> None:
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise VaultError("a secret's name is 1-64 letters, digits, '.', '_' or '-', starting with a letter or digit")
-    if RESERVED.fullmatch(name):
-        raise VaultError("band-psk-* names belong to band memberships")
 
 
 def substitute(value: Any, lookup: Callable[[str], str]) -> Any:
@@ -287,14 +283,17 @@ def substitute(value: Any, lookup: Callable[[str], str]) -> Any:
     return value
 
 
-def resolver(vault: Vault, is_owner: Callable[[str | None], bool]) -> Callable[..., Any]:
+def resolver(vault: Vault, is_owner: Callable[[str | None], bool],
+             turn: Callable[[str], str | None]) -> Callable[..., Any]:
     """Dispatch's step for vault references, as ``resolve(args, caller)``:
-    only an owner's calls (in person or through their agents) use the vault;
-    an unknown name or a locked vault fails the call."""
+    a live turn's name is its door token (``turn``); otherwise only an
+    owner's calls (in person or through their agents) use the vault; an
+    unknown name or a locked vault fails the call."""
     def resolve(args: Any, caller) -> Any:
         def lookup(name: str) -> str:
-            if RESERVED.fullmatch(name):
-                raise ValueError("band keys travel only in core.trust.set")
+            token = turn(name)
+            if token is not None:
+                return token
             if not is_owner(caller.person):
                 raise ValueError("only an owner's calls use vault secrets")
             try:
@@ -317,7 +316,7 @@ def _hidden(args: Any, arg_specs: Any) -> set:
 
 
 def journal_args(args: Any, arg_specs: Any) -> Any:
-    """``args`` as the journal keeps them (spec 11.1): an argument the cap
+    """``args`` as the journal keeps them (spec 7.1): an argument the cap
     declares ``type: secret`` that holds a value (not a reference) becomes
     ``[redacted]``."""
     hidden = _hidden(args, arg_specs)

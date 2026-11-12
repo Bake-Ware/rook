@@ -3,7 +3,7 @@
     python -m rook.core2.hub --config hub.yaml init --owner bake --relay relay.example:7474 [--url https://rook.example]
     python -m rook.core2.hub --config hub.yaml
     python -m rook.core2.hub --config hub.yaml passwd bake          # set or reset a person's sign-in password
-    python -m rook.core2.hub --config hub.yaml oauth approve BCDF-2345   # a connector page's code
+    python -m rook.core2.hub --config hub.yaml login-link [bake]    # a sign-in link (keeps working)
     python -m rook.core2.hub --config hub.yaml token --person bake [--agent claude-code] [--label laptop]
     python -m rook.core2.hub --config hub.yaml recovery-key
     python -m rook.core2.hub --config hub.yaml secret list | set NAME [--description TEXT] | delete NAME
@@ -21,14 +21,16 @@ key), makes the hub's keys, sets the owner's sign-in password, and prints an
 API token for the owner's apps and scripts and the recovery key, once. On a
 terminal it asks for the password; otherwise (a deploy script) it makes one
 and leaves it in ``<data>/owner.password`` (0600), never printed: the site
-offers to change it at the first sign-in. ``passwd NAME`` sets or resets a
+offers to change it at the first sign-in. ``--no-password`` sets none: the
+site is open (everyone is the owner) until the owner sets a password on
+their Account page (the first-run installer, deploy/install). ``passwd NAME`` sets or resets a
 person's password (asked on a terminal, else one line on stdin): the way
 back in when one is lost. People sign in with their user name and password;
 tokens are for agents and apps. ``backup`` makes a sealed backup (rook.core2.hub.backup)
 while the hub runs or not; ``restore`` rebuilds a hub on a fresh machine from
 one, asking for the recovery key, and writes ``--config`` with ``data/`` and
 ``library/`` beside it. Devices then enroll with ``python -m rook.core2.worker
---config worker.yaml enroll`` (spec 12).
+--config worker.yaml enroll`` (spec 8).
 
 A config (paths are relative to the file)::
 
@@ -64,7 +66,6 @@ import os
 import secrets
 import signal
 import sys
-import time
 from pathlib import Path
 
 import yaml
@@ -94,7 +95,8 @@ async def serve(cfg) -> None:
         await hub.stop()
 
 
-def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str | None, bind: str) -> int:
+def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str | None, bind: str,
+         password: bool = True) -> int:
     """The owner hub's first run: config, keys, owner token, recovery key."""
     if path.exists():
         print(f"init: {path} exists; this hub is set up already", file=sys.stderr)
@@ -124,8 +126,11 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
     token = add_token(cfg.data, Caller(person=f"person:{owner}"), "first owner")
     print(f"Rook hub {wire.key_id(bytes(root.verify_key))} set up in {path.parent} (band {home_band(cfg)[:8]}).")
     site = url or "http://" + bind
-    typed = _new_password(owner) if sys.stdin.isatty() else ""
-    if typed:
+    typed = _new_password(owner) if password and sys.stdin.isatty() else ""
+    if not password:
+        (cfg.data / passwords.UNCLAIMED).touch()
+        print(f"\nOpen {site}: it needs no sign-in until you set a password on the Your account page.")
+    elif typed:
         passwords.set_password(cfg.data, owner, typed, by="init")
         print(f"\nSign in at {site} as {owner} with the password you just typed.")
     else:
@@ -143,6 +148,23 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
     return 0
 
 
+def login_link_cmd(cfg, name: str | None, base: str | None) -> int:
+    """Print a sign-in link for an owner (default: the first); it keeps working."""
+    from . import login_links
+    owners = [n for n, u in cfg.users.items() if u.get("preset") == "owner"]
+    name = name or (owners[0] if owners else None)
+    if name not in cfg.users:
+        print(f"login-link: no user {name!r} in the config", file=sys.stderr)
+        return 2
+    if not base:
+        bind = (cfg.doors.get("http") or {}).get("bind", "127.0.0.1:8740")
+        host, _, port = str(bind).rpartition(":")
+        base = f"http://{'127.0.0.1' if host in ('', '0.0.0.0', '::', '[::]') else host}:{port}"
+    code = login_links.make(cfg.data, f"person:{name}")
+    print(f"{base.rstrip('/')}/login/link?code={code}")
+    return 0
+
+
 def _new_password(name: str) -> str:
     """A new password typed twice on the terminal ('' to make one instead)."""
     while True:
@@ -150,31 +172,6 @@ def _new_password(name: str) -> str:
         if not first or first == getpass.getpass("Again: "):
             return first
         print("They don't match; try again.", file=sys.stderr)
-
-
-def oauth_cmd(cfg, code: str, person: str | None) -> int:
-    """Approve a waiting connector's code on the running hub: written to
-    ``<data>/oauth-approvals.json``, which the MCP door reads on the page's
-    next reload (a few seconds). Journaled by the hub when it takes it."""
-    owners = [n for n, u in cfg.users.items() if u.get("preset") == "owner"]
-    name = person or (owners[0] if owners else None)
-    if name not in owners:
-        print(f"oauth: {name!r} is not an owner in the config", file=sys.stderr)
-        return 2
-    norm = "".join(c for c in code.upper() if c.isalnum())
-    if len(norm) != 8:
-        print("oauth: a code is 8 letters and digits, e.g. BCDF-2345", file=sys.stderr)
-        return 2
-    path = cfg.data / "oauth-approvals.json"
-    try:
-        pending = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except ValueError:
-        pending = {}
-    pending[norm] = {"person": f"person:{name}", "by": "hub CLI", "ts": time.time()}
-    _write_private(path, json.dumps(pending))
-    print(f"Approved {norm[:4]}-{norm[4:]} for {name}: the connector's page goes on within a few seconds "
-          "(if no page shows that code within 10 minutes, nothing happens).")
-    return 0
 
 
 def passwd_cmd(cfg, name: str) -> int:
@@ -284,10 +281,6 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd")
     pw = sub.add_parser("passwd", help="set or reset a person's sign-in password (typed, or one line on stdin)")
     pw.add_argument("name", help="the user's name in the config")
-    oa = sub.add_parser("oauth", help="approve the code a connector's sign-in page shows (claude.ai adding Rook)")
-    oa.add_argument("action", choices=["approve"])
-    oa.add_argument("code", help="as the page shows it, e.g. BCDF-2345")
-    oa.add_argument("--person", help="the owner it goes through as (default: the first owner)")
     tok = sub.add_parser("token", help="mint a door token (printed once; only its hash is kept)")
     tok.add_argument("--person", help="the person it calls for (a user in the config)")
     tok.add_argument("--agent", help="the agent that calls (an agent in the config)")
@@ -298,6 +291,11 @@ def main(argv=None) -> int:
     ini.add_argument("--ws-url", help="or its WebSocket address")
     ini.add_argument("--url", help="where devices reach this hub's door (https://...), for enrollment")
     ini.add_argument("--bind", default="127.0.0.1:8740", help="the HTTP door's address (default %(default)s)")
+    ini.add_argument("--no-password", action="store_true",
+                     help="set no password: the site is open until the owner sets one on the Account page")
+    ll = sub.add_parser("login-link", help="print a sign-in link for the site (it keeps working: no time limit, any number of uses)")
+    ll.add_argument("name", nargs="?", help="the user (default: the first owner)")
+    ll.add_argument("--url", help="the site's address as the browser reaches it (default: the HTTP door's)")
     sub.add_parser("recovery-key", help="show the owner's recovery key")
     sec = sub.add_parser("secret", help="the hub's vault: list, set (value on stdin) or delete a secret")
     sec.add_argument("action", choices=["list", "set", "delete"])
@@ -314,7 +312,8 @@ def main(argv=None) -> int:
     res.add_argument("--name", help="with --target: which backup (default: the newest)")
     args = ap.parse_args(argv)
     if args.cmd == "init":
-        return init(Path(args.config), args.owner, args.relay, args.ws_url, args.url, args.bind)
+        return init(Path(args.config), args.owner, args.relay, args.ws_url, args.url, args.bind,
+                    password=not args.no_password)
     if args.cmd == "restore":
         try:
             return restore_cmd(Path(args.config), args.file, args.target, args.name)
@@ -326,10 +325,10 @@ def main(argv=None) -> int:
     except (OSError, ValueError) as e:
         print(f"config: {e}", file=sys.stderr)
         return 2
-    if args.cmd == "oauth":
-        return oauth_cmd(cfg, args.code, args.person)
     if args.cmd == "passwd":
         return passwd_cmd(cfg, args.name)
+    if args.cmd == "login-link":
+        return login_link_cmd(cfg, args.name, args.url)
     if args.cmd == "recovery-key":
         print(recovery_key(cfg.data))
         return 0

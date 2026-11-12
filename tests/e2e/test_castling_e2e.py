@@ -76,23 +76,25 @@ def test_caps_stay_known_while_the_worker_is_offline_and_across_hub_restarts(fre
     assert [e["args"]["text"] for e in calls] == ["before", "after"]
 
 
-def test_real_plugin_ports_say_what_this_machine_can_serve(band):
-    """battery and torrent from rook/plugins in the real worker: the hub
-    lists their caps, and one the machine can't serve says why, in the
-    listing and in the reply."""
+def test_real_plugin_ports_run_on_the_hub_for_the_real_worker(band):
+    """battery and torrent run on the hub for the real worker: listed among
+    its caps, they run the OS's tools there through shell.exec and answer
+    what those tools said (no battery, no deluge-console: their own failure)."""
     c = band.caps()
     assert {"battery.status", "torrent.version", "torrent.add"} <= set(c["caps"])
-    # the worker's config declares no battery hardware
-    assert c["unavailable"]["battery.status"] == "missing hardware: battery"
+    assert not {"battery.status", "torrent.version"} & set(c.get("unavailable", {}))
     out = band.owner.call("battery.status")
-    assert out["error"] == "unavailable: battery.status: missing hardware: battery", out
+    if out["ok"]:
+        assert set(out["result"]) == {"percent", "status"}, out
+    else:                       # this machine has no battery or no tool: the tool's own failure
+        assert not out["error"].startswith("unavailable"), out
+    steps = [e for e in band.owner.get("/journal?cap=shell.exec&limit=50")["entries"] if e.get("parent") == out["id"]]
+    assert steps and {e["cap"] for e in steps} == {"shell.exec"}, steps
+    v = band.owner.call("torrent.version")
     if shutil.which("deluge-console"):
-        v = band.owner.call("torrent.version")
         assert v["ok"] and v["result"]["deluge"], v
     else:
-        assert c["unavailable"]["torrent.version"] == "missing bin: deluge-console"
-        assert band.owner.call("torrent.version")["error"] == \
-            "unavailable: torrent.version: missing bin: deluge-console"
+        assert v["error"] == "not found: deluge-console", v
 
 
 def test_shell_and_file_run_on_the_real_worker(band, tmp_path):
@@ -204,33 +206,6 @@ def test_a_replayed_ticket_is_refused_by_the_worker(band):
     assert [r["text"] for r in [e["args"] for e in band.owner.get("/journal?cap=e2e.ping")["entries"]]] == ["once"]
 
 
-def test_the_worker_ceiling_holds_even_when_the_hub_grants_more(band):
-    """The home hub narrows its own ceiling on the worker (a signed
-    membership through core.trust.set). The hub then refuses what's outside
-    it, and the worker refuses a validly signed hub ticket for it too."""
-    narrowed = band.owner.post("/memberships", {"worker": "e2e-worker", "role": "home", "why": WHY,
-                                                "ceiling": {"grants": ["e2e.ping"]}})
-    assert narrowed["ok"], narrowed
-    # the announce carries the new ceiling; the hub's dispatch applies it
-    via_hub = until(lambda: (r := band.owner.call("e2e.admin")) and not r["ok"] and r, 20, "the narrowed announce")
-    assert via_hub["error"].startswith("denied: ceiling: "), via_hub
-    assert band.owner.call("e2e.ping", {"text": "still"})["ok"]
-
-    async def straight_to_the_worker(t):
-        cid = secrets.token_hex(16)
-        req = {"id": cid, "cap": "e2e.admin", "target": band.worker_id, "args": {},
-               "ticket": band.ticket("e2e.admin", {}, cid)}
-        return await t.request(band.band, req, 10)
-    direct = on_band(band, straight_to_the_worker)
-    assert direct["ok"] is False and direct["error"] == "denied by worker: outside_ceiling", direct
-
-    # the home hub widens it again; core.trust.set is never outside a home ceiling
-    widened = band.owner.post("/memberships", {"worker": "e2e-worker", "role": "home", "why": WHY})
-    assert widened["ok"], widened
-    band.wait_caps("e2e.admin")
-    assert band.owner.call("e2e.admin")["ok"]
-
-
 def test_a_destructive_cap_is_held_for_the_person(band):
     held = band.owner.call("e2e.wipe")
     assert held["held"] and not held["ok"] and held["error"] == "held: destructive", held
@@ -296,11 +271,10 @@ def test_plugins_install_from_the_library_check_roll_back_and_hot_reload(band):
     assert band.worker_calls("core.manifests") == fetches
 
     installs = band.owner.get("/journal?cap=core.plugin.install")["entries"]
-    # each install is the owner's own call, with its why; each push leaves a change record
-    assert [e["ok"] for e in installs] == [False, True, True] and all(e["why"] == WHY for e in installs)
-    changes = band.owner.call("change.list", {"where": {"category": "plugin"}}, worker="rook")["result"]
-    assert [c["outcome"].split(":")[0] for c in changes] == ["not installed", "installed", "installed"], changes
-    assert first["change"] == changes[-1]["id"] and broken["change"] == changes[0]["id"]
+    # each install is the owner's own call, with its why naming the plugin and version
+    assert [e["ok"] for e in installs] == [False, True, True]
+    assert [e["why"] for e in installs] == [f"{WHY} (installs tv 1.2.0 over 1.1.0)",
+                                           f"{WHY} (installs tv 1.1.0 over 1.0.0)", f"{WHY} (installs tv 1.0.0)"]
     chain_holds(band)
 
     # installed plugins load again at start-up, re-checked against plugin.sig

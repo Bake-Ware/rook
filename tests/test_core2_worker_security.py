@@ -654,8 +654,6 @@ def test_launch_plan_other_platforms_are_stubbed():
         sec.launch_plan(["cmd"], None, platform="win32", admin=True)
     with pytest.raises(sec.LaunchUnsupported):
         sec.launch_plan(["cmd"], {"id": "l"}, platform="win32", admin=False)
-    with pytest.raises(sec.LaunchUnsupported):
-        sec.launch_plan(["ls"], {"id": "l"}, platform="darwin", admin=False)
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux") or os.geteuid() == 0, reason="needs a normal Linux user")

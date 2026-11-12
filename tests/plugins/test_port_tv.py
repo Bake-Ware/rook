@@ -1,22 +1,17 @@
-"""tv (LG webOS) against a fake SSAP websocket server on 127.0.0.1.
-
-TODO(castling:worker-host): the host can't run appliance caps yet (no
-instance values reach Host.call or ctx; spec 5.7), so ``call`` below does
-what it will: the loader's bound cap, the host's arg check, defaults and
-``bind``, then the script with ``ctx.appliance`` set. Switch to host.call
-once it takes an appliance.
-"""
+"""tv (LG webOS) on the hub, through a delegate that serves net.open, net.udp
+and the stream caps, against a fake SSAP websocket server on 127.0.0.1."""
 
 import asyncio
-import copy
+import importlib.util
 import json
 import socket
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from port_helpers import ME, PLUGINS, go
-from rook.core2.worker.loader import load_folder
-from rook.kit.ctx import Ctx, KitError, invoke
+from port_helpers import PLUGINS, FakeNet, go, on_worker
+from rook.kit.ctx import KitError
 
 KEY = "k-1234-paired"
 APPS = [{"id": "youtube.leanback.v4", "title": "YouTube"},
@@ -27,9 +22,9 @@ APPS = [{"id": "youtube.leanback.v4", "title": "YouTube"},
         {"id": "musichub", "title": "Music Hub"}]
 INPUTS = [{"id": "HDMI_1", "label": "HDMI 1", "appId": "com.webos.app.hdmi1", "connected": True}]
 
-PLUGIN = load_folder(PLUGINS / "tv", os_name="linux")
-MOD = next(iter(PLUGIN.modules.values()))
-STOP = PLUGIN.resolve("scripts/tv.py:stop")
+_spec = importlib.util.spec_from_file_location("tv_script", PLUGINS / "tv" / "scripts" / "tv.py")
+MOD = importlib.util.module_from_spec(_spec)      # its constants, for the fake
+_spec.loader.exec_module(MOD)
 
 
 class FakeTV:
@@ -129,20 +124,9 @@ def _free_port():
         return s.getsockname()[1]
 
 
-def call(tv, cap, args=None, *, key=KEY, mac=None, data=None, up=True, timeout=15):
-    """Run one cap against ``tv`` as the host will: arg check, defaults,
-    bind, then the script with the instance on ctx.appliance."""
+def call(tv, cap, args=None, *, key=KEY, mac=None, data=None, up=True, timeout=15, net=None):
+    """Run one cap against ``tv`` as the hub does, for the TV's delegate."""
     from websockets.asyncio.server import serve
-
-    c = PLUGIN.caps[cap]
-    args = dict(args or {})
-    errors = list(c.validator.iter_errors(args))
-    if errors:
-        raise ValueError(f"bad args: {errors[0].message}")
-    for k, spec in c.spec.get("args", {}).items():
-        if k not in args and "default" in spec:
-            args[k] = copy.deepcopy(spec["default"])
-    args.update(c.bind)
 
     async def body():
         server = None
@@ -151,13 +135,11 @@ def call(tv, cap, args=None, *, key=KEY, mac=None, data=None, up=True, timeout=1
             tv.port = server.sockets[0].getsockname()[1]
         else:
             tv.port = _free_port()   # nothing listens there
-        ctx = Ctx(PLUGIN.manifest, ME, cap=cap, data_dir=data)
-        ctx.appliance = {"name": "den-tv", "host": "127.0.0.1", "port": tv.port,
-                         "client_key": key, "mac": mac}
+        inst = {"name": "den-tv", "host": "127.0.0.1", "port": tv.port,
+                "settings": {"client_key": key, "mac": mac}}
         try:
-            return await invoke(c.func, ctx, args)
+            return (await asyncio.to_thread(on_worker, "tv", cap, args, appliance=inst, data=data, net=net))[0]
         finally:
-            await STOP(Ctx(PLUGIN.manifest, ME))
             if server is not None:
                 server.close()
                 await asyncio.wait_for(server.wait_closed(), 5)
@@ -208,11 +190,8 @@ def test_unreachable_is_a_clean_error(tv):
 
 
 def test_no_instance(tv):
-    async def body():
-        ctx = Ctx(PLUGIN.manifest, ME, cap="tv.status")
-        return await invoke(PLUGIN.caps["tv.status"].func, ctx, {})
     with pytest.raises(KitError, match="no appliance instance"):
-        go(body)
+        on_worker("tv", "tv.status")
 
 
 # -- reads ----------------------------------------------------------------------
@@ -224,7 +203,7 @@ def test_status(tv, tmp_path):
     assert got["model"] == "OLED55C1" and got["wake_on_lan"] is True and got["screen"] == "on"
     assert got["macs"] == ["aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:01"]
     # learned for power.on
-    assert json.loads((tmp_path / "macs.json").read_text())
+    assert json.loads((tmp_path / "tv" / "macs.json").read_text())
     tv.app = "com.webos.app.hdmi1"
     assert call(tv, "tv.status")["app"] == "HDMI 1"
 
@@ -274,7 +253,7 @@ def test_sound(tv):
         call(tv, "tv.sound.set", {"level": 3, "step": 1})
     with pytest.raises(KitError, match="give level, step or mute"):
         call(tv, "tv.sound.set", {})
-    with pytest.raises(ValueError, match="bad args"):
+    with pytest.raises(KitError, match="bad args"):
         call(tv, "tv.sound.set", {"level": 101})
 
 
@@ -296,7 +275,7 @@ def test_buttons(tv):
         call(tv, "tv.hid.key", {"key": "a", "mods": ["ctrl"]})
     with pytest.raises(KitError, match="unknown button"):
         call(tv, "tv.hid.key", {"key": "f13"})
-    with pytest.raises(ValueError, match="bad args"):
+    with pytest.raises(KitError, match="bad args"):
         call(tv, "tv.hid.key", {"key": "HOME\nname:POWER"})
 
 
@@ -314,52 +293,60 @@ def test_type(tv):
 
 def test_open_url_and_screen(tv):
     call(tv, "tv.app.open_url", {"url": "https://example.com"})
-    with pytest.raises(ValueError, match="bad args"):
+    with pytest.raises(KitError, match="bad args"):
         call(tv, "tv.app.open_url", {"url": "file:///etc/passwd"})
     call(tv, "tv.screen.off")
     call(tv, "tv.screen.on")
     assert [u for u, _ in tv.seen if "turn" in u] == [MOD.SCREEN_OFF, MOD.SCREEN_ON]
 
 
-def test_screen_capture(tv, monkeypatch):
-    fetched = []
-    jpeg = b"\xff\xd8\xff\xe0 fake jpeg"
-    monkeypatch.setattr(MOD, "_fetch", lambda url: fetched.append(url) or jpeg)
-    got = call(tv, "tv.screen.capture")
-    assert got.data == jpeg and got.mime == "image/jpeg"
-    assert sent(tv, MOD.CAPTURE) == [{"path": "/tmp/capture.jpg", "method": "DISPLAY", "format": "JPG"}]
-    assert fetched == ["https://127.0.0.1:3001/resources/abc/capture.jpg"]
-    tv.image_uri = "http://169.254.169.254/latest/meta-data"     # only ever the TV itself
-    with pytest.raises(KitError, match="no capture address of its own"):
-        call(tv, "tv.screen.capture")
-    tv.image_uri = None
-    monkeypatch.setattr(MOD, "_fetch", lambda url: b"<html>")
-    with pytest.raises(KitError, match="not a JPEG"):
-        call(tv, "tv.screen.capture")
+class Capture(BaseHTTPRequestHandler):
+    """The TV's own web server, where it leaves the capture."""
+    body = b"\xff\xd8\xff\xe0 fake jpeg"
 
+    def log_message(self, *a):
+        pass
 
-def test_screen_capture_never_follows_a_redirect():
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    class Moved(BaseHTTPRequestHandler):
-        def log_message(self, *a):
-            pass
-
-        def do_GET(self):
+    def do_GET(self):
+        self.server.fetched.append(self.path)
+        if self.path.startswith("/moved"):
             self.send_response(302)
             self.send_header("Location", "http://169.254.169.254/latest/meta-data")
             self.send_header("Content-Length", "0")
             self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(self.server.body)))
+        self.end_headers()
+        self.wfile.write(self.server.body)
 
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), Moved)
+
+@pytest.fixture
+def web():
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Capture)
+    srv.fetched, srv.body = [], Capture.body
     threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
-    try:
-        with pytest.raises(Exception, match="302"):
-            MOD._fetch(f"http://127.0.0.1:{srv.server_address[1]}/resources/abc/capture.jpg")
-    finally:
-        srv.shutdown()
-        srv.server_close()
+    yield srv
+    srv.shutdown()
+    srv.server_close()
+
+
+def test_screen_capture(tv, web):
+    port = web.server_address[1]
+    tv.image_uri = f"http://127.0.0.1:{port}/resources/abc/capture.jpg"
+    got = call(tv, "tv.screen.capture")
+    assert __import__("base64").b64decode(got["data"]) == web.body and got["mime"] == "image/jpeg"
+    assert sent(tv, MOD.CAPTURE) == [{"path": "/tmp/capture.jpg", "method": "DISPLAY", "format": "JPG"}]
+    assert web.fetched == ["/resources/abc/capture.jpg"]
+    tv.image_uri = "http://169.254.169.254/latest/meta-data"     # only ever the TV itself
+    with pytest.raises(KitError, match="no capture address of its own"):
+        call(tv, "tv.screen.capture")
+    tv.image_uri = f"http://127.0.0.1:{port}/moved"               # never a redirect
+    with pytest.raises(KitError, match="HTTP 302"):
+        call(tv, "tv.screen.capture")
+    tv.image_uri, web.body = f"http://127.0.0.1:{port}/x.jpg", b"<html>"
+    with pytest.raises(KitError, match="not a JPEG"):
+        call(tv, "tv.screen.capture")
 
 
 def test_power_off(tv):
@@ -371,43 +358,40 @@ def test_power_off(tv):
     assert call(tv, "tv.power.off", up=False)["already_off"]
 
 
-def test_power_on(tv, monkeypatch):
-    packets = []
-    monkeypatch.setattr(MOD, "_send_wol", lambda macs, host: packets.append(macs) or ["255.255.255.255"])
-    monkeypatch.setattr(MOD, "arp_mac", lambda host: None)
+def wol(net):
+    return [(data, to) for data, to in net.sent if to and to.endswith(":9")]
+
+
+def test_power_on(tv):
     assert call(tv, "tv.power.on")["already_on"]
     with pytest.raises(KitError, match="MAC address unknown"):
         call(tv, "tv.power.on", {"wait": 0}, up=False)
-    got = call(tv, "tv.power.on", {"wait": 0}, up=False, mac="AA:BB:CC:DD:EE:FF")
-    assert got["ok"] and got["macs"] == ["aa:bb:cc:dd:ee:ff"] and packets
+    net = FakeNet()
+    got = call(tv, "tv.power.on", {"wait": 0}, up=False, mac="AA:BB:CC:DD:EE:FF", net=net)
+    assert got["macs"] == ["aa:bb:cc:dd:ee:ff"]
+    packets = wol(net)
+    assert {to for _, to in packets} <= {"255.255.255.255:9", "127.0.0.1:9"} and "127.0.0.1:9" in {t for _, t in packets}
+    assert packets[0][0] == b"\xff" * 6 + bytes.fromhex("aabbccddeeff") * 16
     tv.power = "Suspend"
     with pytest.raises(KitError, match="did not come on within 1 s"):
         call(tv, "tv.power.on", {"wait": 1}, mac="AA:BB:CC:DD:EE:FF")
 
 
-def test_power_on_learned_macs(tv, monkeypatch, tmp_path):
-    monkeypatch.setattr(MOD, "_send_wol", lambda macs, host: ["255.255.255.255"])
-    monkeypatch.setattr(MOD, "arp_mac", lambda host: None)
+def test_power_on_learned_macs(tv, tmp_path):
     call(tv, "tv.status", data=tmp_path)
     got = call(tv, "tv.power.on", {"wait": 0}, up=False, data=tmp_path)
     assert got["macs"] == ["aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:01"]
 
 
-def test_connection_is_reused(tv):
-    async def body():
-        from websockets.asyncio.server import serve
-        server = await serve(tv.handler, "127.0.0.1", 0)
-        tv.port = server.sockets[0].getsockname()[1]
-        ctx = Ctx(PLUGIN.manifest, ME, cap="tv.media.play")
-        ctx.appliance = {"name": "den-tv", "host": "127.0.0.1", "port": tv.port, "client_key": KEY}
-        try:
-            await invoke(PLUGIN.caps["tv.media.play"].func, ctx, {"action": "play"})
-            first = MOD._clients[f"127.0.0.1:{tv.port}"]
-            await invoke(PLUGIN.caps["tv.media.play"].func, ctx, {"action": "pause"})
-            assert MOD._clients[f"127.0.0.1:{tv.port}"] is first
-        finally:
-            await STOP(Ctx(PLUGIN.manifest, ME))
-            server.close()
-            await server.wait_closed()
-        assert not MOD._clients
-    go(body)
+def test_each_call_closes_its_connection(tv):
+    net = FakeNet()
+    call(tv, "tv.media.play", net=net)
+    assert net.streams and all(st["closed"] for st in net.streams.values())
+
+
+def test_arp_table():
+    table = ("IP address       HW type     Flags       HW address            Mask     Device\n"
+             "192.168.1.20     0x1         0x2         a4:b1:c2:d3:e4:f5     *        eth0\n"
+             "192.168.1.21     0x1         0x0         00:00:00:00:00:00     *        eth0\n")
+    assert MOD.arp_mac("192.168.1.20", table) == "a4:b1:c2:d3:e4:f5"
+    assert MOD.arp_mac("192.168.1.21", table) is None

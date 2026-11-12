@@ -6,17 +6,17 @@ Each plugin setting says in the plugin's manifest where it lives:
 
 | `where` | Set in | Example |
 |---|---|---|
-| `worker` (the default for worker plugins) | the worker's `worker.yaml`, under `settings:` | the path to `deluge-console` on that machine |
-| `hub` | the hub: `hub.yaml` under `settings:`, or the Settings page | which agent answers the dashboard's chat dock |
+| `worker` (the default for a plugin that runs on a worker) | the worker's `worker.yaml`, under `settings:` | whether the browser on that machine shows its window |
+| `hub` (the default for a plugin that runs on the hub) | the hub: `hub.yaml` under `settings:`, or the Settings page | which agent answers the dashboard's chat dock |
 | `person` | each person's own, on the Settings page | which channel `notify` reaches you on |
 
 ```yaml
 # worker.yaml
 settings:
-  torrent: { console: /usr/bin/deluge-console }
+  browser: { headless: false }
 # hub.yaml
 settings:
-  page: { dock: house }
+  agent: { dock: house }
 ```
 
 Values set on the Settings page (or with the cap `setting.set`) are kept in
@@ -26,6 +26,15 @@ everyone changes their own. `setting.list` shows every hub-side setting
 with its type, default and value. Worker settings are only in `worker.yaml`
 for now: the Settings page doesn't edit them yet.
 
+The Settings page is a map of what the system can do. It groups every
+setting by its plugin's segment (Agents, Machines, Work, Hub, then any
+other), and inside it by plugin. Each row is the setting's description,
+its `plugin.key` name, and a control: a switch, a dropdown where the
+values are known (a fixed list, the vault's secret names, the band's
+workers), a number box, a text box, or one item per line for a list. A
+change is saved as it is made. Your own settings are marked "yours". The
+filter box narrows the rows by any word.
+
 A plugin that needs a setting before some caps can work (`requires:
 {settings: [...]}`) shows those caps as unavailable, with the reason, until
 it has a value.
@@ -34,8 +43,11 @@ it has a value.
 
 Some caps are shared contracts that several plugins can provide:
 `llm.complete` (Claude API, an OpenAI-compatible server, a Claude Code or
-Codex subscription), `notify.send`, `agent.backend`. Pick the provider in
-`hub.yaml`:
+Codex subscription), `notify.send`, `voice.tts`. With none picked, the
+first installed answers. For `llm.complete`, the **Model providers** page
+(under Agents) has **Use this one** on each provider (`llm.choose`, which
+an agent can call too); it takes effect on the next call and is kept in
+`hub.yaml`. The others are picked in `hub.yaml`:
 
 ```yaml
 contracts:
@@ -60,9 +72,13 @@ The values live in the hub's vault, `<data>/vault.db` (owners only):
 - in the args of a call to a worker, `{{secret:NAME}}` (alone or inside a
   string) becomes the value for that call only; the journal keeps the
   reference, and the value comes back as `[redacted]`. Calls to the hub's
-  own caps keep the reference as text. Band keys
-  (`{{secret:band-psk-<band>}}`) travel only in an owner's own
-  `core.trust.set`.
+  own caps keep the reference as text. A command gets a secret in its
+  environment this way: `shell.exec` with
+  `env: {GH_TOKEN: "{{secret:gh-token}}"}`;
+- an agent turn's door token is a reference too: `ctx.turn_token` returns a
+  name (`turn-...`), and `{{secret:<that name>}}` in a call to a worker is
+  the token until the turn ends, for whoever the turn acts for. The token
+  stays in the hub's memory; no script or journal entry holds it.
 
 Worker-side secret settings (a worker plugin's `secret: true` setting) have
 no path from the vault yet: pass the secret as a reference in the call.

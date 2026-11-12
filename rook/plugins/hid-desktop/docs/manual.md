@@ -1,7 +1,9 @@
 # Desktop keyboard and mouse (hid-desktop)
 
 Types, presses keys, moves, clicks and drags on the desktop of the machine the
-worker runs on. It needs a desktop session (`requires.hardware: display`).
+worker runs on. It runs on the hub: the hub lists it on Linux and Windows
+workers that serve `shell.exec` and `shell.which` and runs the input tools
+there. A worker with no desktop session answers with the tool's own failure.
 
 | Cap | What it does |
 |---|---|
@@ -18,9 +20,9 @@ worker runs on. It needs a desktop session (`requires.hardware: display`).
   only) and `ydotool` (Wayland, needs its daemon). Typing falls through to the
   next tool when one fails, so `xdotool` failing on a Wayland session hands over
   to `wtype`. Install one with the distribution's package manager.
-- **Windows:** typing and pointer moves use PowerShell (`SendKeys`, `Cursor`),
-  keys, clicks and drags use `SendInput`. They reach the desktop of the account
-  the worker runs as.
+- **Windows:** PowerShell: typing and pointer moves use `SendKeys` and
+  `Cursor`; keys, clicks and drags use user32's `keybd_event`, `mouse_event`
+  and `SetCursorPos`. They reach the desktop of the account the worker runs as.
 
 Typed text is passed to the tool on stdin, so it never shows in a process list.
 

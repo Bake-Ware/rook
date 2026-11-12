@@ -29,15 +29,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import systems.bake.rook.databinding.ActivitySettingsBinding
 
 /**
  * Everything that isn't the conversation, in four tabs (see [SettingsTabs]):
  *  - Voice: conversation mode + prompt, voice picker, fast voice, show thinking,
  *    wake word, default assistant.
- *  - Band: Rook 0.4 or 0.5; 0.4: account sign-in / pairing / saved bands, hub + PSK + name;
- *    0.5: sign in to the home hub (address, or its QR as a rook://enroll link); worker start/stop.
+ *  - Band: sign in to the home hub (address, or its QR as a rook://enroll link); worker start/stop.
  *  - Permissions: one row per grant with its live state; tap to grant.
  *  - App: version, updates, and the advanced voice connection (server, key, TLS).
  * The status footer is shared by every tab.
@@ -370,53 +368,21 @@ class SettingsActivity : AppCompatActivity() {
     // ---- band -------------------------------------------------------------
 
     private fun setupBand() {
-        b.accountServer.setText(prefs.getString("account_server", BuildConfig.ROOK_SERVER))
-        b.btnGoogle.setOnClickListener { fetchBands(google = true) }
-        if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isEmpty()) b.btnGoogle.visibility = View.GONE   // not configured in this build
-        b.btnPair.setOnClickListener { fetchBands(google = false) }
-        b.btnSavedBands.setOnClickListener { chooseBand(JSONArray(prefs.getString("band_configurations", "[]"))) }
-        b.hub.setText(prefs.getString("hub", BuildConfig.DEFAULT_HUB))
-        b.psk.setText(prefs.getString("psk", BuildConfig.DEFAULT_PSK))
-        b.name.setText(prefs.getString("name", (Build.MODEL ?: "android").replace(' ', '-')))
-        b.coreVersion.check(if (Castling.on(this)) R.id.core05 else R.id.core04)
-        b.coreVersion.setOnCheckedChangeListener { _, id ->
-            val v = if (id == R.id.core05) Castling.V05 else Castling.V04
-            if (v == Castling.version(this)) return@setOnCheckedChangeListener
-            // Two different workers on different bands: stop the running one; Start runs the new one.
-            WorkerService.stop(this)
-            prefs.edit().putBoolean("autostart", false).apply()
-            Castling.setVersion(this, v)
-            status("Rook $v: worker stopped. " + if (v == Castling.V05) "Sign in, then tap Start." else "Tap Start to run it.")
-            showCore()
-        }
         b.name05.setText(prefs.getString(Castling.NAME_PREF, null) ?: (Build.MODEL ?: "android").replace(' ', '-'))
         b.btnSignIn05.setOnClickListener { signIn05(b.hub05.text.toString()) }
         b.btnCancel05.setOnClickListener { cancel05() }
         b.token05.setText(prefs.getString(Castling.TOKEN_PREF, ""))
         b.token05.doAfterTextChanged { prefs.edit().putString(Castling.TOKEN_PREF, it.toString().trim()).apply() }
-        showCore()
+        renderEnrolled()
         b.btnStart.setOnClickListener {
-            if (Castling.on(this)) {
-                lifecycleScope.launch {
-                    val ready = withContext(Dispatchers.IO) {
-                        runCatching { Castling.status(this@SettingsActivity).optBoolean("enrolled") }.getOrDefault(false) }
-                    if (!ready) { status("Sign in to your hub first."); return@launch }
-                    prefs.edit().putBoolean("autostart", true).apply()
-                    WorkerService.start(this@SettingsActivity, "", "", "")
-                    status("Rook 0.5 worker starting")
-                }
-                return@setOnClickListener
+            lifecycleScope.launch {
+                val ready = withContext(Dispatchers.IO) {
+                    runCatching { Castling.status(this@SettingsActivity).optBoolean("enrolled") }.getOrDefault(false) }
+                if (!ready) { status("Sign in to your hub first."); return@launch }
+                prefs.edit().putBoolean("autostart", true).apply()
+                WorkerService.start(this@SettingsActivity)
+                status("worker starting")
             }
-            val hub = b.hub.text.toString().trim()
-            val psk = b.psk.text.toString().trim()
-            val name = b.name.text.toString().trim().ifEmpty { (Build.MODEL ?: "android").replace(' ', '-') }
-            // A hub address from the Rook server is its WebSocket bridge whatever the port;
-            // an edited address goes back to the port rule (443/8443 WebSocket, else UDP).
-            val ws = prefs.getBoolean(PREF_HUB_WS, false) && hub == prefs.getString("hub", null)
-            prefs.edit().putString("hub", hub).putString("psk", psk).putString("name", name)
-                .putBoolean(PREF_HUB_WS, ws).putBoolean("autostart", true).apply()
-            WorkerService.start(this, hub, psk, name)
-            status("worker starting as $name -> $hub")
         }
         b.btnStop.setOnClickListener {
             prefs.edit().putBoolean("autostart", false).apply()
@@ -426,15 +392,7 @@ class SettingsActivity : AppCompatActivity() {
         b.btnStopFind.setOnClickListener { FindDeviceBridge.stop(); status("find-device ring stopped") }
     }
 
-    // ---- Rook 0.5 ----------------------------------------------------------
-
-    private fun showCore() {
-        val v5 = Castling.on(this)
-        b.connect04.visibility = if (v5) View.GONE else View.VISIBLE
-        b.band04.visibility = if (v5) View.GONE else View.VISIBLE
-        b.connect05.visibility = if (v5) View.VISIBLE else View.GONE
-        if (v5) renderEnrolled()
-    }
+    // ---- sign-in -----------------------------------------------------------
 
     private fun renderEnrolled() {
         lifecycleScope.launch {
@@ -445,7 +403,7 @@ class SettingsActivity : AppCompatActivity() {
                 b.enrolled05.text = if (on) "Signed in as ${s.optString("name")} to hub ${s.optString("hub")} " +
                     "(${s.optString("url")}), owned by ${s.optString("owner")}." else "Not signed in yet."
                 b.btnSignIn05.text = if (on) "Sign in again" else "Sign in"
-            }.onFailure { b.enrolled05.text = "Rook 0.5 isn't working in this build: ${it.message}" }
+            }.onFailure { b.enrolled05.text = "The worker isn't working in this build: ${it.message}" }
         }
     }
 
@@ -455,10 +413,9 @@ class SettingsActivity : AppCompatActivity() {
         val link = intent!!.dataString!!
         intent.data = null
         b.settingsTabs.getTabAt(SettingsTabs.indexOf("band"))?.select()
-        AlertDialog.Builder(this).setTitle("Sign in to a Rook 0.5 hub?")
-            .setMessage("Hub ${hub ?: "?"} at $url.\n\nThis phone switches to Rook 0.5 and its 0.4 worker stops.")
+        AlertDialog.Builder(this).setTitle("Sign in to this hub?")
+            .setMessage("Hub ${hub ?: "?"} at $url.")
             .setPositiveButton("Sign in") { _, _ ->
-                b.coreVersion.check(R.id.core05)
                 b.hub05.setText(link)
                 signIn05(link)
             }.setNegativeButton("Cancel", null).show()
@@ -516,51 +473,6 @@ class SettingsActivity : AppCompatActivity() {
         Thread { runCatching { Castling.cancel(app) } }.start()
     }
 
-    private fun fetchBands(google: Boolean) {
-        b.btnGoogle.isEnabled = false
-        b.btnPair.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                val server = b.accountServer.text.toString().trim()
-                val bands = if (google) GoogleEnrollment.signIn(this@SettingsActivity, server)
-                    else GoogleEnrollment.pair(server, b.pairingCode.text.toString())
-                prefs.edit()
-                    .putString("account_server", server)
-                    .putString("band_configurations", bands.toString()).apply()
-                b.pairingCode.text.clear()
-                chooseBand(bands)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                status(error.message ?: "Enrollment failed. Try Google again or use a pairing code.")
-            } finally {
-                b.btnGoogle.isEnabled = true
-                b.btnPair.isEnabled = true
-            }
-        }
-    }
-
-    private fun chooseBand(bands: JSONArray) {
-        if (bands.length() == 0) {
-            status("No bands yet. Create a band or accept an invitation in your Rook account.")
-            return
-        }
-        val names = Array(bands.length()) { bands.getJSONObject(it).getString("name") }
-        AlertDialog.Builder(this).setTitle("Choose your active band")
-            .setItems(names) { _, index ->
-                val band = bands.getJSONObject(index)
-                b.hub.setText(band.getString("hub"))
-                b.psk.setText(band.getString("psk"))
-                prefs.edit()
-                    .putString("hub", band.getString("hub"))
-                    .putBoolean(PREF_HUB_WS, HubAddress.bandUsesWebSocket(band))
-                    .putString("psk", band.getString("psk"))
-                    .putString("band_id", band.getString("id"))
-                    .putInt("band_epoch", band.getInt("epoch")).apply()
-                status("Selected ${names[index]}. Tap Start to connect.")
-            }.setNegativeButton("Cancel", null).show()
-    }
-
     // ---- permissions ------------------------------------------------------
 
     /** One grant: [state] is true/false, or null when this Android version doesn't need it. */
@@ -584,8 +496,7 @@ class SettingsActivity : AppCompatActivity() {
             request(Manifest.permission.READ_CONTACTS) },
         Grant("Call log", "Recent calls", { granted(Manifest.permission.READ_CALL_LOG) }) {
             request(Manifest.permission.READ_CALL_LOG) },
-        Grant("Phone calls", "Rook 0.5: place the calls you ask for", {
-            if (Castling.on(this)) granted(Manifest.permission.CALL_PHONE) else null }) {
+        Grant("Phone calls", "Place the calls you ask for", { granted(Manifest.permission.CALL_PHONE) }) {
             request(Manifest.permission.CALL_PHONE) },
         Grant("Calendar", "Read your events, and add or change them when you ask", {
             granted(Manifest.permission.READ_CALENDAR) && granted(Manifest.permission.WRITE_CALENDAR) }) {

@@ -11,7 +11,7 @@ get it as ``ctx.streams`` and open their streams there with
 ``attrs.plugin`` naming themselves; nobody keeps a private stream store.
 
 **One index.** Rows come from two places. Workers send ``stream.changed`` /
-``stream.deleted`` / ``stream.synced`` events (builtin/stream.yaml, spec 13
+``stream.deleted`` / ``stream.synced`` events (builtin/stream.yaml, spec 10.4
 ``core.event``), which :meth:`HubStreams.take` files under the worker's id;
 the hub's own store reports straight in, under ``hub``. Either way a host
 changes only its own rows (:class:`~rook.streams.StreamIndex`).

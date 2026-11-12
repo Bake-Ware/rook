@@ -18,7 +18,7 @@ def test_pages_are_listed_and_their_links_resolve():
 
 def test_manifest_examples_validate():
     names = {b.split("plugin:", 1)[1].split()[0] for _, b in mc.manifest_blocks()}
-    assert {"hello", "deluge", "pikvm", "uptime", "homework"} <= names
+    assert "wiki-care" in names       # the plugin skill's examples: tests/plugins/test_plugin_skill.py
     assert mc.example_problems() == []
 
 

@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /**
- * attention.remind (rook_android/plugins/attention_android.py): speak a short reminder only
+ * Spoken reminders: speak a short reminder only
  * when the room is quiet. The hub decides when and what; the phone checks and speaks.
  *
  * [start] returns at once; one reminder runs at a time on its own thread (never a Chaquopy

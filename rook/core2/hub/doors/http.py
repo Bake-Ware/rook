@@ -16,27 +16,25 @@ agent, or an agent for a person).
     GET  /updates/desktop.json  no token: the desktop app's files in Rook's latest release (its update check)
     GET  /apk.json[?channel=beta], /apk[?channel=beta]  no token: the phone app's update check and
                           download, from files an owner put in the data folder (:mod:`..apkfeed`)
-    *    /p/<plugin><path>  a hub plugin's ``routes:`` entry: ``auth: user`` takes the
-                          bearer token, ``hmac``/``token`` a signature or token under the
-                          route's secret (HubPlugins.route_allows), ``none`` anyone
 
-Enrollment (spec 12; rook.core2.enroll.hub):
+Enrollment (spec 8; rook.core2.enroll.hub):
 
-    POST /enroll/code     {}  a one-time code and its QR text, for a device to claim
+    POST /enroll/code     {}  a one-time code and its QR text, for a device to claim (also hub.join_code)
     POST /enroll/claim    {code, name}       no token: the device's config bundle, once
-    POST /enroll/device   {name}             no token: a device code to poll and a user code to show
-    POST /enroll/poll     {device_code}      no token: pending, refused, or the bundle (once)
-    GET  /enroll/pending  devices waiting for someone to approve their code
-    POST /enroll/approve  {code, decision?}  approve (or refuse) a device's user code
+    POST /enroll/ask      {name}             no token: ask to join; a ticket to poll with
+    POST /enroll/poll     {ticket}           no token: pending, refused, or the bundle (once)
+                          (someone lets it in on the Workers page: hub.joins, hub.join)
     GET  /recovery-key    owners, in person: the recovery key
-    POST /bands/invite    {role?, ceiling?}  owners, in person: an invite to this hub's band
-    POST /memberships     {worker, why, invite? | band?, role?, ceiling?}  owners: a worker's other bands
 
 Replies are JSON objects with ``ok``; a refused call is still 200 (the body
 says why). Bind to localhost: put TLS in front before exposing it.
 Options: ``bind: "127.0.0.1:8740"`` (port 0 picks one); ``web:`` the hub
 site on ``/``, ``/login`` and ``/web/`` (:mod:`.web`; ``false`` turns it off,
-``{secure_cookie: true}`` behind TLS).
+``{secure_cookie: true}`` behind TLS); ``band: "ws://127.0.0.1:7475/band"``
+the relay's web socket listener: a web socket upgrade on ``/band`` is passed
+straight through to it, so a worker whose UDP is blocked joins the band at
+the hub's own address (the frames are sealed with the band key; this door
+never reads them).
 """
 from __future__ import annotations
 
@@ -44,12 +42,11 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
-
-from rook.kit.ctx import Caller as KitCaller, KitError
 
 from ..apkfeed import ApkFeed
 from .web import Web
@@ -57,7 +54,7 @@ from .web import Web
 log = logging.getLogger("rook.hub.door.http")
 
 MAX_BODY = 1 << 20
-OPEN = {"/enroll/claim": "claim", "/enroll/device": "device_start", "/enroll/poll": "device_poll"}
+OPEN = {"/enroll/claim": "claim", "/enroll/ask": "ask", "/enroll/poll": "poll"}
 WAIT = 900.0     # longest a request waits for the hub (dispatch has its own timeouts)
 CHUNK = 1 << 20  # a file goes out this much at a time
 
@@ -77,6 +74,7 @@ class HttpDoor:
         self._server: ThreadingHTTPServer | None = None
         web = options.get("web", {} if self.name == "http" else False)    # the site is on the plain door only
         self.web = None if web is False else Web(hub, web if isinstance(web, dict) else {})
+        self.band = options.get("band")
         self._apk: ApkFeed | None = None
         self._thread: threading.Thread | None = None
 
@@ -125,7 +123,42 @@ class _Handler(BaseHTTPRequestHandler):
         log.debug("request", extra={"fields": {"line": fmt % args}})
 
     def do_GET(self):
+        if (self.door.band and urlsplit(self.path).path == "/band"
+                and self.headers.get("Upgrade", "").lower() == "websocket"):
+            return self._band()
         self._handle("GET")
+
+    def _band(self) -> None:
+        """Replay this upgrade to the relay's web socket, then copy bytes
+        both ways until either side closes."""
+        to = urlsplit(self.door.band)
+        try:
+            relay = socket.create_connection((to.hostname, to.port or 80), timeout=10)
+        except OSError as e:
+            log.warning("band relay unreachable", extra={"fields": {"relay": self.door.band, "error": str(e)}})
+            self.send_error(502)
+            return
+        self.close_connection = True
+        relay.settimeout(None)
+        self.connection.settimeout(None)
+        head = [f"GET {to.path or '/band'} HTTP/1.1", *(f"{k}: {v}" for k, v in self.headers.items())]
+        relay.sendall(("\r\n".join(head) + "\r\n\r\n").encode("latin-1"))
+
+        def back():
+            try:
+                while data := relay.recv(1 << 16):
+                    self.connection.sendall(data)
+            except OSError:
+                pass
+            _shut(self.connection)
+        threading.Thread(target=back, name="rook-band-door", daemon=True).start()
+        try:
+            while data := self.rfile.read1(1 << 16):
+                relay.sendall(data)
+        except OSError:
+            pass
+        _shut(relay)
+        relay.close()
 
     def do_POST(self):
         self._handle("POST")
@@ -179,10 +212,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return 200, got[1]
             return 200, _File(got[0], "application/vnd.android.package-archive", "rook-worker.apk")
         if method == "POST" and path in OPEN:      # a device enrolling has no token yet
-            extra = {"address": self._address()} if OPEN[path] == "device_start" else {}
+            extra = {"address": self._address()} if OPEN[path] == "ask" else {}
             return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body(), **extra))
-        if path.startswith("/p/"):
-            return self._plugin_route(method, url)
         caller = self._run(self._auth())
         body = self._body() if method == "POST" else None
         if method == "POST" and path.startswith("/doors/") and path.count("/") == 2:
@@ -202,11 +233,7 @@ class _Handler(BaseHTTPRequestHandler):
             ("GET", "/holds"): lambda: hub.holds_view(caller),
             ("POST", "/plugins/push"): lambda: hub.push_plugin(caller, body, self.door.name),
             ("POST", "/enroll/code"): lambda: hub.enroll.new_code(caller, self._base()),
-            ("GET", "/enroll/pending"): lambda: hub.enroll.pending(caller),
-            ("POST", "/enroll/approve"): lambda: hub.enroll.approve(caller, body),
             ("GET", "/recovery-key"): lambda: hub.enroll.recovery(caller),
-            ("POST", "/bands/invite"): lambda: hub.enroll.invite(caller, body),
-            ("POST", "/memberships"): lambda: hub.enroll.membership(caller, body, self.door.name),
         }
         if (method, path) in routes:
             return 200, self._run(routes[(method, path)]())
@@ -265,38 +292,6 @@ class _Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host")
         return f"http://{host}" if host else None
 
-    def _plugin_route(self, method: str, url):
-        hub = self.door.hub
-        plugin, _, rest = url.path[len("/p/"):].partition("/")
-        path = "/" + rest.rstrip("/")
-        route = hub.plugins.route(plugin, path)
-        if route is None:
-            raise _Error(404, "not found")
-        if method not in route.methods:
-            raise _Error(405, "method not allowed")
-        if route.auth not in ("user", "none") and route.secret is None:
-            raise _Error(501, f"this {route.auth} route names no secret")
-        body = self._raw()
-        headers = {k.lower(): v for k, v in self.headers.items()}
-        if route.auth in ("hmac", "token") and not hub.plugins.route_allows(plugin, route, headers, body):
-            raise _Error(401, "unauthorized")
-        caller = None
-        if route.auth == "user":
-            who = self._run(self._auth())
-            if (refused := hub.door_refused(who, self.door.name)):
-                raise _Error(503, refused)
-            caller = KitCaller(person=who.person, agent=who.agent, band=hub.band, why=f"{plugin} route {path}",
-                               owner=hub.identities.is_owner(who.person))
-        request = {"method": method, "path": path, "query": dict(parse_qsl(url.query)),
-                   "headers": headers, "body": body}
-        try:
-            out = self._run(hub.plugins.serve(plugin, path, request, caller))
-        except PermissionError as e:
-            raise _Error(401, str(e) or "unauthorized") from None
-        except KitError as e:
-            raise _Error(400, e.message) from None
-        return 200, out if isinstance(out, dict) else {"ok": True, "result": out}
-
     async def _auth(self):
         header = self.headers.get("Authorization", "")
         scheme, _, token = header.partition(" ")
@@ -336,6 +331,13 @@ class _Handler(BaseHTTPRequestHandler):
             return asyncio.run_coroutine_threadsafe(coro, self.loop).result(WAIT)
         except (concurrent.futures.CancelledError, TimeoutError):
             raise _Error(503, "hub unavailable") from None
+
+
+def _shut(sock: socket.socket) -> None:
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
 
 
 def _encode(body: dict | bytes | None) -> tuple[dict, bytes]:

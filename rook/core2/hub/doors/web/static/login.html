@@ -4,17 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rook: sign in</title>
+<link rel="icon" href="/web/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/web/static/fonts.css">
 <link rel="stylesheet" href="/web/static/shell.css">
 </head>
 <body>
 <form class="login" method="post" action="/login">
-  <div class="brand">Rook</div>
+  <div class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h3v2h2V3h4v2h2V3h3v5l-2 2v7l2 2v2H5v-2l2-2v-7L5 8z"/></svg><span>ROOK</span></div>
   <label for="user">User name</label>
   <input id="user" name="user" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
   <label for="password">Password</label>
   <input id="password" name="password" type="password" autocomplete="current-password" required>
   <button type="submit">Sign in</button>
   <div id="failed" class="muted" hidden>Wrong user name or password.</div>
+  <div id="link" class="muted" hidden>That sign-in link isn't one this hub made. Run the installer again with --open for a new one, or sign in with your password.</div>
 </form>
 <script src="/web/static/login.js"></script>
 </body>

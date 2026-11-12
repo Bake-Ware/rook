@@ -1,45 +1,34 @@
-//! The local worker: this computer's own Rook worker (the Python band worker
-//! the hub's installer puts in `~/.rook-band-worker`).
+//! This computer's Rook worker, run inside the app: the worker crate
+//! (`worker/`) compiled in, started and stopped as a task when the person
+//! turns it on or off. It keeps its config in the app's folder
+//! (`<config>/worker05/worker.yaml`, the folder earlier versions enrolled
+//! into), so it never touches a worker installed some other way.
 //!
-//! The app does not install or enroll a worker itself; the hub's Install page
-//! does that with a pairing code. It finds what is there and starts or stops
-//! it the way it was installed:
+//! **Adding this computer** is enrollment (spec 8) with a one-time code: the
+//! app, signed in as the person who clicked "Add", gets one with their token
+//! (`POST /enroll/code`) and the crate's `enroll` claims it, writing the
+//! anchor and home band. The person owns the machine (spec 8).
 //!
-//! * a systemd user service `rook-band-worker` (Linux installer): `systemctl --user`;
-//! * the Scheduled Task `RookBandWorker` (Windows installer): `schtasks`;
-//! * otherwise (macOS, Linux without systemd) the installed bundle, run by the
-//!   app as a child process with the saved enrollment (`--enrolled --ws`).
-//!
-//! A worker can also run outside all of these: the Linux installer's nohup
-//! fallback, or on Windows a worker an update restarted itself (its Scheduled
-//! Task then reads "Ready" while the worker runs). Those are found by their
-//! command line (this install's `band-worker.pyz`, whole path, and
-//! `--enrolled`) and count as running.
+//! It serves what the crate serves (commands and terminals, files, streams,
+//! sockets and serial ports). The app updates it with itself, so its
+//! `worker.update` and `worker.restart` are listed unavailable.
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-pub const SERVICE: &str = "rook-band-worker";
-pub const WINDOWS_TASK: &str = "RookBandWorker";
+use rook_worker::Worker;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Mode {
-    SystemdUser,
-    WindowsTask,
-    Bundle {
-        python: PathBuf,
-        pyz: PathBuf,
-        enrolled: bool,
-    },
-    NotInstalled,
-}
+/// How long "Add this computer" waits for the hub.
+pub const ENROLL_WAIT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Info {
-    /// "service", "task", "bundle" or "none".
+    /// "core2" (the app runs the worker), or "none" when unknown.
     pub mode: &'static str,
-    /// "running", "stopped", "needs-pairing" or "not-installed".
+    /// "running", "stopped", "not-installed" or "unknown".
     pub status: &'static str,
     pub detail: String,
     pub can_start: bool,
@@ -59,373 +48,179 @@ impl Info {
     }
 }
 
-/// Where the installer puts things (rook.core.paths: worker_install_dir,
-/// worker_state_dir).
+/// Where the app keeps its worker.
 #[derive(Debug, Clone)]
 pub struct Layout {
-    pub install_dir: PathBuf,
-    pub state_dir: PathBuf,
+    pub dir: PathBuf,
 }
 
 impl Layout {
-    pub fn from_env(home: &Path) -> Self {
-        let install_dir = home.join(".rook-band-worker");
-        let state_dir = std::env::var("ROOK_WORKER_HOME")
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| install_dir.clone());
-        Layout { install_dir, state_dir }
-    }
-
-    pub fn pyz(&self) -> PathBuf {
-        self.install_dir.join("band-worker.pyz")
-    }
-
-    pub fn python_candidates(&self) -> Vec<PathBuf> {
-        let venv = self.install_dir.join("venv");
-        if cfg!(windows) {
-            vec![
-                venv.join("Scripts").join("pythonw.exe"),
-                venv.join("Scripts").join("python.exe"),
-            ]
-        } else {
-            vec![venv.join("bin").join("python")]
+    pub fn new(app_config: &Path) -> Self {
+        Layout {
+            dir: app_config.join("worker05"),
         }
     }
 
-    pub fn enrollment(&self) -> PathBuf {
-        self.state_dir.join("enrollment.json")
+    pub fn config(&self) -> PathBuf {
+        self.dir.join("worker.yaml")
     }
 
-    pub fn log_file(&self) -> PathBuf {
-        self.state_dir.join("desktop-worker.log")
+    /// Enrolled: the anchor enrollment writes beside the config.
+    pub fn enrolled(&self) -> bool {
+        self.dir.join("anchor.json").is_file()
     }
 
-    /// The installed bundle and its interpreter, if both are present.
-    pub fn bundle(&self) -> Option<Mode> {
-        let pyz = self.pyz();
-        if !pyz.is_file() {
-            return None;
-        }
-        let python = self.python_candidates().into_iter().find(|p| p.is_file())?;
-        Some(Mode::Bundle {
-            python,
-            pyz,
-            enrolled: self.enrollment().is_file(),
-        })
+    /// Service endpoints from the config bundle (`<data>/services.json`).
+    pub fn services(&self) -> Option<serde_json::Value> {
+        let text = std::fs::read_to_string(self.dir.join("data").join("services.json")).ok()?;
+        serde_json::from_str(&text).ok()
     }
 }
 
-/// The child-process command for an installed bundle: the saved enrollment,
-/// over the hub's WebSocket bridge (what the installers run too).
-pub fn bundle_command(python: &Path, pyz: &Path) -> (PathBuf, Vec<String>) {
-    (
-        python.to_path_buf(),
-        vec![pyz.display().to_string(), "--enrolled".into(), "--ws".into()],
-    )
-}
-
-/// `systemctl --user is-active` prints "active" (or activating) when up.
-pub fn systemd_active(stdout: &str) -> bool {
-    matches!(stdout.trim(), "active" | "activating" | "reloading")
-}
-
-/// `schtasks /Query /TN RookBandWorker /FO CSV /NH` ends each row with the
-/// status column: "Running", "Ready", "Disabled"...
-pub fn task_running(stdout: &str) -> bool {
-    stdout
-        .lines()
-        .any(|l| l.trim_end().trim_end_matches('"').ends_with("Running"))
-}
-
-/// Ids of the processes running this install's worker, from `pid command
-/// line` rows (`ps -axo pid=,args=`, or the Win32_Process query on Windows):
-/// the command line must name this install's bundle (`pyz`, a whole argument:
-/// nothing glued on before or after) followed by `--enrolled`. Another
-/// install, a dev worker or a test run doesn't match. Windows paths compare
-/// without case.
-pub fn worker_pids(rows: &str, pyz: &Path, windows: bool) -> Vec<u32> {
-    pids_naming(rows, pyz, windows, enrolled_after)
-}
-
-fn enrolled_after(after: &str) -> bool {
-    after.split_whitespace().any(|a| a.trim_matches('"') == "--enrolled")
-}
-
-/// The rows whose command line names `path` as a whole argument, where
-/// `accept` likes what follows it.
-pub fn pids_naming(rows: &str, path: &Path, windows: bool, accept: fn(&str) -> bool) -> Vec<u32> {
-    let fold = |s: &str| if windows { s.to_lowercase() } else { s.to_string() };
-    let want = fold(&path.display().to_string());
-    rows.lines()
-        .filter_map(|l| {
-            // A byte-order mark may lead the first row (Windows PowerShell).
-            let (pid, cmd) = l
-                .trim_start_matches('\u{feff}')
-                .trim_start()
-                .split_once(char::is_whitespace)?;
-            let cmd = fold(cmd);
-            let edge = |c: Option<char>| c.map_or(true, |c| c.is_whitespace() || c == '"' || c == '\'');
-            let found = cmd.match_indices(want.as_str()).any(|(at, _)| {
-                let (before, after) = (&cmd[..at], &cmd[at + want.len()..]);
-                edge(before.chars().next_back()) && edge(after.chars().next()) && accept(after)
-            });
-            found.then_some(())?;
-            pid.trim().parse().ok()
-        })
-        .collect()
-}
-
-/// This install's worker processes running outside the app and its service.
-fn worker_processes(pyz: &Path) -> Vec<u32> {
-    processes_naming(pyz, enrolled_after)
-}
-
-/// Processes whose command line names `path` (see [`pids_naming`]).
-pub fn processes_naming(path: &Path, accept: fn(&str) -> bool) -> Vec<u32> {
-    if cfg!(windows) {
-        // UTF-8, so a profile path with non-ASCII letters (C:\\Users\\José) matches.
-        const SCRIPT: &str = "[Console]::OutputEncoding = New-Object Text.UTF8Encoding $false; \
-            Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | \
-            ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }";
-        match run(
-            "powershell",
-            &[
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                SCRIPT,
-            ],
-        ) {
-            Some((true, out)) => pids_naming(&out, path, true, accept),
-            _ => vec![],
-        }
-    } else {
-        // -ww: whole command lines (macOS cuts them at the terminal width).
-        match run("ps", &["-ww", "-axo", "pid=,args="]) {
-            Some((true, out)) => pids_naming(&out, path, false, accept),
-            _ => vec![],
-        }
+/// Enroll with `origin` using the one-time `code`; what to tell the person.
+pub async fn enroll(layout: &Layout, origin: &str, code: &str, name: Option<&str>) -> Result<String, String> {
+    if layout.enrolled() {
+        return Err("This computer is already added. Its worker keeps its home hub.".into());
+    }
+    std::fs::create_dir_all(&layout.dir).map_err(|e| format!("Can't make {}: {e}", layout.dir.display()))?;
+    let quiet = |_: &str| {};
+    let config = layout.config();
+    let run = rook_worker::enroll::enroll(&config, origin, Some(code), name, false, false, &quiet);
+    match tokio::time::timeout(ENROLL_WAIT, run).await {
+        Ok(Ok(e)) => Ok(format!("Enrolled {} ({}) with hub {}.", e.name, e.worker_id, e.hub)),
+        Ok(Err(why)) => Err(format!("Couldn't add this computer: {why}")),
+        Err(_) => Err("Couldn't add this computer: the hub didn't answer in time.".into()),
     }
 }
 
-fn quiet(cmd: &mut Command) -> &mut Command {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flash
-    }
-    cmd.stdin(Stdio::null())
+struct Running {
+    worker: Arc<Mutex<Option<Arc<Worker>>>>,
+    task: tauri::async_runtime::JoinHandle<()>,
+    done: Arc<AtomicBool>,
 }
 
-fn run(program: &str, args: &[&str]) -> Option<(bool, String)> {
-    let out = quiet(&mut Command::new(program)).args(args).output().ok()?;
-    Some((out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned()))
-}
-
-pub fn detect(layout: &Layout) -> Mode {
-    if cfg!(target_os = "linux") {
-        if let Some((true, _)) = run("systemctl", &["--user", "cat", &format!("{SERVICE}.service")]) {
-            return Mode::SystemdUser;
-        }
-    }
-    if cfg!(windows) {
-        if let Some((true, _)) = run("schtasks", &["/Query", "/TN", WINDOWS_TASK]) {
-            return Mode::WindowsTask;
-        }
-    }
-    layout.bundle().unwrap_or(Mode::NotInstalled)
-}
-
-/// Starts and stops the worker; owns the child process in bundle mode.
+/// Starts and stops the app's worker.
 pub struct Controller {
     pub layout: Layout,
-    child: Option<Child>,
+    running: Option<Running>,
+    /// Why the last run ended, when it ended on its own.
+    error: Arc<Mutex<Option<String>>>,
 }
 
 impl Controller {
     pub fn new(layout: Layout) -> Self {
-        Controller { layout, child: None }
-    }
-
-    fn child_alive(&mut self) -> bool {
-        match self.child.as_mut().map(|c| c.try_wait()) {
-            Some(Ok(None)) => true,
-            Some(_) => {
-                self.child = None;
-                false
-            }
-            None => false,
+        Controller {
+            layout,
+            running: None,
+            error: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// A bundle worker running outside the app and its service (the
-    /// installer's nohup fallback; on Windows, one an update restarted),
-    /// found by its command line.
-    fn running_elsewhere(&self) -> bool {
-        !worker_processes(&self.layout.pyz()).is_empty()
-    }
-
-    /// End those processes, and only those: not the processes they started
-    /// (terminals and agent sessions the worker hosts keep running).
-    fn stop_elsewhere(&self) {
-        for pid in worker_processes(&self.layout.pyz()) {
-            let pid = pid.to_string();
-            if cfg!(windows) {
-                let _ = run("taskkill", &["/PID", &pid, "/F"]);
-            } else {
-                let _ = run("kill", &[&pid]);
-            }
+    fn alive(&mut self) -> bool {
+        if self.running.as_ref().is_some_and(|r| r.done.load(Ordering::SeqCst)) {
+            self.running = None;
         }
+        self.running.is_some()
     }
 
     pub fn info(&mut self) -> Info {
-        match detect(&self.layout) {
-            Mode::SystemdUser => {
-                let up = run("systemctl", &["--user", "is-active", SERVICE])
-                    .map(|(_, o)| systemd_active(&o))
-                    .unwrap_or(false);
-                Info {
-                    mode: "service",
-                    status: if up { "running" } else { "stopped" },
-                    detail: format!("Installed as the user service {SERVICE}."),
-                    can_start: !up,
-                    can_stop: up,
-                }
-            }
-            Mode::WindowsTask => {
-                let task = run("schtasks", &["/Query", "/TN", WINDOWS_TASK, "/FO", "CSV", "/NH"])
-                    .map(|(_, o)| task_running(&o))
-                    .unwrap_or(false);
-                let outside = !task && self.running_elsewhere();
-                let up = task || outside;
-                Info {
-                    mode: "task",
-                    status: if up { "running" } else { "stopped" },
-                    detail: if outside {
-                        format!("Installed as the Scheduled Task {WINDOWS_TASK}; running outside it (an update restarted it).")
-                    } else {
-                        format!("Installed as the Scheduled Task {WINDOWS_TASK}.")
-                    },
-                    can_start: !up,
-                    can_stop: up,
-                }
-            }
-            Mode::Bundle { enrolled: false, .. } => Info {
-                mode: "bundle",
-                status: "needs-pairing",
-                detail:
-                    "The worker is installed but not paired with a hub. Run the installer from your hub's Install page."
-                        .into(),
-                can_start: false,
-                can_stop: false,
-            },
-            Mode::Bundle { .. } => {
-                let ours = self.child_alive();
-                let up = ours || self.running_elsewhere();
-                Info {
-                    mode: "bundle",
-                    status: if up { "running" } else { "stopped" },
-                    detail: if ours {
-                        format!("Running from the app. Log: {}", self.layout.log_file().display())
-                    } else if up {
-                        "Running (started outside the app).".into()
-                    } else {
-                        "Installed; runs while the app is open.".into()
-                    },
-                    can_start: !up,
-                    can_stop: up,
-                }
-            }
-            Mode::NotInstalled => Info {
-                mode: "none",
+        if !self.layout.enrolled() {
+            return Info {
+                mode: "core2",
                 status: "not-installed",
-                detail: "This computer isn't a worker yet. Open your hub's Install page to add it.".into(),
+                detail: "This computer isn't a worker on your hub yet. Add it here: it joins as yours.".into(),
                 can_start: false,
                 can_stop: false,
-            },
+            };
+        }
+        let up = self.alive();
+        let detail = if up {
+            let worker = self.running.as_ref().and_then(|r| r.worker.lock().unwrap().clone());
+            match worker.map(|w| w.activity()) {
+                Some((streams, last)) => activity(streams, last),
+                None => "Starting…".into(),
+            }
+        } else if let Some(e) = self.error.lock().unwrap().clone() {
+            format!("Stopped: {e}")
+        } else {
+            "Added; runs while the app is open.".into()
+        };
+        Info {
+            mode: "core2",
+            status: if up { "running" } else { "stopped" },
+            detail,
+            can_start: !up,
+            can_stop: up,
         }
     }
 
     pub fn start(&mut self) -> Result<Info, String> {
-        match detect(&self.layout) {
-            Mode::SystemdUser => checked(run("systemctl", &["--user", "start", SERVICE]), "start the service")?,
-            Mode::WindowsTask => checked(run("schtasks", &["/Run", "/TN", WINDOWS_TASK]), "start the task")?,
-            Mode::Bundle {
-                python,
-                pyz,
-                enrolled: true,
-            } => {
-                if !self.child_alive() && !self.running_elsewhere() {
-                    let (program, args) = bundle_command(&python, &pyz);
-                    let log = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(self.layout.log_file())
-                        .map_err(|e| format!("Can't open the worker log: {e}"))?;
-                    let err = log.try_clone().map_err(|e| e.to_string())?;
-                    let child = quiet(&mut Command::new(program))
-                        .args(args)
-                        .stdout(Stdio::from(log))
-                        .stderr(Stdio::from(err))
-                        .spawn()
-                        .map_err(|e| format!("Couldn't start the worker: {e}"))?;
-                    self.child = Some(child);
+        if !self.layout.enrolled() {
+            return Err("Add this computer first.".into());
+        }
+        if !self.alive() {
+            let cfg =
+                rook_worker::config::load(&self.layout.config()).map_err(|e| format!("The worker's config: {e}"))?;
+            let (worker, done, error) = (
+                Arc::new(Mutex::new(None)),
+                Arc::new(AtomicBool::new(false)),
+                self.error.clone(),
+            );
+            *error.lock().unwrap() = None;
+            let (slot, flag) = (worker.clone(), done.clone());
+            let task = tauri::async_runtime::spawn(async move {
+                let out = match Worker::start(cfg, true).await {
+                    Ok(w) => {
+                        *slot.lock().unwrap() = Some(w.clone());
+                        w.run().await
+                    }
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = out {
+                    log::warn!("worker stopped: {e}");
+                    *error.lock().unwrap() = Some(e.to_string());
                 }
-            }
-            Mode::Bundle { enrolled: false, .. } | Mode::NotInstalled => {
-                return Err("Add this computer from your hub's Install page first.".into())
-            }
+                flag.store(true, Ordering::SeqCst);
+            });
+            self.running = Some(Running { worker, task, done });
         }
         Ok(self.info())
     }
 
+    /// Its streams end (terminals get HUP), then its task.
     pub fn stop(&mut self) -> Result<Info, String> {
-        match detect(&self.layout) {
-            Mode::SystemdUser => checked(run("systemctl", &["--user", "stop", SERVICE]), "stop the service")?,
-            Mode::WindowsTask => {
-                let task = run("schtasks", &["/Query", "/TN", WINDOWS_TASK, "/FO", "CSV", "/NH"])
-                    .map(|(_, o)| task_running(&o))
-                    .unwrap_or(false);
-                if task {
-                    checked(run("schtasks", &["/End", "/TN", WINDOWS_TASK]), "stop the task")?;
-                }
-                if self.running_elsewhere() {
-                    self.stop_elsewhere();
-                }
+        if let Some(r) = self.running.take() {
+            if let Some(w) = r.worker.lock().unwrap().take() {
+                w.stop();
             }
-            Mode::Bundle { .. } => {
-                if let Some(mut c) = self.child.take() {
-                    let _ = c.kill();
-                    let _ = c.wait();
-                } else if self.running_elsewhere() {
-                    self.stop_elsewhere();
-                }
-            }
-            Mode::NotInstalled => {}
+            r.task.abort();
         }
         Ok(self.info())
     }
 
-    /// On quit: a worker the app started stops with it (services keep running).
     pub fn shutdown(&mut self) {
-        if let Some(mut c) = self.child.take() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
+        let _ = self.stop();
     }
 }
 
-fn checked(r: Option<(bool, String)>, what: &str) -> Result<(), String> {
-    match r {
-        Some((true, _)) => Ok(()),
-        Some((false, _)) => Err(format!("Couldn't {what}. It may need an administrator.")),
-        None => Err(format!("Couldn't {what}: the system tool isn't available.")),
+/// "Running in the app. 2 open streams; last call shell.exec 12 s ago."
+fn activity(streams: usize, last: Option<(String, f64)>) -> String {
+    let mut s = format!(
+        "Running in the app. {streams} open stream{}",
+        if streams == 1 { "" } else { "s" }
+    );
+    if let Some((cap, at)) = last {
+        let ago = (rook_worker::now() - at).max(0.0) as u64;
+        let ago = if ago < 120 {
+            format!("{ago} s")
+        } else if ago < 7200 {
+            format!("{} min", ago / 60)
+        } else {
+            format!("{} h", ago / 3600)
+        };
+        s += &format!("; last call {cap} {ago} ago");
     }
+    s + "."
 }
 
 #[cfg(test)]
@@ -433,84 +228,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn layout_paths() {
-        let l = Layout {
-            install_dir: PathBuf::from("/h/.rook-band-worker"),
-            state_dir: PathBuf::from("/s"),
-        };
-        assert_eq!(l.pyz(), PathBuf::from("/h/.rook-band-worker/band-worker.pyz"));
-        assert_eq!(l.enrollment(), PathBuf::from("/s/enrollment.json"));
-        assert!(l.python_candidates()[0].starts_with("/h/.rook-band-worker/venv"));
+    fn layout_and_status_before_enrollment() {
+        let dir = std::env::temp_dir().join(format!("rook-desktop-w-{}", std::process::id()));
+        let layout = Layout::new(&dir);
+        assert_eq!(layout.config(), dir.join("worker05").join("worker.yaml"));
+        assert!(!layout.enrolled());
+        let mut c = Controller::new(layout.clone());
+        let i = c.info();
+        assert_eq!((i.mode, i.status, i.can_start), ("core2", "not-installed", false));
+        assert!(c.start().is_err());
+        std::fs::create_dir_all(&layout.dir).unwrap();
+        std::fs::write(layout.dir.join("anchor.json"), "{}").unwrap();
+        let i = c.info();
+        assert_eq!((i.status, i.can_start, i.can_stop), ("stopped", true, false));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn bundle_detection_and_command() {
-        let dir = std::env::temp_dir().join(format!("rook-desktop-worker-{}", std::process::id()));
-        let l = Layout {
-            install_dir: dir.clone(),
-            state_dir: dir.clone(),
-        };
-        assert_eq!(l.bundle(), None);
-        std::fs::create_dir_all(l.python_candidates()[0].parent().unwrap()).unwrap();
-        std::fs::write(l.pyz(), b"zip").unwrap();
-        assert_eq!(l.bundle(), None, "no interpreter yet");
-        std::fs::write(&l.python_candidates()[0], b"").unwrap();
-        assert!(matches!(l.bundle(), Some(Mode::Bundle { enrolled: false, .. })));
-        std::fs::write(l.enrollment(), b"{}").unwrap();
-        let Some(Mode::Bundle {
-            python,
-            pyz,
-            enrolled: true,
-        }) = l.bundle()
-        else {
-            panic!("bundle")
-        };
-        let (prog, args) = bundle_command(&python, &pyz);
-        assert_eq!(prog, python);
-        assert_eq!(args[1..], ["--enrolled".to_string(), "--ws".to_string()]);
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn service_status_parsing() {
-        assert!(systemd_active("active\n"));
-        assert!(!systemd_active("inactive\n"));
-        assert!(!systemd_active("failed"));
-        assert!(task_running("\"\\RookBandWorker\",\"N/A\",\"Running\"\r\n"));
-        assert!(!task_running("\"\\RookBandWorker\",\"N/A\",\"Ready\""));
-    }
-
-    #[test]
-    fn worker_processes_by_exact_command_line() {
-        // A worker an update restarted outside its Scheduled Task (and the
-        // child it relaunched), beside other Python processes.
-        let pyz = PathBuf::from(r"C:\Users\me\.rook-band-worker\band-worker.pyz");
-        let out = "7452\t\"C:\\Program Files\\Python311\\python.exe\" C:\\tools\\other.py\r\n\
-            45928\tC:\\Users\\me\\.rook-band-worker\\venv\\Scripts\\pythonw.exe C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --enrolled --ws\r\n\
-            116568\tC:\\Users\\me\\.rook-band-worker\\venv\\Scripts\\pythonw.exe \"C:\\Users\\ME\\.rook-band-worker\\Band-Worker.pyz\" --enrolled\r\n\
-            501\tpython C:\\dev\\rook\\band-worker.pyz --enrolled\r\n\
-            502\tpython C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --hub 127.0.0.1:7474\r\n\
-            503\tpython C:\\Users\\me\\.rook-band-worker\\band-worker.pyz.bak --enrolled\r\n\
-            504\tpython D:\\x\\C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --enrolled\r\n\
-            505\tpython --enrolled C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --ws\r\n\
-            9\t\r\n\
-            notapid\tpython band-worker.pyz --enrolled\r\n";
-        assert_eq!(worker_pids(out, &pyz, true), vec![45928, 116568]);
-        assert!(worker_pids("", &pyz, true).is_empty());
-        // ps on Linux and macOS: case matters, and only this install's bundle.
-        let pyz = PathBuf::from("/home/me/.rook-band-worker/band-worker.pyz");
-        let ps = "  812 /home/me/.rook-band-worker/venv/bin/python /home/me/.rook-band-worker/band-worker.pyz --enrolled --ws\n\
-                  913 /home/me/rook/.venv/bin/python /home/me/rook/band-worker.pyz --enrolled\n\
-                  914 python -m pytest tests/test_band-worker.pyz.py\n\
-                  915 /home/me/.rook-band-worker/venv/bin/python /home/ME/.rook-band-worker/band-worker.pyz --enrolled\n\
-                  916 python /tmp/x/home/me/.rook-band-worker/band-worker.pyz --enrolled\n\
-                  917 python '/home/me/.rook-band-worker/band-worker.pyz' --enrolled\n";
-        assert_eq!(worker_pids(ps, &pyz, false), vec![812, 917]);
-        // A profile with non-ASCII letters (the PowerShell query reads UTF-8).
-        let pyz = PathBuf::from(r"C:\Users\José\.rook-band-worker\band-worker.pyz");
-        let out = "77\tC:\\Users\\José\\.rook-band-worker\\venv\\Scripts\\pythonw.exe C:\\Users\\JOSÉ\\.rook-band-worker\\band-worker.pyz --enrolled --ws\r\n";
-        assert_eq!(worker_pids(out, &pyz, true), vec![77]);
-        let bom = format!("\u{feff}{out}");
-        assert_eq!(worker_pids(&bom, &pyz, true), vec![77]);
+    fn what_it_is_doing() {
+        assert_eq!(activity(0, None), "Running in the app. 0 open streams.");
+        let at = rook_worker::now() - 300.0;
+        assert_eq!(
+            activity(1, Some(("shell.exec".into(), at))),
+            "Running in the app. 1 open stream; last call shell.exec 5 min ago."
+        );
     }
 }

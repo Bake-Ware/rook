@@ -16,14 +16,11 @@ held to the plugin's ``uses`` like ``ctx.call``. ``on`` run functions get
 ``event=`` and ``payload=``, and ``source=`` (the plugin or ``core`` that
 published it) when they take a ``source`` parameter; ``on`` calls get only
 their declared ``args``.
-An event published with ``taints=True`` (outside content) runs its hooks
-with ``ctx.caller.tainted`` set, so whatever they call is tainted too.
 
 The scheduler never lets a hook take down another: errors are logged and the
 next tick runs. :meth:`Scheduler.stop` cancels a plugin's timers and in-flight
 runs, unsubscribes its events and then runs its ``stop`` hook, so unloading a
-plugin leaves nothing behind. Core's own periodic work (record pruning) uses
-:meth:`Scheduler.every` under an owner name and stops the same way.
+plugin leaves nothing behind.
 """
 
 from __future__ import annotations
@@ -65,16 +62,11 @@ class _Plugin:
 
 
 class Scheduler:
-    """One per process. ``dispatch(cap, args, caller)`` runs ``call:`` targets;
-    ``may_receive(plugin, event)`` filters which events reach ``on`` hooks."""
+    """One per process. ``dispatch(cap, args, caller)`` runs ``call:`` targets."""
 
-    def __init__(self, dispatch: Callable[[str, dict, Caller], Any] | None = None,
-                 timeout: float = 30.0, may_receive: Callable[[str, str], bool] | None = None):
+    def __init__(self, dispatch: Callable[[str, dict, Caller], Any] | None = None, timeout: float = 30.0):
         self.dispatch = dispatch
         self.timeout = timeout
-        # Event grants are hub state: core passes its check here so a plugin's
-        # on: hooks only see events it was granted (default: all).
-        self.may_receive = may_receive
         self._plugins: dict[str, _Plugin] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -148,34 +140,24 @@ class Scheduler:
         except Exception as e:
             return {"error": _message(e)}
 
-    def every(self, owner: str, interval: str | float, fn: Callable[[], Any]) -> None:
-        """Core's own periodic work, e.g. ``every("records", "1d", store.prune)``.
-        ``fn`` may be sync (run in a thread) or async. Stopped by ``stop(owner)``."""
-        self._loop = asyncio.get_running_loop()
-        p = self._plugins.setdefault(owner, _Plugin(owner))
-        self._spawn(p, self._tick(p, parse_duration(interval), _Target(f"every {interval}", func=fn)))
-
     # -- events ---------------------------------------------------------------
 
-    def publish(self, event: str, payload: Mapping | None = None, source: str | None = None,
-                taints: bool = False) -> None:
+    def publish(self, event: str, payload: Mapping | None = None, source: str | None = None) -> None:
         """Run every ``on`` hook matching ``event`` (exact or glob). Safe to call
         from any thread; returns at once. Signature fits ``Ctx(emit=...)`` and
         ``RecordStore(emit=...)``."""
         if self._loop is None or self._loop.is_closed():
             return
-        self._loop.call_soon_threadsafe(self._fan_out, event, dict(payload or {}), taints, source)
+        self._loop.call_soon_threadsafe(self._fan_out, event, dict(payload or {}), source)
 
-    def _fan_out(self, event: str, payload: dict, taints: bool = False, source: str | None = None) -> None:
+    def _fan_out(self, event: str, payload: dict, source: str | None = None) -> None:
         for p in list(self._plugins.values()):
-            if p.on and self.may_receive is not None and not self.may_receive(p.name, event):
-                continue
             for pattern, target in p.on:
                 if fnmatch.fnmatchcase(event, pattern):
                     args = {"event": event, "payload": payload} if target.func else {}
                     if target.func and _takes(target.func, "source"):
                         args["source"] = source
-                    self._spawn(p, self._safe(p, target, args, taints))
+                    self._spawn(p, self._safe(p, target, args))
 
     # -- running --------------------------------------------------------------
 
@@ -189,26 +171,22 @@ class Scheduler:
             await asyncio.sleep(seconds)
             await self._safe(p, target, {})
 
-    async def _safe(self, p: _Plugin, target: _Target, args: dict, tainted: bool = False) -> None:
+    async def _safe(self, p: _Plugin, target: _Target, args: dict) -> None:
         try:
-            await self._run(p, target, args, tainted)
+            await self._run(p, target, args)
         except asyncio.CancelledError:
             raise
         except Exception as e:
             log.warning("%s hook %s failed: %s", p.name, target.label, _message(e))
 
-    async def _run(self, p: _Plugin, target: _Target, args: dict, tainted: bool = False) -> Any:
-        caller = Caller(plugin=p.name, band=p.band, why=f"{p.name} hook: {target.label}", tainted=tainted)
+    async def _run(self, p: _Plugin, target: _Target, args: dict) -> Any:
+        caller = Caller(plugin=p.name, band=p.band, why=f"{p.name} hook: {target.label}")
         if target.cap is not None:
             if not allowed(p.name, (p.manifest or {}).get("uses") or [], target.cap):
                 raise KitError(f"{p.name} may not call {target.cap}: not in its manifest's uses")
             if self.dispatch is None:
                 raise KitError("no dispatcher for call hooks")
             res = self.dispatch(target.cap, {**target.args, **args}, caller)
-            return await res if inspect.isawaitable(res) else res
-        if p.make_ctx is None:   # core work
-            res = target.func() if inspect.iscoroutinefunction(target.func) else \
-                await asyncio.to_thread(target.func)
             return await res if inspect.isawaitable(res) else res
         return await invoke(target.func, p.make_ctx(caller), args)
 

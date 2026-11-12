@@ -3,8 +3,9 @@
 Drives a PiKVM's screen, keyboard, mouse and ATX power over kvmd's REST API.
 A PiKVM is an **appliance**: it runs no Rook worker. Onboard it once (the hub
 finds it by its `/api/info` answering `kvmd`), give it its web password, and
-a worker that can reach it carries its calls. Name the PiKVM in the call; the
-caps don't take a host.
+a worker that can reach it carries its calls: the plugin runs on the hub and
+sends each request over a TLS stream from that worker (`net.open`, which the
+Rust worker serves). Name the PiKVM in the call; the caps don't take a host.
 
 | Cap | What it does |
 |---|---|

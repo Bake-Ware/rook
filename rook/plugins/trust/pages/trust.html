@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trust map</title>
+<!-- The 0.4 Trust map (rook/web/trust.js + manage.js/manage.css) on 0.5's model
+     (Bake, Nov 9: "Let's bring over the trust map ... pages too"). Same look:
+     level cards with a segmented control, "Everything else", the exceptions
+     list (here: what each agent may do), history; trust.map reads it all. -->
+<style>
+.mg{display:flex;flex-direction:column;gap:18px;max-width:1320px;color:var(--fg);font:14px var(--sans)}
+.mg-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.mg-bar h2{margin:0;font:500 15px var(--sans);letter-spacing:.2px}
+.mg-grow{flex:1 1 260px;min-width:0}
+.mg-sub,.mg-status{color:var(--dim);font-size:13px;margin:0}
+.mg-status:empty{display:none}
+.mg-mono{font-family:var(--mono);font-size:12px}
+.mg-dimtext{color:var(--fg-soft)}.mg-warn{color:var(--accent)}.mg-good{color:var(--green)}.mg-bad{color:var(--bad)}
+.mg-tag{font:500 9px var(--mono);letter-spacing:1px;padding:2px 6px;background:var(--accent);color:var(--on-accent);margin-left:8px;vertical-align:middle;text-transform:uppercase}
+.mg-tag.line{background:none;border:1px solid currentColor;color:var(--dim)}
+.mg-tag.mg-bad{background:var(--bad-bg);color:var(--bad);border:1px solid var(--bad-line)}
+.mg-tag.mg-good{background:var(--good-bg);color:var(--good);border:1px solid var(--good-line)}
+.mg-tag.mg-normal{background:var(--accent-bg);color:var(--accent);border:1px solid var(--accent-line)}
+.mg-box{position:relative;border:1px solid var(--line);background:var(--overlay);min-width:0}
+.mg-box:before{content:'';position:absolute;top:-1px;left:-1px;width:5px;height:5px;border-top:1px solid var(--corner);border-left:1px solid var(--corner);pointer-events:none}
+.mg-box.callout{border-color:var(--accent-dim);background:var(--banner-bg)}
+.mg-pad{padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.mg-empty{padding:28px 18px;color:var(--dim);text-align:center;font-size:13px}
+.mg-row{display:flex;flex-wrap:wrap;gap:4px 10px;padding:8px 12px;border-bottom:1px solid var(--line-soft);font-size:13px}
+.mg-row:last-child{border-bottom:0}
+.mg-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.mg-actions.end{justify-content:flex-end}
+.mg .mg-btn{min-height:36px;padding:0 14px;background:transparent;border:1px solid var(--line2);border-radius:0;color:var(--fg);cursor:pointer;font:500 11px var(--mono);white-space:nowrap;display:inline-flex;align-items:center;justify-content:center}
+.mg .mg-btn:hover{border-color:var(--accent);color:var(--accent)}
+.mg .mg-btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-size:12px}
+.mg .mg-btn.primary:hover{background:var(--accent-hi);color:var(--on-accent)}
+.mg .mg-btn.soft{background:var(--accent-bg);border-color:var(--accent-line);color:var(--accent)}
+.mg .mg-btn.danger{border-color:var(--bad-line);color:var(--bad)}
+.mg .mg-btn.icon{min-width:36px;padding:0;color:var(--dim);border-color:var(--line);font-size:18px;line-height:1}
+.mg .mg-btn:disabled{opacity:.45;cursor:not-allowed}
+.mg input,.mg textarea{background:var(--panel2);border:1px solid var(--line2);border-radius:0;color:var(--fg);font:13px var(--sans);padding:8px 12px;max-width:100%}
+.mg textarea{width:100%;line-height:1.5;resize:vertical;font-family:var(--mono);font-size:12px}
+.mg-info{display:inline-block;position:relative}
+.mg-info>summary{list-style:none;cursor:pointer;width:22px;height:22px;display:inline-grid;place-items:center;border:1px solid var(--line2);border-radius:50%;color:var(--dim);font:italic 600 12px/1 Georgia,serif}
+.mg-info>summary::-webkit-details-marker{display:none}
+.mg-info[open]>summary,.mg-info>summary:hover{color:var(--accent);border-color:var(--accent-line)}
+.mg-info>div{margin:8px 0 0;color:var(--dim);font-size:12px;line-height:1.55;max-width:72ch}
+.mg-info>div p{margin:0 0 6px}
+.seg{display:inline-flex;max-width:100%;overflow-x:auto;scrollbar-width:none;border:1px solid var(--line2);align-self:flex-start}
+.seg>*{flex:0 0 auto;display:inline-flex;align-items:center;min-height:34px;padding:0 12px;background:transparent;border:0;border-right:1px solid var(--line);color:var(--dim);font:500 11px var(--mono);cursor:pointer;white-space:nowrap}
+.seg>*:last-child{border-right:0}
+.seg>[aria-pressed=true]{background:var(--accent-bg);color:var(--accent)}
+.seg>*:disabled{cursor:not-allowed;opacity:.6}
+.more-btn{min-width:34px;font-size:18px!important;letter-spacing:1px}
+.mg-menu{position:fixed;z-index:120;min-width:190px;padding:6px;background:var(--panel);border:1px solid var(--line2);box-shadow:0 12px 40px var(--shadow)}
+.mg-menu button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--fg);font:12px var(--sans);padding:10px 12px;cursor:pointer}
+.mg-menu button:hover,.mg-menu button:focus{background:var(--accent-bg);color:var(--accent)}
+.mg-menu .danger{color:var(--bad)}
+dialog.mg-dialog{width:min(560px,calc(100vw - 32px));max-height:88dvh;overflow:auto;margin:auto;padding:24px;background:var(--panel);color:var(--fg);border:1px solid var(--line2);gap:14px}
+dialog.mg-dialog[open]{display:flex;flex-direction:column}
+dialog.mg-dialog::backdrop{background:var(--backdrop);backdrop-filter:blur(4px)}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{display:inline-flex;padding:2px 7px;border:1px solid var(--line2);font:10px var(--mono);color:var(--fg-soft);background:var(--panel2)}
+.why{display:flex;gap:8px;align-items:center}
+.why input{flex:1;min-width:0}
+q{color:var(--fg-soft)}
+@media(max-width:800px){.mg{gap:14px}.mg-pad{padding:12px}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+// -- manage.js helpers, as on 0.4 -------------------------------------------------
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e[k] = v;
+    else if (["value", "checked", "disabled", "hidden", "selected", "type", "title", "placeholder"].includes(k)) e[k] = v;
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) { if (kid === null || kid === undefined || kid === false) continue; e.append(kid); }
+  return e;
+}
+const ago = (t) => t ? rook.ago(t) : "never";
+function btn(text, cls, onclick, attrs) { return h("button", { type: "button", class: "mg-btn" + (cls ? " " + cls : ""), text, onclick, ...attrs }); }
+function info(body, label) {
+  return h("details", { class: "mg-info" }, h("summary", { "aria-label": label, title: label, text: "i" }),
+    typeof body === "string" ? h("div", null, h("p", { text: body })) : body);
+}
+function seg(items, current, pick, label) {
+  return h("div", { class: "seg", role: "group", "aria-label": label || null },
+    items.map(([id, text, title]) => h("button", { type: "button", text, title: title || null,
+      "aria-pressed": String(id === current), onclick: () => pick(id) })));
+}
+let closeMenu = null;
+function menu(anchor, items) {
+  if (closeMenu) closeMenu();
+  const box = h("div", { class: "mg-menu", role: "menu" }, items.filter(Boolean).map((i) =>
+    h("button", { type: "button", text: i.label, class: i.danger ? "danger" : "", role: "menuitem", onclick: () => { close(); i.run(); } })));
+  function close() { box.remove(); closeMenu = null; document.removeEventListener("pointerdown", away, true); }
+  function away(e) { if (!box.contains(e.target)) close(); }
+  document.body.append(box); closeMenu = close;
+  const r = anchor.getBoundingClientRect();
+  box.style.left = Math.max(8, Math.min(r.right - box.offsetWidth, innerWidth - box.offsetWidth - 8)) + "px";
+  box.style.top = (r.bottom + box.offsetHeight + 8 > innerHeight ? Math.max(8, r.top - box.offsetHeight - 4) : r.bottom + 4) + "px";
+  setTimeout(() => document.addEventListener("pointerdown", away, true));
+  (box.querySelector("button") || box).focus();
+}
+function more(items, label) {
+  const b = h("button", { type: "button", class: "mg-btn icon more-btn", text: "⋯", "aria-label": label, title: label, "aria-haspopup": "menu" });
+  b.onclick = (e) => { e.stopPropagation(); menu(b, items); };
+  return b;
+}
+function dialog(title, ...body) {
+  const d = h("dialog", { class: "mg mg-dialog", "aria-label": title },
+    h("div", { class: "mg-bar", style: "justify-content:space-between" }, h("h2", { text: title }),
+      btn("×", "icon", () => d.close(), { "aria-label": "Close" })), body);
+  d.addEventListener("close", () => d.remove());
+  document.body.append(d);
+  try { d.showModal(); } catch (e) { d.show(); }
+  return d;
+}
+
+// -- the trust map ---------------------------------------------------------------
+const LEVEL_TEXT = {};
+const LEVEL_CLASS = { "sacred": "mg-bad", "normal": "mg-normal", "ship-it": "mg-good" };
+const SECURITY_TEXT = {
+  "off": "Nothing waits on you: hard stops and sacred machines are journaled (would_hold), not held.",
+  "on": "Hard stops and anything that isn't a read on a sacred machine wait on you.",
+};
+let data = null, busy = false;
+
+const status = h("p", { class: "mg-status", role: "status" });
+const warn = h("p", { class: "mg-box mg-pad mg-bad", role: "alert", hidden: true });
+const secTag = h("span", { class: "mg-tag line" });
+const summary = h("p", { class: "mg-sub" });
+const levelsHelp = h("div");
+const notices = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+const security = h("div", { "data-target": "trust.security", class: "mg-box mg-pad", style: "flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 14px" });
+const machines = h("div", { "data-target": "trust.machines", style: "display:flex;flex-direction:column;gap:8px" });
+const projects = h("div", { "data-target": "trust.projects", style: "display:flex;flex-direction:column;gap:8px" });
+const unlisted = h("div", { class: "mg-box mg-pad", style: "flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 14px" });
+const agents = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+const stops = h("div", { class: "mg-box mg-pad" });
+const history = h("div", { class: "mg-box" });
+const words = h("input", { placeholder: "Why (optional): your words, recorded with each change", "aria-label": "Why", "data-target": "trust.why" });
+
+document.getElementById("root").replaceChildren(h("div", { class: "mg tr" },
+  h("div", { class: "mg-bar" }, h("h2", null, "Trust map ", secTag),
+    info(h("div", null,
+      h("p", { text: "The hub checks every agent call against this: sacred machines, each project's level, the hard stops and what each agent may do. Every change here is journaled with your words." }),
+      levelsHelp,
+      h("p", { class: "mg-sub", text: "What agents are told:" }), summary), "How the trust map works"),
+    h("span", { class: "mg-grow" }),
+    btn("↻", "icon", () => refresh().catch(fail), { "aria-label": "Refresh", title: "Refresh" })),
+  h("div", { class: "why" }, words),
+  warn, status, notices,
+  h("div", { class: "mg-bar" }, h("h2", { text: "Security" })), security,
+  h("div", { class: "mg-bar" }, h("h2", { text: "Machines" })), machines,
+  h("div", { class: "mg-bar" }, h("h2", { text: "Projects" })), projects,
+  h("div", { class: "mg-bar" }, h("h2", { text: "Everything else" })), unlisted,
+  h("div", { class: "mg-bar" }, h("h2", { text: "What agents may do" }),
+    info("Each agent acts only within its grants (cap patterns). Acting for a person it gets only what both may.", "About grants")), agents,
+  h("div", { class: "mg-bar" }, h("h2", { text: "Hard stops" }),
+    info("These always wait on a person while security is on, whatever the map says.", "About hard stops")), stops,
+  h("details", { "data-target": "trust.history" }, h("summary", { class: "mg-sub", style: "cursor:pointer", text: "History" }), history)));
+
+function fail(e) { status.textContent = e.message; }
+
+async function refresh() {
+  data = await rook.call("trust.map", {}, { why: "Show the trust map." });
+  draw();
+}
+
+// One change; the person's words (if any) go with it as the call's why.
+async function change(cap, args, what) {
+  if (busy) return false;
+  busy = true; status.textContent = "";
+  const said = words.value.trim();
+  try {
+    await rook.call(cap, args, { why: said ? what + " (“" + said + "”)" : what });
+    status.textContent = "Saved: " + what;
+    words.value = "";
+    return true;
+  } catch (e) {
+    status.textContent = e.held ? "Waiting on a person (" + (e.hold || "held") + ")." : e.message;
+    return false;
+  } finally { busy = false; await refresh().catch(fail); }
+}
+
+const levelTag = (l) => h("span", { class: "mg-tag " + (LEVEL_CLASS[l] || ""), text: l, title: LEVEL_TEXT[l] || "" });
+const levelSeg = (current, levels, pick, label) => seg(levels.map((l) => [l, l, LEVEL_TEXT[l]]), current, (l) => { if (l !== current) pick(l); }, label);
+
+function machineCard(m) {
+  return h("div", { class: "mg-box mg-pad", style: "gap:6px", "data-target": `trust.${m.name}.sacred` },
+    h("div", { style: "display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center" },
+      h("b", { text: m.name }), h("span", { class: "mg-dimtext mg-mono", text: "machine · " + (m.id ? m.id.slice(0, 12) : "not enrolled") }),
+      levelTag(m.level),
+      h("span", { class: "mg-tag line", text: m.online ? "online" : "offline · " + ago(m.last_seen) })),
+    m.description ? h("div", { text: m.description }) : null,
+    levelSeg(m.level, ["sacred", "normal"], (l) => change("hub.sacred", { worker: m.name, sacred: l === "sacred" },
+      "Make " + m.name + " " + l + "."), "Level of " + m.name));
+}
+
+function projectCard(p) {
+  return h("div", { class: "mg-box mg-pad", style: "gap:6px", "data-target": `trust.${p.title}.level` },
+    h("div", { style: "display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center" },
+      h("b", { text: p.title }), h("span", { class: "mg-dimtext mg-mono", text: "project · " + (p.slug || p.id) + (p.state ? " · " + p.state : "") }),
+      levelTag(p.level), p.set ? null : h("span", { class: "mg-tag line", text: "default" })),
+    p.note ? h("div", { class: "mg-sub", text: p.note }) : null,
+    levelSeg(p.level, ["sacred", "normal", "ship-it"], (l) => {
+      const said = words.value.trim();
+      const args = p.trust_id ? { id: p.trust_id, revision: p.revision, level: l } : { project: p.id, level: l };
+      if (said) args.note = said;
+      change(p.trust_id ? "trust.level.update" : "trust.level.create", args, "Make project " + p.title + " " + l + ".");
+    }, "Level of " + p.title));
+}
+
+function editGrants(a) {
+  const area = h("textarea", { rows: 6, placeholder: "One cap pattern per line: task.*, knowledge.*, shell.exec@laptop" });
+  area.value = (a.grants || []).join("\n");
+  const d = dialog("What " + a.name + " may do",
+    h("p", { class: "mg-sub", text: "Cap patterns, one per line (* is any run of characters; cap@machine narrows to a machine)." }),
+    area,
+    h("div", { class: "mg-actions end" }, btn("Save", "primary", async () => {
+      const grants = area.value.split("\n").map((s) => s.trim()).filter(Boolean);
+      d.close();
+      await change("agent.update", { id: a.id, revision: a.revision, grants }, "Set what " + a.name + " may do.");
+    })));
+  area.focus();
+}
+
+function agentCard(a) {
+  const edit = a.source === "agents" && a.id;
+  return h("div", { class: "mg-box mg-pad", style: "gap:6px" },
+    h("div", { style: "display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center" },
+      h("b", { text: a.name }), h("span", { class: "mg-dimtext", text: [a.title, a.persona && "persona " + a.persona, a.source === "hub.yaml" ? "in hub.yaml" : ""].filter(Boolean).join(" · ") }),
+      (a.grants || []).includes("*") ? h("span", { class: "mg-tag mg-good", text: "everything" }) : null,
+      h("span", { class: "mg-grow" }),
+      edit ? more([{ label: "Edit what it may do", run: () => editGrants(a) }], "Actions for " + a.name) : null),
+    h("div", { class: "chips" }, (a.grants || []).length ? a.grants.map((g) => h("span", { class: "chip", text: g })) : h("span", { class: "mg-sub", text: "Nothing beyond its own turns." })));
+}
+
+function historyRow(r) {
+  const who = [r.person, r.agent].filter(Boolean).join(" via ") || "?";
+  const args = Object.entries(r.args || {}).filter(([k]) => !["revision"].includes(k)).map(([k, v]) => k + "=" + (Array.isArray(v) ? v.join(",") : v)).join(" ");
+  return h("div", { class: "mg-row" },
+    h("span", { class: "mg-mono", text: r.cap }), h("span", { text: args }),
+    h("span", { class: "mg-dimtext", text: who + " · " + ago(r.at) }),
+    r.why ? h("q", { class: "mg-sub", text: r.why, style: "flex-basis:100%" }) : null);
+}
+
+function draw() {
+  const m = data;
+  for (const l of m.levels || []) LEVEL_TEXT[l.level] = l.text;
+  secTag.textContent = "security " + m.security;
+  secTag.className = "mg-tag " + (m.security === "on" ? "mg-good" : "line");
+  summary.textContent = m.summary || "";
+  levelsHelp.replaceChildren(...(m.levels || []).map((l) => h("p", null, h("b", { text: l.level + ": " }), l.text)));
+  warn.hidden = !(m.missing || []).length;
+  warn.textContent = (m.missing || []).length ? "Not installed here: " + m.missing.join(", ") + " (their part of the map is empty)." : "";
+
+  notices.replaceChildren(...(m.waiting ? [h("div", { class: "mg-box mg-pad callout" },
+    h("span", { class: "mg-warn", text: m.waiting + (m.waiting === 1 ? " call waits" : " calls wait") + " on a person." }))] : []));
+
+  security.replaceChildren(
+    seg([["off", "off", SECURITY_TEXT.off], ["on", "on", SECURITY_TEXT.on]], m.security, (v) => {
+      if (v !== m.security) change("setting.set", { plugin: "hub", key: "security", value: v }, "Turn security " + v + ".");
+    }, "Security"),
+    h("span", { class: "mg-sub", text: SECURITY_TEXT[m.security] || "" }));
+
+  machines.replaceChildren(...(m.machines.length ? [...m.machines].sort((a, b) => (a.level === "sacred" ? 0 : 1) - (b.level === "sacred" ? 0 : 1) || a.name.localeCompare(b.name)).map(machineCard)
+    : [h("div", { class: "mg-box mg-empty", text: "No machines yet besides the hub." })]));
+  const order = { "sacred": 0, "normal": 1, "ship-it": 2 };
+  projects.replaceChildren(...(m.projects.length ? [...m.projects].sort((a, b) => (order[a.level] - order[b.level]) || String(a.title).localeCompare(String(b.title))).map(projectCard)
+    : [h("div", { class: "mg-box mg-empty", text: (m.missing || []).includes("projects") ? "Projects aren't installed." : "No projects yet." })]));
+  unlisted.replaceChildren(levelTag(m.everything_else),
+    h("span", { class: "mg-sub", text: "Machines not marked sacred and projects without a level are " + m.everything_else + ". " + (LEVEL_TEXT[m.everything_else] || "") }));
+  agents.replaceChildren(...(m.agents.length ? m.agents.map(agentCard) : [h("div", { class: "mg-box mg-empty", text: "No agents." })]));
+  stops.replaceChildren(h("div", { class: "chips" }, (m.hard_stops || []).map((s) => h("span", { class: "chip", text: s }))));
+  history.replaceChildren(...((m.history || []).length ? m.history.map(historyRow) : [h("div", { class: "mg-empty", text: "No trust changes yet." })]));
+}
+
+refresh().catch(fail);
+setInterval(() => { if (!document.hidden && !document.querySelector("dialog[open]")) refresh().catch(fail); }, 15000);
+for (const ev of ["worker.*", "hold.*", "approval.*"]) rook.on(ev, () => refresh().catch(fail));
+</script>
+</body>
+</html>

@@ -43,8 +43,7 @@ Start with [Install and first run](docs/manual-0.5/install.md).
 
 This is Rook 0.5 ("Castling"), a clean rework of Rook. It runs from a
 checkout of this branch; there are no release packages yet, and the hub is
-tested on Linux only. Rook 0.4 is the `v0.4.0` tag (its README:
-[docs/README-0.4.md](docs/README-0.4.md)).
+tested on Linux only. Rook 0.4 is the `v0.4.0` tag.
 
 ## More
 

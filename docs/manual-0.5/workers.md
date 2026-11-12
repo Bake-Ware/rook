@@ -16,9 +16,19 @@ anchor: ./anchor.json          # the home hub: written at enrollment
 name: kaiju
 description: GPU box in the rack (what this machine is for, for people and agents)
 plugins: [../rook/plugins/shell, ../rook/plugins/file]   # plugin folders loaded at start
-settings: { torrent: { console: /usr/bin/deluge-console } }
+settings: { browser: { headless: false } }
 hardware: [gpu, display]       # what this machine has, for plugins that need it
 ```
+
+**Kinds of worker.** The Python worker (`python -m rook.core2.worker`)
+reads everything above. The `rook-worker` binary (one file, `worker/` in
+the repo; the desktop app has it built in) reads only `data`, `anchor`,
+`name`, `worker_id` and `bands`, and runs no plugins: it serves commands
+and terminals (`shell.*`), files (`file.*`), streams (`stream.*`), TCP
+connections (`net.open`), serial ports (`serial.open`) and `worker.*`.
+Everything else becomes hub scripts that call those. `worker/rook_worker.py` is a third form,
+one Python file for machines where nothing can be installed: commands,
+files and `worker.*`, no streams ([Installing](install.md#where-nothing-can-be-installed)).
 
 Plugins listed under `plugins:` are trusted because the machine's owner put
 them there. Plugins the hub pushes are signed for this worker and installed
@@ -38,24 +48,21 @@ Every call runs as the worker's normal account: no `sudo`, no "run as
 administrator". Shell stays fully open within that account. A cap that
 needs administrator rights declares `elevation: upfront` or `may` in its
 manifest; the worker then asks the hub, inside the same call, for a
-15-minute **lease** for that person, agent and session. The hub runs its
-security gates on the call as an admin call first (elevation must pass:
-a flag refuses it, since nothing can wait for you mid-call; ask with
-`elevate` up front and a flag becomes a hold instead), journals it, and the
-call runs elevated (on Linux through `sudo -n`, so the worker's
+15-minute **lease** for that person, agent and session. The hub checks
+rights, journals it, and the call runs elevated (on Linux through `sudo -n`, so the worker's
 account needs a sudoers rule you add yourself). No answer from the hub in
 10 seconds and the call fails: elevation fails closed. Leases end when
 rights change, when the worker loses the hub, or when it restarts. A worker
 running as root refuses to run normal calls as root. Elevation on Windows
-and macOS is not built yet.
+is not built yet.
 
 ## Ceilings
 
 A **ceiling** is the most a hub may ever do on a worker, kept on the
-worker and signed by its home hub. Your home hub's ceiling is "everything"
-until you narrow it; other bands get only the ceiling you set when you let
-them in ([Adding machines](enrollment.md#joining-another-band)). A ceiling
-is a rights object:
+worker. The Python worker keeps one per hub it trusts (its home hub's is
+"everything") and announces it; the Rust worker has none. Nothing on the
+hub changes ceilings any more: they are dormant until the hardening pass.
+A ceiling is a rights object:
 
 ```json
 {"grants": ["tv.*", "light.*@downstairs-*"], "max_risk": "write", "effects": ["physical"]}
@@ -84,6 +91,12 @@ own code, its **core**, updates from a release the hub signs:
    `worker.update {version}` on a worker goes back to a core it keeps
    (`installed`: the one installed with the package) by hand.
 
+A `rook-worker` binary takes a release of built files instead: put the
+release job's files in a folder on the hub machine and roll it out with
+`update.rollout {source: <folder>, version: "0.5.1"}`; each worker takes the
+file named in its `facts.artifact` ([Core updates](../castling-updates.md#a-one-file-worker)).
+The desktop app's built-in worker updates with the app.
+
 A worker with terminals or streams open refuses the update (they would
 end): close them and roll out again. The phone app's worker updates with the
 app. Updates over the band aren't available on Windows yet. A worker needs
@@ -100,6 +113,8 @@ sacred: [nas, router]
 
 On a sacred machine, every call that isn't read-only is a **hard stop**:
 it waits for you, and only you can release it ([Holds](holds.md)).
+`hub.sacred {worker, sacred}` changes the list while the hub runs; the
+agents package's **Trust map** page shows and sets it.
 
 ## Appliances
 
@@ -108,12 +123,15 @@ Pico-CEC bridge. Its plugin has an `appliance:` section (how to find it,
 its per-device settings), and a worker that can reach the device carries
 its calls. Each device is an instance with its own name, called like a
 worker (`worker=living-room-tv cap=tv.power.off`). The hub keeps the
-registry: `appliance.add` onboards one from the worker that reaches it
-(running the plugin's pair cap first, when it has one), `appliance.list`
-and `appliance.remove`. A call goes to the known-good delegate (or the next
+registry: `appliance.discover` (a cap of each worker that serves `net.udp`)
+looks for devices on that worker's network, `appliance.add` onboards one
+from the worker that reaches it (running the plugin's pair cap first, when
+it has one), `appliance.list` and `appliance.remove`. A call goes to the known-good delegate (or the next
 online one) with the instance's address and settings, secrets read from the
 vault for that call; the ticket binds them. The plugins for these ship
-(`kvm`, `tv`, `adb`, `cec`).
+(`kvm`, `tv`, `tv-roku`, `adb`, `cec`) and run on the hub: they reach the
+device through the delegate's `shell.exec` or its network streams
+(`net.open`, `net.udp`, which the Rust worker serves).
 
 Worker plugin settings marked `secret` (and `where: hub` ones) are kept on
 the hub (`setting.set`, a vault name for a secret) and sent with each call:

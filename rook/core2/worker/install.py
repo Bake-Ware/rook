@@ -1,7 +1,7 @@
 """Plugin installs, worker side: receive a hub-built bundle, verify it,
 install it next to the previous version, hand it to the host, run its
 ``check`` caps, and roll back by itself when anything fails
-(castling-manifest-lifecycle; spec 13 for ``plugin.sig``).
+(castling-manifest-lifecycle; spec 10.7 for ``plugin.sig``).
 
     inst = Installer(state / "plugins", worker_id=wid, host=host,
                      keys=approver_keys, approves=approver)

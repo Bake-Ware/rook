@@ -1,7 +1,5 @@
 <resources>
     <string name="app_name">Rook Worker</string>
-    <string name="hint_hub">Hub (host:port)</string>
-    <string name="hint_psk">Band PSK</string>
     <string name="hint_name">Worker name</string>
     <string name="start">Start worker</string>
     <string name="stop">Stop worker</string>

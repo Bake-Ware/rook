@@ -12,18 +12,12 @@ pub const DEFAULT_PTT_SHORTCUT: &str = "Ctrl+Alt+V";
 pub const SPEAK_VOICE: &str = "voice";
 pub const SPEAK_ALWAYS: &str = "always";
 pub const SPEAK_NEVER: &str = "never";
-/// The hub's Rook version: 0.4 (today's hubs) or 0.5 (castling). The switch
-/// stays until every hub is on 0.5.
-pub const HUB_04: &str = "0.4";
-pub const HUB_05: &str = "0.5";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
     /// The hub's dashboard address, e.g. `https://rook.example.com`.
     pub hub_url: String,
-    /// "0.4" or "0.5": which hub API the app speaks.
-    pub hub_version: String,
     /// Global shortcut that opens the quick-ask box.
     pub ask_shortcut: String,
     pub notifications: bool,
@@ -39,7 +33,7 @@ pub struct Settings {
     /// pre-trained ones are licensed non-commercial.
     pub wake_model: String,
     pub wake_threshold: f32,
-    /// Start the local worker when the app starts (child-process mode only).
+    /// Start this computer's worker when the app starts.
     pub worker_autostart: bool,
     /// Read answers aloud: "voice" (after a spoken question), "always" or
     /// "never". Needs the voice server.
@@ -48,16 +42,12 @@ pub struct Settings {
     pub start_at_login: bool,
     /// The newest app version already announced, so each is announced once.
     pub update_notified: String,
-    /// 0.5: the Python that runs this computer's worker (Rook installed in
-    /// it); empty is `python3` (`python` on Windows).
-    pub worker_python: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             hub_url: String::new(),
-            hub_version: HUB_04.into(),
             ask_shortcut: DEFAULT_ASK_SHORTCUT.into(),
             notifications: true,
             poll_seconds: 30,
@@ -70,7 +60,6 @@ impl Default for Settings {
             speak_answers: SPEAK_VOICE.into(),
             start_at_login: false,
             update_notified: String::new(),
-            worker_python: String::new(),
         }
     }
 }
@@ -89,46 +78,32 @@ impl Settings {
         if ![SPEAK_VOICE, SPEAK_ALWAYS, SPEAK_NEVER].contains(&self.speak_answers.as_str()) {
             self.speak_answers = SPEAK_VOICE.into();
         }
-        if self.hub_version != HUB_05 {
-            self.hub_version = HUB_04.into();
-        }
-        self.worker_python = self.worker_python.trim().to_string();
         self
-    }
-
-    pub fn v05(&self) -> bool {
-        self.hub_version == HUB_05
     }
 }
 
 /// The sign-in the app keeps for its own calls to the hub (quick ask,
-/// notifications). On 0.4 it is the same session cookie a browser holds
-/// after the normal sign-in: `rook_account=...` (account login) or
-/// `rook_session=...` (the dashboard password). On 0.5 it is the person's
-/// door token, plus the hub site's `rook_web=...` cookie for the dashboard
-/// window.
+/// notifications): the person's door token, plus the hub site's
+/// `rook_web=...` cookie for the dashboard window.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Credentials {
-    /// Origin the cookie belongs to; a different hub never gets it.
+    /// Origin the sign-in belongs to; a different hub never gets it.
     pub hub: String,
+    /// The hub site's session cookie, for the dashboard window.
     pub cookie: String,
     /// Who the hub says this is (for display only).
     pub principal: String,
     /// Bearer key for the voice server's /api/transcribe.
     pub voice_key: String,
-    /// Optional agent token (the hub's Tokens page). With one, quick ask
-    /// calls `home.ask` over MCP exactly as `rook_home_ask` does.
-    pub agent_token: String,
-    /// 0.5: the person's door token (`Authorization: Bearer`).
+    /// The person's door token (`Authorization: Bearer`).
     pub token: String,
 }
 
 impl Credentials {
-    /// On 0.4 the cookie is the sign-in; on 0.5 the token is.
-    pub fn signed_in_to(&self, hub_origin: &str, v05: bool) -> bool {
-        let have = if v05 { &self.token } else { &self.cookie };
-        !have.is_empty() && !hub_origin.is_empty() && self.hub == hub_origin
+    /// The token is the sign-in.
+    pub fn signed_in_to(&self, hub_origin: &str) -> bool {
+        !self.token.is_empty() && !hub_origin.is_empty() && self.hub == hub_origin
     }
 }
 
@@ -291,7 +266,8 @@ mod tests {
         assert_eq!(back.hub_url, "https://a.example");
         let c = Credentials {
             hub: "https://a.example".into(),
-            cookie: "rook_session=x".into(),
+            token: "t".into(),
+            cookie: "rook_web=x".into(),
             ..Default::default()
         };
         store.save_credentials(&c).unwrap();
@@ -314,17 +290,15 @@ mod tests {
             assert_eq!(mode & 0o777, 0o600);
             assert!(!tmp.exists());
         }
-        assert!(c.signed_in_to("https://a.example", false));
-        assert!(!c.signed_in_to("https://b.example", false));
-        // A 0.4 cookie isn't a 0.5 sign-in, and the other way round.
-        assert!(!c.signed_in_to("https://a.example", true));
-        let t = Credentials {
+        assert!(c.signed_in_to("https://a.example"));
+        assert!(!c.signed_in_to("https://b.example"));
+        // A site cookie alone isn't a sign-in.
+        let cookie_only = Credentials {
             hub: "https://a.example".into(),
-            token: "t".into(),
+            cookie: "rook_web=x".into(),
             ..Default::default()
         };
-        assert!(t.signed_in_to("https://a.example", true));
-        assert!(!t.signed_in_to("https://a.example", false));
+        assert!(!cookie_only.signed_in_to("https://a.example"));
         fs::remove_dir_all(dir).ok();
     }
 
@@ -337,11 +311,5 @@ mod tests {
         let odd: Settings = serde_json::from_str(r#"{"speak_answers":"loud"}"#).unwrap();
         assert_eq!(odd.sanitized().speak_answers, SPEAK_VOICE);
         assert!(s.notifications);
-        assert_eq!(s.hub_version, HUB_04);
-        assert!(!s.v05());
-        let v: Settings = serde_json::from_str(r#"{"hub_version":"0.5"}"#).unwrap();
-        assert!(v.sanitized().v05());
-        let odd: Settings = serde_json::from_str(r#"{"hub_version":"9"}"#).unwrap();
-        assert_eq!(odd.sanitized().hub_version, HUB_04);
     }
 }

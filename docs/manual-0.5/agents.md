@@ -17,16 +17,25 @@ one agent with a broader persona.
 
 Put `agents` in the hub's library, and a backend:
 
-- `agents-claude-code` on a worker that has Claude Code installed and
-  signed in: turns run `claude -p` under that subscription
+- `agents-claude-code`, with its `worker` setting naming a worker that has
+  Claude Code installed and signed in: the plugin runs on the hub and turns
+  run `claude -p` on that worker under that subscription
   ([its manual](../../rook/plugins/agents-claude-code/docs/manual.md)).
   Each turn reaches the hub's MCP door (its `door_url` setting, the local
   door by default) with a token made for that turn only, so the agent acts
   on the band as itself.
-- or `agents-codex` on a worker that has Codex installed and signed in
-  (`codex login`): turns run `codex exec` under that ChatGPT subscription
-  ([its manual](../../rook/plugins/agents-codex/docs/manual.md)), reaching
-  the door the same way with each turn's own token.
+- or `agents-codex` the same way, on a worker that has Codex installed and
+  signed in (`codex login`): turns run `codex exec` under that ChatGPT
+  subscription ([its manual](../../rook/plugins/agents-codex/docs/manual.md)),
+  reaching the door the same way with each turn's own token.
+- or `agents-opencode` on a worker with OpenCode: its free models need no
+  account ([its manual](../../rook/plugins/agents-opencode/docs/manual.md)).
+  The installer picks this one or Claude Code and sets its `worker` to the
+  machine it installs on.
+- Each keeps its work folder and generated config on that worker, in
+  `~/.rook-plugins/<plugin>/`.
+- Agents > Engines on the hub site shows each engine, whether it can run a
+  turn now and why not, and sets its worker, model and light model.
 - `llm-cli`, `llm-anthropic` or `llm-openai` if other plugins need plain
   completions (`llm.complete`); agents themselves think through
   `agent.backend`.
@@ -38,7 +47,6 @@ The agents package makes these:
 | Agent | Role |
 |---|---|
 | `house` | your personal assistant and the guardian of the house; knows how and when to reach you, and offers to set up a project when something has become real work. Always on |
-| `security` | triages security events, proposes safer ways. Always on |
 
 With the workbench installed, its team roles come too (the workbench's
 plugins ship them as personas):
@@ -58,7 +66,7 @@ Agents that need you go through the house agent.
 ## Talking to an agent
 
 - In the dashboard: the chat dock beside every page talks to the house
-  agent (the `page.dock` setting picks another; blank turns it off).
+  agent (the agents setting `dock` picks another; blank turns it off).
 - As a call: `agent.chat.send {agent: "house", text: "..."}` on worker
   `rook` waits for the reply; `agent.chat.read {agent, after}` reads your
   session with it (pass `next` back as `after`). A first turn takes about
@@ -96,8 +104,10 @@ everything (and takes its identity off the hub until you restore it).
 Owners curate an agent's memory with `agent.memory.*`. A persona's
 **grants** are its own rights, checked on every call it makes; every agent
 may also run its own turns (`agent.backend`). `backend` is `default` (the
-hub's chosen provider) or one provider's cap, e.g.
-`agents-claude-code.turn`. Skills are markdown playbooks an agent follows
+agents plugin's `backend` setting) or one provider's cap, e.g.
+`agents-claude-code.turn`. `agent.engines` lists the engines and the
+default one, `agent.models {engine?}` the models one offers; the
+**Agents** page sets each agent's engine and model from dropdowns. Skills are markdown playbooks an agent follows
 (`agent.skill {name}` reads one). Any plugin can ship personas and skills
 in its manifest; each installed plugin's personas become agents. With the
 workbench, a knowledge page of kind `skill` is a skill too (the skill

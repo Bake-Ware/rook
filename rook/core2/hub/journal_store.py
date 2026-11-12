@@ -1,4 +1,4 @@
-"""The hub's journal (spec 11 of docs/spec/core-v2.md): one SQLite table,
+"""The hub's journal (spec 7 of docs/spec/core-v2.md): one SQLite table,
 write-once rows, a hash chain per project plus the general chain.
 
 Only the hub writes. ``append`` stamps the session's project and chain,
@@ -173,7 +173,7 @@ class JournalStore:
         """Entries matching every filter given, newest first. ``cap`` ending in
         ``.*`` matches that prefix; ``actor`` is person or agent; ``since`` is
         inclusive, ``until`` exclusive. ``viewer`` limits to what they may
-        read (11.4). ``worker`` may list several ids (one name, several workers)."""
+        read (7.4). ``worker`` may list several ids (one name, several workers)."""
         where, params = [], []
         if isinstance(worker, (list, tuple)):
             where.append(f"worker IN ({','.join('?' * len(worker))})" if worker else "0")
@@ -275,26 +275,15 @@ class JournalStore:
 
     # -- retention ------------------------------------------------------------
 
-    def prune(self, now: float | None = None, closed: dict | None = None) -> list[dict]:
-        """Retention (11.4). ``closed`` maps closed projects to when they
-        closed. A closed project's chain goes whole once its close and its
-        last activity are past retention; the general chain goes by UTC day,
-        oldest first, up to the first day still kept. Each prune
-        moves the chain's checkpoint to its last pruned entry, deletes up to
-        it and journals a ``prune`` entry on the general chain; returns those."""
+    def prune(self, now: float | None = None) -> list[dict]:
+        """Retention (7.4): the general chain goes by UTC day, oldest first,
+        up to the first day still kept. A prune moves the chain's checkpoint
+        to its last pruned entry, deletes up to it and journals a ``prune``
+        entry on the general chain; returns those."""
         now = self.clock() if now is None else now
-        out = []
         with self._maint, self._lock:
-            for project, closed_at in sorted((closed or {}).items()):
-                chain = journal.chain_name(project)
-                seq, last_ts = self._db.execute(
-                    "SELECT MAX(seq), MAX(ts) FROM journal WHERE chain = ?", (chain,)).fetchone()
-                if seq is not None and journal.expired(max(last_ts, closed_at), now, self.retention_days):
-                    out.append(self._prune_through(chain, seq, "project closed", now))
             seq = self._general_cutoff(now)
-            if seq is not None:
-                out.append(self._prune_through(journal.GENERAL, seq, "age", now))
-        return out
+            return [] if seq is None else [self._prune_through(journal.GENERAL, seq, "age", now)]
 
     def _general_cutoff(self, now: float) -> int | None:
         """The last general-chain seq before the first entry of a day still

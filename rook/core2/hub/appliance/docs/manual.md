@@ -9,14 +9,17 @@ worker:
 call worker=living-room-tv cap=tv.power.off
 ```
 
-The hub looks up the instance, sends the call to its known-good delegate
-with the instance's values (address, port, its settings, secrets from the
-vault) and the delegate's plugin runs it (`{{appliance.host}}` in a YAML
-action, `ctx.appliance` in Python).
+The hub looks up the instance and picks its known-good delegate; the
+plugin's script runs on the hub with the instance's values in
+`ctx.appliance` (address, port, its settings, secrets from the vault) and
+reaches the device through that delegate (`ctx.worker`): its `shell.exec`,
+or a network stream (`net.open`, `net.udp`).
 
 ## Onboarding: `appliance.add`
 
-Find the device from a worker on its network (`appliance.discover`), then:
+Find the device from a worker on its network (`appliance.discover`, a cap of
+every worker that serves `net.udp`: an SSDP search and an mDNS browse from
+that worker), then:
 
 ```yaml
 name: living-room-tv

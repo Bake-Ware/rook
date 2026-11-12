@@ -26,10 +26,10 @@ What it wires together:
   home hub it serves, else dropped after ``ROOK_UPDATE_TRIAL_SECS`` and the worker
   restarts on the core it had. ``worker.update {version}`` goes back by hand.
 - **Transport** (:mod:`rook.core2.transport`): one connection per band, each
-  with its own announce, heartbeat and hub-loss clock (9.4). Bands come from
+  with its own announce, heartbeat and hub-loss clock (10.10). Bands come from
   the config, enrollment and ``core.trust.set`` (the last two kept in
   ``<data>/bands.json``).
-  Losing the hub on a band drops its leases there (7.4).
+  Losing the hub on a band drops its leases there (10.9).
 
 Plugin events (``ctx.emit``) run this worker's ``on:`` hooks and go to every
 hub whose ceiling grants them, as ``core.event`` batches from a bounded
@@ -44,10 +44,10 @@ Plugin code's ``ctx.call`` becomes ``core.call`` on the hub, authenticated
 by the ticket of the call in flight it runs inside (13); hooks have no call
 in flight, so their ``ctx.call`` is refused.
 
-The worker's own key (spec 5.8) is ``<data>/worker.key``, made on
+The worker's own key (spec 10.2) is ``<data>/worker.key``, made on
 first start (or by enrollment) and never sent anywhere: its public half goes
 in every announce, and every ``core.call`` and ``core.elevate`` it sends a
-hub carries a ``rook-request`` proof signed with it (13.1).
+hub carries a ``rook-request`` proof signed with it (10.2).
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ from rook.kit.manifest import check
 
 from .. import CORE_VERSION, wire
 from ..builtin import CORE, STREAM, WORKER
-from ..transport import FEATURES, Transport, TransportError, link_from
+from ..transport import FEATURES, Transport, TransportError, band_door, link_from
 from rook.streams import Reporter, Streams
 
 from . import boot, builtins, events
@@ -318,7 +318,7 @@ class Worker:
         await self._load_plugins()
         self.transport = Transport(self.worker_id, [], hello=self._announce, beat=self._heartbeat,
                                    on_lost=self._lost, on_contact=self._regained, **self.transport_opts)
-        for spec in [*self.cfg.bands, *self._joined().values()]:
+        for spec in [*self.cfg.bands, *self._joined(with_door=True).values()]:
             try:
                 await self.transport.add(self.make_link(spec))
             except (ValueError, KeyError, TypeError) as e:     # a duplicate band, a missing PSK
@@ -436,7 +436,7 @@ class Worker:
             pass
 
     def _lost(self, band: str) -> None:
-        """No hub contact on ``band`` for a while: its leases end now (7.4)."""
+        """No hub contact on ``band`` for a while: its leases end now (10.9)."""
         dropped = sum(self.gate.drop_leases(m.hub, band, {})["dropped"] for m in self.trust.members(band))
         log.warning("hub lost", extra=_f(band=band[:8], leases_dropped=dropped))
 
@@ -475,14 +475,14 @@ class Worker:
 
     def _view(self, band: str) -> tuple[Member | None, dict]:
         """The band's membership and the ceiling its announce is filtered by
-        (9.4). A band normally has one hub; with several, their grants add up."""
+        (10.10). A band normally has one hub; with several, their grants add up."""
         members = self.trust.members(band)
         if len(members) == 1:
             return members[0], members[0].ceiling
         return None, {"grants": [g for m in members for g in m.ceiling.get("grants") or ()]}
 
     async def _announce(self, band: str) -> dict:
-        """The full announce (5.3) for one band's filtered view."""
+        """The full announce (4.2) for one band's filtered view."""
         member, ceiling = self._view(band)
         msg = {"kind": "announce", "worker_id": self.worker_id, "name": self.cfg.name, "core": CORE_VERSION,
                "key": wire.pub_text(self.key), "version": _version(), "facts": _facts(), **await self.host.announce(ceiling),
@@ -494,7 +494,7 @@ class Worker:
         return msg
 
     async def _heartbeat(self, band: str) -> dict:
-        """The heartbeat (5.5); also the clock that expires leases."""
+        """The heartbeat (4.3); also the clock that expires leases."""
         self.gate.tick()
         view = await self.host.announce(self._view(band)[1])
         msg = {"kind": "heartbeat", "worker_id": self.worker_id, "core": CORE_VERSION, "ts": int(time.time()),
@@ -638,7 +638,7 @@ class Worker:
         return {name: {**(self.cfg.settings.get(name) or {}), **stored.get(name, {})}
                 for name in {*self.cfg.settings, *stored}}
 
-    # -- who may approve plugins here (spec 13) -------------------------------------
+    # -- who may approve plugins here (spec 10.7) -------------------------------------
 
     def _approver_bands(self, hub: Any) -> list[str]:
         """Bands where ``hub`` has role home or co-owner."""
@@ -685,15 +685,26 @@ class Worker:
         self._spawn(self.reannounce())
         return {"ok": True}
 
-    def _joined(self) -> dict[str, dict]:
+    def _joined(self, with_door: bool = False) -> dict[str, dict]:
         """Bands joined at enrollment and through ``core.trust.set``: band ->
         link spec. The file holds band PSKs, so it is private to the worker's
-        account."""
+        account. ``with_door``: the home band reached over UDP also gets its
+        hub's ``/band`` web socket (from the address kept at enrollment), the
+        fallback when UDP hears nothing."""
         try:
             got = json.loads((self.data / "bands.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
-        return {b: s for b, s in got.items() if isinstance(s, dict)} if isinstance(got, dict) else {}
+        joined = {b: s for b, s in got.items() if isinstance(s, dict)} if isinstance(got, dict) else {}
+        home = joined.get(self.trust.home.band) if with_door else None
+        if home and home.get("relay") and not home.get("ws_url"):
+            try:
+                site = json.loads((self.data / "enrollment.json").read_text(encoding="utf-8")).get("url")
+            except (OSError, ValueError, AttributeError):
+                site = None
+            if isinstance(site, str) and site:
+                home["ws_url"] = band_door(site)
+        return joined
 
     def _save_joined(self, joined: dict) -> None:
         _write_atomic(self.data / "bands.json", json.dumps(joined, indent=1, sort_keys=True))
@@ -839,7 +850,7 @@ KEY_FILE = "worker.key"
 
 
 def worker_key(path: Path) -> SigningKey:
-    """The worker's own Ed25519 key (5.8): the 32-byte seed in hex, private
+    """The worker's own Ed25519 key (10.2): the 32-byte seed in hex, private
     to the worker's account; made the first time (a 2.0 worker upgrading
     gets its key here, and the hub pins it at its next announce)."""
     try:
@@ -860,15 +871,13 @@ def worker_key(path: Path) -> SigningKey:
 
 
 def _version() -> str:
-    """The core release this process runs, else the installed package's version."""
+    """The core release this process runs, else the Rook release of this
+    code (ROOK_VERSION; the Python package's own version is still 0.4's)."""
     running = boot.running()
     if running:
         return running
-    try:
-        from importlib.metadata import version
-        return version("rook")
-    except Exception:
-        return "unknown"
+    from .. import ROOK_VERSION
+    return ROOK_VERSION
 
 
 def _facts() -> dict:

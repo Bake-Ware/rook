@@ -1,5 +1,5 @@
 """Helpers for the Castling 0.5 end-to-end tests: real processes on
-localhost, a UDP relay (relay.py), ``python -m rook.core2.hub`` and
+localhost, a UDP relay (rook.core2.relay), ``python -m rook.core2.hub`` and
 ``python -m rook.core2.worker``, with generated keys and configs in a temp
 folder, talking over the real Telesthete transport. Tests drive the hub
 through its HTTP door.
@@ -40,7 +40,8 @@ E2E_TIMEOUT = int(os.environ.get("E2E_TIMEOUT", "150"))
 START_SECS = 30.0
 HTTP_SECS = 60.0
 WHY = "End-to-end test of the Castling hub and worker."
-PORTS = ("battery", "torrent", "shell", "file")   # real 0.5 ports the worker loads too
+PORTS = ("shell", "file")               # real 0.5 ports the worker loads too
+HUB_PORTS = ("battery", "torrent")      # real 0.5 ports whose scripts run on the hub for the worker
 
 
 def until(cond, seconds: float = 20.0, what: str = "condition", every: float = 0.1):
@@ -171,8 +172,8 @@ class Band:
         keys = self.hub_dir / "data" / "keys"
         keys.mkdir(parents=True, mode=0o700)
         self.library.mkdir()
-        # plugin pushes and rollouts leave change records when the plugin is there
-        (self.library / "changes").symlink_to(REPO / "rook" / "plugins" / "changes", target_is_directory=True)
+        for name in HUB_PORTS:
+            (self.library / name).symlink_to(REPO / "rook" / "plugins" / name, target_is_directory=True)
         for name, key in (("root.key", self.root_key), ("op.key", self.op_key)):
             (keys / name).write_text(bytes(key).hex() + "\n")
             (keys / name).chmod(0o600)
@@ -186,7 +187,7 @@ class Band:
             "doors": {"http": {"bind": "127.0.0.1:0"}, "mcp": {"bind": "127.0.0.1:0"}},
             "transport": {"bands": band},
             "log": {"level": "info", "format": "json"},
-            "settings": {"hub": {"security": "on"}},     # Tests written for hub.security on (holds, gates, device-code approval); security off has its own tests.
+            "settings": {"hub": {"security": "on"}},     # Tests written for hub.security on (holds); security off has its own tests.
         }, indent=1))
         self.worker_dir.mkdir()
         # No anchor and no band: enrollment (start_worker) writes those.
@@ -200,7 +201,7 @@ class Band:
         self.kid_token = self.hub_cli("token", "--person", "kid")
 
     def start_relay(self) -> str:
-        self.relay = self._spawn("relay", [sys.executable, str(HERE / "relay.py")], self.root)
+        self.relay = self._spawn("relay", [sys.executable, "-m", "rook.core2.relay"], self.root)
         port = until(lambda: self.relay.lines and self.relay.lines[0].strip().isdigit() and self.relay.lines[0],
                      START_SECS, "the relay's port")
         self.relay_addr = f"127.0.0.1:{int(port)}"

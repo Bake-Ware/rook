@@ -31,7 +31,7 @@ import re
 from collections import OrderedDict
 from dataclasses import replace
 
-from rook.kit.ctx import KitError
+from rook.kit.ctx import Caller, KitError
 from rook.streams import StreamError
 
 log = logging.getLogger("rook.plugin.speech")
@@ -177,12 +177,14 @@ async def close(ctx, stream):
 
 async def voices(ctx):
     """Every text-to-speech provider's voices (the voice.tts.voices
-    contract), by provider plugin."""
+    contract), by provider plugin. Asked as the plugin itself, not bounded
+    by the page or person asking (agents' engine list does the same)."""
     out, errors = {}, {}
+    me = Caller(plugin=ctx.plugin, band=ctx.band, why=ctx.caller.why)
     for cap in ctx.providers("voice.tts.voices"):
         plugin = cap.partition(".")[0]
         try:
-            out[plugin] = await _as_contract(ctx, "voice.tts.voices", cap, {})
+            out[plugin] = await ctx.call_as(me, "voice.tts.voices", {}, provider=cap)
         except KitError as e:
             errors[plugin] = e.message
     return {"voices": out, **({"errors": errors} if errors else {})}

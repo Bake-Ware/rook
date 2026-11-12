@@ -20,6 +20,7 @@ from rook.kit.manifest.types import setting_spec
 
 from ..vault import LONE_REF, NAME as VAULT_NAME, Locked, VaultError
 from . import NAME, secret_decl
+from .discover import discover
 
 MANIFEST = Path(__file__).parent
 
@@ -173,4 +174,4 @@ def install(hub) -> None:
         return {"appliance": view(rec), "removed": False}
 
     hub.plugins.add_builtin(MANIFEST, {"appliance.add": add, "appliance.list": list_,
-                                       "appliance.remove": remove})
+                                       "appliance.remove": remove, "appliance.discover": discover})

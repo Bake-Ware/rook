@@ -12,19 +12,19 @@
 </head>
 <body>
 <form id="filters" class="row">
-  <input name="cap" placeholder="cap">
-  <input name="worker" placeholder="worker">
-  <select name="kind"><option value="">all kinds</option><option>call</option><option>session</option>
+  <input name="cap" data-target="journal.cap" placeholder="cap">
+  <input name="worker" data-target="journal.worker" placeholder="worker">
+  <select name="kind" data-target="journal.kind"><option value="">all kinds</option><option>call</option><option>session</option>
     <option>late_reply</option></select>
-  <button class="primary">Show</button>
+  <button class="primary" data-target="journal.show">Show</button>
 </form>
-<div class="scroll">
+<div class="scroll" data-target="journal.list">
 <table>
   <thead><tr><th>When</th><th>Who</th><th>Call</th><th>Why</th><th>Outcome</th></tr></thead>
   <tbody id="rows"></tbody>
 </table>
 </div>
-<div class="row" style="margin-top:10px"><button id="more">More</button></div>
+<div class="row" style="margin-top:10px"><button id="more" data-target="journal.more">More</button></div>
 <script>
 "use strict";
 let limit = 50, entries = [];

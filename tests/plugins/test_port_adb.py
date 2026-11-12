@@ -1,26 +1,26 @@
-"""adb (Android over adb) with a fake ``adb`` on PATH that answers like a
-real one for one attached serial.
-
-TODO(castling:worker-host): the host can't run appliance caps yet (no
-instance values reach Host.call or ctx; spec 5.7), so ``call`` below does
-what it will: the loader's bound cap, the host's arg check and defaults, then
-the script with ``ctx.appliance`` set. Switch to host.call once it takes an
-appliance. ``adb.scan`` needs no instance and goes through the host.
-"""
+"""adb (Android over adb) on the hub, for a delegate worker that serves only
+shell.exec, with a fake ``adb`` on its PATH that answers like a real one for
+one attached serial."""
 
 import base64
-import copy
+import io
 
 import pytest
+from PIL import Image
 
-from port_helpers import ME, PLUGINS, go
-from rook.core2.worker.host import Host
-from rook.core2.worker.loader import load_folder
-from rook.kit.ctx import Ctx, FileResult, KitError, invoke
+from port_helpers import PLUGINS, on_worker
+from rook.kit.ctx import KitError
+from rook.kit.manifest import load
+
+
+def _png(w, h):
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (200, 30, 30)).save(buf, "PNG")
+    return buf.getvalue()
+
 
 SERIAL = "R52N30ABCDE"
-PNG = b"\x89PNG\r\n\x1a\nfake-png"
-JPEG = b"\xff\xd8\xff\xe0fake-jpeg\xff\xd9"
+PNG = _png(2400, 1080)
 DUMP = (
     '<?xml version="1.0" encoding="UTF-8"?><hierarchy rotation="0">'
     '<node package="com.android.settings" text="" bounds="[0,0][1080,2400]">'
@@ -41,7 +41,7 @@ BATTERY = """Current Battery Service state:
 # The fake adb: argv[0:2] == ["-s", serial] for device commands.
 FAKE_ADB = f"""
 import sys, time
-SERIAL, PNG, DUMP, BATTERY = {SERIAL!r}, {PNG!r}, {DUMP!r}, {BATTERY!r}
+SERIAL, PNG64, DUMP, BATTERY = {SERIAL!r}, {base64.encodebytes(PNG)!r}, {DUMP!r}, {BATTERY!r}
 out = sys.stdout.buffer
 if argv[:2] == ["devices", "-l"]:
     print("List of devices attached")
@@ -56,8 +56,8 @@ if serial != SERIAL:
     sys.stderr.write(f"error: device '{{serial}}' not found\\n"); sys.exit(1)
 if cmd == "get-state":
     print("device"); sys.exit(0)
-if cmd == "exec-out" and rest == ["screencap", "-p"]:
-    out.write(PNG); sys.exit(0)
+if cmd == "exec-out" and rest == ["screencap -p | base64"]:
+    out.write(PNG64); sys.exit(0)
 if cmd == "exec-out" and rest[:2] == ["uiautomator", "dump"]:
     out.write(DUMP.encode()); sys.exit(0)
 if cmd == "shell" and rest[:2] == ["-T", "--"]:
@@ -67,7 +67,7 @@ if cmd == "shell" and rest[:2] == ["-T", "--"]:
     if remote.startswith("sleep"):
         time.sleep(30)
     if remote == "flood":
-        out.write(b"y" * (3 << 20)); out.flush(); time.sleep(30)
+        out.write(b"y" * (3 << 20)); sys.exit(0)
     if remote == "gone":
         sys.stderr.write("adb: device 'x' not found\\n"); sys.exit(1)
     if remote.startswith("input") and "fail" in remote:
@@ -78,34 +78,17 @@ if cmd == "shell" and rest[:2] == ["-T", "--"]:
 sys.stderr.write("fake adb: unexpected " + repr(argv) + "\\n"); sys.exit(99)
 """
 
-PLUGIN = None   # bound by the adb fixture, once the fake adb is on PATH (requires.bins)
-
-
 @pytest.fixture
 def adb(bins):
-    global PLUGIN
     bins.add("adb", FAKE_ADB)
-    bins.only_these()     # no real ImageMagick: tests add a fake one when they want it
-    PLUGIN = load_folder(PLUGINS / "adb", os_name="linux")
+    bins.only_these()
     return bins
 
 
-def call(cap, args=None, instance=None, timeout=20):
-    c = PLUGIN.caps[cap]
-    args = dict(args or {})
-    errors = list(c.validator.iter_errors(args))
-    if errors:
-        raise ValueError(f"bad args: {errors[0].message}")
-    for key, spec in c.spec.get("args", {}).items():
-        if key not in args and "default" in spec:
-            args[key] = copy.deepcopy(spec["default"])
-    args.update(copy.deepcopy(c.bind))
-
-    async def body():
-        ctx = Ctx(PLUGIN.manifest, ME, cap=cap)
-        ctx.appliance = {"name": "playground-tablet", "serial": SERIAL} if instance is None else instance
-        return await invoke(c.func, ctx, args)
-    return go(body, timeout)
+def call(cap, args=None, instance=None):
+    """``cap`` called on the appliance: the script on the hub, adb on its delegate."""
+    inst = {"name": "playground-tablet", "settings": {"serial": SERIAL}} if instance is None else instance
+    return on_worker("adb", cap, args, appliance=inst)[0]
 
 
 def remotes(adb):
@@ -113,18 +96,25 @@ def remotes(adb):
     return [c["argv"][-1] for c in adb.calls("adb") if c["argv"][2:5] == ["shell", "-T", "--"]]
 
 
-def test_scan_through_the_host(adb):
-    async def body():
-        host = Host(os_name="linux")
-        await host.load(PLUGINS / "adb")
-        try:
-            return await host.call("adb.scan", {}, ME)
-        finally:
-            await host.close()
-    assert go(body) == {"items": [
+def test_a_delegates_caps_run_on_the_hub():
+    m = load(PLUGINS / "adb")
+    assert m.data["runs_on"] == "hub" and m.data["uses"] == ["shell.exec"] and "requires" not in m.data
+    assert {c["on"] for c in m.caps.values()} == {"worker"}
+
+
+def test_scan_on_the_worker(adb):
+    out, seen = on_worker("adb", "adb.scan")
+    assert out == {"items": [
         {"serial": SERIAL, "state": "device", "model": "SM_A525F"},
         {"serial": "emulator-5554", "state": "unauthorized"}]}
+    assert seen == [("shell.exec", {"argv": ["adb", "devices", "-l"], "timeout": 10})]
     assert adb.calls("adb")[0]["argv"] == ["devices", "-l"]
+
+
+def test_adb_missing_is_said_plainly(bins):
+    bins.only_these()
+    with pytest.raises(KitError, match="adb is not installed on this worker"):
+        on_worker("adb", "adb.scan")
 
 
 def test_every_device_call_names_the_serial(adb):
@@ -138,7 +128,7 @@ def test_serial_defaults_to_the_instance_name(adb):
     assert adb.calls("adb")[0]["argv"][:2] == ["-s", SERIAL]
 
 
-@pytest.mark.parametrize("instance", [{}, {"name": "-s x"}, {"serial": "a b"}, {"serial": "x;reboot"}])
+@pytest.mark.parametrize("instance", [{}, {"name": "-s x"}, {"settings": {"serial": "a b"}}, {"settings": {"serial": "x;reboot"}}])
 def test_no_or_bad_instance(adb, instance):
     with pytest.raises(KitError, match="no device instance"):
         call("adb.battery.status", instance=instance)
@@ -147,9 +137,9 @@ def test_no_or_bad_instance(adb, instance):
 
 def test_device_states(adb):
     with pytest.raises(KitError, match="tap Allow"):
-        call("adb.hid.click", {"x": 1, "y": 1}, instance={"name": "t", "serial": "UNAUTH"})
+        call("adb.hid.click", {"x": 1, "y": 1}, instance={"name": "t", "settings": {"serial": "UNAUTH"}})
     with pytest.raises(KitError, match="not connected") as e:
-        call("adb.hid.click", {"x": 1, "y": 1}, instance={"name": "t", "serial": "OTHER"})
+        call("adb.hid.click", {"x": 1, "y": 1}, instance={"name": "t", "settings": {"serial": "OTHER"}})
     assert e.value.retry
     assert remotes(adb) == []   # nothing ran on a device that isn't ready
 
@@ -182,11 +172,11 @@ def test_shell_exec_refusals(adb, args, match):
 
 def test_shell_exec_timeout_is_a_clean_error(adb):
     with pytest.raises(KitError, match="timed out after 1s; ended on the device"):
-        call("adb.shell.exec", {"cmd": "sleep 60", "timeout": 1}, timeout=15)
+        call("adb.shell.exec", {"cmd": "sleep 60", "timeout": 1})
 
 
-def test_shell_exec_stops_at_the_output_limit(adb):
-    res = call("adb.shell.exec", {"cmd": "flood", "timeout": 20}, timeout=15)
+def test_shell_exec_cuts_at_the_output_limit(adb):
+    res = call("adb.shell.exec", {"cmd": "flood", "timeout": 20})
     assert res["truncated"] is True and len(res["stdout"]) == 1 << 20
 
 
@@ -200,35 +190,11 @@ def test_battery(adb):
                                           "status": "charging", "temp_c": 25.1}
 
 
-def test_screen_capture_png_without_imagemagick(adb):
-    res = call("adb.screen.capture")
-    assert isinstance(res, FileResult) and res.mime == "image/png"
-    assert res.data == PNG
-
-
-def test_screen_capture_jpeg_with_imagemagick(adb):
-    adb.add("convert", f"open(argv[-1], 'wb').write({JPEG!r})\n")
+def test_screen_capture_is_a_full_size_jpeg(adb):
     res = call("adb.screen.capture", {"quality": 40})
-    assert (res.data, res.mime) == (JPEG, "image/jpeg")
-    assert adb.calls("convert")[0]["argv"][1:5] == ["-resize", "1600x1600>", "-quality", "40"]
-
-
-def test_screen_capture_through_the_host_returns_bytes(adb):
-    # The host turns a file result into {data, mime}; the call needs the
-    # instance, so drive the bound function the way host._exec will.
-    async def body():
-        host = Host(os_name="linux")
-        p = await host.load(PLUGINS / "adb")
-        c = p.caps["adb.screen.capture"]
-        ctx = host._ctx(p, ME, cap=c.name)
-        ctx.appliance = {"name": "t", "serial": SERIAL}
-        from rook.core2.worker.host import _jsonable
-        try:
-            return _jsonable(await invoke(c.func, ctx, {}))
-        finally:
-            await host.close()
-    res = go(body)
-    assert base64.b64decode(res["data"]) == PNG and res["mime"] == "image/png"
+    assert res["mime"] == "image/jpeg" and res["name"] == "screen.jpg"
+    img = Image.open(io.BytesIO(base64.b64decode(res["data"])))
+    assert (img.format, img.size) == ("JPEG", (2400, 1080))   # its pixels are hid.click's x, y
 
 
 def test_ui_screen(adb):
@@ -249,7 +215,7 @@ def test_type_escapes_for_input_text(adb):
 def test_type_refuses_non_ascii(adb):
     with pytest.raises(KitError, match="ASCII only"):
         call("adb.hid.type", {"text": "héllo"})
-    with pytest.raises(ValueError, match="bad args"):
+    with pytest.raises(KitError, match="bad args"):
         call("adb.hid.type", {"text": "x" * 2001})
 
 
@@ -265,7 +231,7 @@ def test_keys(adb):
 @pytest.mark.parametrize("args", [{"key": "a;reboot"}, {"key": "a b"}, {"key": ""},
                                   {"key": "a", "mods": ["hyper"]}])
 def test_key_args_refused(adb, args):
-    with pytest.raises(ValueError, match="bad args"):
+    with pytest.raises(KitError, match="bad args"):
         call("adb.hid.key", args)
 
 
@@ -300,21 +266,8 @@ def test_input_failure_is_an_error(adb):
         call("adb.hid.type", {"text": "fail"})
 
 
-def test_no_04_names(adb):
+def test_no_04_names():
     """castling-protocol (Bake): "Clean cut: no 0.4/0.5 compatibility." """
+    caps = load(PLUGINS / "adb").caps
     for old in ("android.shell.exec", "android.ui.text", "android.hid.key_combo", "android.hid.mouse.click"):
-        assert old not in PLUGIN.caps
-
-
-def test_adb_missing_makes_the_plugin_unavailable(bins):
-    bins.only_these()
-
-    async def body():
-        host = Host(os_name="linux")
-        p = await host.load(PLUGINS / "adb")
-        try:
-            return p.caps, p.unavailable
-        finally:
-            await host.close()
-    caps, unavailable = go(body)
-    assert caps == {} and "adb.scan" in unavailable and "adb" in unavailable["adb.scan"]
+        assert old not in caps

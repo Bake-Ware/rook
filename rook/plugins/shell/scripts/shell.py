@@ -1,7 +1,7 @@
 """shell: run commands, look at the environment, and open live terminals.
 
 Every process starts through the worker's launch path
-(rook.core2.worker.security.launch, spec 7.1): as the worker's normal user,
+(rook.core2.worker.security.launch, spec 10.9): as the worker's normal user,
 or elevated when the call holds a lease. Nothing here may start a process
 any other way.
 
@@ -127,7 +127,7 @@ def env(ctx, name=None, prefix=None, default=None):
 
 
 async def open_(ctx, argv=None, cmd=None, shell=None, cwd=None, env=None, pty=True,
-                cols=120, rows=32, title=""):
+                cols=120, rows=32, title="", stdin=None):
     if argv is None and cmd is None:   # an interactive shell
         argv = ([_powershell() or "powershell.exe", "-NoLogo"] if IS_WIN
                 else [os.environ.get("SHELL") or "/bin/sh", "-l"])
@@ -158,7 +158,7 @@ async def open_(ctx, argv=None, cmd=None, shell=None, cwd=None, env=None, pty=Tr
         raise
     handle.streams.update(handle.id, attrs={"pid": proc.pid})
     handle.append("status", {"state": "started", "pid": proc.pid})
-    task = asyncio.get_running_loop().create_task(_pump(handle, proc, master))
+    task = asyncio.get_running_loop().create_task(_pump(handle, proc, master, stdin))
     _RUNNING.add(task)
     task.add_done_callback(_RUNNING.discard)
     return handle
@@ -209,22 +209,25 @@ async def _start(ctx, argv, cwd, env, *, stdin=False, merge=False, slave=None):
 
 
 async def _kill(proc) -> None:
-    """End the process and everything in its session (sh -c's children too).
-    TERM first: an elevated process is sudo, which passes TERM on to the
-    command it runs as root, where our KILL could only reach sudo itself."""
+    """End the process and everything in its session (sh -c's children too),
+    whether or not the process itself has already exited: TERM, then KILL
+    what is left. TERM first: an elevated process is sudo, which passes TERM
+    on to the command it runs as root, where our KILL could only reach sudo
+    itself."""
     for sig, grace in ((signal.SIGTERM, 2), (getattr(signal, "SIGKILL", None), 5)):
-        if proc.returncode is not None:
-            return
         try:
             if IS_WIN:
+                if proc.returncode is not None:
+                    return
                 proc.kill()
             else:
                 os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
+            return
+        except PermissionError:
             pass
         try:
             await asyncio.wait_for(proc.wait(), grace)
-            return
         except asyncio.TimeoutError:
             pass
 
@@ -245,10 +248,10 @@ def _signal(proc, name: str) -> None:
         pass
 
 
-async def _pump(handle, proc, master) -> None:
+async def _pump(handle, proc, master, stdin=None) -> None:
     """Output to the stream, input from it, until the process exits."""
     loop = asyncio.get_running_loop()
-    feeder = loop.create_task(_feed(handle, proc, master))
+    feeder = loop.create_task(_feed(handle, proc, master, stdin))
     try:
         if master is not None:
             await _read_pty(handle, master, loop)
@@ -292,7 +295,11 @@ async def _read_pty(handle, master, loop) -> None:
         loop.remove_reader(master)
 
 
-async def _feed(handle, proc, master) -> None:
+async def _feed(handle, proc, master, stdin=None) -> None:
+    if stdin is not None:
+        await _write(proc, master, stdin.encode())
+        if master is None:       # on pipes, the end of its input
+            proc.stdin.close()
     async for ev in handle.inputs():
         body = ev.body
         if "signal" in body:
@@ -300,21 +307,26 @@ async def _feed(handle, proc, master) -> None:
         elif "resize" in body:
             if master is not None:
                 _winsize(master, *body["resize"])
+        elif not await _write(proc, master, body["text"].encode()):
+            return                # the process closed its input
+
+
+async def _write(proc, master, data: bytes) -> bool:
+    """False once the process has closed its input."""
+    try:
+        if master is not None:
+            # Non-blocking: a child that stops reading must not stall the worker's loop.
+            while data:
+                try:
+                    data = data[os.write(master, data):]
+                except BlockingIOError:
+                    await asyncio.sleep(0.05)
         else:
-            data = body["text"].encode()
-            try:
-                if master is not None:
-                    # Non-blocking: a child that stops reading must not stall the worker's loop.
-                    while data:
-                        try:
-                            data = data[os.write(master, data):]
-                        except BlockingIOError:
-                            await asyncio.sleep(0.05)
-                else:
-                    proc.stdin.write(data)
-                    await proc.stdin.drain()
-            except (OSError, ConnectionError, AttributeError):
-                return            # the process closed its input
+            proc.stdin.write(data)
+            await proc.stdin.drain()
+    except (OSError, ConnectionError, AttributeError, RuntimeError):
+        return False
+    return True
 
 
 def _winsize(fd: int, cols: int, rows: int) -> None:

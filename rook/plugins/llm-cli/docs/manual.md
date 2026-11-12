@@ -4,8 +4,11 @@ An `llm.complete` provider that uses a CLI subscription already signed in on a
 worker: Claude Code (`tool: claude`, the default) or Codex (`tool: codex`).
 Most people start here: no API key, the subscription's tokens.
 
-Install it on the worker where the CLI is signed in. Each call runs one
-completion with tools off, through core's launch path, in a temp folder:
+The plugin runs on the hub. Set its `worker` setting to the worker where the
+CLI is signed in (the Settings page, or `setting.set` with plugin `llm-cli`, key `worker`);
+until then every call says so. Each call runs one completion with tools off
+on that worker through `shell.exec`, in a fresh folder in its temp folder
+(`TMPDIR` or `TEMP`, else `/tmp`), removed afterwards:
 
 | Tool | Command (prompt on stdin) |
 |---|---|
@@ -24,5 +27,5 @@ CLI's own default. Set `model_one`, `model_two`, `model_three` to change them.
 ## Limits
 
 `max_tokens` and `temperature` can't be passed to a CLI and are ignored.
-`stop` sequences cut the reply here (`stop_reason: stop`). `llm.models` runs
-`<program> --version` to show the CLI works on this worker.
+`stop` sequences cut the reply here (`stop_reason: stop`). `llm-cli.models` runs
+`<program> --version` to show the CLI works on its worker.

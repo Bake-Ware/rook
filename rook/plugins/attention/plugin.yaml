@@ -1,6 +1,7 @@
 # Attention on the hub (castling-attention: "Attention becomes an aggregation
 # job on the hub run by the house agent"). No sorting engine and no rules:
-# a ready-made job wakes the house agent every so often; its attention skill
+# a ready-made job, off until the person says yes in guided setup, wakes the
+# house agent every so often; its attention skill
 # collects what is trying to reach the person through ordinary caps (the
 # phone's notifications and texts, mail, chat), curates what matters into
 # attention records (attention.list: one place), and gets word to the person
@@ -10,10 +11,11 @@
 # wants an instant job on them; this plugin needs none of its own code.
 manifest: 1
 plugin: attention
-version: 0.5.0
+version: 0.5.1
 title: Attention
 doc: What is trying to get the person's attention, curated in one place by the house agent.
 package: agents
+segment: Agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
@@ -35,11 +37,12 @@ jobs:
   attention:
     doc: "Every 15 minutes the house agent looks over what is trying to reach the person and curates it (its attention skill)."
     trigger: { every: 15m }
-    agent:
-      persona: house
-      prompt: "Attention pass: follow your attention skill (agent.skill attention). Look at what has arrived for the people you look after since your last pass, curate what matters into attention records, and reach them only if something can't wait."
+    call: agent.chat.send
+    args:
+      agent: house
+      text: "Attention pass: follow your attention skill (agent.skill attention). Look at what has arrived for the people you look after since your last pass, curate what matters into attention records, and reach them only if something can't wait."
     as: persona
-    enabled: true
+    persona: house
 
 skills:
   attention: skills/attention.md

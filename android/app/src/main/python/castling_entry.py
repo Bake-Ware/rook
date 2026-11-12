@@ -1,25 +1,22 @@
-"""Chaquopy entrypoint for Rook 0.5 (Castling) in the Android app.
+"""Chaquopy entrypoint for the Rook worker in the Android app.
 
-The app runs either the 0.4 worker (worker_entry) or this one; the person
-picks in Settings > Band > Rook version (0.4 is the default). Everything 0.5
-keeps lives in ``<files>/rook05``: the worker config, the anchor, the data
-folder and the phone plugins, unpacked from the APK.
+Everything the worker keeps lives in ``<files>/rook05``: the worker config,
+the anchor, the data folder and the phone plugins, unpacked from the APK.
 
 The Kotlin side (Castling.kt, WorkerService.kt) calls, off the main thread:
 
     castling_entry.status(files_dir)                              # JSON: signed in? hub, url, owner, name
-    castling_entry.enroll(files_dir, target, name, listener, force)   # blocks until approved, refused or cancelled
+    castling_entry.enroll(files_dir, target, name, listener, force)   # blocks until let in, refused or cancelled
     castling_entry.cancel()                                       # ends a sign-in that waits for approval
     castling_entry.start(files_dir)                               # blocks until stop()
     castling_entry.stop()
     castling_entry.kick(reason)                                   # the default network changed
-    castling_entry.connected()                                    # a band link is up
 
 ``target`` is the hub's address or the text of its sign-in QR
 (``rook://enroll?url=…&code=…&hub=…``, which the phone's camera hands the
-app as a link). Without a one-time code the hub gives a short code; the
-listener's ``say(text)`` shows it so the person can approve it on the
-dashboard. Enrollment is rook.core2.enroll.device, the same as
+app as a link). Without a one-time code the phone asks to join and waits
+until someone taps Join on the hub's Workers page; the listener's
+``say(text)`` shows that it is waiting. Enrollment is rook.core2.enroll.device, the same as
 ``python -m rook.core2.worker enroll``.
 """
 
@@ -133,7 +130,7 @@ def enroll(files_dir: str, target: str, name: str, listener=None, force: bool = 
         device.check_url(url)       # https, or a hub on this phone itself (adb reverse in tests)
         if not force and device.home_of(path):
             raise device.EnrollError(device.already(device.home_of(path)))
-        key = device.signing_key(path, force)       # the phone's own key (spec 5.8): the hub records it
+        key = device.signing_key(path, force)       # the phone's own key (spec 10.2): the hub records it
         bundle = device.sign_in(url, name, code, pinned, key=wire.pub_text(key), say=say, sleep=_sleep)
         if _cancel.is_set():
             raise Cancelled()
@@ -172,8 +169,3 @@ def kick(reason: str = "") -> bool:
     from rook.core2.worker import android
     log.info("redial: %s", reason)
     return android.kick()
-
-
-def connected() -> bool:
-    from rook.core2.worker import android
-    return android.connected()

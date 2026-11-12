@@ -117,12 +117,12 @@ def test_agents_on_the_hub(tmp_path):
             # personas (castling-dashboard) are made on the next look.
             # Agents are kit records (drift #31).
             out = await call(hub, owner, "agent.list")
-            assert out["ok"] and {a["name"] for a in out["result"]} >= {"house", "security"}, out
+            assert out["ok"] and {a["name"] for a in out["result"]} >= {"house"}, out
             rt = next(m for m in hub.plugins._modules["agent"].values() if hasattr(m, "_RT"))._RT
             await rt.ready(force=True)
             out = await call(hub, owner, "agent.list")
             assert out["ok"] and sorted(a["name"] for a in out["result"]) == [
-                "archivist", "house", "lead", "pm", "producer", "qa", "security", "writer"], out
+                "archivist", "house", "lead", "pm", "producer", "qa", "writer"], out
             assert not any(a["awake"] for a in out["result"] if a["name"] != "house"), out
             got = next(a for a in out["result"] if a["name"] == "producer")
             assert got["persona"] == "producer" and "assembling a crew" in got["prompt"], got
@@ -138,14 +138,14 @@ def test_agents_on_the_hub(tmp_path):
             assert out["ok"] and out["result"]["text"] == "brain: good morning", out
             turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
             # The agent itself, for the person who sent the message; its turn
-            # token is never journaled.
+            # token travels by name (a hub provider gets the reference).
             assert (turn["person"], turn["agent"], turn["ok"]) == ("person:bake", "agent:house", True)
-            assert turn["contract"] == "agent.backend" and turn["args"]["door"] == "[redacted]"
+            assert turn["contract"] == "agent.backend" and turn["args"]["door"].startswith("{{secret:turn-")
             outer = hub.journal.query(cap="agent.backend", limit=1)[0]
-            assert outer["args"]["door"] == "[redacted]" and outer["agent"] == "agent:house"
+            assert outer["args"]["door"] == turn["args"]["door"] and outer["agent"] == "agent:house"
             assert hub.identities.run_by["house"] == "agent" and hub.identities.agents["archivist"]["grants"][-1] \
                 == "agent.backend"
-            assert hub.identities._turns == {}                                # ended with the turn
+            assert hub.identities._turns == hub.identities._turn_names == {}   # ended with the turn
 
             # A guest may chat (agent.chat.*), but the turn runs with the
             # guest's rights, and core's guest preset grants no backend.
@@ -279,13 +279,9 @@ def test_a_linked_persons_direct_message_reaches_the_house_agent(tmp_path):
             assert outbox() == [{"to": "bake", "text": "brain: (on Telegram) what's on today?", "by": None}]
             turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
             assert (turn["person"], turn["agent"], turn["ok"]) == ("person:bake", "agent:house", True)
-            assert hub.dispatcher.sessions[turn["session"]].tainted            # outside content
             await until(lambda: hub.journal.query(cap="telegram.send", limit=1))   # journaled as the call ends
             sent = hub.journal.query(cap="telegram.send", limit=1)[0]
             assert sent["contract"] == "notify.channel.send"                  # the reply goes by contract
-            # ... and so is the session its harness's calls run in (its turn token's).
-            door = hub._door_sessions[("person:bake", "agent:house")]
-            assert hub.dispatcher.sessions[door].tainted
             out = await call(hub, owner, "agent.chat.read", agent="house")     # their one session with it
             assert "what's on today?" in json.dumps(out["result"]), out
 

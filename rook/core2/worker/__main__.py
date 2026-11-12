@@ -10,9 +10,9 @@ Running, it first picks its core (rook.core2.worker.boot): the installed
 package, or the release a hub installed under ``<data>/core/``, and execs into
 it when that isn't the code already running.
 
-``enroll`` (spec 12; rook.core2.enroll.device) signs the machine in as a
-person: with the QR's one-time code, else by showing a short code the person
-approves on their phone or the dashboard. It writes the anchor, the home
+``enroll`` (spec 8; rook.core2.enroll.device) signs the machine in as a
+person: with the QR's one-time code (``hub.join_code``), else by asking to
+join and waiting until someone taps Join on the hub's Workers page. It writes the anchor, the home
 band and the config's ``anchor``/``name``/``worker_id``; the rest of an
 existing config is kept.
 
@@ -116,7 +116,7 @@ def main(argv=None) -> int:
     en = sub.add_parser("enroll", help="sign this machine in with its home hub (writes the anchor and config)")
     en.add_argument("hub", nargs="?", help="the hub's address, or the text of its enrollment QR")
     en.add_argument("--discover", action="store_true", help="find the hub on the local network")
-    en.add_argument("--code", help="a one-time code from the hub (else a code to approve is shown)")
+    en.add_argument("--code", help="a one-time code from the hub (hub.join_code): joins with no tap")
     en.add_argument("--name", help="this machine's name on the band (default: the config's, else the hostname)")
     en.add_argument("--insecure", action="store_true", help="allow a plain http hub address off this machine")
     en.add_argument("--force", action="store_true", help="enroll again: a new home hub, every other band dropped")

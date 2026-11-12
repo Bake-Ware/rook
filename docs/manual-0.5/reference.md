@@ -15,8 +15,8 @@ Paths are relative to the file. An unknown key is an error.
 | `settings` | hub-side plugin settings: `plugin: {setting: value}` ([Settings](settings.md)) |
 | `contracts` | which provider answers a shared cap: `llm.complete: llm-cli.complete` |
 | `sacred` | worker names where every change is a hard stop ([Workers](workers.md#sacred-machines)) |
-| `doors` | `http: {bind, web}` (`web: false` turns the site off, `{secure_cookie: true}` behind TLS); `mcp: {bind, path, origins, oauth}` (`oauth`: the door's public https address, for [claude.ai's connectors](mcp.md#claudeais-connectors)) ([MCP](mcp.md)) |
-| `transport` | the band link: `bands: [{psk_env \| psk, relay \| ws_url}]` |
+| `doors` | `http: {bind, web, band}` (`web: false` turns the site off, `{secure_cookie: true}` behind TLS; `band`: the relay's web socket, passed through on `/band`, [Web socket fallback](install.md#web-socket-fallback)); `mcp: {bind, path, origins, oauth}` (`oauth`: the door's public https address, for [claude.ai's connectors](mcp.md#claudeais-connectors)) ([MCP](mcp.md)) |
+| `transport` | the band link: `bands: [{psk_env \| psk, relay \| ws_url}]` (both: UDP first, the web socket when UDP hears nothing) |
 | `enroll` | what enrolling devices are told: `url`, `relay`, `ws_url`, `discover`, `services` ([Adding machines](enrollment.md)) |
 | `log` | `{level, format: text \| json}` |
 
@@ -46,7 +46,7 @@ Paths are relative to the file. An unknown key is an error.
 |---|---|
 | `python -m rook.core2.hub --config hub.yaml init --owner <name> [--relay host:port \| --ws-url url] [--url https://…] [--bind addr]` | set up a new hub; sets the owner's sign-in password, prints an API token and the recovery key once |
 | `python -m rook.core2.hub --config hub.yaml passwd <name>` | set or reset a person's sign-in password (typed, or one line on stdin); works at once |
-| `python -m rook.core2.hub --config hub.yaml oauth approve <CODE> [--person NAME]` | approve the code a connector's sign-in page shows (claude.ai adding Rook); the page goes on within seconds ([MCP](mcp.md#claudeais-connectors)) |
+| `python -m rook.core2.hub --config hub.yaml login-link [NAME] [--url URL]` | a sign-in link to the hub site for NAME (default: the first owner; it keeps working: no time limit, any number of uses; `--url`: the address the browser reaches). On a new hub (`init --no-password`) the site needs no sign-in at all until a password is set |
 | `python -m rook.core2.hub --config hub.yaml` | run the hub (SIGINT or SIGTERM stops it) |
 | `python -m rook.core2.hub --config hub.yaml token --person <name> [--agent <name>] [--label text]` | mint a door token |
 | `python -m rook.core2.hub --config hub.yaml recovery-key` | show the owner's recovery key |
@@ -57,7 +57,7 @@ Paths are relative to the file. An unknown key is an error.
 | `python -m rook.core2.worker --config worker.yaml enroll <hub \| qr text> [--name] [--code] [--discover] [--insecure] [--force]` | sign this machine in with its home hub |
 | `python -m rook.core2.worker --config worker.yaml` | run the worker |
 | `python -m rook.core2.worker --config worker.yaml check` | import this core and check the config and core's manifests (what a core update runs before it switches; [Workers](workers.md#keeping-workers-up-to-date)) |
-| `python -m rook.kit.manifest validate <folder>` / `diff <old> <new>` | check a plugin ([Writing a plugin](authoring.md#checking-and-trying-it)) |
+| `python -m rook.kit.manifest validate <folder>` / `diff <old> <new>` | check a plugin ([the plugins skill](../../rook/plugins/agents/skills/plugins.md#4-try-it)) |
 | `python -m rook.core2.hub.doors.mcp_stdio [--url] [--token-file]` | the MCP door over stdio, for agents that need it |
 
 ## The HTTP door
@@ -76,26 +76,14 @@ says why.
 | `GET /journal` | `?call=&cap=&worker=&person=&agent=&project=&kind=&session=&chain=&since=&until=&limit=` | journal entries ([The journal](journal.md)) |
 | `GET /holds` | | calls waiting for a person |
 | `POST /holds/<hold>` | `{decision: approve \| refuse}` | answer one ([Holds](holds.md)) |
-| `POST /plugins/push` | `{worker, plugin, why}` | owners: install a library plugin on a worker, through a change record |
-| `POST /doors/<name>` | `{open: true \| false}` | owners: the kill switch ([Security plugins](security.md#the-kill-switch)) |
-| `POST /enroll/code` | `{}` | a one-time code and its QR text |
+| `POST /plugins/push` | `{worker, plugin, why}` | owners: install a library plugin on a worker |
+| `POST /doors/<name>` | `{open: true \| false}` | owners: the kill switch ([Security](security.md#the-kill-switch)) |
+| `POST /enroll/code` | `{}` | a one-time code and its QR text (also `hub.join_code`) |
 | `POST /enroll/claim` | `{code, name}` | no token: a device claims its config, once |
-| `POST /enroll/device` | `{name}` | no token: a device code to poll and a code to show |
-| `POST /enroll/poll` | `{device_code}` | no token: pending, refused, or the config, once |
-| `GET /enroll/pending` | | devices waiting for approval |
-| `POST /enroll/approve` | `{code, decision?}` | approve or refuse a device's code |
+| `POST /enroll/ask` | `{name}` | no token: ask to join (it waits for Join on the Workers page); a ticket to poll with |
+| `POST /enroll/poll` | `{ticket}` | no token: pending, refused, or the config, once |
 | `GET /recovery-key` | | owners: the recovery key |
-| `POST /bands/invite` | `{role?, ceiling?}` | owners: an invite to this hub's band |
-| `POST /memberships` | `{worker, why, invite? \| band?, role?, ceiling?}` | owners: a worker's other bands |
 | `GET /health` | | no token: the hub answers |
 | `GET /updates/desktop.json` | | no token: the desktop app's files in Rook's latest release, for its update check |
 
 The hub site is on `/`, `/login` and `/web/` ([The hub site](dashboard.md)).
-A hub plugin's own endpoints (its manifest's `routes:`) are under
-`/p/<plugin>/<path>`: `auth: user` takes the bearer token, `auth: none`
-lets anyone in and the plugin checks. `auth: {hmac: "{{settings.x}}"}` takes
-a request whose `X-Hub-Signature-256` is the HMAC-SHA256 of its body under
-that secret (GitHub's form, `sha256=<hex>`), `auth: {token: "{{settings.x}}"}`
-one whose `Authorization: Bearer` is the token; `header:` names another
-header (Telegram sends `X-Telegram-Bot-Api-Secret-Token`). Anything else is
-401, and so is every request while the secret isn't set.

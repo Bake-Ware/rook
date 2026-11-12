@@ -9,7 +9,7 @@ A concept sets the pool of experts a project draws on: `roles` (agent
 personas: the reviewers a task's sign-off goes to), `skills` (skill pages
 in knowledge), `signoff` (`experts`, or `none` when tasks need no reviewers,
 like a grocery list) and the `trust` level new projects start with. Whether
-the person signs off too is the project's trust level (`project.trust`:
+the person signs off too is the project's trust level (`trust.level`:
 sacred), not the concept's. A playlist needs no security advisor; a comic book
 needs no finance.
 

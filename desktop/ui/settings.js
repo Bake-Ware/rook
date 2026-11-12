@@ -2,7 +2,7 @@
 // The settings window.
 let S = null; // last state from the app
 
-const FIELDS = ['hub_url', 'hub_version', 'worker_python', 'ask_shortcut', 'poll_seconds', 'voice_url', 'ptt_shortcut', 'speak_answers', 'wake_model', 'wake_threshold'];
+const FIELDS = ['hub_url', 'ask_shortcut', 'poll_seconds', 'voice_url', 'ptt_shortcut', 'speak_answers', 'wake_model', 'wake_threshold'];
 const CHECKS = ['notifications', 'wake_word', 'worker_autostart', 'start_at_login'];
 
 function fill(st) {
@@ -20,27 +20,18 @@ function fill(st) {
   $('#wake-val').textContent = Number(s.wake_threshold).toFixed(2);
   $('#version').textContent = 'v' + st.version;
 
-  const v05 = s.hub_version === '0.5';
   const pill = $('#signin-pill');
   pill.textContent = st.signed_in ? 'Signed in' : (st.hub ? 'Not signed in' : 'Not set up');
   pill.className = 'pill ' + (st.signed_in ? 'ok' : 'warn');
   $('#signin-note').textContent = st.signed_in
     ? 'Signed in to ' + st.hub + (st.principal ? ' as ' + st.principal : '') + '.'
-    : v05 ? 'Sign in with your own sign-in token.'
-      : 'Sign in opens your dashboard in a window. Sign in there as usual and this app picks it up.';
+    : 'Sign in with your own sign-in token.';
   $('#signout').hidden = !st.signed_in;
   $('#signin-window').textContent = st.signed_in ? 'Sign in again' : 'Sign in';
-  // 0.4 signs in in the dashboard window or with a password; 0.5 with a token.
-  $('#signin-password-toggle').hidden = v05;
-  if (v05) $('#password-form').hidden = true;
-  $('#token-form').hidden = !v05 || (st.signed_in && $('#token-form').hidden);
-  $('#signin-window').hidden = v05 && !$('#token-form').hidden;
-  $('#ask-advanced').hidden = v05;
-  $('#install-hub').hidden = v05;
+  $('#token-form').hidden = st.signed_in && $('#token-form').hidden;
+  $('#signin-window').hidden = !$('#token-form').hidden;
 
   $('#voice_key').placeholder = st.voice_key_set ? 'Saved (type to replace)' : 'Not set';
-  $('#agent_token').placeholder = st.agent_token_set ? 'Saved (type to replace)' : 'Leave empty to ask in a private chat';
-  $('#clear-token').hidden = !st.agent_token_set;
 
   const mic = $('#mic-pill');
   mic.textContent = st.microphone ? 'Mic: ' + st.microphone.slice(0, 28) : (st.features.voice ? 'No microphone' : 'Voice not in this build');
@@ -64,14 +55,13 @@ function fill(st) {
 
   const w = st.worker;
   const wp = $('#worker-pill');
-  wp.textContent = { running: 'Running', stopped: 'Stopped', 'needs-pairing': 'Not paired', 'not-installed': 'Not added' }[w.status] || w.status;
+  wp.textContent = { running: 'Running', stopped: 'Stopped', 'not-installed': 'Not added' }[w.status] || w.status;
   wp.className = 'pill ' + (w.status === 'running' ? 'ok' : w.status === 'stopped' ? '' : 'warn');
   $('#worker-detail').textContent = w.detail;
   $('#worker-start').hidden = !w.can_start;
   $('#worker-stop').hidden = !w.can_stop;
-  $('#worker-add').hidden = w.status !== 'not-installed' && w.status !== 'needs-pairing';
-  $('#autostart-box').hidden = w.mode !== 'bundle' && w.mode !== 'core2';
-  $('#python-box').hidden = !v05;
+  $('#worker-add').hidden = w.status !== 'not-installed';
+  $('#autostart-box').hidden = w.mode !== 'core2';
 }
 
 function collect() {
@@ -91,9 +81,8 @@ async function save() {
   try {
     const secrets = {};
     if ($('#voice_key').value) secrets.voiceKey = $('#voice_key').value;
-    if ($('#agent_token').value) secrets.agentToken = $('#agent_token').value;
     if (Object.keys(secrets).length) await invoke('save_secrets', secrets);
-    $('#voice_key').value = ''; $('#agent_token').value = '';
+    $('#voice_key').value = '';
     fill(await invoke('save_settings', { settings: collect() }));
     setMsg(msg, 'Saved.', 'ok');
   } catch (e) {
@@ -111,26 +100,8 @@ document.querySelectorAll('[data-record]').forEach(shortcutRecorder);
 $('#save').addEventListener('click', save);
 $('#wake_threshold').addEventListener('input', e => { $('#wake-val').textContent = Number(e.target.value).toFixed(2); });
 
-$('#signin-window').addEventListener('click', e => run(e.target, $('#hub-msg'), async () => {
-  if (S.settings.hub_version !== $('#hub_version').value) throw new Error('Save your changes first: the Rook version changed.');
-  if (S.settings.hub_version === '0.5') { $('#token-form').hidden = false; e.target.hidden = true; $('#token').focus(); return; }
-  await invoke('sign_in_browser', { hub: $('#hub_url').value });
-  setMsg($('#hub-msg'), 'Sign in in the dashboard window. This page updates when you are in.');
-}));
-$('#signin-password-toggle').addEventListener('click', () => {
-  $('#password-form').hidden = !$('#password-form').hidden;
-  if (!$('#password-form').hidden) $('#password').focus();
-});
-$('#password-form').addEventListener('submit', e => {
-  e.preventDefault();
-  const btn = e.target.querySelector('button');
-  run(btn, $('#hub-msg'), async () => {
-    setMsg($('#hub-msg'), 'Signing in…');
-    fill(await invoke('sign_in_password', { hub: $('#hub_url').value, username: $('#username').value, password: $('#password').value }));
-    $('#password').value = '';
-    $('#password-form').hidden = true;
-    setMsg($('#hub-msg'), 'Signed in.', 'ok');
-  });
+$('#signin-window').addEventListener('click', e => {
+  $('#token-form').hidden = false; e.target.hidden = true; $('#token').focus();
 });
 $('#token-form').addEventListener('submit', e => {
   e.preventDefault();
@@ -149,17 +120,14 @@ $('#signout').addEventListener('click', e => run(e.target, $('#hub-msg'), async 
   setMsg($('#hub-msg'), 'Signed out.');
 }));
 $('#try-ask').addEventListener('click', () => invoke('show_window', { name: 'overlay' }));
-$('#clear-token').addEventListener('click', e => run(e.target, $('#save-msg'), async () => fill(await invoke('save_secrets', { agentToken: '' }))));
 $('#test-notify').addEventListener('click', () => invoke('test_notification'));
 $('#worker-start').addEventListener('click', e => run(e.target, $('#save-msg'), async () => fill(await invoke('worker_action', { action: 'start' }))));
 $('#worker-stop').addEventListener('click', e => run(e.target, $('#save-msg'), async () => fill(await invoke('worker_action', { action: 'stop' }))));
 $('#worker-add').addEventListener('click', e => run(e.target, $('#save-msg'), async () => {
-  if (S.settings.hub_version !== '0.5') return invoke('open_dashboard_cmd', { path: '/#install' });
   setMsg($('#save-msg'), 'Adding this computer to your hub…');
   fill(await invoke('worker_add'));
   setMsg($('#save-msg'), 'Added. Its worker is running.', 'ok');
 }));
-$('#open-install').addEventListener('click', () => invoke('show_window', { name: 'install' }));
 $('#update-get').addEventListener('click', e => run(e.target, $('#save-msg'), () => invoke('open_update')));
 
 listen('state-changed', refresh);
