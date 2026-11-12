@@ -45,7 +45,8 @@ class Refused(Exception):
 
 
 class Worker:
-    def __init__(self, state_dir, hub_url, connect, name=None, caps=None, macs=None, knock_every=5.0):
+    def __init__(self, state_dir, hub_url, connect, name=None, caps=None, macs=None, knock_every=5.0,
+                 token=None):
         self.state_dir = pathlib.Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.hub_url = hub_url.rstrip("/")
@@ -54,6 +55,7 @@ class Worker:
         self.caps = dict(caps or {})
         self.macs = own_macs() if macs is None else macs
         self.knock_every = knock_every
+        self.token = token  # a join token: approved at once, no pending step (R3)
         self.signing_key = self._load_key()
         self.key = self.signing_key.verify_key.encode().hex()
         path = self.state_dir / "identity.json"
@@ -100,8 +102,11 @@ class Worker:
     # ---------------------------------------------------------------- knock
 
     async def _knock_until_approved(self):
-        knock = encode({"type": "knock", "protocol": PROTOCOL, "name": self.name, "key": self.key,
-                        "macs": self.macs, "caps": self._cap_list()})
+        knock = {"type": "knock", "protocol": PROTOCOL, "name": self.name, "key": self.key,
+                 "macs": self.macs, "caps": self._cap_list()}
+        if self.token is not None:
+            knock["token"] = self.token
+        knock = encode(knock)
         while True:
             reply = await asyncio.to_thread(self._post, knock)
             if reply["type"] == "error":
