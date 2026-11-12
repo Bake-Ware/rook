@@ -1,6 +1,6 @@
 # Rook Core Plan
 
-Decided with Bake, 12 November 2026. LOCKED 12 November 2026. Core only. Agents and Workbench are separate plans built on top once core is tested. Claude (the voice session that wrote this) reviews every PR against this document; coding agents build, they do not decide.
+Decided with Bake, 12 November 2026. LOCKED 12 November 2026. Amended 12 November 2026 by Bake: Telesthete is updated additively to accommodate this design, the Rook hub implements the Telesthete relay as its base, and user login is by password for now. Core only. Agents and Workbench are separate plans built on top once core is tested. Claude (the voice session that wrote this) reviews every PR against this document; coding agents build, they do not decide.
 
 ## Build rules
 
@@ -15,11 +15,11 @@ Decided with Bake, 12 November 2026. LOCKED 12 November 2026. Core only. Agents 
 
 - Telesthete is the vendor spec Rook lives on. It owns framing, encryption, sessions, transport modes (UDP, WebSocket fallback), discovery, NAT traversal and relay.
 - Rook owns workers, caps, calls, streams, bands and access.
-- Rook pins a Telesthete version and uses only its public surface. Nothing in this plan adds to the Telesthete spec. Keys: Telesthete authenticates frames with a key the application supplies; Rook decides which keys are accepted.
+- Rook pins a Telesthete version and uses only its public surface. Telesthete is updated, additively only, to accommodate this design; this design is the reason both projects exist. Existing Telesthete behaviour does not change. Keys: Telesthete authenticates frames with a key the application supplies; Rook decides which keys are accepted.
 
 ## Topology
 
-- Hub and spoke only. Every worker holds one connection to its hub; calls route through the hub.
+- Hub and spoke only. Every worker holds one connection to its hub; calls route through the hub. The Rook hub implements the Telesthete relay as its base.
 - Uptime is the host's problem. A free Oracle VM is the recommended path in the setup docs.
 - Peer to peer is a Telesthete capability, not Rook architecture. Rook may use it later for heavy streams with the hub as introducer.
 - Hubs have names. The whole system is "the hub".
@@ -98,7 +98,7 @@ Decided with Bake, 12 November 2026. LOCKED 12 November 2026. Core only. Agents 
 - **T1.** One token mechanism, JWT, for everything: agent MCP access, unattended joins, dongle provisioning, app devices.
 - **T2.** Purpose, expiry and scope are claims. A token may carry several scopes (a desktop app is worker and client at once). Defaults are set by the hub owner, not by agents: agent tokens long-lived and revocable; join tokens minutes and one use; dongle tokens tied to the device.
 - **T3.** Humans never type tokens. Humans approve; agents and devices carry tokens. The one exception is copying the first MCP token from the hub page.
-- **T4.** Two front doors: user login for humans, token for everything else. Nothing else authenticates.
+- **T4.** Two front doors: user login for humans, token for everything else. Nothing else authenticates. User login is by password for now.
 - **T5.** Every token is owned by a user. A user mints directly; an agent mints under the user who owns the agent's own token, so ownership always chains back to a person. Revoking a user revokes every token in that chain.
 - **T6.** The Auth page shows users, and tokens with scope, owner and last-used.
 
