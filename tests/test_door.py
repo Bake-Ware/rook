@@ -123,7 +123,8 @@ async def scenario(tmp_path):
                 "schema": {"type": "object", "properties": {"text": {"type": "string"}}}}]}]}
             failed, hub_caps = await tool(session, "caps", worker="hub")
             assert [c["name"] for c in hub_caps["caps"][0]["caps"]] == [
-                "worker.approve", "worker.attach", "worker.join-token"]
+                "worker.approve", "worker.attach", "worker.join-token",
+                "job.create", "job.list", "job.pause", "job.unpause", "job.delete", "event.emit"]
             failed, matched = await tool(session, "caps", match="join")
             assert [(g["worker"], [c["name"] for c in g["caps"]]) for g in matched["caps"]] == [
                 ("hub", ["worker.join-token"]), (moniker, [])]
@@ -158,7 +159,9 @@ async def scenario(tmp_path):
             assert (alice["moniker"], agent_moniker, "hub", "approve the new lab box") in whys
             failed, by_worker = await tool(session, "journal", worker=moniker)
             assert {e["worker"] for e in by_worker["entries"]} == {moniker}
-            assert [(e["kind"], e["why"]) for e in by_worker["entries"]] == [
+            assert ("event", "worker.online") in [(e["kind"], e["result"].get("event"))
+                                                  for e in by_worker["entries"]]          # its coming online
+            assert [(e["kind"], e["why"]) for e in by_worker["entries"] if e["kind"] != "event"] == [
                 ("call", "try a cap it does not have"), ("call", "check the echo cap answers"),
                 ("auth", None)]                                  # its approval
             failed, by_word = await tool(session, "journal", text="ECHO CAP")

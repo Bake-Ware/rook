@@ -1,11 +1,13 @@
 """Caps the hub itself serves, called like any worker's caps with worker `hub`.
 
 Only what the plan requires an agent to be able to do: approve a knocking
-worker (R2), attach a knock to a known identity (W7) and mint a join token (R3).
+worker (R2), attach a knock to a known identity (W7), mint a join token (R3),
+and manage jobs and emit events (J7, J2; defined in jobs.py).
 """
 
 import datetime
 
+from . import jobs
 from .errors import HubError
 
 HUB = "hub"  # the worker name that addresses the hub's own caps
@@ -63,6 +65,9 @@ CAPS = {
         "schema": {"type": "object", "additionalProperties": False, "properties": {}},
     }),
 }
+
+
+CAPS.update(jobs.CAPS)  # create, list, pause, un-pause and delete jobs; emit an event (J7, J2)
 
 
 def descriptors():
