@@ -69,8 +69,9 @@ Every field is optional; a device fills what it can. Sizes are objects `{"total"
 | `key` | string | yes | The public half of the keypair the worker generated: an Ed25519 public key, 64 lowercase hex characters (R5). |
 | `macs` | list of string | yes | The worker's own MAC addresses, used to recognise a known identity (W7). May be empty. |
 | `caps` | list of cap | yes | The caps it offers, shown read-only before approval (R4). |
+| `token` | string | no | A join token (a JWT the hub minted with the `join` scope). A good one approves the knock at once, with no pending step, and the worker's owner is the user the token belongs to (R3, W6). Added in v1 as an optional field (U8). |
 
-A worker that has not been approved repeats the same knock, with the same key, until the reply says `approved`.
+A worker that has not been approved repeats the same knock, with the same key, until the reply says `approved`. A join token is spent by its first use; the repeats that follow are answered from the approved key, not the token.
 
 ### `knock_reply`: hub to worker, the HTTPS response (R2, R5, W7)
 
@@ -85,7 +86,7 @@ A worker that has not been approved repeats the same knock, with the same key, u
 
 The signed bytes are the ASCII text `rook-worker-key:` followed by the 32 raw key bytes. Before keeping anything, the worker verifies `signature` with `hub_key`; if it does not verify, the worker keeps nothing. It then stores `guid`, `moniker`, `signature` and `hub_key` in its state with its key (W7, U2). The hub key is what it will later check signed builds with (U9).
 
-A knock with a revoked key, or one that is not valid, gets an `error` instead.
+A knock with a revoked key, one that is not valid, or one whose token is refused gets an `error` instead, and nothing is approved or left pending.
 
 ### `heartbeat`: worker to hub (H1, H4, S4)
 
@@ -148,6 +149,11 @@ The hub hands the same message back to whoever made the call. Codes in use:
 | `unknown_key` | hub | The key was never approved or attached. |
 | `key_revoked` | hub | The key was revoked, for example by a rekey (W7). |
 | `bad_message` | either | The message could not be decoded or validated. |
+| `token_invalid` | hub | The knock's token is not one this hub minted. |
+| `token_expired` | hub | The knock's token is past its lifetime. |
+| `token_spent` | hub | The knock's join token was already used. |
+| `token_revoked` | hub | The knock's token, or its user, was revoked. |
+| `token_scope` | hub | The knock's token is not a join token. |
 
 New codes may be added without a version change; receivers treat an unknown code like any other error.
 

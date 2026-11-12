@@ -146,6 +146,7 @@ MESSAGES = {
         "key": (_key, REQ),
         "macs": (_list_of(_string), REQ),
         "caps": (_list_of(CAP), REQ),
+        "token": (_string, OPT),
     },
     # Hub -> worker, the HTTPS reply to a knock (R2, R5, W7).
     "knock_reply": {
