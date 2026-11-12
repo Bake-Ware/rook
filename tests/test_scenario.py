@@ -41,6 +41,7 @@ async def lifecycle(tmp_path):
     hub = Hub(tmp_path / "hub", clock=clock)
     host, port = hub.serve_knocks("127.0.0.1", 0)
     connect = connector(hub)
+    bake = hub.auth.create_user("Bake")["guid"]
 
     def worker(state):
         return Worker(tmp_path / state, f"http://{host}:{port}", connect, name="test-box",
@@ -62,11 +63,11 @@ async def lifecycle(tmp_path):
 
         # 2. Approval mints GUID and moniker, records the owner, signs the key;
         #    the worker persists its identity (W6, W7, G1, R5, U2).
-        record = hub.approve("bake", first.key)
+        record = hub.approve(first.key, user=bake)
         guid, moniker = record["guid"], record["moniker"]
         assert str(uuid.UUID(guid)) == guid
         assert len(moniker.split("-")) == 3
-        assert record["owner"] == "bake"
+        assert record["owner"] == bake
         assert hub.list_pending() == []
         await eventually(lambda: first.identity)
         assert first.identity["guid"] == guid and first.identity["moniker"] == moniker
@@ -75,7 +76,7 @@ async def lifecycle(tmp_path):
         assert stored["hub_key"] == hub.public_key   # the worker verified the signature with it
         assert hub.get_worker(moniker)["guid"] == guid  # either ID is accepted (G1)
         [entry] = journal(hub)                     # approval is journaled (L1)
-        assert (entry["kind"], entry["actor"], entry["worker"]) == ("auth", "bake", guid)
+        assert (entry["kind"], entry["user"], entry["token"], entry["worker"]) == ("auth", bake, None, guid)
         assert json.loads(entry["result"]) == {"approved": first.key}
 
         # 3. The worker heartbeats its full state; the hub stores it, replies
@@ -98,22 +99,22 @@ async def lifecycle(tmp_path):
 
         # 4. Calls go through the hub; failures say what to try next; every
         #    call is journaled (C3, W5, L1).
-        reply = await hub.call("bake", moniker, "demo.echo", {"text": "hi"}, "check the echo")
+        reply = await hub.call(moniker, "demo.echo", {"text": "hi"}, "check the echo", user=bake)
         assert reply["type"] == "result" and reply["result"] == {"text": "hi"}
 
-        reply = await hub.call("bake", guid, "video.capture", {}, "try a cap it lacks")
+        reply = await hub.call(guid, "video.capture", {}, "try a cap it lacks", user=bake)
         assert reply["type"] == "error" and reply["code"] == "unknown_cap" and reply["next"]
-        reply = await hub.call("bake", guid, "demo.fail", {}, "see a worker-side failure")
+        reply = await hub.call(guid, "demo.fail", {}, "see a worker-side failure", user=bake)
         assert reply["code"] == "cap_failed" and "no such file" in reply["message"] and reply["next"]
-        reply = await hub.call("bake", "no-such-worker", "demo.echo", {}, "try a worker that does not exist")
+        reply = await hub.call("no-such-worker", "demo.echo", {}, "try a worker that does not exist", user=bake)
         assert reply["code"] == "unknown_worker" and reply["next"]
 
         rows = [r for r in journal(hub) if r["kind"] == "call"]
-        assert [(r["actor"], r["worker"], r["cap"], r["why"]) for r in rows] == [
-            ("bake", guid, "demo.echo", "check the echo"),
-            ("bake", guid, "video.capture", "try a cap it lacks"),
-            ("bake", guid, "demo.fail", "see a worker-side failure"),
-            ("bake", None, "demo.echo", "try a worker that does not exist"),
+        assert [(r["user"], r["token"], r["worker"], r["cap"], r["why"]) for r in rows] == [
+            (bake, None, guid, "demo.echo", "check the echo"),
+            (bake, None, guid, "video.capture", "try a cap it lacks"),
+            (bake, None, guid, "demo.fail", "see a worker-side failure"),
+            (bake, None, None, "demo.echo", "try a worker that does not exist"),
         ]
         assert json.loads(rows[0]["result"])["result"] == {"text": "hi"}
         assert json.loads(rows[1]["result"])["code"] == "unknown_cap"
@@ -128,7 +129,7 @@ async def lifecycle(tmp_path):
         record = hub.get_worker(guid)
         assert not record["online"]
         assert [c["name"] for c in record["caps"]] == ["demo.echo", "demo.fail"]
-        reply = await hub.call("bake", guid, "demo.echo", {}, "call it while offline")
+        reply = await hub.call(guid, "demo.echo", {}, "call it while offline", user=bake)
         assert reply["code"] == "worker_offline" and reply["next"]
 
         # 6. It restarts from its state directory as the same identity, with no
@@ -139,7 +140,7 @@ async def lifecycle(tmp_path):
         await eventually(lambda: hub.get_worker(guid)["online"])
         assert hub.list_pending() == []
         assert [w["guid"] for w in hub.list_workers()] == [guid]
-        reply = await hub.call("bake", guid, "demo.echo", {"n": 1}, "call after restart")
+        reply = await hub.call(guid, "demo.echo", {"n": 1}, "call after restart", user=bake)
         assert reply["result"] == {"n": 1}
         again.stop()
         await running
@@ -147,6 +148,8 @@ async def lifecycle(tmp_path):
         # 7. A worker that lost its key knocks fresh under the same name; the hub
         #    flags a likely rekey. Attaching is an explicit call. The old key is
         #    refused afterwards; owner and journal history stay (W7).
+        sam = hub.auth.create_user("Sam")["guid"]      # someone other than the owner attaches
+        sam_agent = hub.auth.mint("agent", user=sam)
         history = journal(hub)
         fresh = worker("lost-key")
         assert fresh.key != first.key
@@ -159,16 +162,17 @@ async def lifecycle(tmp_path):
         assert hub.list_pending()[0]["key"] == fresh.key   # never attached on its own
         assert fresh.identity is None
 
-        record = hub.attach("claude", fresh.key, moniker)
-        assert record["guid"] == guid and record["owner"] == "bake"
+        record = hub.attach(fresh.key, moniker, token=sam_agent)
+        assert record["guid"] == guid and record["owner"] == bake
         await eventually(lambda: fresh.identity)
         assert fresh.identity["guid"] == guid and fresh.identity["moniker"] == moniker
         await eventually(lambda: hub.get_worker(guid)["online"])
-        reply = await hub.call("bake", guid, "demo.echo", {"n": 2}, "call with the new key")
+        reply = await hub.call(guid, "demo.echo", {"n": 2}, "call with the new key", user=bake)
         assert reply["result"] == {"n": 2}
         assert journal(hub)[:len(history)] == history
         entry = journal(hub)[len(history)]       # attaching is journaled with what it revoked (L1)
-        assert (entry["kind"], entry["actor"], entry["worker"]) == ("auth", "claude", guid)
+        assert (entry["kind"], entry["user"], entry["token"], entry["worker"]) == (
+            "auth", sam, hub.auth.verify(sam_agent)["guid"], guid)
         assert json.loads(entry["result"]) == {"attached": fresh.key, "revoked": [first.key]}
 
         keys = hub.seen(guid)["keys"]
