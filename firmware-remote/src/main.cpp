@@ -14,6 +14,7 @@
 #include <deque>
 #include <esp_wifi.h>
 #include <time.h>
+#include "bt.h"
 #include "buttons.h"
 #include "rc_sig.h"
 #include "rc_worker.h"
@@ -22,7 +23,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.2.5"
+#define FW_VERSION "0.3.0"
 static const int PIN_SDA = 5, PIN_SCL = 6;
 static const uint8_t PCF_ADDR = 0x20, OLED_ADDR = 0x3C;
 
@@ -41,6 +42,8 @@ static volatile Mode mode = REMOTE;
 static uint32_t menu_until = 0;             // the menu closes itself when left alone
 static bool swallow = false;                // drop the release of the press that left the game
 static const uint32_t MENU_IDLE_MS = 20000;
+static uint32_t seq_all = 0;                // one count over the handheld's buttons and a paired remote's keys
+static const char* const BT_PAIR_TEXT = "BT\npair:\n\nput\nthe\nother\nremote\nin\npair\nmode";
 
 static void logf(const char* fmt, ...) {
     char b[200];
@@ -61,6 +64,8 @@ static bool is_name(const std::string& n, std::initializer_list<const char*> set
 static void open_menu() {
     std::vector<std::string> items = settings::targets();
     items.push_back("Tetris");
+    items.push_back("Pair BT");
+    if (bt::saved()) items.push_back("Forget BT");
     ui::menu_begin("MENU", items, settings::target());
     menu_until = millis() + MENU_IDLE_MS;
     mode = MENU;
@@ -73,19 +78,31 @@ static void menu_pick(int i) {
         settings::set_target(i);
         mode = REMOTE;
         ui::flash(ts[i]);
-    } else {
+    } else if (i == (int)ts.size()) {
         tetris::start(millis());
         ui::game(true);
         mode = GAME;
+    } else if (i == (int)ts.size() + 1) {
+        mode = REMOTE;
+        bt::pair();
+        ui::text(BT_PAIR_TEXT, 35);
+    } else {
+        mode = REMOTE;
+        bt::forget();
+        ui::flash("BT\ngone");
     }
 }
 
-static void on_button(const ButtonEvent& e) {
+// A press: one of the handheld's buttons, or (index -1, lines "bt") a key of
+// the Bluetooth remote paired to it. Both do the same things.
+static void on_button(const ButtonEvent& ev) {
+    ButtonEvent e = ev;
+    e.seq = ++seq_all;
     xSemaphoreTake(ev_mu, portMAX_DELAY);
     recent.push_back(e);
     while (recent.size() > 16) recent.pop_front();
     xSemaphoreGive(ev_mu);
-    logf("button %s (%d, %s) %s %ums", e.name.c_str(), e.index, buttons::pair(e.index).c_str(), e.action, (unsigned)e.held_ms);
+    logf("button %s (%d, %s) %s %ums", e.name.c_str(), e.index, e.lines.c_str(), e.action, (unsigned)e.held_ms);
     if (buttons::identify()) {
         ui::big(e.lines);
         return;
@@ -114,7 +131,7 @@ static void on_button(const ButtonEvent& e) {
     }
     if (buttons::learning()) {
         char b[24];
-        snprintf(b, sizeof b, "%s = %s", e.name.c_str(), buttons::pair(e.index).c_str());
+        snprintf(b, sizeof b, "%s = %s", e.name.c_str(), e.lines.c_str());
         ui::flash(b);
     } else {
         ui::flash(e.name + (strcmp(e.action, "long") ? "" : " (hold)"));
@@ -126,16 +143,27 @@ static void on_button(const ButtonEvent& e) {
         p["index"] = e.index;
         p["held_ms"] = e.held_ms;
         if (!settings::target_name().empty()) p["target"] = settings::target_name();
+        if (e.index < 0) p["source"] = "bt";
         worker.emit("remote.button", p.as<JsonObjectConst>());
     }
 }
 
 // ---- caps -------------------------------------------------------------------
 
+static void fill_bt(JsonObject o) {
+    o["state"] = bt::state();
+    if (bt::saved()) {
+        o["name"] = bt::name();
+        o["address"] = bt::address();
+    }
+    if (!bt::last_report().empty()) o["last_report"] = bt::last_report();
+}
+
 static void fill_state(JsonObject r) {
     r["name"] = settings::name();
     r["version"] = FW_VERSION;
     r["mode"] = mode == GAME ? "game" : mode == MENU ? "menu" : "remote";
+    fill_bt(r["bt"].to<JsonObject>());
     r["target"] = settings::target_name();
     JsonArray tg = r["targets"].to<JsonArray>();
     for (auto& t : settings::targets()) tg.add(t);
@@ -233,6 +261,18 @@ static bool cap_wait(JsonObjectConst a, JsonObject r, std::string&) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
     r["timeout"] = true;
+    return true;
+}
+
+static bool cap_bt(JsonObjectConst a, JsonObject r, std::string&) {
+    std::string action = a["action"] | "status";
+    if (action == "pair") {
+        bt::pair();
+        ui::text(BT_PAIR_TEXT, 35);
+    } else if (action == "forget") {
+        bt::forget();
+    }
+    fill_bt(r);
     return true;
 }
 
@@ -363,6 +403,14 @@ static void handle_line(const std::string& line) {
         settings::set_rotation(in["turns"] | 3);
         ui::set_rotation(settings::rotation());
         out["turns"] = settings::rotation();
+    } else if (cmd == "bt" || cmd == "bt.pair" || cmd == "bt.forget") {
+        if (cmd == "bt.pair") {
+            bt::pair();
+            ui::text(BT_PAIR_TEXT, 35);
+        } else if (cmd == "bt.forget") {
+            bt::forget();
+        }
+        fill_bt(out["bt"].to<JsonObject>());
     } else if (cmd == "reboot") {
         reply(out);
         delay(200);
@@ -375,7 +423,7 @@ static void handle_line(const std::string& line) {
         ESP.restart();
     } else {
         out["ok"] = false;
-        out["error"] = "commands: status key wifi wifi.clear scan name enroll unenroll show names identify layout.set layout.reset targets rotate reboot factory";
+        out["error"] = "commands: status key wifi wifi.clear scan name enroll unenroll show names identify layout.set layout.reset targets rotate bt bt.pair bt.forget reboot factory";
     }
     reply(out);
 }
@@ -551,6 +599,7 @@ void setup() {
             worker.on("remote.map", cap_map);
             worker.on("remote.ask", cap_ask, true);
             worker.on("remote.wait", cap_wait, true);
+            worker.on("remote.bt", cap_bt);
             worker_on = true;
         } else {
             logf("enrollment is unusable (hub root key or manifest); enroll again");
@@ -558,6 +607,7 @@ void setup() {
     }
     xTaskCreatePinnedToCore(rook_task, "rook", 16384, nullptr, 1, nullptr, 1);
     xTaskCreatePinnedToCore(wifi_task, "wifi", 4096, nullptr, 1, nullptr, 0);
+    bt::begin([](const char* m) { logf("%s", m); });
     logf("Rook remote %s ready; worker %s", FW_VERSION, worker_on ? "on" : "off (not enrolled)");
 }
 
@@ -585,6 +635,21 @@ void loop() {
             }
         }
     }
+    // The paired Bluetooth remote's keys, and what became of it.
+    std::string bt_key;
+    while (bt::next_key(bt_key)) {
+        ButtonEvent e{0, -1, bt_key, "bt", "press", 0, ms};
+        on_button(e);
+    }
+    static std::string bt_was = "off";
+    std::string bt_now = bt::state();
+    if (bt_now != bt_was) {
+        if (bt_was == "pairing") ui::text("", 0);
+        if (bt_now == "connected") ui::flash("BT on\n" + bt::name());
+        else if (bt_was == "pairing" && bt_now != "pairing") ui::flash("BT:\nnone\nfound");
+        else if (bt_was == "connected") ui::flash("BT\nsleep");
+        bt_was = bt_now;
+    }
     if (mode == MENU && (int32_t)(ms - menu_until) >= 0) {
         ui::menu_end();
         mode = REMOTE;
@@ -599,7 +664,7 @@ void loop() {
         else if (!worker.clock_ok()) s0 = "clock";
         else s0 = worker.hub_ok() ? "band" : "hub?";
         ui::status_line(0, s0);
-        ui::status_line(1, "TV:");
+        ui::status_line(1, bt::state() == "connected" ? "TV: B" : "TV:");
         ui::status_line(2, settings::target_name());
         if (buttons::learning()) {
             char b[24];

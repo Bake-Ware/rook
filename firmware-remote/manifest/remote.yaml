@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.2.0
+version: 0.3.0
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -44,6 +44,13 @@ caps:
       timeout: { type: int, default: 30, min: 1, max: 600, doc: Seconds to wait. }
       buttons: { type: list, items: { type: str } }
     result: { type: map }
+  bt:
+    doc: The Bluetooth remote paired to this one (most Android TV remotes). Its keys arrive as remote.button events too, with source bt; a key that means what one of this remote's buttons means has that button's name, any other is bt_c<usage> or bt_k<code>. action pair looks for a remote in pairing mode for 30 seconds and bonds with it; forget drops it; blank answers its state (off, idle, pairing, waiting, connected), name and last raw report.
+    risk: write
+    scope: local
+    args:
+      action: { type: str, enum: [status, pair, forget], default: status }
+    result: { type: map }
   map:
     doc: Name the buttons and the devices. names lists one name per button, in the order remote.state lists them; blank keeps the current names. targets lists the devices the remote's own menu offers (its input button opens it); the one picked there rides every remote.button event as target.
     risk: write
@@ -63,3 +70,4 @@ emits:
       index: { type: int, doc: The button's position in remote.state. }
       held_ms: { type: int }
       target: { type: str, doc: The device picked in the remote's menu (an appliance's name). }
+      source: { type: str, doc: "bt when the key was pressed on the Bluetooth remote paired to this one." }
