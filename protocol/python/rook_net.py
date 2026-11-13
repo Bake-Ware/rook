@@ -14,6 +14,7 @@ import base64
 import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # straight to the address, no proxy
@@ -36,7 +37,12 @@ def _incoming(data, name):
 
 
 def http(args):
-    """One HTTP request: {status, headers, body or body_base64}. An HTTP error status is an answer, not a failure."""
+    """One HTTP request: {status, headers, body or body_base64}. An HTTP error status is an answer, not a failure.
+    Only http and https: this is an HTTP request, never a way to read files (D3)."""
+    scheme = urllib.parse.urlsplit(args["url"]).scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"net.http makes HTTP requests only: the url must start with http:// or https://, "
+                         f"not {scheme or 'no scheme'}")
     request = urllib.request.Request(args["url"], data=_outgoing(args, "body"), method=args.get("method", "GET"),
                                      headers=args.get("headers") or {})
     try:
@@ -49,11 +55,14 @@ def http(args):
 
 
 def tcp(args):
-    """Connect, send, and return what comes back until the other end closes or `wait` seconds pass."""
+    """Connect, send, and return what comes back until the other end closes or `wait` seconds pass.
+    With `wait` 0 it sends and returns at once, reading nothing: {data: null}."""
     deadline = time.monotonic() + args["wait"]
     received = b""
-    with socket.create_connection((args["host"], args["port"]), timeout=args["wait"]) as sock:
+    with socket.create_connection((args["host"], args["port"]), timeout=args["wait"] or None) as sock:
         sock.sendall(_outgoing(args, "data") or b"")
+        if args["wait"] <= 0:
+            return {"data": None}
         while (left := deadline - time.monotonic()) > 0:
             sock.settimeout(left)
             try:
@@ -88,13 +97,13 @@ _HOST = {"type": "string", "description": "Host name or IP address."}
 _PORT = {"type": "integer", "minimum": 1, "maximum": 65535}
 
 CAPS = {
-    "net.http": (http, "Make one HTTP request and return its status, headers and body.", {
+    "net.http": (http, "Make one HTTP or HTTPS request and return its status, headers and body.", {
         "type": "object", "required": ["url"], "additionalProperties": False, "properties": {
             "url": {"type": "string"}, "method": {"type": "string", "description": "GET unless given."},
             "headers": {"type": "object", "additionalProperties": {"type": "string"}},
             "body": _TEXT, "body_base64": _BYTES,
             "wait": dict(_WAIT, description="Seconds to wait for the server; no limit unless given.")}}),
-    "net.tcp": (tcp, "Open a TCP connection, send data, and return what comes back within wait seconds.", {
+    "net.tcp": (tcp, "Open a TCP connection, send data, and return what comes back within wait seconds (0: send only).", {
         "type": "object", "required": ["host", "port", "wait"], "additionalProperties": False, "properties": {
             "host": _HOST, "port": _PORT, "data": _TEXT, "data_base64": _BYTES, "wait": _WAIT}}),
     "net.udp": (udp, "Send one UDP datagram and return the first reply within wait seconds (or none).", {
