@@ -1,7 +1,9 @@
-/* The Workers page (P4, P7, B2, B5, R2, R4, W6): workers grouped by band, with a
-   group for roaming ones; the stats strip; pending approvals; unrecognised
-   networks; band rename; a worker expanded to its facts, health, caps and open
-   streams. It asks the hub again every few seconds, so it stays up to date. */
+/* The Workers page (P4, P7, B2, B5, R2, R4, W6, D1, D4, D6, D8): workers and devices
+   grouped by band, with a group for roaming ones; a filter for workers, devices or
+   both; the stats strip; pending approvals; unrecognised networks; band rename; a
+   worker expanded to its facts, health, caps, open streams, the devices pinned to
+   it and whether it serves devices; a device expanded to its driver, route, latest
+   status and caps. It asks the hub again every few seconds, so it stays up to date. */
 import { api, toast, viewHref, showView } from '/site/shell.js';
 
 const REFRESH_MS = 5000;
@@ -19,23 +21,28 @@ export default {
     const view = new URLSearchParams(location.search);
     return {
       data: null, error: '', q: view.get('q') || '', only: view.get('worker') || '', open: {},
+      show: ['workers', 'devices'].includes(view.get('show')) ? view.get('show') : 'all',
       renaming: {}, rename: {}, newBand: {}, addTo: {}, timer: null,
     };
   },
   computed: {
-    view() { return { q: this.q, worker: this.only }; },
+    view() { return { q: this.q, worker: this.only, show: this.show === 'all' ? '' : this.show }; },
     href() { return viewHref('/workers', this.view); },
     onlyName() {
-      const w = this.allWorkers.find(x => x.moniker === this.only);
+      const w = [...this.allWorkers, ...this.allDevices].find(x => x.moniker === this.only);
       return w ? w.name : this.only;
     },
-    pinLabel() { return this.only ? 'Workers: ' + this.onlyName : this.q ? 'Workers: ' + this.q : 'Workers'; },
+    pinLabel() {
+      if (this.only) return 'Workers: ' + this.onlyName;
+      return 'Workers' + (this.show !== 'all' || this.q ? ': ' : '') + [this.show !== 'all' ? this.show : '', this.q].filter(Boolean).join(' · ');
+    },
     allWorkers() { return this.data ? this.data.groups.flatMap(g => g.workers) : []; },
+    allDevices() { return this.data ? this.data.groups.flatMap(g => g.devices) : []; },
     groups() {
       if (!this.data) return [];
       return this.data.groups
-        .map(g => ({ ...g, shown: g.workers.filter(this.match) }))
-        .filter(g => g.shown.length || (g.band && !this.only && !this.q));
+        .map(g => ({ ...g, shown: this.rows(g) }))
+        .filter(g => g.shown.length || (g.band && !this.only && !this.q && this.show === 'all'));
     },
     bands() { return this.data ? this.data.groups.filter(g => g.band).map(g => g.band) : []; },
   },
@@ -55,9 +62,38 @@ export default {
       if (this.only) return w.moniker === this.only;
       const q = this.q.trim().toLowerCase();
       if (!q) return true;
-      return [w.name, w.moniker, w.owner.name, w.owner.moniker, ...w.caps.map(c => c.name)]
+      return [w.name, w.moniker, w.owner.name, w.owner.moniker, w.driver, ...w.caps.map(c => c.name)]
         .some(s => (s || '').toLowerCase().includes(q));
     },
+    /* A band's rows: each worker followed by the devices pinned to it, then its other devices (P4). */
+    rows(g) {
+      const workers = this.show === 'devices' ? [] : g.workers.filter(this.match);
+      const devices = this.show === 'workers' ? [] : g.devices.filter(this.match);
+      const out = [];
+      for (const w of workers) {
+        out.push({ w, child: false });
+        devices.filter(d => d.route.via === w.moniker).forEach(d => out.push({ w: d, child: true }));
+      }
+      devices.filter(d => !out.some(r => r.w === d)).forEach(d => out.push({ w: d, child: false }));
+      return out;
+    },
+    count(show) {
+      return (show === 'devices' ? 0 : this.allWorkers.length) + (show === 'workers' ? 0 : this.allDevices.length);
+    },
+    pinnedTo(w) { return this.allDevices.filter(d => d.route.via === w.moniker); },
+    route(d) { return d.route.kind === 'pinned' ? 'via ' + this.nameOf(d.route.via) : d.route.kind; },
+    nameOf(moniker) { const w = this.allWorkers.find(x => x.moniker === moniker); return w ? w.name : moniker; },
+    reach(d) { return d.reachable === null ? 'not polled yet' : d.reachable ? 'reachable' : 'unreachable'; },
+    serve(w, serves) {
+      return this.act(() => api('POST', `/api/workers/${w.moniker}/serves-devices`, { serves }),
+        serves ? w.name + ' serves devices again' : w.name + ' no longer serves devices');
+    },
+    status(s) {
+      if (s === null || typeof s !== 'object' || Array.isArray(s)) return null;
+      const pairs = Object.entries(s);
+      return pairs.every(([, v]) => v === null || typeof v !== 'object') ? pairs.map(([k, v]) => [k, String(v)]) : null;
+    },
+    json(value) { return JSON.stringify(value, null, 2); },
     toggle(moniker) { this.open[moniker] = !this.open[moniker]; },
     async act(request, done) {
       try { await request(); toast(done); await this.load(); } catch (e) { toast(e.message); }
@@ -79,7 +115,7 @@ export default {
       if (!band) { toast('Choose a band to add it to.'); return; }
       return this.act(() => api('POST', `/api/bands/${band}/gateways`, { gateway_mac: gw.gateway_mac }), 'Added to the band');
     },
-    rowMenu(w) { return [{ label: 'Pin this worker', pin: { label: 'Workers: ' + w.name, href: viewHref('/workers', { worker: w.moniker }) } }]; },
+    rowMenu(w) { return [{ label: w.device ? 'Pin this device' : 'Pin this worker', pin: { label: 'Workers: ' + w.name, href: viewHref('/workers', { worker: w.moniker }) } }]; },
     ago(iso) {
       if (!iso) return 'never';
       const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
@@ -103,11 +139,14 @@ export default {
     <header class="topbar">
       <div>
         <div class="title-row"><h1>Workers</h1><pin-view :label="pinLabel" :href="href"></pin-view></div>
-        <p v-if="data">{{ data.stats.online }} online · {{ data.stats.pending }} pending · grouped by band</p>
+        <p v-if="data">{{ data.stats.online }} online · {{ data.stats.pending }} pending · {{ data.stats.devices }} devices · grouped by band</p>
       </div>
       <div class="spacer"></div>
       <div class="filter-row">
         <input class="mono" type="search" placeholder="filter by name, cap, owner…" v-model="q" style="width:220px" aria-label="Filter workers">
+        <div v-if="data" class="chips" role="group" aria-label="Show">
+          <button v-for="f in ['all', 'workers', 'devices']" :key="f" class="chip" type="button" :aria-pressed="show===f" @click="show=f">{{ f }} <span class="n">{{ count(f) }}</span></button>
+        </div>
       </div>
     </header>
 
@@ -117,9 +156,10 @@ export default {
       <section class="stats" aria-label="At a glance">
         <div class="tile mini online"><div class="k">{{ data.stats.online }}</div><div class="l">workers online</div></div>
         <div class="tile mini pend"><div class="k">{{ data.stats.pending }}</div><div class="l">pending</div></div>
+        <div class="tile mini dev"><div class="k">{{ data.stats.devices }}</div><div class="l">devices</div></div>
       </section>
 
-      <div v-if="only" class="one-banner">Showing one worker: <b>{{ onlyName }}</b><span style="flex:1"></span><button class="btn sm" type="button" @click="only=''">show all workers</button></div>
+      <div v-if="only" class="one-banner">Showing one: <b>{{ onlyName }}</b><span style="flex:1"></span><button class="btn sm" type="button" @click="only=''">show all workers</button></div>
 
       <section v-if="!only && data.pending.length" class="panel pending" aria-labelledby="pending-h">
         <div class="panel-head"><h2 id="pending-h">Pending</h2><span class="sub">workers asking to join this hub</span>
@@ -164,18 +204,42 @@ export default {
             @click="rename[g.band.moniker]=g.band.name; renaming[g.band.moniker]=true">✎ rename</button>
         </div>
         <div class="wcols wsite wlist-head" aria-hidden="true"><span></span><span></span><span>name · moniker</span><span>owner</span><span>last heartbeat</span><span></span></div>
-        <p v-if="!g.shown.length" class="note" style="margin:0;padding:10px 14px">No workers on this band right now.</p>
-        <template v-for="w in g.shown" :key="w.moniker">
-          <div class="wcols wsite wrow" :class="{open: open[w.moniker]}" @click="toggle(w.moniker)" role="button" tabindex="0"
+        <p v-if="!g.shown.length" class="note" style="margin:0;padding:10px 14px">Nothing on this band right now.</p>
+        <template v-for="{ w, child } in g.shown" :key="w.moniker">
+          <div v-if="w.device" class="wcols wsite wrow" :class="{open: open[w.moniker], child}" @click="toggle(w.moniker)" role="button" tabindex="0"
+               :aria-expanded="!!open[w.moniker]" @keydown.enter="toggle(w.moniker)">
+            <span class="caret">{{ open[w.moniker] ? '▾' : '▸' }}</span>
+            <span class="sdot" :class="{off: !w.reachable}" :title="reach(w)"></span>
+            <div class="wname"><span class="n">{{ w.name }} <span class="via">{{ route(w) }}</span><span class="badge plain">device · {{ w.driver }}</span><span v-if="w.reachable === false" class="badge bad">unreachable</span></span><span class="m">{{ w.moniker }}</span></div>
+            <span class="owner" :title="w.owner.moniker">{{ w.owner.name }}</span>
+            <span class="owner" :title="reach(w)">{{ w.polled_at ? 'polled ' + ago(w.polled_at) : 'not polled' }}</span>
+            <row-menu :items="rowMenu(w)"></row-menu>
+          </div>
+          <div v-if="w.device && open[w.moniker]" class="wdetail">
+            <div class="dblock"><h4>Device</h4>
+              <div class="kv"><span class="k">Driver</span><span class="v">{{ w.driver }}</span>
+                <span class="k">Route</span><span class="v">{{ w.route.kind }}<template v-if="w.route.via"> · through {{ nameOf(w.route.via) }} ({{ w.route.via }})</template></span>
+                <span class="k">Band</span><span class="v">{{ g.band ? g.band.name : 'none' }}</span>
+                <span class="k">Status poll</span><span class="v">{{ w.interval ? 'every ' + w.interval + ' s' : 'not polled' }}</span>
+                <span class="k">Last poll</span><span class="v">{{ w.polled_at ? ago(w.polled_at) + ' · ' + reach(w) : 'never' }}</span></div></div>
+            <div class="dblock"><h4>Status <span class="dim2">latest poll</span></h4>
+              <div v-if="status(w.status)" class="kv"><template v-for="[k, v] in status(w.status)" :key="k"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></template></div>
+              <pre v-else-if="w.status !== null" class="json">{{ json(w.status) }}</pre>
+              <p v-else class="note" style="margin:0">No status yet.</p></div>
+            <div class="dblock"><h4>Caps <span class="dim2">{{ w.caps.length }} from driver {{ w.driver }}</span></h4>
+              <div v-for="c in w.caps" :key="c.name" class="capline"><code>{{ c.name }}</code><span class="note">{{ c.description }}</span></div>
+              <p v-if="!w.caps.length" class="note" style="margin:0">No caps: no installed plugin declares driver {{ w.driver }}.</p></div>
+          </div>
+          <div v-if="!w.device" class="wcols wsite wrow" :class="{open: open[w.moniker]}" @click="toggle(w.moniker)" role="button" tabindex="0"
                :aria-expanded="!!open[w.moniker]" @keydown.enter="toggle(w.moniker)">
             <span class="caret">{{ open[w.moniker] ? '▾' : '▸' }}</span>
             <span class="sdot" :class="{off: !w.online}" :title="w.online ? 'online' : 'offline'"></span>
-            <div class="wname"><span class="n">{{ w.name }}<span v-if="!w.online" class="badge plain">offline</span></span><span class="m">{{ w.moniker }}</span></div>
+            <div class="wname"><span class="n">{{ w.name }}<span v-if="!w.online" class="badge plain">offline</span><span v-if="!w.serves_devices" class="badge plain" title="opted out of serving devices">no devices</span></span><span class="m">{{ w.moniker }}</span></div>
             <span class="owner" :title="w.owner.moniker">{{ w.owner.name }}</span>
             <span class="owner">{{ ago(w.last_heartbeat) }}</span>
             <row-menu :items="rowMenu(w)"></row-menu>
           </div>
-          <div v-if="open[w.moniker]" class="wdetail">
+          <div v-if="!w.device && open[w.moniker]" class="wdetail">
             <div class="dblock"><h4>Runs on</h4>
               <div class="kv"><template v-for="[k, v] in facts(w.facts)" :key="k"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></template></div>
               <p v-if="!facts(w.facts).length" class="note" style="margin:0">It has not reported yet.</p></div>
@@ -188,6 +252,16 @@ export default {
             <div class="dblock"><h4>Open streams <span class="dim2">{{ w.streams.length }} open</span></h4>
               <div v-for="s in w.streams" :key="s.moniker" class="stream"><span class="k">{{ s.moniker }}</span><div><b>{{ s.title }}</b><p>{{ s.description }}</p></div><span></span></div>
               <p v-if="!w.streams.length" class="note" style="margin:0">Nothing open.</p></div>
+            <div class="dblock full"><h4>Devices <span class="dim2">{{ pinnedTo(w).length }} pinned to {{ w.name }}</span></h4>
+              <div class="optout"><div class="p">Serves devices<small>Carries out network steps for devices: those pinned to it, and floating ones on its band.</small></div>
+                <span class="state" :class="{out: !w.serves_devices}">{{ w.serves_devices ? 'allowed' : 'opted out' }}</span>
+                <button class="toggle" type="button" :class="{on: w.serves_devices}" :aria-pressed="w.serves_devices" :aria-label="'Serve devices from ' + w.name"
+                  @click.stop="serve(w, !w.serves_devices)"></button></div>
+              <div v-for="d in pinnedTo(w)" :key="d.moniker" class="devcard" style="margin-top:8px">
+                <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v11H4zM9 20h6M12 16v4"/></svg></span>
+                <div><b>{{ d.name }}</b> <span class="dim2 mono small">· {{ d.moniker }}</span><br><span class="note">driver {{ d.driver }} · {{ d.caps.length }} caps</span></div>
+                <span class="badge" :class="{good: d.reachable, bad: d.reachable === false}">{{ reach(d) }}</span>
+              </div></div>
           </div>
         </template>
       </section>
