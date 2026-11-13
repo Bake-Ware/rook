@@ -76,7 +76,9 @@ def descriptors():
 
 
 def for_journal(reply):
-    """A hub cap's reply as the journal keeps it: never a usable token."""
+    """A hub cap's reply as the journal keeps it: never a usable token. Any shape is accepted."""
+    if not isinstance(reply, dict):
+        return reply
     result = reply.get("result")
     if isinstance(result, dict) and "token" in result:
         return dict(reply, result=dict(result, token="(withheld from the journal)"))

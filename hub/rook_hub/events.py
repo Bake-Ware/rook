@@ -14,6 +14,7 @@ notice workers that have missed three heartbeats (H3) and schedules that are due
 import asyncio
 import collections
 import json
+import logging
 
 from aiohttp import web
 
@@ -21,6 +22,8 @@ from . import caps, jobs
 from .errors import HubError
 
 TICK = 1.0  # seconds between looks at heartbeats and schedules
+
+log = logging.getLogger(__name__)  # rook_hub.events: where an event that could not be handled is reported
 
 
 class Events:
@@ -65,16 +68,20 @@ class Events:
             self._wake.clear()
             while self._queue:
                 event = self._queue.popleft()
-                if event["journal"]:
-                    self._journal(event)
-                for job in jobs.matching(self.hub, event):
-                    self._spawn(jobs.run(self.hub, job, event))
+                try:
+                    if event["journal"]:
+                        self._journal(event)
+                    for job in jobs.matching(self.hub, event):
+                        self._spawn(jobs.run(self.hub, job, event))
+                except Exception:   # this event is lost; the bus goes on with the next one
+                    log.exception("Event %r could not be handled", event["name"])
 
     def _journal(self, event):
         payload, job, run = event["payload"], None, None
-        if event["name"] in jobs.COMPLETIONS:     # never journal a usable token a hub cap returned
-            payload = dict(payload, result=caps.for_journal(payload["result"]))
-            job, run = payload.get("job"), payload.get("run")
+        if event["name"] in jobs.COMPLETIONS:     # anyone may emit these names: assume nothing of the payload
+            if "result" in payload:               # never journal a usable token a hub cap returned
+                payload = dict(payload, result=caps.for_journal(payload["result"]))
+            job, run = (value if isinstance(value, str) else None for value in (payload.get("job"), payload.get("run")))
         with self.hub._lock, self.hub._db:
             self.hub._journal("event", (event["user"], event["token"]), event["worker"],
                               {"event": event["name"], "payload": payload}, job=job, run=run)
