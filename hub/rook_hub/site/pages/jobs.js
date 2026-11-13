@@ -1,8 +1,10 @@
 /* The Jobs page (P4, J1, J3, J4, J5, J7, P8): the jobs, chains as trees, runs grouped by
-   run ID, a run opened to the call's result, and pause, un-pause, delete and New job, each
+   run ID, a run opened to what is behind it (the stream it opened, as a terminal, or the
+   call's result), and pause, un-pause, delete and New job, each
    a hub cap called as the logged-in user. It asks the hub again every few seconds. */
 import { api, toast, viewHref, showView } from '/site/shell.js';
 import { ago, SureButton } from '/site/pages/parts.js';
+import StreamTerminal from '/site/terminal.js';
 
 const REFRESH_MS = 5000;
 
@@ -199,7 +201,7 @@ const RunsList = {
       <div v-for="s in r.steps" :key="s.id" class="tr click" style="display:grid;grid-template-columns:minmax(160px,1fr) minmax(200px,1.4fr) 80px 90px;gap:10px;align-items:center;padding:5px 0"
            :style="sel && s.job !== sel ? 'opacity:.6' : ''" @click="$emit('open', Object.assign({run: r.run}, s))" tabindex="0" @keydown.enter="$emit('open', Object.assign({run: r.run}, s))" title="Open what is behind this run">
         <span class="cell-title">{{ s.title || s.job }}<span v-if="s.title === null" class="dim2"> (deleted)</span></span>
-        <span class="cell-mono" :title="s.worker">{{ s.name }} › {{ s.cap }}</span>
+        <span class="cell-mono" :title="s.worker">{{ s.name }} › {{ s.cap }} <span v-if="s.stream" class="badge plain">stream</span></span>
         <span><span class="badge" :class="s.ok ? 'good' : 'bad'">{{ s.ok ? 'ok' : 'failed' }}</span></span>
         <span class="cell-mono">{{ ago(s.at) }}</span>
       </div>
@@ -208,11 +210,12 @@ const RunsList = {
 };
 
 export default {
-  components: { 'chain-node': ChainNode, 'job-form': JobForm, 'cap-call': CapCall, 'runs-list': RunsList, 'sure-button': SureButton },
+  components: { 'chain-node': ChainNode, 'job-form': JobForm, 'cap-call': CapCall, 'runs-list': RunsList, 'sure-button': SureButton,
+    'stream-terminal': StreamTerminal },
   data() {
     const view = new URLSearchParams(location.search);
     return {
-      data: null, runs: [], error: '', step: null, warning: '', timer: null,
+      data: null, runs: [], error: '', step: null, warning: '', timer: null, stepStream: null, streamShown: true,
       event: view.get('event') || '', sel: view.get('job') || '', creating: view.get('new') === '1',
     };
   },
@@ -227,6 +230,15 @@ export default {
     pinLabel() { return 'Jobs: ' + (this.creating ? 'new job' : this.selJob ? this.selJob.title : this.event || 'all'); },
   },
   watch: {
+    /* A step that opened a stream shows it as a terminal: live while open, read-only once closed (P8). */
+    async step(step) {
+      this.stepStream = null; this.streamShown = true;
+      if (!step || !step.stream) return;
+      try {
+        const { stream } = await api('GET', '/api/streams/' + encodeURIComponent(step.stream));
+        if (this.step === step) this.stepStream = stream;
+      } catch (e) { toast(e.message); }
+    },
     view: { handler() { showView('/jobs', this.view); this.loadRuns(); }, deep: true },
     sel(now, before) { if (before) this.warning = ''; },   // the warning of a save goes once the person moves on
   },
@@ -376,8 +388,15 @@ export default {
           <button class="btn sm ghost" type="button" @click="step=null" aria-label="Close">✕</button>
         </div>
         <div class="drawer-body">
-          <div class="section-title" style="margin:0">Call result</div>
-          <pre class="json">{{ json(step.result) }}</pre>
+          <template v-if="step.stream">
+            <div class="section-title" style="margin:0">Stream <span class="dim2" style="text-transform:none;letter-spacing:0">· {{ step.stream }}</span></div>
+            <stream-terminal v-if="stepStream && streamShown" :stream="stepStream" :worker="step.name" :height="300" @detach="streamShown=false"></stream-terminal>
+            <button v-else-if="stepStream" class="btn sm" type="button" @click="streamShown=true">show the terminal</button>
+          </template>
+          <template v-else>
+            <div class="section-title" style="margin:0">Call result</div>
+            <pre class="json">{{ json(step.result) }}</pre>
+          </template>
           <div>
             <div class="section-title">Journal entry</div>
             <div class="kv panel" style="padding:12px">
