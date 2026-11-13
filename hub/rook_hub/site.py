@@ -77,8 +77,7 @@ def workers_view(hub):
     members, owners, out = bands.membership(hub), {}, devices.opted_out(hub)
     open_streams = {}
     for stream in hub.streams.list(open=True):
-        open_streams.setdefault(stream["worker"], []).append(
-            {"moniker": stream["moniker"], "title": stream["title"], "description": stream["description"]})
+        open_streams.setdefault(stream["worker"], []).append(stream_view(hub, stream))
 
     def owner(guid):
         if guid not in owners:
@@ -116,10 +115,34 @@ def workers_view(hub):
             "groups": groups, "pending": pending, "unrecognised": bands.unrecognised(hub)}
 
 
+def stream_view(hub, stream):
+    """A stream as a worker card shows it (S3, S5): title, description, who opened it and when,
+    and, once closed, who closed it and when."""
+    def person(moniker):
+        if moniker in (None, "worker"):
+            return moniker
+        user = hub.auth.get_user(moniker)
+        return {"name": user["name"], "moniker": user["moniker"]}
+    return {"moniker": stream["moniker"], "title": stream["title"], "description": stream["description"],
+            "worker": stream["worker"], "cap": stream["cap"], "open": stream["open"],
+            "opened_by": person(stream["opened_by"]), "opened_at": stream["opened_at"],
+            "closed_by": person(stream["closed_by"]), "closed_at": stream["closed_at"]}
+
+
 # ----------------------------------------------------------- the Data page
 
 KINDS = ("call", "auth", "band", "event", "job", "stream")   # what the journal holds (L1)
 JOURNAL_FILTERS = ("kind", "worker", "cap", "user", "text", "since", "until", "job", "run")
+
+
+STREAM_READ_LIMIT = 1000     # entries per terminal read; the terminal reads on until it has them all
+
+
+def _query_text(request, name):
+    value = request.query.get(name, "").strip()
+    if not value:
+        raise HubError("bad_message", f"{name} is required.", f"Give {name}.")
+    return value
 
 
 def _limit(query, default=50):
@@ -274,6 +297,49 @@ def add_routes(app, hub):
             hub._db.executemany("INSERT INTO pins (user, position, label, href) VALUES (?, ?, ?, ?)",
                                 [(user, i, p["label"], p["href"]) for i, p in enumerate(pins)])
         return pins_of(user)
+
+    # ----------------------------------------------- streams as a terminal on the worker card (P8, S2-S5, L1)
+
+    @logged_in
+    async def worker_streams(request, token, user):
+        """A worker's streams, newest first; `open=false` for the closed ones (S5)."""
+        worker = hub.get_worker(_query_text(request, "worker"))["moniker"]
+        wanted = {"true": True, "false": False}.get(request.query.get("open"))
+        return {"streams": [stream_view(hub, s) for s in hub.streams.list(wanted) if s["worker"] == worker]}
+
+    @logged_in
+    async def one_stream(request, token, user):
+        return {"stream": stream_view(hub, hub.streams.get(request.match_info["stream"]))}
+
+    @logged_in
+    async def read_stream(request, token, user):
+        """The recording's bytes from `from` on, as recorded; waits up to `wait` seconds for more (S2)."""
+        try:
+            position, wait = int(request.query.get("from", 0)), float(request.query.get("wait", 0))
+        except ValueError:
+            raise HubError("bad_message", "from must be a whole number and wait a number of seconds.",
+                           "Read from the position the last read gave as next.") from None
+        return await hub.streams.read(request.match_info["stream"], position, wait, STREAM_READ_LIMIT, raw=True)
+
+    @logged_in
+    async def stream_input(request, token, user):
+        """What the person typed, to the worker, recorded as theirs (S2)."""
+        text = (await _body(request)).get("text")
+        if not isinstance(text, str) or not text:
+            raise HubError("bad_message", "text is required.", "Send what was typed as text.")
+        return await hub.streams.write(request.match_info["stream"], text, token=token)
+
+    @logged_in
+    async def close_stream(request, token, user):
+        """Close on purpose, with a reason, journaled under the user (S4, L1)."""
+        why = _text(await _body(request), "why")
+        return await hub.streams.close(request.match_info["stream"], why, token=token)
+
+    app.router.add_get("/api/streams", worker_streams)
+    app.router.add_get("/api/streams/{stream}", one_stream)
+    app.router.add_get("/api/streams/{stream}/read", read_stream)
+    app.router.add_post("/api/streams/{stream}/input", stream_input)
+    app.router.add_post("/api/streams/{stream}/close", close_stream)
 
     # ------------------------------------------- the Data page, and device opt-out (P4, L1, L2, L5, K1-K4, D8)
 
