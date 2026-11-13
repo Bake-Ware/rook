@@ -1,0 +1,5 @@
+{
+  "name": "lamp",
+  "version": "1.0.0",
+  "hub": {"module": "hub.py"}
+}
