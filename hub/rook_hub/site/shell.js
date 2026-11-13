@@ -6,7 +6,8 @@
    pages exist and where their modules are (GET /api/session). */
 const { createApp, reactive, markRaw } = Vue;
 
-export const store = reactive({ user: null, nav: [], pins: [], toast: '', ready: false });
+export const store = reactive({ user: null, nav: [], pins: [], toast: '', ready: false,
+  view: location.pathname + location.search });   // the page's current view, so the strip can follow it (P6)
 
 /* ---------------- Talking to the hub ---------------- */
 export async function api(method, path, body) {
@@ -42,6 +43,7 @@ export function viewHref(path, state) {
 }
 export function showView(path, state) {
   history.replaceState(null, '', viewHref(path, state));
+  store.view = location.pathname + location.search;
 }
 const sameView = (a, b) => {
   const norm = href => { const u = new URL(href, location.origin); return u.pathname + '?' + [...u.searchParams].sort().map(x => x.join('=')).join('&'); };
@@ -116,7 +118,7 @@ const SideBar = {
   data() { return { store, drag: null, over: null, host: location.host }; },
   mounted() { this.$refs.art.appendChild(artToggle); },   // the scene's pause control lives in the sidebar
   methods: {
-    isHere(p) { return sameView(p.href, location.pathname + location.search); },
+    isHere(p) { return sameView(p.href, store.view); },
     start(i, e) { this.drag = i; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(i)); },
     enter(i) { if (this.drag != null) this.over = i; },
     drop(i) { if (this.drag != null) pins.move(this.drag, i).catch(e => toast(e.message)); this.drag = this.over = null; },
@@ -215,7 +217,7 @@ const App = {
         store.pins = (await api('GET', '/api/pins')).pins;
         const pages = session.nav.flatMap(s => s.pages);
         this.page = pages.find(p => p.path === location.pathname) || pages[0];
-        if (location.pathname === '/') history.replaceState(null, '', this.page.path + location.search);
+        if (location.pathname === '/') showView(this.page.path + location.search);
         this.component = markRaw((await import(this.page.script)).default);
       } catch (e) {
         if (store.user) toast(e.message);

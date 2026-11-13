@@ -45,6 +45,10 @@ def install_page(segment, page, label, script):
 
 
 install_page("Hub", "workers", "Workers", "/site/pages/workers.js")
+# the Jobs, Secrets and Auth pages (their data and actions are the last block of this file)
+install_page("Hub", "auth", "Auth", "/site/pages/auth.js")
+install_page("Hub", "secrets", "Secrets", "/site/pages/secrets.js")
+install_page("Hub", "jobs", "Jobs", "/site/pages/jobs.js")
 install_page("Hub", "data", "Data", "/site/pages/data.js")
 
 
@@ -189,7 +193,8 @@ def add_routes(app, hub):
         async def answer(request):
             try:
                 token, user = session(request)
-                return web.json_response(await handler(request, token, user))
+                # no-store: a revealed value or a new token is never kept in the browser's cache
+                return web.json_response(await handler(request, token, user), headers={"Cache-Control": "no-store"})
             except HubError as e:
                 return _refused(e)
         return answer
@@ -366,4 +371,216 @@ def add_routes(app, hub):
     app.router.add_post("/api/bands/{band}/name", rename_band)
     app.router.add_get("/api/pins", get_pins)
     app.router.add_put("/api/pins", put_pins)
+    jobs_secrets_auth_routes(app, hub, logged_in)
 
+
+# ------------------------------------------------- the Jobs, Secrets and Auth pages
+
+RUNS_SHOWN = 50   # the newest chain runs the Jobs page shows; older ones stay in the journal
+
+
+def _names(hub):
+    """{moniker: name} for every worker, device and user, to show names beside monikers."""
+    names = {w["moniker"]: w["name"] for w in hub.list_workers()}
+    names.update({d["moniker"]: d["name"] for d in devices.list_devices(hub)})
+    names.update({u["moniker"]: u["name"] for u in hub.auth.list_users()})
+    return names
+
+
+def chains(hub):
+    """Every chain of jobs as a tree (J3): a root job, and under each job the jobs its completion
+    starts. A job met again on its own path is a loop node and is not followed further (J4)."""
+    with hub._lock:
+        rows = jobs._all(hub)
+        edges = jobs._edges(rows)
+    by_guid = {row["guid"]: row for row in rows}
+    started = {guid for following in edges.values() for guid in following}
+    linked = started | {guid for guid, following in edges.items() if following}
+
+    def node(guid, path):
+        row = by_guid[guid]
+        loop = guid in path
+        return {"job": row["moniker"], "on": row["event"], "loop": loop,
+                "children": [] if loop else [node(nxt, path | {guid}) for nxt in edges[guid]]}
+
+    def jobs_in(tree):
+        return {tree["job"]} | set().union(*(jobs_in(child) for child in tree["children"]))
+
+    trees, placed = [], set()
+    roots = [row["guid"] for row in rows if row["guid"] in linked and row["guid"] not in started]
+    loops_only = [row["guid"] for row in rows if row["guid"] in linked]   # a chain that is all loop has no root
+    for guid in roots + loops_only:
+        if by_guid[guid]["moniker"] not in placed:
+            tree = node(guid, frozenset())
+            placed |= jobs_in(tree)
+            trees.append(tree)
+    return trees
+
+
+def runs(hub, job=None):
+    """Job runs from the journal, grouped by run ID (J5), newest run first; each step
+    oldest first, with the call's reply (P8). With `job`, the chain runs it took part in."""
+    entries = journal.read(hub, kind="job", job=job, limit=RUNS_SHOWN * 20)
+    order = list(dict.fromkeys(e["run"] for e in entries))[:RUNS_SHOWN]
+    with hub._lock:
+        titles = {row["moniker"]: row["title"] for row in jobs._all(hub)}
+    names = _names(hub)
+    grouped = []
+    for run in order:
+        steps = entries if job is None else journal.read(hub, kind="job", run=run, limit=1000)
+        steps = [e for e in steps if e["run"] == run][::-1]
+        grouped.append({"run": run, "at": steps[0]["at"], "steps": [
+            {"id": e["id"], "at": e["at"], "job": e.get("job"), "title": titles.get(e.get("job")),
+             "worker": e["worker"], "name": names.get(e["worker"], e["worker"]), "cap": e["cap"], "why": e["why"],
+             "ok": e["result"].get("type") != "error", "result": e["result"]} for e in steps]})
+    return grouped
+
+
+def jobs_view(hub):
+    """What the Jobs page lists (P4): every job, with owner and call target named, and the chains."""
+    names = _names(hub)
+    listed = jobs.list_jobs(hub, {}, None)["jobs"]
+    for job in listed:
+        job["owner"] = {"moniker": job["owner"], "name": names.get(job["owner"], job["owner"])}
+        job["call"]["name"] = names.get(job["call"]["worker"], job["call"]["worker"])
+    return {"jobs": listed, "chains": chains(hub)}
+
+
+def job_targets(hub):
+    """What a new job can call: the hub, every worker and every device, each with its caps' schemas."""
+    def caps_of(caps_list):
+        return [{"name": c["name"], "description": c.get("description", ""), "schema": c.get("schema") or {}}
+                for c in caps_list]
+    targets = [{"worker": "hub", "name": "hub", "kind": "hub", "caps": caps_of(caps.descriptors(hub))}]
+    targets += [{"worker": w["moniker"], "name": w["name"], "kind": "worker", "caps": caps_of(w["caps"])}
+                for w in hub.list_workers()]
+    targets += [{"worker": d["moniker"], "name": d["name"], "kind": "device", "caps": caps_of(d["caps"])}
+                for d in devices.list_devices(hub)]
+    return {"targets": targets}
+
+
+def secrets_view(hub, token):
+    """What the Secrets page lists (X3): scope, name, moniker, who made it and when; never a value.
+    Also the scopes a new secret can have."""
+    names = _names(hub)
+    listed = hub.vault.list({}, {"user": None, "token": token})["secrets"]
+    for secret in listed:
+        secret["created_by"] = secret["created_by"] and {"moniker": secret["created_by"],
+                                                         "name": names.get(secret["created_by"])}
+    return {"secrets": listed,
+            "scopes": {"workers": [{"moniker": w["moniker"], "name": w["name"]} for w in hub.list_workers()]
+                       + [{"moniker": d["moniker"], "name": d["name"]} for d in devices.list_devices(hub)],
+                       "bands": [{"moniker": b["moniker"], "name": b["name"]} for b in bands.list_bands(hub)]}}
+
+
+def auth_view(hub, token, user):
+    """What the Auth page lists (T6): users, and tokens with purpose, scope, owner, times and use."""
+    users = hub.auth.list_users()
+    names = {u["guid"]: u["name"] for u in users}
+    tokens = hub.auth.list_tokens()
+    monikers = {t["guid"]: t["moniker"] for t in tokens}
+    session = hub.auth.verify(token)["guid"]
+    return {
+        "me": hub.auth.get_user(user)["moniker"],
+        "users": [{"moniker": u["moniker"], "name": u["name"], "created_at": iso(u["created_at"]),
+                   "revoked_at": iso(u["revoked_at"])} for u in users],
+        "tokens": [{"moniker": t["moniker"], "purpose": t["purpose"], "scopes": t["scopes"],
+                    "owner": {"moniker": t["owner_moniker"], "name": names[t["owner"]]},
+                    "minted_by": monikers.get(t["minted_by"]), "minted_at": iso(t["minted_at"]),
+                    "expires_at": iso(t["expires_at"]), "last_used": iso(t["last_used"]),
+                    "spent_at": iso(t["spent_at"]), "revoked_at": iso(t["revoked_at"]),
+                    "this_session": t["guid"] == session} for t in tokens][::-1]}   # newest first
+
+
+def jobs_secrets_auth_routes(app, hub, logged_in):
+    """The data and actions of the Jobs, Secrets and Auth pages, as the logged-in user.
+    Actions a hub cap already does go through it as a call, so they are journaled as calls (L1)."""
+    async def hub_cap(cap, args, why, token):
+        reply = await hub.call("hub", cap, args, why, token=token)
+        if reply["type"] == "error":
+            raise HubError(reply["code"], reply["message"], reply["next"])
+        return reply["result"]
+
+    # Jobs (P4, J1, J3, J4, J5, J7, P8)
+    @logged_in
+    async def get_jobs(request, token, user):
+        return jobs_view(hub)
+
+    @logged_in
+    async def get_runs(request, token, user):
+        return {"runs": runs(hub, request.query.get("job") or None)}
+
+    @logged_in
+    async def get_targets(request, token, user):
+        return job_targets(hub)
+
+    @logged_in
+    async def new_job(request, token, user):
+        return await hub_cap("job.create", await _body(request), "Created on the Jobs page.", token)
+
+    def job_action(cap, why):
+        @logged_in
+        async def act(request, token, user):
+            return await hub_cap(cap, {"job": request.match_info["job"]}, why, token)
+        return act
+
+    # Secrets (X3)
+    @logged_in
+    async def get_secrets(request, token, user):
+        return secrets_view(hub, token)
+
+    @logged_in
+    async def new_secret(request, token, user):
+        body = await _body(request)
+        args = {name: body.get(name) for name in ("scope", "name", "value")}
+        return await hub_cap("secret.create", args, "Added on the Secrets page.", token)
+
+    @logged_in
+    async def reveal(request, token, user):
+        return {"value": hub.vault.reveal(request.match_info["secret"], token=token)}
+
+    # Auth (T3, T5, T6)
+    @logged_in
+    async def get_auth(request, token, user):
+        return auth_view(hub, token, user)
+
+    @logged_in
+    async def new_token(request, token, user):
+        # The person mints it directly (T5: "a user mints directly"), not through the session,
+        # so the token hangs on the person and not on this browser's login.
+        jwt = hub.auth.mint("agent", user=user)
+        return {"token": jwt, "moniker": hub.auth.verify(jwt)["moniker"]}
+
+    @logged_in
+    async def revoke_token(request, token, user):
+        hub.auth.revoke_token(request.match_info["token"], token=token)
+        return {"revoked": request.match_info["token"]}
+
+    @logged_in
+    async def revoke_user(request, token, user):
+        hub.auth.revoke_user(request.match_info["user"], token=token)
+        return {"revoked": request.match_info["user"]}
+
+    @logged_in
+    async def change_password(request, token, user):
+        password = (await _body(request)).get("password")
+        if not isinstance(password, str) or not password:
+            raise HubError("bad_message", "password is required.", "Give the new password.")
+        hub.auth.change_password(user, password, token=token)
+        return {"changed": True}
+
+    app.router.add_get("/api/jobs", get_jobs)
+    app.router.add_get("/api/jobs/runs", get_runs)
+    app.router.add_get("/api/jobs/targets", get_targets)
+    app.router.add_post("/api/jobs", new_job)
+    app.router.add_post("/api/jobs/{job}/pause", job_action("job.pause", "Paused on the Jobs page."))
+    app.router.add_post("/api/jobs/{job}/unpause", job_action("job.unpause", "Un-paused on the Jobs page."))
+    app.router.add_post("/api/jobs/{job}/delete", job_action("job.delete", "Deleted on the Jobs page."))
+    app.router.add_get("/api/secrets", get_secrets)
+    app.router.add_post("/api/secrets", new_secret)
+    app.router.add_post("/api/secrets/{secret}/reveal", reveal)
+    app.router.add_get("/api/auth", get_auth)
+    app.router.add_post("/api/tokens", new_token)
+    app.router.add_post("/api/tokens/{token}/revoke", revoke_token)
+    app.router.add_post("/api/users/{user}/revoke", revoke_user)
+    app.router.add_post("/api/password", change_password)

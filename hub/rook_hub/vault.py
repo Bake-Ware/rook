@@ -176,13 +176,21 @@ class Vault:
     # ------------------------------------------------------ reveal (X3)
 
     def reveal(self, secret, *, user=None, token=None):
-        """One secret's value, to a user acting directly. A token is refused. Journaled without the value."""
-        if token is not None:
-            raise HubError("reveal_needs_a_person", "Only a person can view a secret's value.",
-                           "Use the secret by reference (secret:<name>) in a call; a person can reveal it on the Secrets page.")
+        """One secret's value, to a person: a user acting directly, or logged in to the site
+        (a session token; X3). Any other token is refused. Journaled without the value."""
         self._open()
         with self.hub._lock, self.hub._db:
-            actor = self.hub.auth.actor(user, None)
+            if token is None:
+                actor = self.hub.auth.actor(user, None)
+            else:
+                try:
+                    actor = self.hub.auth.use(token, "session")
+                except HubError as e:
+                    if e.message["code"] != "token_scope":
+                        raise
+                    raise HubError("reveal_needs_a_person", "Only a person can view a secret's value.",
+                                   "Use the secret by reference (secret:<name>) in a call; a person can reveal "
+                                   "it on the Secrets page.") from None
             row = self.hub._db.execute("SELECT * FROM secrets WHERE guid = ? OR moniker = ?", (secret, secret)).fetchone()
             if row is None:
                 raise HubError("unknown_secret", f"No secret is called {secret!r}.",

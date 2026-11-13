@@ -113,10 +113,10 @@ async def scenario(tmp_path):
             assert (await login(client, base, "Alice", "correct horse"))[0] == 200
             session = hub.auth.verify(client.cookie_jar.filter_cookies(yarl.URL(base))[COOKIE].value)
 
-            # 2. The Data page is installed in the Hub segment, after Workers (P2, P4).
+            # 2. The Data page is installed in the Hub segment, after Jobs, in P4's order (P2, P4).
             status, reply = await ask(client, "GET", base + "/api/session")
-            assert [p["id"] for p in reply["nav"][0]["pages"]] == ["workers", "data"]
-            assert reply["nav"][0]["pages"][1] == {"id": "data", "label": "Data", "path": "/data",
+            assert [p["id"] for p in reply["nav"][0]["pages"]] == ["workers", "auth", "secrets", "jobs", "data"]
+            assert reply["nav"][0]["pages"][4] == {"id": "data", "label": "Data", "path": "/data",
                                                    "script": "/site/pages/data.js"}
             for path in ("/data", "/site/pages/data.js"):
                 async with client.get(base + path) as response:
