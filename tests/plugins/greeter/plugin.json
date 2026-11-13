@@ -1,0 +1,9 @@
+{
+  "name": "greeter",
+  "version": "1.0.0",
+  "hub": {"module": "hub.py"},
+  "worker": {
+    "python": {"module": "worker.py"},
+    "esp32": {"image": "esp32/greeter.bin"}
+  }
+}
