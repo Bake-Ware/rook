@@ -1,4 +1,4 @@
-"""The hub's one HTTP server: the knock endpoint and the MCP door.
+"""The hub's one HTTP server: the knock endpoint, the MCP door, webhooks and the site.
 
 aiohttp, because the hub is asyncio already: a handler awaits a call on a
 worker directly, and the same server can later serve the site and live
@@ -9,7 +9,7 @@ from aiohttp import web
 
 from rook_protocol import ProtocolError, decode, encode
 
-from . import door, events
+from . import door, events, site
 from .errors import error
 
 
@@ -30,6 +30,7 @@ def app(hub):
     application.router.add_post("/knock", knock)
     door.add_routes(application, hub)
     events.add_routes(application, hub)
+    site.add_routes(application, hub)
     return application
 
 
