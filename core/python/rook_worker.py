@@ -4,6 +4,12 @@ State directory (W7, U2): `key` holds the private key the worker generated,
 `identity.json` the GUID, moniker, hub signature and hub key it got on approval. Both
 survive restarts, so a restarted worker is the same identity (R5).
 
+Plugins (PL3): the hub sends a `plugins` message with every plugin worker part
+this worker should have. The worker loads what is new, replaces what changed and
+drops what is gone, with no restart, and announces the caps they add like its
+own (W5). A part is a Python module defining `CAPS`, a dict of `Cap`, as below
+and in docs/plugins.md.
+
 The worker never sees a transport. `connect(key)` returns its link to the hub:
 an object with `async send(bytes)`, `async recv() -> bytes` (raises EOFError
 once closed) and `close()`.
@@ -17,6 +23,8 @@ import pathlib
 import platform
 import shutil
 import socket
+import sys
+import types
 import urllib.error
 import urllib.request
 import uuid
@@ -26,7 +34,7 @@ from typing import Any, Awaitable, Callable
 from nacl.signing import SigningKey, VerifyKey
 
 import rook_net
-from rook_protocol import PROTOCOL, ProtocolError, decode, encode
+from rook_protocol import PROTOCOL, ProtocolError, decode, encode, validate
 
 VERSION = "0.1.0"
 
@@ -47,8 +55,8 @@ class Stream:
     """One open stream, owned by this worker (S2). `send` output; `read` input
     (None once closed); `close` it. It lives until one side closes it (S4)."""
 
-    def __init__(self, worker, handle):
-        self.worker, self.handle = worker, handle
+    def __init__(self, worker, handle, cap):
+        self.worker, self.handle, self.cap = worker, handle, cap   # the cap that opened it
         self.open = True
         self._input = asyncio.Queue()
         self._ready = asyncio.Event()     # set once the hub has its stream_open, so no data goes first
@@ -79,6 +87,17 @@ class Stream:
             self.worker.changed()        # the open count is part of the heartbeat (S4)
 
 
+@dataclass
+class Part:
+    """A plugin's worker part as this worker has it (PL3): loaded, with the caps it
+    added and the module name it runs under, or failed, with why."""
+    version: str
+    source: str
+    caps: tuple = ()
+    module: str | None = None
+    error: str | None = None
+
+
 class Refused(Exception):
     """The hub refused this worker's key. `.message` is the hub's `error` message."""
 
@@ -105,6 +124,8 @@ class Worker:
         self.identity = json.loads(path.read_text()) if path.exists() else None
         self.interval = None
         self.streams = {}                 # handle -> Stream, while open
+        self.plugins = {}                 # plugin name -> Part, as the hub's last plugins message left them
+        self._loads = 0
         self._link = None
         self._changed = asyncio.Event()
         self._interval_known = asyncio.Event()
@@ -208,6 +229,8 @@ class Worker:
                 self.streams[message["stream"]]._input.put_nowait(base64.b64decode(message["data"]))
             elif message["type"] == "stream_close" and message["stream"] in self.streams:
                 self.streams[message["stream"]]._closed()
+            elif message["type"] == "plugins":
+                await self._plugins(message["plugins"])
             elif message["type"] == "error" and message["code"] in ("unknown_key", "key_revoked"):
                 raise Refused(message)
 
@@ -232,7 +255,7 @@ class Worker:
         """A call on a stream cap: the handler names the stream, the hub hears stream_open (S1)."""
         # A fresh random handle, so a stream opened after a restart never takes the
         # handle of one the hub still lists from before it.
-        stream = Stream(self, uuid.uuid4().hex[:16])
+        stream = Stream(self, uuid.uuid4().hex[:16], call["cap"])
         try:
             named = await cap.handler(call["args"], stream)
             reply = {"type": "stream_open", "id": call["id"], "stream": stream.handle,
@@ -246,6 +269,65 @@ class Worker:
         await self._send(reply)
         stream._ready.set()
         self.changed()
+
+    # -------------------------------------------------------------- plugins
+
+    async def _plugins(self, parts):
+        """Make this worker's plugin worker parts match the hub's list (PL3): drop what is
+        no longer listed, has changed or failed last time; load what is not loaded; then
+        heartbeat, so the caps are announced (W5). Parts load in the order the hub lists them."""
+        wanted = {part["name"]: part for part in parts}
+        for name, have in list(self.plugins.items()):
+            part = wanted.get(name)
+            if part is None or have.error is not None or (have.version, have.source) != (part["version"], part["source"]):
+                await self._drop(name)
+        for part in parts:
+            if part["name"] not in self.plugins:
+                self.plugins[part["name"]] = self._load(part)
+        self.changed()
+
+    async def _drop(self, name):
+        """A plugin's worker part goes: its caps are no longer served or announced, and the
+        streams they opened are closed (W5, S4)."""
+        part = self.plugins.pop(name)
+        for cap in part.caps:
+            del self.caps[cap]
+        for stream in [s for s in self.streams.values() if s.cap in part.caps]:
+            await stream.close()
+        if part.module is not None:
+            sys.modules.pop(part.module, None)
+
+    def _load(self, part):
+        """Run a part's module under a name of its own and take its CAPS. A part that fails,
+        or names a cap this worker already serves, is kept as failed with the reason and adds nothing."""
+        self._loads += 1
+        module_name = f"rook_plugin_{part['name'].replace('-', '_')}_{self._loads}"
+        module = types.ModuleType(module_name)
+        sys.modules[module_name] = module
+        try:
+            exec(compile(part["source"], f"<plugin {part['name']}>", "exec"), module.__dict__)
+            caps = getattr(module, "CAPS", None)
+            if not isinstance(caps, dict):
+                raise ValueError("the module defines no CAPS dict of name to Cap (docs/plugins.md)")
+            for name, cap in caps.items():
+                validate({"type": "call", "id": "-", "cap": name, "args": {}})     # a cap name as W3 has it
+                if not isinstance(cap, Cap) or not callable(cap.handler) or not isinstance(cap.schema, dict) \
+                        or not isinstance(cap.description, str) or not cap.description or "\n" in cap.description:
+                    raise ValueError(f"CAPS[{name!r}] must be a Cap with a one-line description, "
+                                     "a JSON Schema object and a handler")
+                if name in self.caps:
+                    raise ValueError(f"{name} is already served by {self._owner(name)}")
+        except Exception as e:
+            sys.modules.pop(module_name, None)
+            return Part(part["version"], part["source"], error=f"{type(e).__name__}: {e}")
+        self.caps.update(caps)
+        return Part(part["version"], part["source"], tuple(caps), module_name)
+
+    def _owner(self, cap):
+        for name, part in self.plugins.items():
+            if cap in part.caps:
+                return f"plugin {name}"
+        return "this worker"
 
     async def _send(self, message):
         try:
@@ -272,6 +354,8 @@ class Worker:
             "band": {"gateway_mac": gateway_mac()},
             "health": self.health(),
             "streams": len(self.streams),
+            "plugins": [dict(name=name, version=part.version, **({"error": part.error} if part.error else {}))
+                        for name, part in sorted(self.plugins.items())],
         }
 
     def health(self):
@@ -296,8 +380,8 @@ class Worker:
 
 def primitives():
     """The dumb network primitives every worker serves, so it can be a jump box for
-    devices on its band (D3): net.http, net.tcp and net.udp (rook_net.py). Built in
-    until the worker part of plugins exists (PL7)."""
+    devices on its band (D3): net.http, net.tcp and net.udp (rook_net.py). Built in;
+    shipping them as a plugin installed by default is PL7, not yet done."""
     def serve(function):
         async def handler(args):
             return await asyncio.to_thread(function, args)
