@@ -18,6 +18,22 @@ three.js r186 (npm package three 0.186.0)
   MIT License: hub/rook_hub/site/vendor/THREE-LICENSE.txt
   (also listed in hub/rook_hub/site/vendor/rook-scene.js.LEGAL.txt, written by the bundler)
 
+xterm.js 6.0.0 (npm package @xterm/xterm 6.0.0)
+  hub/rook_hub/site/vendor/xterm/xterm.mjs and xterm.css
+  Copyright (c) 2017-2019, The xterm.js authors; (c) 2014-2016 SourceLair Private Company;
+  (c) 2012-2013 Christopher Jeffrey
+  MIT License: hub/rook_hub/site/vendor/xterm/LICENSE.txt
+  Source: lib/xterm.mjs and css/xterm.css of the npm package, unmodified except that the last
+  line of xterm.mjs (a sourceMappingURL comment naming a map that is not shipped) is removed
+  (xterm.mjs sha256 3fd3d0046d2604ea5860235e2f96625a2fab158dcf3d4cfb0f7c1655559a5d9a)
+
+@xterm/addon-fit 0.11.0
+  hub/rook_hub/site/vendor/xterm/addon-fit.mjs
+  Copyright (c) 2019, The xterm.js authors
+  MIT License: hub/rook_hub/site/vendor/xterm/ADDON-FIT-LICENSE.txt
+  Source: lib/addon-fit.mjs of the npm package, its sourceMappingURL line removed the same way
+  (sha256 aa22c5f28e4d64118ac0e7d60276b3384188e59dd104c96e43760d6e2cedd771)
+
 The rest of rook-scene.js (the background rook scene), rook-logo.png and
 favicon.png are Rook's own, carried over from Rook 0.4 (P10), under the
 licence in LICENSE.

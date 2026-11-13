@@ -187,8 +187,12 @@ async def scenario(tmp_path):
             assert desk["facts"]["hostname"] == "desk" and desk["health"] == HEALTH
             assert desk["caps"] == [{"name": c["name"], "description": c["description"], "returns": c["returns"]}
                                     for c in CAPS]
-            assert desk["streams"] == [{"moniker": hub.streams.get(opened["stream"])["moniker"],
-                                        "title": "nightly build", "description": "following the build log"}]
+            stream = hub.streams.get(opened["stream"])
+            assert desk["streams"] == [{"moniker": stream["moniker"], "title": "nightly build",
+                                        "description": "following the build log", "worker": desk["moniker"],
+                                        "cap": "shell.open", "open": True,
+                                        "opened_by": {"name": "Alice", "moniker": alice["moniker"]},
+                                        "opened_at": stream["opened_at"], "closed_by": None, "closed_at": None}]
             assert workers["nas"]["streams"] == []
             [pending] = view["pending"]
             assert pending["name"] == "porch-light" and pending["key"] == knock_key

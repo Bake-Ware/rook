@@ -164,9 +164,11 @@ class Streams:
 
     # ------------------------------------------------------ for clients
 
-    async def read(self, stream, position=0, wait=0, limit=200):
+    async def read(self, stream, position=0, wait=0, limit=200, raw=False):
         """Entries from `position` on (at most `limit`), waiting up to `wait` seconds
-        for one if there is none yet and the stream is open. Says where to read next."""
+        for one if there is none yet and the stream is open. Says where to read next.
+        Agents get each entry as text (`out` or `in`). With `raw`, for a terminal, each
+        entry's bytes come exactly as recorded, base64 in `data`, with its `direction`."""
         if isinstance(wait, bool) or not isinstance(wait, (int, float)) or wait < 0:
             raise HubError("bad_message", f"wait {wait!r} is not a number of seconds.",
                            f"Give wait as a number from 0 to {MAX_WAIT}, or leave it out.")
@@ -193,8 +195,13 @@ class Streams:
             except TimeoutError:
                 break
             wait = 0   # one wait per read
-        entries = [{"position": r["position"], r["direction"]: _text(r["data"]),
-                    **({"from": self._who(r["user"])} if r["direction"] == "in" else {})} for r in rows]
+        if raw:
+            entries = [{"position": r["position"], "direction": r["direction"],
+                        "data": base64.b64encode(r["data"]).decode("ascii"),
+                        **({"from": self._who(r["user"])} if r["direction"] == "in" else {})} for r in rows]
+        else:
+            entries = [{"position": r["position"], r["direction"]: _text(r["data"]),
+                        **({"from": self._who(r["user"])} if r["direction"] == "in" else {})} for r in rows]
         return {"stream": row["moniker"], "open": row["closed_at"] is None, "entries": entries,
                 "next": rows[-1]["position"] + 1 if rows else position}
 
