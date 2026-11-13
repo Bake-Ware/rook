@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, web
+from . import bands, caps, records, web
 from .auth import Auth
 from .errors import HubError, error
 
@@ -113,6 +113,7 @@ class Hub:
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
         self._db.executescript(bands.SCHEMA)
+        self._db.executescript(records.SCHEMA)
         self.auth = Auth(self)
         self._signing_key = self._load_signing_key()
         self.public_key = self._signing_key.verify_key.encode().hex()
