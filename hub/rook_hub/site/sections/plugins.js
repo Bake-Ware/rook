@@ -34,7 +34,13 @@ export default {
       } catch (e) { this.outcome = { refused: this.refusal(e) }; }
       this.pending = null; this.busy = false;
     },
-    adds(p) { return [...p.caps, ...p.record_types.map(t => 'record: ' + t), ...p.drivers.map(d => 'driver: ' + d)]; },
+    adds(p) {
+      return [...p.caps, ...p.record_types.map(t => 'record: ' + t), ...p.drivers.map(d => 'driver: ' + d),
+        ...(p.pages || []).map(x => 'page: ' + x.segment + ' › ' + x.title), ...(p.settings_sections || []).map(t => 'settings: ' + t),
+        ...(p.components || []).map(c => 'component: ' + c)];
+    },
+    /* Where the worker part loaded and where it failed, as the hub reports them (PL3). */
+    workers(list) { return (list || []).map(w => w.worker + (w.error ? ': ' + w.error : '')).join(', '); },
     ago,
   },
   template: `<div>
@@ -71,9 +77,11 @@ export default {
           <span class="cell-mono">{{ p.version }}</span>
           <span class="cell-mono">{{ ago(p.installed_at) }}</span>
           <span class="chips"><span v-for="a in adds(p)" :key="a" class="chip">{{ a }}</span><span v-if="!adds(p).length" class="dim2 small">—</span></span>
-          <span class="chips" title="reported as the manifest has them; nothing acts on them yet">
-            <span v-for="part in ['worker', 'site', 'skill'].filter(x => p[x])" :key="part" class="badge plain">{{ part === 'skill' ? 'skill' : part + ' section' }}</span>
-            <span v-if="!p.worker && !p.site && !p.skill" class="dim2 small">—</span></span>
+          <span class="chips">
+            <span v-for="part in ['worker', 'skill'].filter(x => p[x])" :key="part" class="badge plain">{{ part === 'skill' ? 'skill' : 'worker part' }}</span>
+            <span v-if="p.loaded_on && p.loaded_on.length" class="small">loaded on {{ workers(p.loaded_on) }}</span>
+            <span v-if="p.failed_on && p.failed_on.length" class="small bad-text">failed on {{ workers(p.failed_on) }}</span>
+            <span v-if="!p.worker && !p.skill" class="dim2 small">—</span></span>
         </div>
         <div v-if="plugins && !plugins.length" class="tr"><span class="note" style="grid-column:1/-1">No plugins installed.</span></div>
       </div>

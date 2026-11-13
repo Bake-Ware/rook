@@ -345,6 +345,9 @@ body.fleet-on .rook-art{opacity:0}
 .pin:hover .pin-x,.pin-x:focus-visible{opacity:1}.pin-x:hover{color:var(--bad)}
 .sr-move{position:absolute;left:-9999px}.sr-move:focus-within{position:static;display:flex}
 .sr-move button{background:none;border:1px solid var(--line2);color:var(--dim);font-size:10px;padding:0 4px;cursor:pointer}
+.pin.gone a{color:var(--dim2);text-decoration:line-through}.pin-gone{flex-basis:100%;color:var(--bad);font-size:9px;text-decoration:none}
+.bad-text{color:var(--bad)}
+.page-failed{margin-top:24px;border-color:var(--bad-line);background:var(--bad-bg);color:var(--bad)}
 .pin-empty{font-size:11px;color:var(--dim2);line-height:1.5;padding:4px 2px}.pin-empty b{color:var(--fg-soft);font-weight:500}
 
 /* ---------- Header thumbtack ---------- */
