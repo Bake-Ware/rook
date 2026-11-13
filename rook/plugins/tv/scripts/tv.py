@@ -739,6 +739,20 @@ async def power_on(ctx, wait: int = 20) -> dict:
                     "Devices > TV Management; some TVs only wake from a short standby")
 
 
+async def power_toggle(ctx, wait: int = 20) -> dict:
+    """One button for both: off when the TV answers as on, else on."""
+    tv = _TV(ctx)
+    try:
+        on = await _on(tv, timeout=3)
+    except NotPaired:
+        raise ctx.Error(f"{tv.name} is not paired: run tv.pair while someone is at the TV") from None
+    except Exception:
+        on = False
+    if on:
+        return {**(await power_off(ctx)), "on": False}
+    return await power_on(ctx, wait)
+
+
 async def pair(ctx, key: str | None = None, timeout: int = 60) -> dict:
     """Without ``key`` the TV shows its prompt; with one, check a key paired
     elsewhere. Either way the result's ``settings.client_key`` is what
