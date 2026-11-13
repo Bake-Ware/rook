@@ -128,7 +128,7 @@ async def workers(hub, token, args):
 
 async def list_caps(hub, token, args):
     worker, match = args.get("worker"), args.get("match") or ""
-    groups = [] if worker not in (None, caps.HUB) else [("hub", True, caps.descriptors())]
+    groups = [] if worker not in (None, caps.HUB) else [("hub", True, caps.descriptors(hub))]
     if worker != caps.HUB:
         chosen = [hub.get_worker(worker)] if worker is not None else hub.list_workers()
         groups += [(w["moniker"], w["online"], w["caps"]) for w in chosen]
