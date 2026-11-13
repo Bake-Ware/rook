@@ -1,14 +1,17 @@
 /* The Workers page's graphs and its 3D view, ported from 0.4 (P4, P7, H1, H4, H5):
    - HeartbeatsTile: one bar per worker that drains over a minute from its latest
      heartbeat and flashes when a new one arrives, with a peak that falls slowly;
-     a click finds the worker. Its data is the hub's heartbeat history.
-   - HealthCharts: a worker's health over the last hour, six hours or day, one chart
-     per field it reports, from the same history, grouped by the hub.
+     a click finds the worker. Its data is the hub's heartbeat history. Over 30 days
+     instead, each bar is a column of days, each coloured by that day's share of the
+     heartbeats the worker's interval asks for (the hub's hourly roll-up, H5).
+   - HealthCharts: a worker's health over the last hour, six hours, day or 30 days,
+     one chart per field it reports, from the same history, grouped by the hub.
    - FleetView: the 0.4 3D scene (vendor/rook-scene.js), the hub as a rook and the
      workers and devices as pawns around it, grouped by band. */
 import { api } from '/site/shell.js';
 
 export const HB_WINDOW = 60;   // seconds over which a heartbeat bar drains, as in 0.4
+const DAY = 86400, MONTH = 30 * DAY;
 
 const colour = f => f > 0.5 ? 'var(--good)' : f > 0.22 ? 'var(--warn)' : 'var(--bad)';
 
@@ -24,11 +27,15 @@ function bytes(n) {
 export const HeartbeatsTile = {
   props: { beats: Object, order: Array },
   emits: ['pick'],
-  data() { return { t: Date.now() }; },
+  data() { return { t: Date.now(), month: false, monthly: null }; },
   created() { this.peaks = {}; this.flash = {}; this.seen = {}; },   // bookkeeping, not shown: kept out of reactivity
   mounted() { this.timer = setInterval(() => { this.t = Date.now(); }, 120); },
-  unmounted() { clearInterval(this.timer); },
+  unmounted() { clearInterval(this.timer); clearInterval(this.monthTimer); },
   watch: {
+    month(on) {
+      clearInterval(this.monthTimer);
+      if (on) { this.loadMonth(); this.monthTimer = setInterval(this.loadMonth, 60000); }
+    },
     beats() {                         // a newer heartbeat than last time: the bar flashes
       for (const w of this.beats.workers) {
         if (this.seen[w.moniker] && w.last_heartbeat && w.last_heartbeat !== this.seen[w.moniker]) this.flash[w.moniker] = Date.now();
@@ -52,17 +59,47 @@ export const HeartbeatsTile = {
             + ' · ' + n + ' in the last minute' };
       });
     },
+    /* Over 30 days: per worker, its day buckets oldest first, each the share of the heartbeats
+       its interval asks for in a day, and the month's total. */
+    days() {
+      if (!this.monthly) return [];
+      const since = Date.parse(this.monthly.since) / 1000, step = this.monthly.step, n = Math.round(MONTH / step);
+      const byMoniker = Object.fromEntries(this.monthly.workers.map(w => [w.moniker, w]));
+      return this.order.filter(o => byMoniker[o.moniker]).map(o => {
+        const w = byMoniker[o.moniker], cells = Array(n).fill(0);
+        let total = 0;
+        for (const c of w.counts) {
+          const i = Math.round((Date.parse(c.at) / 1000 - since) / step);
+          if (i >= 0 && i < n) cells[i] = Math.min(1, c.count * w.interval / step);
+          total += c.count;
+        }
+        const seen = cells.filter(f => f > 0).length;
+        return { moniker: o.moniker, name: o.name, cells,
+          title: o.name + ' · ' + total + ' heartbeats in 30 days · heard on ' + seen + ' of ' + n + ' days' };
+      });
+    },
   },
-  methods: { colour },
+  methods: {
+    colour,
+    async loadMonth() {
+      try { this.monthly = await api('GET', `/api/heartbeats?span=${MONTH}&step=${DAY}`); } catch (e) { /* the page's own load reports */ }
+    },
+  },
   template: `<div class="tile hb">
-    <div class="l"><span>heartbeats</span><span class="hint">drains over {{ ${HB_WINDOW} }} s · click a bar to find the worker</span></div>
-    <div class="bars">
+    <div class="l"><span>heartbeats</span><span class="hint">{{ month ? 'a cell a day, newest on top, by share of expected heartbeats' : 'drains over ${HB_WINDOW} s' }} · click a bar to find the worker</span>
+      <span class="seg" role="group" aria-label="Heartbeats span"><button type="button" :class="{on: !month}" :aria-pressed="!month" @click="month=false">live</button><button type="button" :class="{on: month}" :aria-pressed="month" @click="month=true">30 d</button></span></div>
+    <div v-if="!month" class="bars">
       <div v-for="b in bars" :key="b.moniker" class="bar" :class="{beat: b.beat}" :style="{'--c': colour(b.f)}" :title="b.title" @click="$emit('pick', b.moniker)">
         <span class="fill" :style="{height: Math.max(3, b.f * 100) + '%'}"></span>
         <span class="peak" :style="{bottom: Math.max(4, b.p * 100) + '%', background: colour(b.p)}"></span>
       </div>
     </div>
-    <div class="bar-names" aria-hidden="true"><span v-for="b in bars" :key="b.moniker">{{ b.name }}</span></div>
+    <div v-else class="bars">
+      <div v-for="b in days" :key="b.moniker" class="bar days" :title="b.title" @click="$emit('pick', b.moniker)">
+        <span v-for="(f, i) in b.cells" :key="i" class="day" :style="f ? {background: colour(f)} : {}"></span>
+      </div>
+    </div>
+    <div class="bar-names" aria-hidden="true"><span v-for="b in (month ? days : bars)" :key="b.moniker">{{ b.name }}</span></div>
   </div>`,
 };
 
@@ -73,7 +110,7 @@ const FIELDS = {
   battery: { label: 'Battery', unit: '%' }, temperature: { label: 'Temperature', unit: '°C' },
   heap_free: { label: 'Free heap', unit: 'B' }, uptime: { label: 'Uptime', unit: 'h' },
 };
-const SPANS = [{ s: 3600, label: '1 h' }, { s: 21600, label: '6 h' }, { s: 86400, label: '24 h' }];
+const SPANS = [{ s: 3600, label: '1 h' }, { s: 21600, label: '6 h' }, { s: 86400, label: '24 h' }, { s: MONTH, label: '30 d' }];
 const show = (v, unit) => unit === 'B' ? bytes(v) : unit === 'h' ? (v >= 172800 ? (v / 86400).toFixed(1) + ' d' : (v / 3600).toFixed(1) + ' h')
   : Math.round(v) + (unit === '%' ? '%' : '°');
 
@@ -113,7 +150,8 @@ const HealthChart = {
     },
     ago(at) {
       const m = Math.round((this.since + this.span - at) / 60);
-      return m <= 1 ? 'now' : m < 60 ? m + ' min ago' : (m / 60).toFixed(1).replace('.0', '') + ' h ago';
+      return m <= 1 ? 'now' : m < 60 ? m + ' min ago' : m < 2880 ? (m / 60).toFixed(1).replace('.0', '') + ' h ago'
+        : Math.round(m / 1440) + ' d ago';
     },
   },
   template: `<div class="hchart">
@@ -137,7 +175,10 @@ export const HealthCharts = {
   props: { worker: String },
   data() { return { span: 86400, series: null, error: '' }; },
   computed: {
-    since() { return this.series ? Date.parse(this.series.now) / 1000 - this.span : 0; },
+    /* The window the hub answered: from the roll-up (H5) it is whole hours, a little past now. */
+    since() { return this.series ? Date.parse(this.series.since) / 1000 : 0; },
+    window() { return this.series && this.series.source === 'hourly' ? Math.ceil(this.span / this.series.step) * this.series.step : this.span; },
+    perPoint() { const s = this.series.step; return s >= 3600 ? Math.round(s / 3600) + ' h' : (Math.round(s / 60) || 1) + ' min'; },
     count() { return this.series ? this.series.buckets.reduce((n, b) => n + b.count, 0) : 0; },
   },
   watch: { span() { this.load(); } },
@@ -155,12 +196,12 @@ export const HealthCharts = {
   },
   SPANS,
   template: `<div class="dblock full"><h4>Health <span class="dim2" style="display:flex;gap:8px;align-items:center">
-      <span v-if="series">{{ count }} heartbeats · {{ Math.round(series.step / 60) || 1 }} min a point</span>
+      <span v-if="series">{{ count }} heartbeats · {{ perPoint }} a point</span>
       <span class="seg" role="group" aria-label="Health span"><button v-for="s in $options.SPANS" :key="s.s" type="button" :class="{on: span===s.s}" :aria-pressed="span===s.s" @click.stop="span=s.s">{{ s.label }}</button></span></span></h4>
     <p v-if="error" class="note" style="margin:0">{{ error }}</p>
     <template v-else-if="series">
       <div v-if="series.fields.length" class="charts-grid">
-        <health-chart v-for="f in series.fields" :key="f" :field="f" :buckets="series.buckets" :since="since" :span="span" :step="series.step" :note="note(f)"></health-chart>
+        <health-chart v-for="f in series.fields" :key="f" :field="f" :buckets="series.buckets" :since="since" :span="window" :step="series.step" :note="note(f)"></health-chart>
       </div>
       <p v-else-if="series.buckets.length" class="note" style="margin:0">It heartbeats but reports no health.</p>
       <p v-else class="note" style="margin:0">No heartbeats in this span.</p>
