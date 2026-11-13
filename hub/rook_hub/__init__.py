@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, jobs, web
+from . import bands, caps, jobs, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -107,7 +107,8 @@ def _load_words():
 
 
 class Hub:
-    def __init__(self, state_dir, clock=time.time):
+    def __init__(self, state_dir, clock=time.time, vault_key=None):
+        """`vault_key` (32 bytes) opens the vault (X4); without it the vault is locked."""
         self.state_dir = pathlib.Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.clock = clock
@@ -117,6 +118,8 @@ class Hub:
         self._db.executescript(SCHEMA)
         self._db.executescript(bands.SCHEMA)
         self._db.executescript(jobs.SCHEMA)
+        self._db.executescript(vault.SCHEMA)
+        self.vault = vault.Vault(self, vault_key)
         self.events = Events(self)
         self.auth = Auth(self)
         self._signing_key = self._load_signing_key()
@@ -451,7 +454,8 @@ class Hub:
             request = encode({"type": "call", "id": call_id, "cap": cap, "args": args})
             if worker == caps.HUB:      # the hub's own caps (caps.py)
                 guid = caps.HUB
-                result = caps.run(self, cap, args, {"user": user, "token": token})
+                used = args if cap in caps.KEEP_REFERENCES else self.vault.substitute(args, caps.HUB)
+                result = caps.run(self, cap, used, {"user": user, "token": token})
                 reply = {"type": "result", "id": call_id, "result": result}
             else:
                 record = self.get_worker(worker)
@@ -465,6 +469,8 @@ class Hub:
                     reply = error("unknown_cap", f"{moniker} does not announce {cap}.",
                                   f"List the caps {moniker} announces and call one of those.", call_id)
                 else:
+                    request = encode({"type": "call", "id": call_id, "cap": cap,
+                                      "args": self.vault.substitute(args, guid)})   # secret:<name> (X2)
                     future = asyncio.get_running_loop().create_future()
                     self._calls[call_id] = (guid, future)
                     try:
