@@ -423,6 +423,7 @@ class Hub:
                 return error("key_revoked", "This key was revoked.",
                              "Generate a new key, knock with it, and ask a person or agent to attach it."), None
             guid, now = row["worker"], self.clock()
+            before = self._db.execute("SELECT * FROM workers WHERE guid = ?", (guid,)).fetchone()
             state = {name: message[name] for name in ("facts", "caps", "band", "health", "streams")
                      if name in message}
             self._db.execute(
@@ -432,7 +433,9 @@ class Hub:
                              (guid, now, raw.decode("utf-8")))
             self._see(guid, "hostname", [message["facts"]["hostname"]], now)
             self._see(guid, "mac", message["facts"]["macs"], now)
-            interval = self._db.execute("SELECT interval FROM workers WHERE guid = ?", (guid,)).fetchone()[0]
+            interval = before["interval"]
+            if before["state"] is not None:     # a first heartbeat is not a change of band
+                bands.moved(self, before, (message["band"]["gateway_mac"] or "").lower() or None)
         return {"type": "heartbeat_reply", "protocol": PROTOCOL, "interval": interval}, guid
 
     # ---------------------------------------------------------------- calls
