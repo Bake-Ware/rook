@@ -276,11 +276,9 @@ async def run(hub, job, event):
         reply = await hub.call(job["worker"], job["cap"], json.loads(job["args"]), why,
                                user=job["owner"], job=job["guid"], run=run_id)
     except Exception as e:   # the call raised instead of answering: the run still ends, as a failure (J3)
-        log.exception("Job %s run %s raised", job["moniker"], run_id)
+        log.exception("Job %s run %s raised", job["moniker"], run_id)   # Hub.call ended its journal entry
         reply = error("run_failed", f"The run stopped inside the hub: {type(e).__name__}: {e}",
                       "Read the hub's log (logger rook_hub.jobs) for the details; the job itself is unchanged.")
-        with hub._lock, hub._db:
-            hub._journal("job", (job["owner"], None), job["worker"], reply, job["cap"], why, job["guid"], run_id)
     outcome = "job.fail" if reply["type"] == "error" else "job.success"
     hub.events.emit(outcome, {"job": job["guid"], "job_moniker": job["moniker"], "run": run_id, "result": reply},
                     user=job["owner"])
