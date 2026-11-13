@@ -10,6 +10,7 @@ once closed) and `close()`.
 """
 
 import asyncio
+import base64
 import json
 import os
 import pathlib
@@ -18,6 +19,7 @@ import shutil
 import socket
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -30,10 +32,50 @@ VERSION = "0.1.0"
 
 @dataclass
 class Cap:
-    """A cap this worker serves (W3). `handler(args)` is awaited for each call."""
+    """A cap this worker serves (W3). `handler(args)` is awaited for each call.
+
+    A stream cap (`opens_stream=True`, S1) is called as `handler(args, stream)` and
+    returns {"title": ..., "description": ...} (S3); it keeps `stream` to send on."""
     description: str
     schema: dict
-    handler: Callable[[dict], Awaitable[Any]]
+    handler: Callable[..., Awaitable[Any]]
+    opens_stream: bool = False
+
+
+class Stream:
+    """One open stream, owned by this worker (S2). `send` output; `read` input
+    (None once closed); `close` it. It lives until one side closes it (S4)."""
+
+    def __init__(self, worker, handle):
+        self.worker, self.handle = worker, handle
+        self.open = True
+        self._input = asyncio.Queue()
+        self._ready = asyncio.Event()     # set once the hub has its stream_open, so no data goes first
+
+    async def send(self, data):
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        await self._ready.wait()
+        if self.open:
+            await self.worker._send({"type": "stream_data", "stream": self.handle,
+                                     "data": base64.b64encode(data).decode("ascii")})
+
+    async def read(self):
+        """The next input from a client, as bytes, or None when the stream is closed."""
+        return await self._input.get()
+
+    async def close(self):
+        if self.open:
+            await self._ready.wait()
+            await self.worker._send({"type": "stream_close", "stream": self.handle})
+            self._closed()
+
+    def _closed(self):
+        if self.open:
+            self.open = False
+            self._input.put_nowait(None)
+            self.worker.streams.pop(self.handle, None)
+            self.worker.changed()        # the open count is part of the heartbeat (S4)
 
 
 class Refused(Exception):
@@ -61,6 +103,7 @@ class Worker:
         path = self.state_dir / "identity.json"
         self.identity = json.loads(path.read_text()) if path.exists() else None
         self.interval = None
+        self.streams = {}                 # handle -> Stream, while open
         self._link = None
         self._changed = asyncio.Event()
         self._interval_known = asyncio.Event()
@@ -160,6 +203,10 @@ class Worker:
                 self._interval_known.set()
             elif message["type"] == "call":
                 asyncio.create_task(self._answer(message))
+            elif message["type"] == "stream_data" and message["stream"] in self.streams:
+                self.streams[message["stream"]]._input.put_nowait(base64.b64decode(message["data"]))
+            elif message["type"] == "stream_close" and message["stream"] in self.streams:
+                self.streams[message["stream"]]._closed()
             elif message["type"] == "error" and message["code"] in ("unknown_key", "key_revoked"):
                 raise Refused(message)
 
@@ -168,6 +215,9 @@ class Worker:
         if cap is None:
             reply = error("unknown_cap", f"{self.name} does not serve {call['cap']}.",
                           f"List the caps {self.name} announces and call one of those.", call["id"])
+        elif cap.opens_stream:
+            await self._open_stream(call, cap)
+            return
         else:
             try:
                 reply = {"type": "result", "id": call["id"], "result": await cap.handler(call["args"])}
@@ -176,6 +226,25 @@ class Worker:
                 reply = error("cap_failed", f"{call['cap']} failed: {e}",
                               f"Check the arguments against the schema of {call['cap']}.", call["id"])
         await self._send(reply)
+
+    async def _open_stream(self, call, cap):
+        """A call on a stream cap: the handler names the stream, the hub hears stream_open (S1)."""
+        # A fresh random handle, so a stream opened after a restart never takes the
+        # handle of one the hub still lists from before it.
+        stream = Stream(self, uuid.uuid4().hex[:16])
+        try:
+            named = await cap.handler(call["args"], stream)
+            reply = {"type": "stream_open", "id": call["id"], "stream": stream.handle,
+                     "title": str(named["title"]), "description": str(named["description"])}
+            encode(reply)
+        except Exception as e:
+            await self._send(error("cap_failed", f"{call['cap']} failed: {e}",
+                                   f"Check the arguments against the schema of {call['cap']}.", call["id"]))
+            return
+        self.streams[stream.handle] = stream
+        await self._send(reply)
+        stream._ready.set()
+        self.changed()
 
     async def _send(self, message):
         try:
@@ -186,7 +255,8 @@ class Worker:
     # ---------------------------------------------------------------- state
 
     def _cap_list(self):
-        return [{"name": name, "description": cap.description, "schema": cap.schema, "returns": "result"}
+        return [{"name": name, "description": cap.description, "schema": cap.schema,
+                 "returns": "stream" if cap.opens_stream else "result"}
                 for name, cap in sorted(self.caps.items())]
 
     def heartbeat(self):
@@ -200,6 +270,7 @@ class Worker:
             "caps": self._cap_list(),
             "band": {"gateway_mac": gateway_mac()},
             "health": self.health(),
+            "streams": len(self.streams),
         }
 
     def health(self):

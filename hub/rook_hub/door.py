@@ -9,7 +9,7 @@ Every request carries `Authorization: Bearer <token>`, a hub token with the
 Each request is a use of the token (T6); calls are journaled with the token
 and its user (L1).
 
-Four tools, generic on purpose (C2): workers, caps, call, journal. Caps are
+Five tools, generic on purpose (C2): workers, caps, call, journal, stream. Caps are
 discovered through them, never registered as tools.
 """
 
@@ -65,17 +65,35 @@ TOOLS = [
     {"name": "journal",
      "description": (
          "Read the hub's journal, newest first: every call (with its why and result), auth event "
-         "(approvals, tokens, logins), change to a band, event on the hub's bus, and job run. Narrow with "
-         "worker, cap, user (moniker or GUID), kind (\"call\", \"auth\", \"band\", \"event\" or \"job\"), "
+         "(approvals, tokens, logins), change to a band, event on the hub's bus, job run, and closed stream. "
+         "Narrow with worker, cap, user (moniker or GUID), kind (\"call\", \"auth\", \"band\", \"event\", "
+         "\"job\" or \"stream\"), "
          "job (moniker or GUID), run (a run ID; every run in one chain of jobs shares it), since and until "
          "(ISO 8601 times) and text (found in the why, cap or result). limit is how many entries come back "
          "(default 50)."),
      "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
          "worker": {"type": "string"}, "cap": {"type": "string"}, "user": {"type": "string"},
-         "kind": {"type": "string", "enum": ["call", "auth", "band", "event", "job"]},
+         "kind": {"type": "string", "enum": ["call", "auth", "band", "event", "job", "stream"]},
          "job": {"type": "string"}, "run": {"type": "string"},
          "since": {"type": "string"}, "until": {"type": "string"}, "text": {"type": "string"},
          "limit": {"type": "integer", "minimum": 1}}}},
+    {"name": "stream",
+     "description": (
+         "Work with streams: things that stay open on a worker, such as a terminal or a running process. "
+         "Calling a cap whose returns is \"stream\" opens one, and the reply names it. action \"list\": every "
+         "stream with its title, description, worker, who opened it and whether it is open (open: true for "
+         "open ones only). action \"read\": what passed through the stream from position `from` (0 is the "
+         "start): output from the worker as \"out\", input as \"in\" with who sent it. The reply's `next` "
+         "is where to read from next time. With `wait` (seconds, up to 40) a read with nothing new waits for "
+         "more. action \"write\": send `text` as input (end it with \"\\n\" to finish a line). action "
+         "\"close\": close it, with a `why`. Several agents can read one stream at once. A stream stays open "
+         "until someone closes it, so close it when its work is done."),
+     "inputSchema": {"type": "object", "required": ["action"], "additionalProperties": False, "properties": {
+         "action": {"type": "string", "enum": ["list", "read", "write", "close"]},
+         "stream": {"type": "string", "description": "The stream's moniker or GUID."},
+         "from": {"type": "integer", "minimum": 0}, "wait": {"type": "number", "minimum": 0, "maximum": 40},
+         "limit": {"type": "integer", "minimum": 1}, "text": {"type": "string"}, "why": {"type": "string"},
+         "open": {"type": "boolean"}}}},
 ]
 
 
@@ -130,7 +148,8 @@ async def call(hub, token, args):
     if reply["type"] == "error":
         raise HubError(reply["code"], reply["message"], reply["next"])
     if reply["type"] == "stream_open":
-        return _dumps({name: reply[name] for name in ("stream", "title", "description")})
+        return _dumps(dict({name: reply[name] for name in ("stream", "title", "description")},
+                           next="Read it with the stream tool, from position 0."))
     return _dumps(reply["result"])
 
 
@@ -139,7 +158,29 @@ async def read_journal(hub, token, args):
     return _dumps({"entries": journal.read(hub, **filters, limit=args.get("limit") or 50)})
 
 
-HANDLERS = {"workers": workers, "caps": list_caps, "call": call, "journal": read_journal}
+async def stream(hub, token, args):
+    action, name = args.get("action"), args.get("stream")
+    if action == "list":
+        return _dumps({"streams": hub.streams.list(args.get("open"))})
+    if not isinstance(name, str) or not name:
+        raise HubError("bad_message", "stream is required for this action.",
+                       "Give the stream's moniker or GUID; action \"list\" shows them.")
+    if action == "read":
+        return _dumps(await hub.streams.read(name, args.get("from", 0), args.get("wait", 0), args.get("limit", 200)))
+    if action == "write":
+        if not isinstance(args.get("text"), str):
+            raise HubError("bad_message", "text is required to write.", "Give the input as text.")
+        return _dumps(await hub.streams.write(name, args["text"], token=token))
+    if action == "close":
+        if not isinstance(args.get("why"), str) or not args["why"]:
+            raise HubError("bad_message", "why is required to close a stream.",
+                           "Say in one sentence why it is done; the journal keeps it.")
+        return _dumps(await hub.streams.close(name, args["why"], token=token))
+    raise HubError("bad_message", f"action {action!r} is not one of list, read, write, close.",
+                   "Use action list, read, write or close.")
+
+
+HANDLERS = {"workers": workers, "caps": list_caps, "call": call, "journal": read_journal, "stream": stream}
 
 
 def _rpc(message_id, status=200, result=None, error=None):

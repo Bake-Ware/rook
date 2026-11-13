@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, jobs, plugins, records, scrub, vault, web
+from . import bands, caps, jobs, plugins, records, scrub, streams, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -76,7 +76,7 @@ CREATE INDEX IF NOT EXISTS heartbeats_worker_at ON heartbeats (worker, at);
 CREATE TABLE IF NOT EXISTS journal (
     id     INTEGER PRIMARY KEY,
     at     REAL NOT NULL,
-    kind   TEXT NOT NULL,            -- call, auth, band, event or job (a job's run)
+    kind   TEXT NOT NULL,            -- call, auth, band, event, job (a job's run) or stream (a close)
     user   TEXT,                     -- the acting user (L1); none for events of the hub's own
     token  TEXT,                     -- the token they acted through, if any (L1)
     worker TEXT,
@@ -115,11 +115,19 @@ class Hub:
         self._lock = threading.Lock()  # every entry point takes it before touching the database
         self._db = sqlite3.connect(self.state_dir / "hub.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
+        # WAL with synchronous=NORMAL: a write is one append, not an fsync, so recording
+        # a busy stream does not stall the hub. A power loss can lose the last moments
+        # of writes; it cannot corrupt the database. Closing the hub folds the WAL back
+        # into hub.db, so a closed hub is still one directory to move (F3).
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(SCHEMA)
         self._db.executescript(bands.SCHEMA)
         self._db.executescript(records.SCHEMA)
         self._db.executescript(jobs.SCHEMA)
         self._db.executescript(vault.SCHEMA)
+        self._db.executescript(streams.SCHEMA)
+        self.streams = streams.Streams(self)
         self._db.executescript(plugins.SCHEMA)
         self.vault = vault.Vault(self, vault_key)
         self.events = Events(self)
@@ -128,7 +136,7 @@ class Hub:
         self.public_key = self._signing_key.verify_key.encode().hex()
         self._adjectives, self._nouns = _load_words()
         self._links = {}  # worker guid -> its live link
-        self._calls = {}  # call id -> (worker guid, future)
+        self._calls = {}  # call id -> (worker guid, future, actor, cap)
         self._runner = None  # the HTTP server, while serving
         self.plugins = plugins.Plugins(self)
         self.plugins.load_all()  # every installed plugin, at start (PL3)
@@ -400,14 +408,20 @@ class Hub:
                 elif message["type"] in ("result", "error", "stream_open") and "id" in message:
                     pending = self._calls.get(message["id"])
                     if pending and pending[0] == guid and not pending[1].done():
+                        if message["type"] == "stream_open":   # record it before any data follows (S1, S2)
+                            record = self.streams.opened(guid, message, pending[2], pending[3])
+                            message = dict(message, stream=record["moniker"])
                         pending[1].set_result(message)
-                # stream_data and stream_close: fan-out to clients is not in this skeleton (S2).
+                elif message["type"] == "stream_data" and guid is not None:
+                    self.streams.received(guid, message)
+                elif message["type"] == "stream_close" and guid is not None:
+                    self.streams.closed_by_worker(guid, message)
         except EOFError:
             pass
         finally:
             if guid is not None and self._links.get(guid) is link:
                 del self._links[guid]
-                for call_id, (owner, future) in list(self._calls.items()):
+                for call_id, (owner, future, *_) in list(self._calls.items()):
                     if owner == guid and not future.done():
                         future.set_result(error("worker_disconnected", "The worker's link closed before it answered.",
                                                 "Check whether the worker is online, then call again.", call_id))
@@ -480,7 +494,7 @@ class Hub:
                     request = encode({"type": "call", "id": call_id, "cap": cap,
                                       "args": self.vault.substitute(args, guid)})   # secret:<name> (X2)
                     future = asyncio.get_running_loop().create_future()
-                    self._calls[call_id] = (guid, future)
+                    self._calls[call_id] = (guid, future, actor, cap)
                     try:
                         await link.send(request)
                         reply = await future

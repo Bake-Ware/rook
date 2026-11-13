@@ -11,7 +11,7 @@ L4 calls this a reducer, not a guarantee: it misses vault values shorter than
 eight characters, values that arrive changed (encoded, escaped, split across
 strings, or in another case), secrets of shapes not listed below, and anything
 in a dictionary key. `journal.redact` (L5) takes a value out of every entry
-already written.
+already written, and from stream recordings.
 """
 
 import json
@@ -96,8 +96,9 @@ def _replace(value, old):
 
 
 def redact(hub, args, actor):
-    """The `journal.redact` hub cap (L5): replace a value everywhere in the journal.
-    Answers how many entries changed. The value itself is never journaled."""
+    """The `journal.redact` hub cap (L5): replace a value everywhere in the journal and
+    in stream recordings. Answers how many journal entries and how many stream
+    recordings changed. The value itself is never journaled."""
     value = args.get("value")
     if not isinstance(value, str) or not value:
         raise HubError("bad_message", "args.value is required and must be a string.",
@@ -114,13 +115,21 @@ def redact(hub, args, actor):
             if why != row["why"] or result != row["result"]:
                 hub._db.execute("UPDATE journal SET why = ?, result = ? WHERE id = ?", (why, result, row["id"]))
                 changed += 1
-    return {"redacted": changed, "note": "Stream recordings are not kept yet, so there were none to redact."}
+        raw = value.encode("utf-8")
+        streams = set()
+        for row in hub._db.execute("SELECT stream, position, data FROM stream_data WHERE instr(data, ?)",
+                                   (raw,)).fetchall():
+            hub._db.execute("UPDATE stream_data SET data = ? WHERE stream = ? AND position = ?",
+                            (row["data"].replace(raw, REDACTED.encode()), row["stream"], row["position"]))
+            streams.add(row["stream"])
+    return {"redacted": changed, "recordings": len(streams)}
 
 
 def caps():
     return {"journal.redact": (redact, {
-        "description": "Take a value out of the whole journal: every entry that holds it gets (redacted) "
-                       "in its place. Answers how many entries changed.",
+        "description": "Take a value out of the whole journal and every stream recording: wherever it is, "
+                       "(redacted) takes its place. Answers how many journal entries and how many stream "
+                       "recordings changed.",
         "schema": {"type": "object", "required": ["value"], "additionalProperties": False,
                    "properties": {"value": {"type": "string", "description": "The exact text to remove."}}},
     })}

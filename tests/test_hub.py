@@ -186,7 +186,8 @@ def test_stream_cap_call_returns_the_stream_handle(hub):
         await link.send(encode({"type": "stream_open", "id": request["id"], "stream": "s1",
                                 "title": "shell", "description": "a test shell"}))
         reply = await call
-        assert reply["type"] == "stream_open" and reply["stream"] == "s1" and reply["title"] == "shell"
+        assert reply["type"] == "stream_open" and reply["title"] == "shell"
+        assert hub.streams.get(reply["stream"])["title"] == "shell"   # named by the hub's moniker, not "s1"
     asyncio.run(go())
 
 
