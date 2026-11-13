@@ -2,6 +2,7 @@
 real rook_worker on an in-memory link. The wait is shortened from 45 seconds to half a second."""
 
 import asyncio
+import base64
 import json
 import os
 
@@ -11,6 +12,8 @@ from memory_link import connector
 from rook_hub import Hub
 from rook_worker import Cap, Worker
 from test_door import mcp_client, tool
+from test_first_run import ROOT, Started, start_command
+from test_site import ask, browser, login
 
 SECRET = "hunter2-correct-horse-battery"
 WAIT = 0.5
@@ -159,6 +162,32 @@ async def scenario(tmp_path):
             # The same failure as a quick call: the door's error carries the same code, message and next.
             failed, text = await call("demo.slow", "a broken one, quickly", fail=True)
             assert failed and text == f"cap_failed: {reply['message']} Next: {reply['next']}"
+
+            # 6. The same through the site: POST /api/call, as a page's call() sends it, goes through the
+            #    same code. Quick: the reply as before. Slow: "running" and a stream, followed through the
+            #    site's own stream reads, whose last entry is the reply.
+            async with browser() as client:
+                assert (await login(client, base, "Alice", "a password"))[0] == 200
+                status, quick = await ask(client, "POST", f"{base}/api/call",
+                                          {"worker": box, "cap": "demo.quick", "args": {}, "why": "quick, from a page"})
+                assert status == 200 and quick["type"] == "result" and quick["result"] == {"quick": True}
+                slow.gate.clear()
+                status, answer = await ask(client, "POST", f"{base}/api/call", {
+                    "worker": box, "cap": "demo.slow", "args": {"what": "from a page"}, "why": "built from a page"})
+                assert status == 200 and set(answer) == {"type", "id", "worker", "stream"}, answer
+                assert answer["type"] == "running" and answer["worker"] == box
+                slow.gate.set()
+                position, last, still = 0, None, True
+                while still:
+                    status, read = await ask(client, "GET", f"{base}/api/streams/{answer['stream']}/read?from={position}&wait=5")
+                    assert status == 200, read
+                    last = read["entries"][-1] if read["entries"] else last
+                    position, still = read["next"], read["open"]
+                reply = json.loads(base64.b64decode(last["data"]))
+                assert reply == {"type": "result", "id": answer["id"], "result": {"built": "from a page", "with": None}}
+                assert len(slow.runs) == 4                     # three through the door, one from the page
+                [entry] = [e for e in await journal_of("demo.slow") if e["result"].get("id") == answer["id"]]
+                assert entry["result"] == reply and entry["why"] == "built from a page"
     finally:
         worker.stop()
         await asyncio.gather(running, return_exceptions=True)
@@ -166,43 +195,79 @@ async def scenario(tmp_path):
         hub.close()
 
 
-def test_a_hub_restart_ends_a_long_call_with_an_error(tmp_path, monkeypatch):
-    """The hub stops while a long call runs: when it starts again, the call's stream ends with an
-    error that says what to try next, and the journal entry says the same (C3)."""
+def test_one_hub_per_data_directory_and_a_restart(tmp_path, monkeypatch):
+    """Only the hub that serves a data directory ends calls a previous run left running (C3).
+    While a hub serves it with a long call running, the real start command, run twice (on a free
+    port and on the same port), refuses and changes nothing; the call ends as it should. When that
+    hub is gone mid-call, the real command takes the directory over and ends the call's stream with
+    hub_restarted; the old call ending later adds nothing to the closed stream or the journal."""
     monkeypatch.setattr(rook_hub, "CALL_WAIT", WAIT)
+    asyncio.run(one_hub_per_directory(tmp_path))
 
-    async def go():
-        hub = Hub(tmp_path / "hub")
-        host, port = await hub.serve("127.0.0.1", 0)
-        alice = hub.auth.create_user("Alice", "a password")
-        slow = Slow()
-        worker = Worker(tmp_path / "w", f"http://{host}:{port}", connector(hub), name="builder", caps=slow.caps(),
-                        macs=[], knock_every=0.02)
-        running = asyncio.create_task(worker.run())
-        await eventually(lambda: hub.list_pending())
-        box = hub.approve(worker.key, user=alice["guid"])["moniker"]
-        await eventually(lambda: hub.get_worker(box)["online"])
+
+async def one_hub_per_directory(tmp_path):
+    data, key = tmp_path / "data", tmp_path / "keys" / "vault.key"
+    hub = Hub(data, vault_key_file=key)
+    host, port = await hub.serve("127.0.0.1", 0)
+    alice = hub.auth.create_user("Alice", "a password")
+    slow = Slow()
+    worker = Worker(tmp_path / "w", f"http://{host}:{port}", connector(hub), name="builder", caps=slow.caps(),
+                    macs=[], knock_every=0.02)
+    running = asyncio.create_task(worker.run())
+    await eventually(lambda: hub.list_pending())
+    box = hub.approve(worker.key, user=alice["guid"])["moniker"]
+    await eventually(lambda: hub.get_worker(box)["online"])
+
+    def entry(call_id):
+        [row] = [json.loads(r[0]) for r in hub._db.execute("SELECT result FROM journal WHERE cap = 'demo.slow'")
+                 if json.loads(r[0])["id"] == call_id]
+        return row
+
+    async def recording(stream):
+        return [json.loads(e["out"]) for e in (await hub.streams.read(stream))["entries"]]
+
+    async def command(*extra):
+        args, env = start_command(data, key)
+        process = await asyncio.create_subprocess_exec(*args, *extra, cwd=ROOT, env=env,
+                                                       stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(process.communicate(), 20)
+        return process.returncode, err.decode()
+
+    try:
+        # 1. The real command, twice, while this hub serves the directory and a long call runs.
         answer = await hub.call_or_follow(box, "demo.slow", {"what": "nightly"}, "the nightly build", user=alice["guid"])
         assert answer["type"] == "running"
-        again = None
-        try:
-            # A new hub process on the same data directory; the old one is gone as far as it knows.
-            again = Hub(tmp_path / "hub")
-            read = await again.streams.read(answer["stream"])
-            assert read["open"] is False
-            reply = json.loads(read["entries"][-1]["out"])
+        for extra in ((), ("--port", str(port))):           # a free port, then this hub's own
+            code, err = await command(*extra)
+            assert code != 0 and "Another hub is serving" in err and "Stop that hub first" in err, err
+        assert entry(answer["id"])["type"] == "running" and hub.streams.get(answer["stream"])["open"]
+        assert await recording(answer["stream"]) == []
+        slow.gate.set()                                       # the call ends as it should
+        await eventually(lambda: not hub.streams.get(answer["stream"])["open"])
+        [reply] = await recording(answer["stream"])
+        assert reply["type"] == "result" and entry(answer["id"]) == reply
+        assert len(slow.runs) == 1
+
+        # 2. This hub is gone mid-call (its process ended, so the system let go of its lock). The real
+        #    command takes the directory over and ends the call with an error saying what to try next.
+        slow.gate.clear()
+        answer = await hub.call_or_follow(box, "demo.slow", {"what": "weekly"}, "the weekly build", user=alice["guid"])
+        assert answer["type"] == "running"
+        hub._serving_dir.close()
+        async with Started(data, key):
+            [reply] = await recording(answer["stream"])
             assert reply["code"] == "hub_restarted" and reply["id"] == answer["id"] and "call again" in reply["next"]
-            assert again.streams.get(answer["stream"])["closed_by"] == "hub"
-            [entry] = [r for r in again._db.execute("SELECT result FROM journal WHERE cap = 'demo.slow'")]
-            assert json.loads(entry[0]) == reply
-            assert len(slow.runs) == 1          # nothing was sent to the worker again
-        finally:
-            slow.gate.set()
-            worker.stop()
-            await asyncio.gather(running, return_exceptions=True)
-            await asyncio.sleep(0.05)
-            await hub.stop_serving()
-            hub.close()
-            if again is not None:
-                again.close()
-    asyncio.run(go())
+            assert hub.streams.get(answer["stream"])["closed_by"] == "hub"
+            assert entry(answer["id"]) == reply
+        # The old call ending afterwards adds nothing: the stream and the journal keep the error.
+        slow.gate.set()
+        await asyncio.sleep(0.3)
+        assert await recording(answer["stream"]) == [reply] and entry(answer["id"]) == reply
+        assert len(slow.runs) == 2                           # nothing was sent to the worker again
+    finally:
+        slow.gate.set()
+        worker.stop()
+        await asyncio.gather(running, return_exceptions=True)
+        await hub.stop_serving()
+        hub._serving_dir = None
+        hub.close()
