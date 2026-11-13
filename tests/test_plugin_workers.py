@@ -26,9 +26,31 @@ async def echo(args):
     return args
 
 
-OWN = {"demo.echo": Cap("Return the arguments unchanged.", {"type": "object"}, echo)}
+async def leave(args):
+    raise SystemExit(2)
+
+
+OWN = {"demo.echo": Cap("Return the arguments unchanged.", {"type": "object"}, echo),
+       "demo.leave": Cap("Call sys.exit(), as careless code might.", {"type": "object"}, leave)}
 
 BROKEN = "raise RuntimeError('this part needs a GPU')\n"
+EXITER = "import sys\nsys.exit(3)\n"
+QUITTER = '''import sys
+
+from rook_worker import Cap
+
+
+async def now(args):
+    sys.exit(4)
+
+
+async def stream(args, stream):
+    sys.exit(5)
+
+
+CAPS = {"quit.now": Cap("Exit while answering a call.", {"type": "object"}, now),
+        "quit.stream": Cap("Exit while opening a stream.", {"type": "object"}, stream, opens_stream=True)}
+'''
 GRABBY = '''from rook_worker import Cap
 
 
@@ -190,11 +212,15 @@ async def scenario(tmp_path):
             assert await greets(g)
 
             # 6. Parts that fail to load are reported and journaled; the worker keeps running with
-            #    its other caps. One raises as it loads; one names a cap the worker already serves,
-            #    which is refused rather than replacing it (PL1).
+            #    its other caps. One raises as it loads; one calls sys.exit() as it loads; one names
+            #    a cap the worker already serves, which is refused rather than replacing it (PL1).
             failed, reply = await call("hub", "plugin.install", "install broken", path=write_plugin(
                 tmp_path / "broken", {"name": "broken", "version": "0.1.0", "worker": {"python": {"module": "w.py"}}},
                 **{"w.py": BROKEN}))
+            assert not failed, reply
+            failed, reply = await call("hub", "plugin.install", "install exiter", path=write_plugin(
+                tmp_path / "exiter", {"name": "exiter", "version": "0.1.0", "worker": {"python": {"module": "w.py"}}},
+                **{"w.py": EXITER}))
             assert not failed, reply
             failed, reply = await call("hub", "plugin.install", "install grabby", path=write_plugin(
                 tmp_path / "grabby", {"name": "grabby", "version": "0.1.0", "worker": {"python": {"module": "w.py"}}},
@@ -203,10 +229,12 @@ async def scenario(tmp_path):
 
             async def failures():
                 failed, read = await tool(door, "journal", kind="plugin")
-                return read["entries"] if len(read["entries"]) == 4 else None    # two parts on alpha and gamma
+                return read["entries"] if len(read["entries"]) == 6 else None    # three parts on alpha and gamma
             entries = await until(failures)
             seen = {(e["worker"], e["result"]["plugin"]) for e in entries}
-            assert seen == {(a, "broken"), (g, "broken"), (a, "grabby"), (g, "grabby")}, entries
+            assert seen == {(w, p) for w in (a, g) for p in ("broken", "exiter", "grabby")}, entries
+            exiter = next(e["result"] for e in entries if e["result"]["plugin"] == "exiter")
+            assert exiter == {"plugin": "exiter", "version": "0.1.0", "error": "SystemExit: 3"}
             broken = next(e["result"] for e in entries if e["result"]["plugin"] == "broken")
             assert broken == {"plugin": "broken", "version": "0.1.0",
                               "error": "RuntimeError: this part needs a GPU"}
@@ -223,13 +251,30 @@ async def scenario(tmp_path):
             assert alpha.caps["net.http"] is not None and "net.http" in announced(a)
             assert not any(task.done() for _, task in running)
 
+            #    A handler that calls sys.exit() during a call fails that call, as any failing handler
+            #    does, and the worker answers on: a plugin's plain and stream caps, and its own cap.
+            failed, reply = await call("hub", "plugin.install", "install quitter", path=write_plugin(
+                tmp_path / "quitter", {"name": "quitter", "version": "0.1.0", "worker": {"python": {"module": "w.py"}}},
+                **{"w.py": QUITTER}))
+            assert not failed, reply
+            await eventually(lambda: {"quit.now", "quit.stream"} <= announced(a))
+            for cap, code in (("quit.now", 4), ("quit.stream", 5)):
+                failed, refused = await call(a, cap, "a handler that exits")
+                assert failed and f"{cap} failed: it called sys.exit({code})" in refused, refused
+            failed, refused = await call(a, "demo.leave", "the worker's own cap exits")
+            assert failed and "demo.leave failed: it called sys.exit(2)" in refused, refused
+            assert not any(task.done() for _, task in running)
+            assert await greets(a)
+            failed, own = await call(a, "demo.echo", "alpha's own cap, after the exits", text="still fine")
+            assert not failed and own == {"text": "still fine"} and alpha.streams == {}
+
             # 7. Beta back in: it loads greeter again, and the parts that fail on it are reported too.
             failed, reply = await call("hub", "worker.plugins", "beta takes plugins again", worker=b, receive=True)
             assert not failed and reply["receives_plugins"] is True
             await eventually(lambda: "greet.hello" in announced(b))
             assert await greets(b)
             await eventually(lambda: {p["name"]: "error" in p for p in hub.get_worker(b)["plugins"]} == {
-                "greeter": False, "broken": True, "grabby": True})
+                "greeter": False, "broken": True, "exiter": True, "grabby": True, "quitter": False})
             assert await porch.nothing_more()
 
             # 8. The opt-out from the site: refused without a session, journaled under the person (P4, T4).
@@ -246,7 +291,7 @@ async def scenario(tmp_path):
                 rows = {w["moniker"]: w for group in view["groups"] for w in group["workers"]}
                 assert (rows[a]["receives_plugins"], rows[b]["receives_plugins"]) == (False, True)
                 assert rows[a]["plugins"] == [] and {p["name"] for p in rows[b]["plugins"]} == {
-                    "greeter", "broken", "grabby"}
+                    "greeter", "broken", "exiter", "grabby", "quitter"}
             failed, read = await tool(door, "journal", kind="auth", worker=a)
             assert read["entries"][0]["result"] == {"receives_plugins": False}
             assert read["entries"][0]["user"] == alice["moniker"]
