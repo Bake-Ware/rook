@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, jobs, plugins, records, scrub, vault, web
+from . import bands, caps, devices, jobs, plugins, records, scrub, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -121,6 +121,7 @@ class Hub:
         self._db.executescript(jobs.SCHEMA)
         self._db.executescript(vault.SCHEMA)
         self._db.executescript(plugins.SCHEMA)
+        self._db.executescript(devices.SCHEMA)
         self.vault = vault.Vault(self, vault_key)
         self.events = Events(self)
         self.auth = Auth(self)
@@ -465,6 +466,9 @@ class Hub:
                 used = args if cap in caps.KEEP_REFERENCES else self.vault.substitute(args, caps.HUB)
                 result = caps.run(self, cap, used, {"user": user, "token": token})
                 reply = {"type": "result", "id": call_id, "result": result}
+            elif (device := devices.find(self, worker)) is not None:    # a device is called like a worker (D1)
+                guid = device["guid"]
+                reply = {"type": "result", "id": call_id, "result": await devices.call(self, device, cap, args)}
             else:
                 record = self.get_worker(worker)
                 guid, moniker = record["guid"], record["moniker"]

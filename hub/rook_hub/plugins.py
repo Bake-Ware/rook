@@ -18,6 +18,7 @@ module under a name of its own, so reinstalling one plugin cannot disturb anothe
 """
 
 import importlib.util
+import inspect
 import json
 import logging
 import pathlib
@@ -92,6 +93,7 @@ class Plugins:
         self.hub = hub
         self.root = hub.state_dir / "plugins"
         self.caps = {}       # cap name -> (plugin name, handler, {"description", "schema"})
+        self.drivers = {}    # driver name -> (plugin name, library.Driver) (D2)
         self._modules = {}   # plugin name -> the module name its hub code is loaded under
         self._loads = 0
 
@@ -134,6 +136,8 @@ class Plugins:
             if not isinstance(kind, str) or not kind:
                 raise HubError("bad_plugin", f"Plugin {name} declares a record type {kind!r}.",
                                "Give each record type a name, such as \"note\".")
+        for driver in declared.drivers.values():
+            _check_driver(name, driver)
         return declared, module_name
 
     def _clashes(self, declared):
@@ -145,6 +149,11 @@ class Plugins:
                 raise HubError("cap_taken", f"Cap {cap} is already served by "
                                            f"{owner if owner == 'the hub' else 'plugin ' + owner}.",
                                "Plugins add, never replace: give the cap another name and install again.")
+        for driver in declared.drivers:
+            owner = self.drivers.get(driver, (None,))[0]
+            if owner is not None and owner != declared.name:
+                raise HubError("driver_taken", f"Driver {driver} is already declared by plugin {owner}.",
+                               "Plugins add, never replace: give the driver another name and install again.")
         with self.hub._lock:
             for kind in declared.record_types:
                 row = self.hub._db.execute("SELECT plugin FROM record_types WHERE type = ?", (kind,)).fetchone()
@@ -163,6 +172,9 @@ class Plugins:
         kept = {cap: entry for cap, entry in self.caps.items() if entry[0] != declared.name}
         kept.update({cap: (declared.name, handler, meta) for cap, (handler, meta) in declared.caps.items()})
         self.caps = kept
+        drivers = {name: entry for name, entry in self.drivers.items() if entry[0] != declared.name}
+        drivers.update({name: (declared.name, driver) for name, driver in declared.drivers.items()})
+        self.drivers = drivers
 
     # ----------------------------------------------------------- install
 
@@ -232,6 +244,7 @@ class Plugins:
                 "installed_at": iso(row["installed_at"]),
                 "caps": sorted(cap for cap, entry in self.caps.items() if entry[0] == row["name"]),
                 "record_types": types,
+                "drivers": sorted(d for d, entry in self.drivers.items() if entry[0] == row["name"]),
                 "worker": "worker" in manifest, "site": "site" in manifest, "skill": "skill" in manifest}
 
     def list(self):
@@ -260,6 +273,25 @@ class Plugins:
             raise HubError("plugin_failed", f"Plugin {name} failed in {cap}: {type(e).__name__}: {e}",
                            f"Check the arguments against {cap}'s schema (caps tool); if they are right, "
                            f"plugin {name} needs fixing and installing again.") from None
+
+
+def _check_driver(plugin, driver):
+    """A driver's name, caps and status function, as W3 and D2 need them; else HubError."""
+    fix = "Declare drivers as docs/plugins.md shows: plugin.driver(name), async caps, an async status."
+    if not isinstance(driver.name, str) or not _NAME.match(driver.name):
+        raise HubError("bad_plugin", f"Plugin {plugin} declares a driver named {driver.name!r}: use lowercase "
+                                     "letters and digits, hyphens between them.", fix)
+    for cap, (handler, meta) in driver.caps.items():
+        try:
+            validate({"type": "call", "id": "-", "cap": cap, "args": {}})
+        except ProtocolError as e:
+            raise HubError("bad_plugin", f"Driver {driver.name} declares cap {cap!r}: {e}.", fix) from None
+        if not inspect.iscoroutinefunction(handler) or not isinstance(meta["description"], str) \
+                or not meta["description"] or "\n" in meta["description"] or not isinstance(meta["schema"], dict):
+            raise HubError("bad_plugin", f"Driver {driver.name}'s cap {cap} needs an async handler, a one-line "
+                                         "description and a JSON Schema object.", fix)
+    if driver.status_handler is not None and not inspect.iscoroutinefunction(driver.status_handler):
+        raise HubError("bad_plugin", f"Driver {driver.name}'s status function must be async.", fix)
 
 
 # ------------------------------------------------------------ hub caps (PL4)

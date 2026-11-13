@@ -101,8 +101,9 @@ async def scenario(tmp_path):
             async def knocking():
                 return (await tool(session, "workers"))[1]["knocking"]
             [knock] = await until(knocking)
-            assert knock["name"] == "lab-box" and knock["caps"] == [
-                {"name": "demo.echo", "description": "Return the arguments unchanged."}]
+            assert knock["name"] == "lab-box" and knock["caps"][0] == {
+                "name": "demo.echo", "description": "Return the arguments unchanged."}
+            assert [c["name"] for c in knock["caps"]] == ["demo.echo", "net.http", "net.tcp", "net.udp"]   # and the primitives (D3)
             failed, approved = await tool(session, "call", worker="hub", cap="worker.approve",
                                           args={"key": knock["key"]}, why="approve the new lab box")
             assert not failed and approved["owner"] == alice["moniker"]
@@ -113,11 +114,11 @@ async def scenario(tmp_path):
             [w] = listing["workers"]
             assert listing["knocking"] == []
             assert (w["moniker"], w["online"], w["owner"]["moniker"], w["caps"]) == (
-                moniker, True, alice["moniker"], ["demo.echo"])
+                moniker, True, alice["moniker"], ["demo.echo", "net.http", "net.tcp", "net.udp"])
             assert w["facts"]["form"] == "python" and "disk" in w["health"] and "gateway_mac" in w
 
             # 4. The worker's caps, with description and schema.
-            failed, listing = await tool(session, "caps", worker=moniker)
+            failed, listing = await tool(session, "caps", worker=moniker, match="demo.")
             assert listing == {"caps": [{"worker": moniker, "online": True, "caps": [{
                 "name": "demo.echo", "description": "Return the arguments unchanged.", "returns": "result",
                 "schema": {"type": "object", "properties": {"text": {"type": "string"}}}}]}]}
@@ -125,7 +126,7 @@ async def scenario(tmp_path):
             assert [c["name"] for c in hub_caps["caps"][0]["caps"]] == [
                 "worker.approve", "worker.attach", "worker.join-token",
                 "job.create", "job.list", "job.pause", "job.unpause", "job.delete", "event.emit",
-                "secret.create", "secret.list", "journal.redact", "plugin.install", "plugin.list"]
+                "secret.create", "secret.list", "journal.redact", "plugin.install", "plugin.list", "device.add"]
             failed, matched = await tool(session, "caps", match="join")
             assert [(g["worker"], [c["name"] for c in g["caps"]]) for g in matched["caps"]] == [
                 ("hub", ["worker.join-token"]), (moniker, [])]
