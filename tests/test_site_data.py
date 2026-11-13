@@ -115,7 +115,7 @@ async def scenario(tmp_path):
 
             # 2. The Data page is installed in the Hub segment, after Jobs, in P4's order (P2, P4).
             status, reply = await ask(client, "GET", base + "/api/session")
-            assert [p["id"] for p in reply["nav"][0]["pages"]] == ["workers", "auth", "secrets", "jobs", "data"]
+            assert [p["id"] for p in reply["nav"][0]["pages"]] == ["workers", "auth", "secrets", "jobs", "data", "settings"]
             assert reply["nav"][0]["pages"][4] == {"id": "data", "label": "Data", "path": "/data",
                                                    "script": "/site/pages/data.js"}
             for path in ("/data", "/site/pages/data.js"):
