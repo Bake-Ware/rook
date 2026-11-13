@@ -2,7 +2,7 @@
 
 A plugin is how anything above core reaches Rook: tasks, knowledge, device drivers, and later shell and files too (PL7, K5). It is one folder with a manifest that says what runs at the hub, what runs on workers and what it adds to the site (PL3). Plugins add, never replace (PL1), and none hooks into routing, auth or the journal (PL2).
 
-What is built so far is the hub side: the manifest, installing from a folder, hot loading, and the library a plugin's hub code uses. The worker and site sections are written down below as proposals. The hub keeps them and reports that they are there, and does nothing else with them yet.
+What is built so far is the hub side (the manifest, installing from a folder, hot loading, and the library a plugin's hub code uses) and the site section: pages, settings sections and Vue components. The worker section is written down below as a proposal. The hub keeps it and reports that it is there, and does nothing else with it yet.
 
 ## The folder
 
@@ -24,7 +24,7 @@ A JSON object (JSON, because the standard library reads it).
 | `version` | string | yes | The plugin's version, free text (`1.0.0`). Shown by `plugin.list`. |
 | `hub` | object | no | What runs at the hub. See below. |
 | `worker` | object | no | What runs on workers. **Proposal**, see below. |
-| `site` | object | no | What it adds to the site. **Proposal**, see below. |
+| `site` | object | no | What it adds to the site: pages, settings sections, Vue components. See below. |
 | `skill` | string | no | A file in the folder that teaches an agent how to set up and use the plugin (PL5). |
 
 The hub refuses a manifest that is missing, is not JSON, or breaks any rule above, and the error says what to fix. Fields it does not know are kept and ignored.
@@ -141,9 +141,7 @@ PL3 says the hub pushes worker parts "to the right worker forms", and U1 says co
 
 Open: how the hub delivers it (a new protocol message, or the update path of U2), and how a worker part is removed or replaced.
 
-### `site`: what it adds to the site (proposal, not built)
-
-PL1 lists pages, settings sections and Vue components; P1 says plugin UI and core UI are the same mechanism; P2 says a segment appears in the nav only when something installs a page into it. The proposal:
+### `site`: what it adds to the site (built)
 
 ```json
 "site": {
@@ -153,11 +151,44 @@ PL1 lists pages, settings sections and Vue components; P1 says plugin UI and cor
 }
 ```
 
-- `pages`: each is a Vue 3 component file (no build step, P1) shown under its `segment` in the nav.
-- `settings`: sections added to the Settings page (P4).
-- `components`: Vue components other pages may use (PL1; the Agents chat pane, P5, arrives this way).
+Each part is optional. Every `file` is an ES module in the plugin's folder whose default export is a Vue 3 component, as core's pages are: no build step, Vue is the page's global `Vue` (P1).
 
-Open: how a page calls the plugin's caps from the browser, and how pins (P6) name a plugin's page.
+- `pages` are shown in the navigation under their `segment`, after core's pages, by the same mechanism core's pages use. A segment appears with the first page installed into it (P2). A page's name is its title in lowercase with hyphens between the words (`Notes` is `notes`), and the page is at `/plugins/<plugin>/<page>`.
+- `settings` are sections added to the Settings page as tabs after core's Plugins section (P4).
+- `components` are registered with the site by `name`, so any page, core's or a plugin's, can use them as `<note-card>`. A name is lowercase letters and digits with at least one hyphen, so it is never an HTML element's name. The Agents chat pane (P5) arrives this way.
+
+The hub serves these files at `/plugin-files/<plugin>/<file>` to a logged-in session only, and serves no file the manifest does not name. They are read from the installed plugin on every page load, so installing or replacing a plugin shows on the next page load, with no restart (PL3).
+
+What the hub refuses at install, saying what to fix (an install is all or nothing):
+
+- an entry without its fields, or a `file` that is missing or leaves the plugin's folder (`bad_manifest`);
+- a page or component name used twice in the plugin, or a component name without a hyphen (`bad_manifest`);
+- a page name that core or another plugin already has (`page_taken`);
+- a component name that core or another plugin already has (`component_taken`). Core's are `side-bar`, `login-view`, `pin-view`, `row-menu` and `toast-line`.
+
+A page file looks like this. It calls a cap with the site's `call(worker, cap, args, why)`: the call goes out as the signed-in person, through `POST /api/call`, the same as any page's, and is journaled under them with the `why` (L1). It returns the cap's result, or throws an error that says what to try next. A plugin's caps at the hub are called with worker `"hub"`.
+
+```js
+import { call, viewHref } from '/site/shell.js';
+
+export default {
+  data() { return { notes: null, error: '' }; },
+  computed: { href() { return viewHref(location.pathname, {}); } },
+  async mounted() {
+    try { this.notes = (await call('hub', 'note.search', {}, 'Listed on the Notes page.')).notes; }
+    catch (e) { this.error = e.message; }
+  },
+  template: `<div>
+    <header class="topbar"><div><div class="title-row"><h1>Notes</h1>
+      <pin-view label="Notes" :href="href"></pin-view></div></div></header>
+    <div class="wrap">
+      <p v-if="error" class="callout">{{ error }}</p>
+      <note-card v-for="n in notes || []" :key="n.note" :note="n"></note-card>
+    </div></div>`,
+};
+```
+
+`/site/shell.js` also gives a page `api` (any of the site's requests), `toast`, `viewHref` and `showView` (a view kept in the address, P6). A pin on a plugin's page names the plugin and the page, so it survives a reinstall and never leads to another plugin's page. If a new version no longer has the page, the pin says it is gone, and so does the page area when it is opened. A page that fails to load says which plugin's page failed, and the rest of the site works. A plugin's page runs in the site as core's pages do: there is no sandbox, and a plugin hooks into nothing in routing, auth or the journal (PL2).
 
 ### `skill` (kept, not served)
 
@@ -169,5 +200,5 @@ Open: how a page calls the plugin's caps from the browser, and how pins (P6) nam
 - Uninstalling, disabling or enabling a plugin, and what happens to its records and record types.
 - A plugin's hub code calling caps on workers (other than a driver's three network steps).
 - Serving a plugin's skill to agents (PL5).
-- Pushing worker parts (PL3) and site parts (PL1, P1).
+- Pushing worker parts (PL3).
 - The registry (PL4: LATER).
