@@ -130,7 +130,7 @@ def stream_view(hub, stream):
     """A stream as a worker card shows it (S3, S5): title, description, who opened it and when,
     and, once closed, who closed it and when."""
     def person(moniker):
-        if moniker in (None, "worker"):
+        if moniker in (None, "worker", "hub"):
             return moniker
         user = hub.auth.get_user(moniker)
         return {"name": user["name"], "moniker": user["moniker"]}
@@ -852,12 +852,15 @@ def plugin_site_routes(app, hub, logged_in, session):
 
     @logged_in
     async def call(request, token, user):
-        """One cap call as the logged-in user, journaled under them (L1): what a page's call() sends."""
+        """One cap call as the logged-in user, journaled under them (L1): what a page's call() sends.
+        A call still running after CALL_WAIT answers {type: "running", id, worker, stream} and goes on,
+        as the door's call does (Bake 13 Nov): its reply ends up as that stream's last entry."""
         body = await _body(request)
         args = body.get("args", {})
         if not isinstance(args, dict):
             raise HubError("bad_message", "args must be an object.", "Send the cap's arguments as an object.")
-        reply = await hub.call(_text(body, "worker"), _text(body, "cap"), args, _text(body, "why"), token=token)
+        reply = await hub.call_or_follow(_text(body, "worker"), _text(body, "cap"), args, _text(body, "why"),
+                                         token=token)
         if reply["type"] == "error":
             raise HubError(reply["code"], reply["message"], reply["next"])
         return reply

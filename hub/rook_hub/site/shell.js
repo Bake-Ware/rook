@@ -29,9 +29,34 @@ export async function api(method, path, body) {
 
 /* One cap call as the logged-in user, journaled under them with `why` (L1): how a page,
    core's or a plugin's, calls a cap (Bake 13 Nov). The cap's result, or for a cap that
-   opens a stream its stream_open reply; an error throws, saying what to try next. */
+   opens a stream its stream_open reply; an error throws, saying what to try next. A call
+   still running after the hub's wait (45 s) answers {running: true, id, worker, stream,
+   follow}: `await answer.follow()` gives its result, or throws its error, when it ends. */
 export async function call(worker, cap, args, why) {
   const reply = await api('POST', '/api/call', { worker, cap, args: args || {}, why });
+  if (reply.type === 'running')      // still running after the hub's wait (Bake 13 Nov): it goes on by itself
+    return { running: true, id: reply.id, worker: reply.worker, stream: reply.stream, follow: () => follow(reply.stream) };
+  return reply.type === 'result' ? reply.result : reply;
+}
+
+/* A long call's stream, read with waits until the hub closes it at the call's end. Resolves to
+   what call() would have returned had the call been quick, or throws its error the same way.
+   Following starts nothing: the call runs once, whoever follows it. */
+export async function follow(stream) {
+  let from = 0, last = null;
+  for (;;) {
+    const read = await api('GET', `/api/streams/${encodeURIComponent(stream)}/read?from=${from}&wait=25`);
+    if (read.entries.length) last = read.entries[read.entries.length - 1];
+    from = read.next;
+    if (!read.open) break;
+  }
+  const bytes = Uint8Array.from(atob(last.data), c => c.charCodeAt(0));
+  const reply = JSON.parse(new TextDecoder().decode(bytes));
+  if (reply.type === 'error') {
+    const error = new Error(reply.message + (reply.next ? ' ' + reply.next : ''));
+    error.data = reply;
+    throw error;
+  }
   return reply.type === 'result' ? reply.result : reply;
 }
 

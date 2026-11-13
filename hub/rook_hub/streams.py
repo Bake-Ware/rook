@@ -15,14 +15,23 @@ A stream outlives whoever opened it (S2) and never times out (S4). It closes
 only when the worker closes it or a client closes it on purpose. A closed
 stream can still be read. Closing is journaled with who closed it (L1), and the
 hub emits `stream.open` and `stream.close` (J2).
+
+A call that is still running when its client stops waiting (Bake 13 Nov; see
+`Hub.call_or_follow`) gets a stream of its own on the called worker, titled with
+the cap and the worker, described with the call's why (S3). It stays empty while
+the call runs. When the call ends, its reply, as the journal keeps it, is the
+last entry, and the hub closes the stream on purpose (S4): the call is over. It
+takes no input and no client closes it; it is read like any other.
 """
 
 import asyncio
 import base64
+import json
 import uuid
 
 from rook_protocol import encode
 
+from . import scrub
 from .errors import HubError
 from .journal import iso
 
@@ -51,6 +60,10 @@ CREATE TABLE IF NOT EXISTS stream_data (    -- the recording
     token     TEXT,
     data      BLOB NOT NULL,
     PRIMARY KEY (stream, position)
+);
+CREATE TABLE IF NOT EXISTS call_streams (   -- streams that carry the reply of a long call (Bake 13 Nov)
+    stream TEXT PRIMARY KEY REFERENCES streams(guid),
+    call   TEXT NOT NULL                    -- the call's id
 );
 """
 
@@ -93,6 +106,54 @@ class Streams:
         row = self._open_by_handle(worker, message["stream"])
         if row is not None:
             self._close(row, "worker", (None, None), None)
+
+    # ------------------------------------------------ a long call's stream
+
+    def for_call(self, call_id, worker, cap, why, actor):
+        """A stream to follow call `call_id` on `worker` (a worker's or device's GUID), which is still
+        running. Its handle is never sent to any worker, so no worker can write to it or close it."""
+        hub, guid = self.hub, str(uuid.uuid4())
+        with hub._lock, hub._db:
+            hub._db.execute(
+                "INSERT INTO streams (guid, moniker, worker, handle, title, description, cap, user, token, opened_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (guid, hub._new_moniker(guid), worker, uuid.uuid4().hex, f"{cap} on {hub._moniker(worker)}",
+                 scrub.scrub(why, hub.vault), cap, actor[0], actor[1], hub.clock()))
+            hub._db.execute("INSERT INTO call_streams (stream, call) VALUES (?, ?)", (guid, call_id))
+            record = self._record(self._row(guid))
+        hub.events.emit("stream.open", self._event(record, record["opened_by"]), user=actor[0], token=actor[1],
+                        worker=worker)
+        return record
+
+    def call_ended(self, stream, reply):
+        """The call ended: `reply`, already as the journal keeps it, becomes the stream's last entry,
+        and the hub closes the stream (S4). A stream already closed is left as it is: nothing is
+        ever added after the hub closed it."""
+        with self.hub._lock:
+            row = self._row(stream)
+        if row["closed_at"] is not None:
+            return
+        self._append(stream, "out", json.dumps(reply, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+                     (None, None))
+        self._close(row, "hub", (None, None), "The call ended; its reply is the stream's last entry.")
+
+    def cut_short(self, reply_for):
+        """At start: end each long call's stream still open, with `reply_for(call id)` as its last entry."""
+        with self.hub._lock:
+            rows = self.hub._db.execute("SELECT c.stream, c.call FROM call_streams c JOIN streams s ON s.guid = c.stream "
+                                        "WHERE s.closed_at IS NULL").fetchall()
+        for row in rows:
+            self.call_ended(row["stream"], reply_for(row["call"]))
+
+    def _for_call(self, row):
+        """Refuse input and closing on a long call's stream: the hub ends it when the call ends."""
+        with self.hub._lock:
+            follows = self.hub._db.execute("SELECT 1 FROM call_streams WHERE stream = ?", (row["guid"],)).fetchone()
+        if follows:
+            raise HubError("call_stream", f"Stream {row['moniker']} carries the reply of a call; it takes no input "
+                                          "and closes itself when the call ends.",
+                           f"Read stream {row['moniker']} with a wait until it is no longer open; its last entry "
+                           "is the call's reply.")
 
     def _open_by_handle(self, worker, handle):
         with self.hub._lock:
@@ -144,7 +205,7 @@ class Streams:
                 "description": row["description"], "worker": hub._moniker(row["worker"]), "cap": row["cap"],
                 "opened_by": self._who(row["user"]), "opened_at": iso(row["opened_at"]),
                 "open": row["closed_at"] is None,
-                "closed_by": row["closed_by"] if row["closed_by"] in (None, "worker") else self._who(row["closed_by"]),
+                "closed_by": row["closed_by"] if row["closed_by"] in (None, "worker", "hub") else self._who(row["closed_by"]),
                 "closed_at": iso(row["closed_at"])}
 
     def _event(self, record, by):
@@ -213,6 +274,7 @@ class Streams:
         if row["closed_at"] is not None:
             raise HubError("stream_closed", f"Stream {row['moniker']} is closed.",
                            "Read it to see what it did; open a new stream to go on.")
+        self._for_call(row)
         link = self.hub._links.get(row["worker"])
         if link is None:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
@@ -230,6 +292,7 @@ class Streams:
             row = self._row(stream)
         if row["closed_at"] is not None:
             raise HubError("stream_closed", f"Stream {row['moniker']} is already closed.", "Nothing to do.")
+        self._for_call(row)
         link = self.hub._links.get(row["worker"])
         if link is None:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",

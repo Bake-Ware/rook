@@ -8,6 +8,7 @@ Knocks arrive over HTTP (docs/protocol.md, "Carriage").
 """
 
 import asyncio
+import fcntl
 import json
 import os
 import pathlib
@@ -28,6 +29,12 @@ from .errors import HubError, error
 
 DEFAULT_INTERVAL = 15    # seconds; the hub can change it per worker (H2)
 MISSED_HEARTBEATS = 3    # H3
+CALL_WAIT = 45           # seconds the door and the site wait for a call before answering "still running" (Bake 13 Nov)
+
+# What a follower of a long call reads, and the journal keeps, when the hub restarted before the call ended.
+RESTARTED = ("hub_restarted", "The hub restarted while this call was running, so its reply was lost.",
+             "The call may still have done its work on the worker: check what it was doing (the journal, or the "
+             "worker itself), then call again if it is still needed.")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS workers (
@@ -77,6 +84,7 @@ CREATE TABLE IF NOT EXISTS journal (
     id     INTEGER PRIMARY KEY,
     at     REAL NOT NULL,
     kind   TEXT NOT NULL,            -- call, auth, band, event, job (a job's run), stream (a close) or plugin (a worker part that failed to load)
+                                     -- a call's or job's entry is written when it starts, result {"type": "running", ...}, and holds its reply once it ends
     user   TEXT,                     -- the acting user (L1); none for events of the hub's own
     token  TEXT,                     -- the token they acted through, if any (L1)
     worker TEXT,
@@ -151,7 +159,9 @@ class Hub:
         self._adjectives, self._nouns = _load_words()
         self._links = {}  # worker guid -> its live link
         self._calls = {}  # call id -> (worker guid, future, actor, cap)
+        self._running = {}  # call id -> {actor, worker, entry, reply}, while Hub.call runs it
         self._runner = None  # the HTTP server, while serving
+        self._serving_dir = None  # the open hub.lock while this hub holds its data directory (serve)
         self.plugins = plugins.Plugins(self)
         self.plugins.load_all()  # every installed plugin, at start (PL3)
 
@@ -164,10 +174,13 @@ class Hub:
         return SigningKey(bytes.fromhex(path.read_text().strip()))
 
     def close(self):
-        """Close links and the database. Call stop_serving() first if serving."""
+        """Close links and the database, and let go of the data directory. Call stop_serving() first if serving."""
         for link in list(self._links.values()):
             link.close()
         self._db.close()
+        if self._serving_dir is not None:
+            self._serving_dir.close()       # the lock goes with the file
+            self._serving_dir = None
 
     # ---------------------------------------------------------------- knock
 
@@ -214,10 +227,28 @@ class Hub:
 
     async def serve(self, host, port):
         """Serve the hub over HTTP: the knock endpoint and the MCP door (web.py).
-        Returns the (host, port) it listens on."""
+        Returns the (host, port) it listens on. Only one hub serves a data directory: this one
+        takes it over first, or raises HubError `data_in_use` and changes nothing. Having taken
+        it over, it ends the calls a previous run of the hub left running."""
+        self._take_over()
         self._runner, address = await web.serve(self, host, port)
+        self._calls_cut_short()
         self.events.start()
         return address
+
+    def _take_over(self):
+        """Hold the data directory: an exclusive lock on <data>/hub.lock, kept until close().
+        The system lets go of it when the process ends, however it ends."""
+        if self._serving_dir is not None:
+            return
+        held = open(self.state_dir / "hub.lock", "a")
+        try:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            held.close()
+            raise HubError("data_in_use", f"Another hub is serving {self.state_dir.resolve()}.",
+                           "Stop that hub first, or give this one a data directory of its own.") from None
+        self._serving_dir = held
 
     async def stop_serving(self):
         await self.events.stop()
@@ -310,10 +341,25 @@ class Hub:
         """One journal entry (L1), scrubbed of secrets as it is written (L4).
         `actor` is (user or None, token or None). The caller holds the lock and the transaction."""
         why, result = scrub.scrub(why, self.vault), scrub.scrub(result, self.vault)
-        self._db.execute(
+        return self._db.execute(
             "INSERT INTO journal (at, kind, user, token, worker, cap, why, result, job, run) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (self.clock(), kind, actor[0], actor[1], worker, cap, why, json.dumps(result), job, run))
+            (self.clock(), kind, actor[0], actor[1], worker, cap, why, json.dumps(result), job, run)).lastrowid
+
+    def _kept(self, guid, reply):
+        """A call's reply as the journal and a long call's stream keep it: never a usable token a hub
+        cap returned, and scrubbed of secrets (L4)."""
+        return scrub.scrub(caps.for_journal(reply) if guid == caps.HUB else reply, self.vault)
+
+    def _calls_cut_short(self):
+        """At start: a call that was running when the hub stopped gets an error saying so, in the
+        journal and on its stream if it had one, so nothing waits on it for ever (C3)."""
+        with self._lock, self._db:
+            for row in self._db.execute("SELECT id, result FROM journal WHERE kind IN ('call', 'job') "
+                                        "AND json_extract(result, '$.type') = 'running'").fetchall():
+                self._db.execute("UPDATE journal SET result = ? WHERE id = ?",
+                                 (json.dumps(error(*RESTARTED, json.loads(row["result"])["id"])), row["id"]))
+        self.streams.cut_short(lambda call_id: error(*RESTARTED, call_id))
 
     def _attach_key(self, guid, key, now):
         # R5: approval is the hub signing the worker's key (docs/protocol.md, knock_reply).
@@ -479,20 +525,24 @@ class Hub:
 
     # ---------------------------------------------------------------- calls
 
-    async def call(self, worker, cap, args, why, *, user=None, token=None, job=None, run=None):
+    async def call(self, worker, cap, args, why, *, user=None, token=None, job=None, run=None, call_id=None):
         """Call `cap` on `worker` (GUID or moniker, or `hub` for the hub's own caps)
         and return the reply message:
         `result`, `stream_open` or `error` (C3, W5). The caller is a user acting
         directly or a client token (T4). Every call is journaled with both (L1);
         a caller who cannot be identified gets an error and no call is made.
-        A job's run passes its `job` and `run`; the journal keeps it as kind `job` (J8)."""
-        call_id = uuid.uuid4().hex
-        guid = None
+        A job's run passes its `job` and `run`; the journal keeps it as kind `job` (J8).
+        The journal entry is written as the call starts, as running, and holds the reply once it ends."""
+        call_id = call_id or uuid.uuid4().hex
+        guid, reply = None, None
         try:
             with self._lock, self._db:
                 actor = self.auth.actor(user, token)
+                entry = self._journal("job" if job else "call", actor, None, {"type": "running", "id": call_id},
+                                      cap, why, job, run)
         except HubError as e:
             return dict(e.message, id=call_id)
+        running = self._running[call_id] = {"actor": actor, "worker": None, "entry": entry, "reply": None}
         try:
             request = encode({"type": "call", "id": call_id, "cap": cap, "args": args})
             if worker == caps.HUB:      # the hub's own caps (caps.py)
@@ -501,11 +551,12 @@ class Hub:
                 result = caps.run(self, cap, used, {"user": user, "token": token})
                 reply = {"type": "result", "id": call_id, "result": result}
             elif (device := devices.find(self, worker)) is not None:    # a device is called like a worker (D1)
-                guid = device["guid"]
+                guid = running["worker"] = device["guid"]
                 reply = {"type": "result", "id": call_id, "result": await devices.call(self, device, cap, args)}
             else:
                 record = self.get_worker(worker)
                 guid, moniker = record["guid"], record["moniker"]
+                running["worker"] = guid
                 link = self._links.get(guid)
                 if link is None or not record["online"]:
                     reply = error("worker_offline", f"{moniker} is not connected.",
@@ -531,7 +582,37 @@ class Hub:
             reply = error("bad_message", str(e), "Fix the cap name or arguments and call again.", call_id)
         except HubError as e:
             reply = dict(e.message, id=call_id)
-        with self._lock, self._db:
-            self._journal("job" if job else "call", actor, guid, caps.for_journal(reply) if guid == caps.HUB else reply,
-                          cap, why, job, run)
+        except BaseException as e:   # it raised, or was cancelled, inside the hub: the entry still ends
+            what = "run" if job else "call"
+            reply = error(f"{what}_failed", f"The {what} stopped inside the hub: {type(e).__name__}: {e}",
+                          "Read the hub's log for the details, then call again if it is still needed.", call_id)
+            raise
+        finally:
+            running["reply"] = reply
+            self._running.pop(call_id, None)
+            with self._lock, self._db:
+                self._db.execute("UPDATE journal SET worker = ?, result = ? WHERE id = ? "
+                                 "AND json_extract(result, '$.type') = 'running'",
+                                 (guid, json.dumps(self._kept(guid, reply)), entry))
         return reply
+
+    async def call_or_follow(self, worker, cap, args, why, *, user=None, token=None):
+        """A call as `call` makes it, for a client that cannot wait long: the MCP door and the site
+        (C1, C3; Bake 13 Nov). A reply within CALL_WAIT seconds is returned as it is. Otherwise the
+        answer is {"type": "running", id, worker, stream} and the call goes on, once: when it ends,
+        its reply, as the journal keeps it, is the stream's last entry and the hub closes the stream."""
+        call_id = uuid.uuid4().hex
+        task = asyncio.ensure_future(self.call(worker, cap, args, why, user=user, token=token, call_id=call_id))
+        done, _ = await asyncio.wait({task}, timeout=CALL_WAIT)
+        if done:
+            return task.result()
+        running = self._running[call_id]      # there until the call ends, and it has not
+        stream = self.streams.for_call(call_id, running["worker"], cap, why, running["actor"])
+        with self._lock, self._db:
+            self._db.execute("UPDATE journal SET worker = ?, result = ? WHERE id = ? "
+                             "AND json_extract(result, '$.type') = 'running'",
+                             (running["worker"], json.dumps({"type": "running", "id": call_id, "stream": stream["moniker"]}),
+                              running["entry"]))
+        task.add_done_callback(
+            lambda _: self.streams.call_ended(stream["guid"], self._kept(running["worker"], running["reply"])))
+        return {"type": "running", "id": call_id, "worker": stream["worker"], "stream": stream["moniker"]}
