@@ -201,7 +201,8 @@ async def scenario(tmp_path):
                 assert run["steps"][0]["result"] == {"type": "result", "id": run["steps"][0]["result"]["id"],
                                                      "result": {"text": "a"}}
                 assert run["steps"][1]["result"]["code"] == "it_failed"
-                assert run["steps"][0]["worker"] == box.moniker and run["steps"][0]["why"].startswith("Job ")
+                assert (run["steps"][0]["worker"], run["steps"][0]["name"]) == (box.moniker, "desk")
+                assert run["steps"][0]["why"].startswith("Job ")
             status, mine = await ask(client, "GET", f"{base}/api/jobs/runs?job={m['c']}")
             assert mine == reply                        # c took part in both chain runs, shown whole
             status, none = await ask(client, "GET", f"{base}/api/jobs/runs?job={m['x']}")

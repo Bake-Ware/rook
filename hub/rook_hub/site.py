@@ -277,13 +277,14 @@ def runs(hub, job=None):
     order = list(dict.fromkeys(e["run"] for e in entries))[:RUNS_SHOWN]
     with hub._lock:
         titles = {row["moniker"]: row["title"] for row in jobs._all(hub)}
+    names = _names(hub)
     grouped = []
     for run in order:
         steps = entries if job is None else journal.read(hub, kind="job", run=run, limit=1000)
         steps = [e for e in steps if e["run"] == run][::-1]
         grouped.append({"run": run, "at": steps[0]["at"], "steps": [
             {"id": e["id"], "at": e["at"], "job": e.get("job"), "title": titles.get(e.get("job")),
-             "worker": e["worker"], "cap": e["cap"], "why": e["why"],
+             "worker": e["worker"], "name": names.get(e["worker"], e["worker"]), "cap": e["cap"], "why": e["why"],
              "ok": e["result"].get("type") != "error", "result": e["result"]} for e in steps]})
     return grouped
 

@@ -199,7 +199,7 @@ const RunsList = {
       <div v-for="s in r.steps" :key="s.id" class="tr click" style="display:grid;grid-template-columns:minmax(160px,1fr) minmax(200px,1.4fr) 80px 90px;gap:10px;align-items:center;padding:5px 0"
            :style="sel && s.job !== sel ? 'opacity:.6' : ''" @click="$emit('open', Object.assign({run: r.run}, s))" tabindex="0" @keydown.enter="$emit('open', Object.assign({run: r.run}, s))" title="Open what is behind this run">
         <span class="cell-title">{{ s.title || s.job }}<span v-if="s.title === null" class="dim2"> (deleted)</span></span>
-        <span class="cell-mono">{{ s.worker }} › {{ s.cap }}</span>
+        <span class="cell-mono" :title="s.worker">{{ s.name }} › {{ s.cap }}</span>
         <span><span class="badge" :class="s.ok ? 'good' : 'bad'">{{ s.ok ? 'ok' : 'failed' }}</span></span>
         <span class="cell-mono">{{ ago(s.at) }}</span>
       </div>
@@ -228,6 +228,7 @@ export default {
   },
   watch: {
     view: { handler() { showView('/jobs', this.view); this.loadRuns(); }, deep: true },
+    sel(now, before) { if (before) this.warning = ''; },   // the warning of a save goes once the person moves on
   },
   mounted() {
     this.load();
@@ -318,7 +319,7 @@ export default {
               <span class="k">owner</span><span class="v">{{ selJob.owner.name }} <span class="dim2">{{ selJob.owner.moniker }}</span></span>
               <span class="k">created</span><span class="v">{{ ago(selJob.created_at) }}</span>
             </div>
-            <p v-if="selJob.warning" class="callout bad" style="margin:12px 0 0">⚠ {{ selJob.warning }}</p>
+            <p v-if="selJob.warning && selJob.warning !== warning" class="callout bad" style="margin:12px 0 0">⚠ {{ selJob.warning }}</p>
           </div>
         </section>
         <section class="panel">
@@ -369,7 +370,7 @@ export default {
           <div style="flex:1">
             <div class="dim2 mono small" style="letter-spacing:1px;text-transform:uppercase">job run · run {{ step.run.slice(0, 8) }}</div>
             <h2>{{ stepTitle(step) }}</h2>
-            <p>{{ step.worker }} › {{ step.cap }}</p>
+            <p>{{ step.name }} › {{ step.cap }}</p>
           </div>
           <span class="badge" :class="step.ok ? 'good' : 'bad'">{{ step.ok ? 'ok' : 'failed' }}</span>
           <button class="btn sm ghost" type="button" @click="step=null" aria-label="Close">✕</button>
@@ -383,7 +384,7 @@ export default {
               <span class="k">entry</span><span class="v">{{ step.id }}</span>
               <span class="k">time</span><span class="v">{{ step.at }}</span>
               <span class="k">job</span><span class="v">{{ step.job }}</span>
-              <span class="k">worker · cap</span><span class="v">{{ step.worker }} › <span style="color:var(--accent)">{{ step.cap }}</span></span>
+              <span class="k">worker · cap</span><span class="v">{{ step.name }} <span class="dim2">{{ step.worker }}</span> › <span style="color:var(--accent)">{{ step.cap }}</span></span>
               <span class="k">why</span><span class="v" style="font-family:var(--sans);font-size:12px">{{ step.why }}</span>
               <span class="k">run</span><span class="v">{{ step.run }}</span>
             </div>
