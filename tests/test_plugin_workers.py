@@ -118,6 +118,11 @@ async def scenario(tmp_path):
             assert sorted(p["worker"] for p in greeter["loaded_on"]) == sorted([a, b])
             assert all(p["version"] == "1.0.0" for p in greeter["loaded_on"]) and greeter["failed_on"] == []
             assert alpha.plugins["greeter"].version == "1.0.0" and not alpha.plugins["greeter"].error
+            # Called and journaled exactly as any worker cap, under the agent's user and token (PL2, L1).
+            failed, read = await tool(door, "journal", cap="greet.hello")
+            assert {(e["kind"], e["worker"], e["why"], e["user"]) for e in read["entries"]} == {
+                ("call", a, "say hello", alice["moniker"]), ("call", b, "say hello", alice["moniker"])}
+            assert all(e["token"] and e["result"]["type"] == "result" for e in read["entries"])
 
             # A worker of another form gets nothing, and greeter's hub part works regardless.
             assert await porch.nothing_more()
