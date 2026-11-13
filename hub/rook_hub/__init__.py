@@ -115,6 +115,12 @@ class Hub:
         self._lock = threading.Lock()  # every entry point takes it before touching the database
         self._db = sqlite3.connect(self.state_dir / "hub.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
+        # WAL with synchronous=NORMAL: a write is one append, not an fsync, so recording
+        # a busy stream does not stall the hub. A power loss can lose the last moments
+        # of writes; it cannot corrupt the database. Closing the hub folds the WAL back
+        # into hub.db, so a closed hub is still one directory to move (F3).
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(SCHEMA)
         self._db.executescript(bands.SCHEMA)
         self._db.executescript(records.SCHEMA)
