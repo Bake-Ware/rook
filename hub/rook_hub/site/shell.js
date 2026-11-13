@@ -136,7 +136,7 @@ const SideBar = {
         <li v-for="(p, i) in store.pins" :key="p.href + i" class="pin" :class="{dragging: drag===i, over: over===i && drag!==i, here: isHere(p)}"
             draggable="true" @dragstart="start(i, $event)" @dragenter.prevent="enter(i)" @dragover.prevent @drop.prevent="drop(i)" @dragend="end">
           <span class="grip" aria-hidden="true" title="Drag to reorder">⠿</span>
-          <a :href="p.href" :title="p.label"><i>{{ split(p.label)[0] }}</i>{{ split(p.label)[1] }}</a>
+          <a :href="p.href" :title="p.label"><i v-if="split(p.label)[0]">{{ split(p.label)[0] }}</i>{{ split(p.label)[1] }}</a>
           <button type="button" class="pin-x" @click="remove(i)" :aria-label="'Unpin ' + p.label" title="Unpin">×</button>
           <span class="sr-move"><button type="button" @click="nudge(i,-1)" :aria-label="'Move ' + p.label + ' up'">↑</button><button type="button" @click="nudge(i,1)" :aria-label="'Move ' + p.label + ' down'">↓</button></span>
         </li>
