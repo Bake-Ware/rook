@@ -16,9 +16,10 @@ The claims are standard JWT plus two of Rook's own (T2):
 
 A scope names the mechanism a token is for, nothing more (F8): `client`
 acts through the hub (calls, minting, approving); `join` is an unattended
-join (R3); `webhook` posts to the hub's webhook URL (J2). Lifetime, one use
-and scopes come from the hub's stored defaults per purpose, never from whoever
-mints (T2).
+join (R3); `webhook` posts to the hub's webhook URL (J2); `session` is a
+person logged in to the site (T4), kept in a cookie they never see (T3).
+Lifetime, one use and scopes come from the hub's stored defaults per purpose,
+never from whoever mints (T2).
 """
 
 import base64
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS token_defaults (
 INSERT OR IGNORE INTO token_defaults VALUES ('agent', 'client', NULL, 0);
 INSERT OR IGNORE INTO token_defaults VALUES ('join', 'join', 600, 1);
 INSERT OR IGNORE INTO token_defaults VALUES ('webhook', 'webhook', NULL, 0);
+INSERT OR IGNORE INTO token_defaults VALUES ('session', 'session', NULL, 0);
 CREATE TABLE IF NOT EXISTS tokens (
     guid       TEXT PRIMARY KEY,     -- the jti claim
     moniker    TEXT NOT NULL UNIQUE,
@@ -268,9 +270,10 @@ class Auth:
                             "Mint a new join token for the next worker.")
         if row["expires_at"] is not None and self.hub.clock() >= row["expires_at"]:
             return HubError("token_expired", f"Token {name} expired.", _TRY_AGAIN)
-        if scope is not None and scope not in row["scope"].split():
+        wanted = (scope,) if isinstance(scope, str) else scope    # one scope, or any of several
+        if wanted is not None and not set(wanted) & set(row["scope"].split()):
             return HubError("token_scope", f"Token {name} is a {row['purpose']} token and cannot be used for this.",
-                            f"Use a token with the {scope} scope.")
+                            f"Use a token with the {' or '.join(wanted)} scope.")
         return None
 
     def verify(self, jwt, scope=None):
@@ -302,12 +305,13 @@ class Auth:
 
     def actor(self, user, token):
         """Who is acting: (user GUID, token GUID or None). Exactly one of `user`
-        (a person acting directly) or `token` (a client token) is given. The lock is held."""
+        (a person acting directly) or `token` (a client token, or a site session) is given.
+        The lock is held."""
         if (user is None) == (token is None):
             raise HubError("no_actor", "Say who is acting: a user, or a token.",
                            "Pass user= for a person, or token= for an agent.")
         if token is not None:
-            return self.use(token, "client")
+            return self.use(token, ("client", "session"))
         row = self._user(user)
         if row["revoked_at"] is not None:
             raise HubError("user_revoked", f"User {row['moniker']} was revoked.",

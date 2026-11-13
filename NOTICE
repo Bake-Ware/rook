@@ -1,0 +1,23 @@
+Rook
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository bundles the following third-party software, served by the hub
+as part of its site (hub/rook_hub/site/vendor/). Each keeps its own licence;
+the licence text sits next to the file.
+
+Vue 3.5.13
+  hub/rook_hub/site/vendor/vue.global.prod.js
+  Copyright (c) 2018-present, Yuxi (Evan) You
+  MIT License: hub/rook_hub/site/vendor/VUE-LICENSE.txt
+  Source: the npm package vue 3.5.13, dist/vue.global.prod.js, unmodified
+  (sha256 c459ba7cc8db65c982589fa5d64c7ff478877e8e5b0fd75683207cec6a4e89e8)
+
+three.js r186 (npm package three 0.186.0)
+  bundled inside hub/rook_hub/site/vendor/rook-scene.js
+  Copyright 2010-2026 three.js authors
+  MIT License: hub/rook_hub/site/vendor/THREE-LICENSE.txt
+  (also listed in hub/rook_hub/site/vendor/rook-scene.js.LEGAL.txt, written by the bundler)
+
+The rest of rook-scene.js (the background rook scene), rook-logo.png and
+favicon.png are Rook's own, carried over from Rook 0.4 (P10), under the
+licence in LICENSE.

@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, devices, jobs, plugins, records, scrub, streams, vault, web
+from . import bands, caps, devices, jobs, plugins, records, scrub, site, streams, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -130,6 +130,7 @@ class Hub:
         self.streams = streams.Streams(self)
         self._db.executescript(plugins.SCHEMA)
         self._db.executescript(devices.SCHEMA)
+        self._db.executescript(site.SCHEMA)
         self.vault = vault.Vault(self, vault_key)
         self.events = Events(self)
         self.auth = Auth(self)
