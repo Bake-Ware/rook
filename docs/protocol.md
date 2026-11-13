@@ -28,7 +28,7 @@ A message is a JSON object (RFC 8259) encoded as UTF-8, with a string field `typ
 
 ## Minimum worker (W2)
 
-A worker must implement `knock`, `knock_reply`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, heartbeat and answer calls. The three `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`).
+A worker must implement `knock`, `knock_reply`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, heartbeat and answer calls. The `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them, and `stream_resize` may be ignored by any worker. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`).
 
 ## Shared blocks
 
@@ -179,6 +179,18 @@ New codes may be added without a version change; receivers treat an unknown code
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `stream` | string | yes | Stream handle. Streams live until one side closes them on purpose (S4). |
+
+### `stream_resize`: hub to worker, optional (S2; Bake 13 Nov)
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `stream` | string | yes | Stream handle. |
+| `cols` | integer | yes | Columns of the terminal showing the stream, 1 or more. |
+| `rows` | integer | yes | Rows of the terminal showing the stream, 1 or more. |
+
+The size of the terminal a client shows the stream in, in characters, for a worker whose stream is a terminal: a full-screen program draws for that size. A worker with no use for it ignores it, and answers nothing either way. It is not stream data: it is not input, and it is not part of what the stream carried. Several clients may show one stream at different sizes (S2); each resize replaces the last, so the last one sent wins. Added in v1 as an optional message (U8): a worker that does not know it answers `bad_message`, which the hub ignores, and keeps working.
+
+**Terminal size at open, by convention.** A cap that opens a terminal takes optional `cols` and `rows` (integers, 1 or more) among its arguments, declared in its schema, for the size to start at. They are ordinary arguments: the hub passes them through like any other and reads nothing into them. The site sends resizes only to the streams of such caps; an agent resizes a stream through the MCP `stream` tool.
 
 ### `event`: worker to hub, optional (J2)
 
