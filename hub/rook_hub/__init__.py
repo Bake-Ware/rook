@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, jobs, records, web
+from . import bands, caps, jobs, plugins, records, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -118,6 +118,7 @@ class Hub:
         self._db.executescript(bands.SCHEMA)
         self._db.executescript(records.SCHEMA)
         self._db.executescript(jobs.SCHEMA)
+        self._db.executescript(plugins.SCHEMA)
         self.events = Events(self)
         self.auth = Auth(self)
         self._signing_key = self._load_signing_key()
@@ -126,6 +127,8 @@ class Hub:
         self._links = {}  # worker guid -> its live link
         self._calls = {}  # call id -> (worker guid, future)
         self._runner = None  # the HTTP server, while serving
+        self.plugins = plugins.Plugins(self)
+        self.plugins.load_all()  # every installed plugin, at start (PL3)
 
     def _load_signing_key(self):
         path = self.state_dir / "hub.key"

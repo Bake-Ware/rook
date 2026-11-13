@@ -2,12 +2,14 @@
 
 Only what the plan requires an agent to be able to do: approve a knocking
 worker (R2), attach a knock to a known identity (W7), mint a join token (R3),
-and manage jobs and emit events (J7, J2; defined in jobs.py).
+manage jobs and emit events (J7, J2; defined in jobs.py), and install and list
+plugins (PL4; plugins.py). Installed plugins add caps of their own, served the
+same way (PL1).
 """
 
 import datetime
 
-from . import jobs
+from . import jobs, plugins
 from .errors import HubError
 
 HUB = "hub"  # the worker name that addresses the hub's own caps
@@ -68,11 +70,12 @@ CAPS = {
 
 
 CAPS.update(jobs.CAPS)  # create, list, pause, un-pause and delete jobs; emit an event (J7, J2)
+CAPS.update(plugins.CAPS)  # install and list plugins (PL4)
 
 
-def descriptors():
-    """The hub's caps as a worker announces caps (W3)."""
-    return [dict(meta, name=name, returns="result") for name, (_, meta) in CAPS.items()]
+def descriptors(hub):
+    """The hub's caps, its plugins' included, as a worker announces caps (W3)."""
+    return [dict(meta, name=name, returns="result") for name, (_, meta) in CAPS.items()] + hub.plugins.descriptors()
 
 
 def for_journal(reply):
@@ -87,7 +90,9 @@ def for_journal(reply):
 
 def run(hub, cap, args, actor):
     """Run one hub cap. Returns its result, or raises HubError."""
+    if cap in hub.plugins.caps:
+        return hub.plugins.call(cap, args, actor)
     if cap not in CAPS:
         raise HubError("unknown_cap", f"The hub does not serve {cap}.",
-                       f"The hub serves {', '.join(CAPS)}; list them with the caps tool.")
+                       f"The hub serves {', '.join([*CAPS, *hub.plugins.caps])}; list them with the caps tool.")
     return CAPS[cap][0](hub, args, actor)
