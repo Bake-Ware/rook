@@ -58,12 +58,18 @@ class Cap:
 
 class Stream:
     """One open stream, owned by this worker (S2). `send` output; `read` input
-    (None once closed); `close` it. It lives until one side closes it (S4)."""
+    (None once closed); `close` it. It lives until one side closes it (S4).
+
+    A stream that is a terminal learns the size it is shown at (Bake 13 Nov): `size`
+    is the latest (cols, rows) a client sent, or None, and `await resized()` gives the
+    next new size. A handler that has no use for sizes ignores both; nothing piles up."""
 
     def __init__(self, worker, handle, cap):
         self.worker, self.handle, self.cap = worker, handle, cap   # the cap that opened it
         self.open = True
+        self.size = None
         self._input = asyncio.Queue()
+        self._resized = asyncio.Event()
         self._ready = asyncio.Event()     # set once the hub has its stream_open, so no data goes first
 
     async def send(self, data):
@@ -78,6 +84,17 @@ class Stream:
         """The next input from a client, as bytes, or None when the stream is closed."""
         return await self._input.get()
 
+    async def resized(self):
+        """The next size a client shows the stream at, as (cols, rows), or None once the stream is
+        closed. Sizes that arrive before this is awaited again are not queued: it gives the latest."""
+        await self._resized.wait()
+        self._resized.clear()
+        return self.size if self.open else None
+
+    def _resize(self, cols, rows):
+        self.size = (cols, rows)
+        self._resized.set()
+
     async def close(self):
         if self.open:
             await self._ready.wait()
@@ -88,6 +105,7 @@ class Stream:
         if self.open:
             self.open = False
             self._input.put_nowait(None)
+            self._resized.set()
             self.worker.streams.pop(self.handle, None)
             self.worker.changed()        # the open count is part of the heartbeat (S4)
 
@@ -232,6 +250,8 @@ class Worker:
                 asyncio.create_task(self._answer(message))
             elif message["type"] == "stream_data" and message["stream"] in self.streams:
                 self.streams[message["stream"]]._input.put_nowait(base64.b64decode(message["data"]))
+            elif message["type"] == "stream_resize" and message["stream"] in self.streams:
+                self.streams[message["stream"]]._resize(message["cols"], message["rows"])
             elif message["type"] == "stream_close" and message["stream"] in self.streams:
                 self.streams[message["stream"]]._closed()
             elif message["type"] == "plugins":
