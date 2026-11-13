@@ -5,8 +5,12 @@ it serves and heartbeats and stream output keep arriving; the backup is restored
 path with the key file moved too; and the start command serves the restored data as the same hub."""
 
 import asyncio
+import ctypes
+import ctypes.util
+import fcntl
 import json
 import os
+import struct
 import pathlib
 import shutil
 import sys
@@ -58,6 +62,30 @@ live = []
 async def ticker(args, stream):
     live.append(stream)
     return {"title": "build log", "description": "lines from a long build"}
+
+
+class Watch:
+    """Every name created in, or moved into, a directory while it is watched (Linux inotify): a file
+    that exists for a moment is caught as surely as one that stays."""
+
+    def __init__(self, path):
+        self.libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        self.fd = self.libc.inotify_init1(os.O_NONBLOCK)
+        assert self.fd >= 0 and self.libc.inotify_add_watch(self.fd, os.fsencode(path), 0x100 | 0x80) >= 0  # CREATE, MOVED_TO
+
+    def names(self):
+        found = []
+        while True:
+            try:
+                data = os.read(self.fd, 1 << 16)
+            except BlockingIOError:
+                os.close(self.fd)
+                return found
+            i = 0
+            while i < len(data):
+                wd, mask, cookie, length = struct.unpack_from("iIII", data, i)
+                found.append(data[i + 16:i + 16 + length].rstrip(b"\0").decode())
+                i += 16 + length
 
 
 async def run(*args):
@@ -119,14 +147,33 @@ async def scenario(tmp_path):
             pumping = asyncio.create_task(pump())
             beats = hub._db.execute("SELECT count(*) FROM heartbeats").fetchone()[0]
             saved = tmp_path / "backups" / "hub.rookbackup"
+            saved.parent.mkdir()
+            watch = Watch(saved.parent)
             code, out, err = await run("backup", "--data", str(data), "--vault-key", str(key), "--to", str(saved))
             assert code == 0, err
+            # The destination only ever saw the sealed backup: no plain working copy, not even for a moment (X4).
+            assert watch.names() == ["hub.rookbackup"]
+            assert not (data / backup.COPY).exists()            # the working copy, in the data directory, is gone
             assert "written to" in out and "Keep the vault key file apart" in out
             await asyncio.sleep(1.2)
             assert hub._db.execute("SELECT count(*) FROM heartbeats").fetchone()[0] > beats   # it went on serving
             assert (data / "hub.lock").exists() and hub._serving_dir is not None
             pumping.cancel()
             assert sorted(p.name for p in saved.parent.iterdir()) == ["hub.rookbackup"]   # no copy left beside it
+
+            # A plain copy an interrupted backup left in the data directory is cleared by the next backup;
+            # a backup that finds another one running is refused and writes nothing.
+            (data / backup.COPY).write_bytes(b"SQLite format 3\0" + NAME.encode())
+            again = tmp_path / "backups" / "again.rookbackup"
+            code, out, err = await run("backup", "--data", str(data), "--vault-key", str(key), "--to", str(again))
+            assert code == 0 and not (data / backup.COPY).exists(), err
+            with open(data / backup.COPY, "wb") as other:
+                fcntl.flock(other, fcntl.LOCK_EX)
+                busy = tmp_path / "backups" / "busy.rookbackup"
+                code, out, err = await run("backup", "--data", str(data), "--vault-key", str(key), "--to", str(busy))
+                assert code != 0 and "Another backup" in err and not busy.exists(), err
+            (data / backup.COPY).unlink()
+            again.unlink()
     finally:
         if pumping is not None:
             pumping.cancel()
