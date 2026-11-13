@@ -17,7 +17,19 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # straight to the address, no proxy
+
+class _HTTPRedirectsOnly(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to http or https. A redirect anywhere else is not
+    followed: the 3xx response itself is the answer (D3)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlsplit(newurl).scheme.lower() not in ("http", "https"):
+            raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+# Straight to the address (no proxy), and redirects followed only to http and https.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _HTTPRedirectsOnly)
 
 
 def _outgoing(args, name):
@@ -38,7 +50,8 @@ def _incoming(data, name):
 
 def http(args):
     """One HTTP request: {status, headers, body or body_base64}. An HTTP error status is an answer, not a failure.
-    Only http and https: this is an HTTP request, never a way to read files (D3)."""
+    Only http and https, for the request and for any redirect it follows: this is an HTTP
+    request, never a way to read files or reach other protocols (D3)."""
     scheme = urllib.parse.urlsplit(args["url"]).scheme.lower()
     if scheme not in ("http", "https"):
         raise ValueError(f"net.http makes HTTP requests only: the url must start with http:// or https://, "

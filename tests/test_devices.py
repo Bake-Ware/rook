@@ -352,3 +352,36 @@ def test_primitives_make_http_requests_only():
     for url in ("file:///etc/hostname", "ftp://127.0.0.1/x", "data:,hello", "/etc/hostname"):
         with pytest.raises(ValueError, match="http:// or https://"):
             rook_net.http({"url": url})
+
+
+def test_redirects_stay_on_http():
+    # D3: a redirect is followed only to http or https. A server that redirects to an ftp:
+    # address gets its 302 back as the answer, and nothing is fetched over FTP.
+    import rook_net
+
+    class Redirecting(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/here":
+                self.send_response(200)
+                self.send_header("Content-Length", "4")
+                self.end_headers()
+                self.wfile.write(b"here")
+                return
+            self.send_response(302)
+            self.send_header("Location", {"/to-ftp": "ftp://127.0.0.1:1/x", "/to-http": "/here"}[self.path])
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = serve(http.server.ThreadingHTTPServer(("127.0.0.1", 0), Redirecting))
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        answer = rook_net.http({"url": base + "/to-ftp", "wait": 5})
+        assert answer["status"] == 302 and answer["headers"]["Location"] == "ftp://127.0.0.1:1/x"
+        followed = rook_net.http({"url": base + "/to-http", "wait": 5})      # http redirects are still followed
+        assert (followed["status"], followed["body"]) == (200, "here")
+    finally:
+        server.shutdown()
+        server.server_close()
