@@ -129,6 +129,7 @@ def test_record_errors(tmp_path):
     try:
         alice = hub.auth.create_user("Alice", "a password")["guid"]
         records.declare_type(hub, "note", "notes")
+        blob = records.store_blob(hub, b"bytes", "text/plain", "a blob", user=alice)
         for call, code in ((lambda: records.create(hub, "note", None, user=alice), "bad_message"),
                            (lambda: records.create(hub, "note", "x", body={1, 2}, user=alice), "bad_message"),
                            (lambda: records.create(hub, "note", "x"), "no_actor"),
@@ -136,11 +137,20 @@ def test_record_errors(tmp_path):
                            (lambda: records.store_blob(hub, "text", "text/plain", user=alice), "bad_message"),
                            (lambda: records.update(hub, "no-such-record", title="x"), "unknown_record"),
                            (lambda: records.link(hub, "no-such-record", "nor-this"), "unknown_record"),
-                           (lambda: records.declare_type(hub, "", "notes"), "bad_message")):
+                           (lambda: records.declare_type(hub, "", "notes"), "bad_message"),
+                           # K3: a blob record always has bytes behind it.
+                           (lambda: records.create(hub, "blob", "x", body={"hash": "0" * 64}, user=alice),
+                            "blob_needs_bytes"),
+                           (lambda: records.update(hub, blob["guid"], body={"hash": "0" * 64}), "blob_body_fixed")):
             with pytest.raises(HubError) as refused:
                 call()
             assert refused.value.message["code"] == code and refused.value.message["next"]
-        assert records.search(hub) == []
+        assert [r["guid"] for r in records.search(hub)] == [blob["guid"]]
+        assert records.get(hub, blob["guid"]) == blob and records.read_blob(hub, blob["guid"]) == b"bytes"
+
+        # A blob's title and description may still change.
+        renamed = records.update(hub, blob["moniker"], title="renamed", description="still the same bytes")
+        assert (renamed["title"], renamed["body"]) == ("renamed", blob["body"])
 
         # The owner is the acting user unless another user is named.
         bob = hub.auth.create_user("Bob", "a password")

@@ -152,7 +152,11 @@ def _create(hub, type, title, description, body, owner, actor):
 def create(hub, type, title, description="", body=None, *, owner=None, user=None, token=None):
     """Make a record of a declared type (K1, K2). The actor is a user acting
     directly or a client token (T4); the owner is the acting user unless another
-    user (GUID or moniker) is named. `body` is any JSON value; None means {}."""
+    user (GUID or moniker) is named. `body` is any JSON value; None means {}.
+    A blob is made only by store_blob, so every blob record has bytes behind it (K3)."""
+    if type == BLOB:
+        raise HubError("blob_needs_bytes", "A blob record is made from its bytes, not from a body.",
+                       "Call store_blob with the bytes and their MIME type.")
     title, description = _text(title, "title"), _text(description, "description")
     body = _json({} if body is None else body)
     with hub._lock, hub._db:
@@ -166,7 +170,8 @@ def get(hub, record):
 
 
 def update(hub, record, *, title=None, description=None, body=None):
-    """Change a record's title, description or body; what is not given (None) stays."""
+    """Change a record's title, description or body; what is not given (None) stays.
+    A blob's body describes its bytes, so it never changes; its title and description may."""
     changes = {}
     if title is not None:
         changes["title"] = _text(title, "title")
@@ -176,6 +181,9 @@ def update(hub, record, *, title=None, description=None, body=None):
         changes["body"] = _json(body)
     with hub._lock, hub._db:
         row = _row(hub, record)
+        if "body" in changes and row["type"] == BLOB:
+            raise HubError("blob_body_fixed", f"Record {row['moniker']} is a blob: its body describes its bytes.",
+                           "Change its title or description, or store the new bytes with store_blob.")
         if changes:
             hub._db.execute(f"UPDATE records SET {', '.join(f'{name} = ?' for name in changes)}, updated_at = ? "
                             "WHERE id = ?", (*changes.values(), hub.clock(), row["id"]))
