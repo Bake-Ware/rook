@@ -1,9 +1,10 @@
 /* Rook hub site: the shell (P1, P2, P6, P10).
-   The login (or setup, while the hub has no user), the sidebar (a Pinned strip, then the segments with the pages
-   installed in them), pins kept at the hub, the page header's pin control,
-   a row menu, a toast line, and the background rook scene. A page is an
-   ES module whose default export is a Vue component; the hub says which
-   pages exist and where their modules are (GET /api/session). */
+   The login (or setup, while the hub has no user), the sidebar (a Pinned
+   strip, then the segments with the pages installed in them), pins kept at
+   the hub, the page header's pin control, a row menu, a toast line, and the
+   background rook scene. A page is an ES module whose default export is a
+   Vue component; the hub says which pages exist and where their modules are
+   (GET /api/session). */
 const { createApp, reactive, markRaw } = Vue;
 
 export const store = reactive({ user: null, nav: [], pins: [], toast: '', ready: false,
