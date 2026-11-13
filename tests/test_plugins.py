@@ -280,3 +280,30 @@ def test_a_plugin_that_fails_at_start_is_skipped(tmp_path, caplog):
         assert [p["name"] for p in hub.plugins.list()] == ["notes", "frail"]
     finally:
         hub.close()
+
+
+def test_a_moved_hub_keeps_its_plugins(tmp_path):
+    # F3: hub data is portable. A plugin installed before the data directory moves is
+    # loaded from the new place, its caps answer and its records are there.
+    async def go():
+        before, after = tmp_path / "before", tmp_path / "after"
+        hub = Hub(before)
+        alice = hub.auth.create_user("Alice", "a password")["guid"]
+        try:
+            hub.plugins.install(str(NOTES), {"user": alice, "token": None})
+            made = await hub.call("hub", "note.create", {"title": "Moving", "text": "boxes everywhere"},
+                                  "before the move", user=alice)
+            assert made["type"] == "result"
+        finally:
+            hub.close()
+        shutil.move(before, after)
+        hub = Hub(after)
+        try:
+            assert sorted(hub.plugins.caps) == ["note.create", "note.search"]
+            found = await hub.call("hub", "note.search", {"text": "boxes"}, "after the move", user=alice)
+            assert [n["note"] for n in found["result"]["notes"]] == [made["result"]["note"]]
+            hub.plugins.install(str(NOTES), {"user": alice, "token": None})      # a reinstall still swaps folders
+            assert [p.name.split(".")[0] for p in (after / "plugins").iterdir()] == ["notes"]
+        finally:
+            hub.close()
+    asyncio.run(go())

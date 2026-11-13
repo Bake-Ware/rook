@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS plugins (
     moniker      TEXT NOT NULL UNIQUE,
     name         TEXT NOT NULL UNIQUE,
     version      TEXT NOT NULL,
-    folder       TEXT NOT NULL,          -- its copy, under <state dir>/plugins/
+    folder       TEXT NOT NULL,          -- its copy's name in <state dir>/plugins/, so the data directory can move (F3)
     manifest     TEXT NOT NULL,          -- plugin.json as installed
     installed_at REAL NOT NULL
 );
@@ -189,10 +189,10 @@ class Plugins:
                     self.hub._db.execute(
                         "INSERT INTO plugins (guid, moniker, name, version, folder, manifest, installed_at) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?)", (guid, self.hub._new_moniker(guid), name, manifest["version"],
-                                                         str(folder), json.dumps(manifest), self.hub.clock()))
+                                                         folder.name, json.dumps(manifest), self.hub.clock()))
                 else:
                     self.hub._db.execute("UPDATE plugins SET version = ?, folder = ?, manifest = ?, installed_at = ? "
-                                         "WHERE guid = ?", (manifest["version"], str(folder), json.dumps(manifest),
+                                         "WHERE guid = ?", (manifest["version"], folder.name, json.dumps(manifest),
                                                             self.hub.clock(), guid))
         except BaseException:
             if module_name is not None:
@@ -200,8 +200,8 @@ class Plugins:
             shutil.rmtree(folder, ignore_errors=True)
             raise
         self._serve(declared, module_name)
-        if old is not None and old["folder"] != str(folder):
-            shutil.rmtree(old["folder"], ignore_errors=True)   # the replaced code; one copy per plugin
+        if old is not None and old["folder"] != folder.name:
+            shutil.rmtree(self.root / old["folder"], ignore_errors=True)   # the replaced code; one copy per plugin
         return self.get(name)
 
     def load_all(self):
@@ -210,7 +210,7 @@ class Plugins:
             rows = self.hub._db.execute("SELECT * FROM plugins ORDER BY installed_at").fetchall()
         for row in rows:
             try:
-                declared, module_name = self._load(row["name"], pathlib.Path(row["folder"]), json.loads(row["manifest"]))
+                declared, module_name = self._load(row["name"], self.root / row["folder"], json.loads(row["manifest"]))
                 self._clashes(declared)
                 self._serve(declared, module_name)
             except HubError as e:
