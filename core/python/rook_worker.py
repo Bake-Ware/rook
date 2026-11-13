@@ -11,7 +11,6 @@ once closed) and `close()`.
 
 import asyncio
 import base64
-import itertools
 import json
 import os
 import pathlib
@@ -20,6 +19,7 @@ import shutil
 import socket
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -104,7 +104,6 @@ class Worker:
         self.identity = json.loads(path.read_text()) if path.exists() else None
         self.interval = None
         self.streams = {}                 # handle -> Stream, while open
-        self._handles = itertools.count(1)
         self._link = None
         self._changed = asyncio.Event()
         self._interval_known = asyncio.Event()
@@ -230,7 +229,9 @@ class Worker:
 
     async def _open_stream(self, call, cap):
         """A call on a stream cap: the handler names the stream, the hub hears stream_open (S1)."""
-        stream = Stream(self, f"s{next(self._handles)}")
+        # A fresh random handle, so a stream opened after a restart never takes the
+        # handle of one the hub still lists from before it.
+        stream = Stream(self, uuid.uuid4().hex[:16])
         try:
             named = await cap.handler(call["args"], stream)
             reply = {"type": "stream_open", "id": call["id"], "stream": stream.handle,
