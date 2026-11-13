@@ -73,8 +73,15 @@ class Lamp:
 
 
 class EchoTCP(socketserver.BaseRequestHandler):
+    received = []
+
     def handle(self):
-        self.request.sendall(b"echo:" + self.request.recv(1024))
+        data = self.request.recv(1024)
+        EchoTCP.received.append(data)
+        try:
+            self.request.sendall(b"echo:" + data)
+        except OSError:          # a sender that does not wait for the answer has gone already
+            pass
 
 
 class EchoUDP(socketserver.BaseRequestHandler):
@@ -140,6 +147,16 @@ async def scenario(tmp_path):
             failed, answer = await call(x["moniker"], "net.udp", "send a datagram", host="127.0.0.1",
                                         port=udp.server_address[1], data_base64="/w==", wait=2)
             assert not failed and answer == {"data_base64": "ZWNobzr/"}     # bytes that are not text come back as base64
+            #     With wait 0, TCP sends and returns without reading.
+            failed, answer = await call(x["moniker"], "net.tcp", "send without waiting",
+                                        host="127.0.0.1", port=tcp.server_address[1], data="fire", wait=0)
+            assert not failed and answer == {"data": None}
+            await eventually(lambda: b"fire" in EchoTCP.received)
+            #     net.http makes HTTP requests only: a file URL is refused, and nothing is read.
+            secret_file = tmp_path / "not-for-agents.txt"
+            secret_file.write_text("the worker's own disk")
+            failed, text = await call(x["moniker"], "net.http", "try to read a file", url=secret_file.as_uri())
+            assert failed and "http:// or https://" in text and "own disk" not in text
             lamp.requests.clear()
 
             # 1. The agent installs lamp and adds a device on band Home with a floating route. The
@@ -202,6 +219,16 @@ async def scenario(tmp_path):
             devices.set_serves_devices(hub, y["moniker"], True)
             failed, answer = await call(desk, "lamp.on", "on through Y")
             assert not failed and lamp.via() == "y"
+
+            # 6b. A job calls a device like any worker (D1, J1): on an event, it turns the lamp on.
+            await call(desk, "lamp.off", "off before the job")
+            failed, made = await call("hub", "job.create", "light up when the door opens", title="door light",
+                                      match={"event": "door.opened"}, call={"worker": desk, "cap": "lamp.on"})
+            assert not failed and made["job"]["call"]["worker"] == desk
+            await call("hub", "event.emit", "someone came in", name="door.opened")
+            await eventually(lambda: lamp.on)
+            failed, read = await tool(door, "journal", kind="job", job=made["job"]["moniker"])
+            assert read["entries"][0]["worker"] == desk and read["entries"][0]["cap"] == "lamp.on"
 
             # 7. A device pinned to X uses only X; with X offline it fails naming X, though Y is online (D4).
             failed, reply = await call("hub", "device.add", "add a lamp pinned to X", name="Shelf lamp", driver="lamp",
@@ -315,3 +342,13 @@ def test_device_errors(tmp_path):
         finally:
             hub.close()
     asyncio.run(go())
+
+
+def test_primitives_make_http_requests_only():
+    # D3: net.http is an HTTP request. Other schemes urllib knows are refused before anything
+    # is opened, on a worker and on the hub's direct route alike (both run rook_net).
+    import pytest
+    import rook_net
+    for url in ("file:///etc/hostname", "ftp://127.0.0.1/x", "data:,hello", "/etc/hostname"):
+        with pytest.raises(ValueError, match="http:// or https://"):
+            rook_net.http({"url": url})
