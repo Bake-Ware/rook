@@ -127,7 +127,7 @@ def stream_view(hub, stream):
     """A stream as a worker card shows it (S3, S5): title, description, who opened it and when,
     and, once closed, who closed it and when."""
     def person(moniker):
-        if moniker in (None, "worker"):
+        if moniker in (None, "worker", "hub"):
             return moniker
         user = hub.auth.get_user(moniker)
         return {"name": user["name"], "moniker": user["moniker"]}

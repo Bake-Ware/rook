@@ -44,7 +44,7 @@ const WORKER_DETAIL = `
               <div v-for="s in streamsOf(w)" :key="s.moniker" class="stream" :class="{attached: attached[s.moniker]}">
                 <span class="k">{{ s.moniker }}</span>
                 <div><b>{{ s.title }}<span v-if="!s.open" class="badge plain" style="margin-left:6px">closed</span></b><p>{{ s.description }}</p>
-                  <p class="dim2 mono small">opened by {{ who(s) }} {{ ago(s.opened_at) }}<template v-if="!s.open && s.closed_at"> · closed by {{ s.closed_by === 'worker' ? 'the worker' : s.closed_by ? s.closed_by.name : 'someone' }} {{ ago(s.closed_at) }}</template></p></div>
+                  <p class="dim2 mono small">opened by {{ who(s) }} {{ ago(s.opened_at) }}<template v-if="!s.open && s.closed_at"> · closed by {{ s.closed_by === 'worker' ? 'the worker' : s.closed_by === 'hub' ? 'the hub, as its call ended' : s.closed_by ? s.closed_by.name : 'someone' }} {{ ago(s.closed_at) }}</template></p></div>
                 <span style="display:flex;gap:4px;align-items:start">
                   <button class="btn sm" :class="{accent: attached[s.moniker]}" type="button" @click.stop="attached[s.moniker] ? detach(s) : attach(s)">{{ attached[s.moniker] ? 'detach' : s.open ? 'attach' : 'open read-only' }}</button>
                   <row-menu :items="streamMenu(w, s)" label="Stream actions"></row-menu></span>
