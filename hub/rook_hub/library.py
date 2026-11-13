@@ -18,7 +18,26 @@ to records, blobs and the event bus.
 Through a `Call` a plugin reaches only records of the types it owns, plus blobs
 (K2, K3). Nothing here touches routing, auth or the journal (PL2): a plugin's
 cap is journaled like every hub cap, because it is called the same way.
+
+A plugin may also declare a driver for a kind of device (D2, PL1). A driver's
+handlers are `async`, because each network step goes to a worker and back:
+
+    def setup(plugin):
+        lamp = plugin.driver("lamp")
+
+        @lamp.cap("lamp.on", "Turn the lamp on.", {"type": "object"})
+        async def on(device, args):
+            return await device.http(device.config["url"] + "/on", method="POST")
+
+        @lamp.status
+        async def status(device):
+            return (await device.http(device.config["url"] + "/state"))["body"]
+
+A handler gets a `Device`: its config (with secret:<name> resolved, D7) and the
+three network primitives (D3). It never names a worker; the hub picks the route (D4).
 """
+
+import base64
 
 from . import records
 from .errors import HubError
@@ -35,6 +54,7 @@ class Plugin:
         self.name = name
         self.caps = {}            # cap name -> (handler, {"description": ..., "schema": ...})
         self.record_types = []
+        self.drivers = {}         # driver name -> Driver
 
     def cap(self, name, description, schema):
         """Declare a cap served by the hub, called with worker "hub" (W3). Use as a
@@ -47,6 +67,62 @@ class Plugin:
     def record_type(self, type):
         """Declare a record type this plugin owns (K2)."""
         self.record_types.append(type)
+
+    def driver(self, name):
+        """Declare a driver: what the hub uses to speak to one kind of device (D2)."""
+        self.drivers[name] = Driver(name)
+        return self.drivers[name]
+
+
+class Driver:
+    """The caps a kind of device has, and optionally how to read its status (D1, D6)."""
+
+    def __init__(self, name):
+        self.name = name
+        self.caps = {}            # cap name -> (async handler(device, args), {"description": ..., "schema": ...})
+        self.status_handler = None
+
+    def cap(self, name, description, schema):
+        """Declare a cap of this kind of device (W3), on `async handler(device, args)`."""
+        def register(handler):
+            self.caps[name] = (handler, {"description": description, "schema": schema})
+            return handler
+        return register
+
+    def status(self, handler):
+        """Declare `async handler(device)`, which reads the device's status; the hub polls it (D6)."""
+        self.status_handler = handler
+        return handler
+
+
+class Device:
+    """One device, as its driver sees it during one call or poll."""
+
+    def __init__(self, guid, moniker, name, config, send):
+        self.guid, self.moniker, self.name = guid, moniker, name
+        self.config = config                     # secret:<name> already resolved (D7, X2)
+        self._send = send                        # the hub's route: send(cap, args) -> the primitive's answer
+
+    async def http(self, url, method="GET", headers=None, body=None, wait=None):
+        """One HTTP request (net.http): {status, headers, body or body_base64}."""
+        args = {"url": url, "method": method, "headers": headers or {}, **_bytes("body", body)}
+        return await self._send("net.http", dict(args, **({"wait": wait} if wait is not None else {})))
+
+    async def tcp(self, host, port, data, wait):
+        """One TCP send (net.tcp): {data or data_base64}, what came back within `wait` seconds."""
+        return await self._send("net.tcp", {"host": host, "port": port, "wait": wait, **_bytes("data", data)})
+
+    async def udp(self, host, port, data, wait):
+        """One UDP send (net.udp): {data or data_base64}, the first reply within `wait` seconds, or data null."""
+        return await self._send("net.udp", {"host": host, "port": port, "wait": wait, **_bytes("data", data)})
+
+
+def _bytes(name, value):
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        return {name: value}
+    return {name + "_base64": base64.b64encode(value).decode("ascii")}
 
 
 class Call:

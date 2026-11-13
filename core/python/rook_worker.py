@@ -25,6 +25,7 @@ from typing import Any, Awaitable, Callable
 
 from nacl.signing import SigningKey, VerifyKey
 
+import rook_net
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
 VERSION = "0.1.0"
@@ -94,7 +95,7 @@ class Worker:
         self.hub_url = hub_url.rstrip("/")
         self.connect = connect
         self.name = name or socket.gethostname()
-        self.caps = dict(caps or {})
+        self.caps = {**primitives(), **dict(caps or {})}   # every worker serves the network primitives (D3)
         self.macs = own_macs() if macs is None else macs
         self.knock_every = knock_every
         self.token = token  # a join token: approved at once, no pending step (R3)
@@ -291,6 +292,18 @@ class Worker:
         except (OSError, KeyError, ValueError, IndexError):
             pass
         return health
+
+
+def primitives():
+    """The dumb network primitives every worker serves, so it can be a jump box for
+    devices on its band (D3): net.http, net.tcp and net.udp (rook_net.py). Built in
+    until the worker part of plugins exists (PL7)."""
+    def serve(function):
+        async def handler(args):
+            return await asyncio.to_thread(function, args)
+        return handler
+    return {name: Cap(description, schema, serve(function))
+            for name, (function, description, schema) in rook_net.CAPS.items()}
 
 
 def error(code, message, next_step, call_id=None):

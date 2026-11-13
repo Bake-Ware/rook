@@ -115,8 +115,10 @@ class Vault:
                            "Give scope as \"hub\", \"worker:<moniker>\", \"band:<moniker>\" or a plain string.")
         if scope == "hub":
             return "hub", "hub"
-        if scope.startswith("worker:"):
-            return "worker", self.hub._resolve(scope[7:])["guid"]
+        if scope.startswith("worker:"):     # a device is a worker to agents (D1), so it has this scope too
+            device = self.hub._db.execute("SELECT guid FROM devices WHERE guid = ? OR moniker = ?",
+                                          (scope[7:], scope[7:])).fetchone()
+            return "worker", device["guid"] if device else self.hub._resolve(scope[7:])["guid"]
         if scope.startswith("band:"):
             from .bands import _band
             return "band", _band(self.hub, scope[5:])["guid"]
@@ -191,11 +193,12 @@ class Vault:
 
     # --------------------------------------------------- references (X2)
 
-    def substitute(self, args, worker):
+    def substitute(self, args, worker, band=None):
         """`args` with every string that is exactly secret:<name> replaced by its value,
         found in the worker's scope, then its band's, then the hub's (X1); for the hub's
-        own caps (worker "hub") only in the hub's scope. Raises HubError if a name is
-        found nowhere, or if the vault cannot be opened."""
+        own caps (worker "hub") only in the hub's scope. A device passes its own GUID as
+        `worker` and its band's GUID as `band`. Raises HubError if a name is found
+        nowhere, or if the vault cannot be opened."""
         names = set()
 
         def find(value):
@@ -216,8 +219,12 @@ class Vault:
         scopes = [("hub", "hub")]
         if worker != "hub":
             from . import bands
-            band = bands.of_worker(self.hub, worker)
-            scopes = [("worker", worker)] + ([("band", band["guid"])] if band else []) + scopes
+            if band is None:
+                with self.hub._lock:
+                    is_worker = self.hub._db.execute("SELECT 1 FROM workers WHERE guid = ?", (worker,)).fetchone()
+                if is_worker:
+                    band = (bands.of_worker(self.hub, worker) or {}).get("guid")
+            scopes = [("worker", worker)] + ([("band", band)] if band else []) + scopes
         values = {}
         with self.hub._lock:
             for name in names:

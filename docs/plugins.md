@@ -81,6 +81,40 @@ What the hub refuses at install, keeping nothing of the plugin (an install is al
 
 A plugin that is installed again keeps its own cap names and record types, and its GUID and moniker (G1).
 
+### Drivers: devices at the hub (built)
+
+A device is anything with an API that cannot run a worker: a TV, a lamp, a printer (D1). Its driver is something a plugin adds (PL1, D2). In `setup(plugin)`:
+
+```python
+import json
+
+
+def setup(plugin):
+    lamp = plugin.driver("lamp")                   # a driver name: lowercase, hyphens between words
+
+    @lamp.cap("lamp.on", "Turn the lamp on.", {"type": "object"})
+    async def on(device, args):
+        answer = await device.http(device.config["url"] + "/on", method="POST",
+                                   headers={"x-lamp-key": device.config["key"]}, wait=5)
+        return json.loads(answer["body"])
+
+    @lamp.status                                   # optional: the hub polls it (D6)
+    async def status(device):
+        return json.loads((await device.http(device.config["url"] + "/state", wait=5))["body"])
+```
+
+A driver's handlers are `async`, because each network step goes to a worker and back. A handler gets a `device`:
+
+| | |
+|---|---|
+| `device.config` | The device's config, kept at the hub (D7). A value that is exactly `secret:<name>` arrives resolved: the device's own scope first, then its band's, then the hub's (X1, X2). |
+| `device.guid`, `device.moniker`, `device.name` | Which device. |
+| `await device.http(url, method="GET", headers=None, body=None, wait=None)` | One HTTP request: `{status, headers, body}` (or `body_base64` for bytes that are not text). |
+| `await device.tcp(host, port, data, wait)` | One TCP send; what came back within `wait` seconds: `{data}` or `{data_base64}`. |
+| `await device.udp(host, port, data, wait)` | One UDP send; the first reply within `wait` seconds, or `{"data": null}`. |
+
+These are the driver's only way to the network, and it never names a worker. The hub carries each step out by the device's route (D4): itself (direct), through one worker (pinned), or through any eligible worker on the device's band (floating, D5). Every worker serves the steps as the caps `net.http`, `net.tcp` and `net.udp` (D3). An agent adds a device with the hub cap `device.add`, naming the driver. A driver name that another plugin already declares is refused (`driver_taken`); so is a handler or status function that is not `async` (`bad_plugin`).
+
 ### Installing (built)
 
 Agents install through MCP with the hub caps (PL4):
@@ -133,7 +167,7 @@ Open: how a page calls the plugin's caps from the browser, and how pins (P6) nam
 
 - Install from a URL (PL4): a URL to what is not decided.
 - Uninstalling, disabling or enabling a plugin, and what happens to its records and record types.
-- A plugin's hub code calling caps on workers.
+- A plugin's hub code calling caps on workers (other than a driver's three network steps).
 - Serving a plugin's skill to agents (PL5).
 - Pushing worker parts (PL3) and site parts (PL1, P1).
 - The registry (PL4: LATER).
