@@ -10,14 +10,22 @@ once. When the hub starts it loads every installed plugin (PL3).
 A plugin adds, never replaces (PL1): a cap name or a record type that the hub or
 another plugin already has is refused, and then nothing of that plugin is kept.
 An install is all or nothing. A plugin is a hub object with a GUID and a moniker
-(G1). Its worker section is kept and reported, nothing more, until the slice
-that acts on it. Its site section (the last block of this file) adds pages,
-settings sections and Vue components to the site (PL1, P1).
+(G1). Its site section (the last block of this file) adds pages, settings
+sections and Vue components to the site (PL1, P1).
+
+A plugin's worker part (PL3) is a module per worker form. The hub pushes the
+parts to each connected worker as one `plugins` message listing every part that
+worker should have: when it connects, and again when a plugin is installed or
+replaced or its opt-out changes, to each worker whose list changed. A worker
+opted out of plugins (P4) gets an empty list. Only the form `python` is pushed
+to in this slice; other forms' entries are kept. What a worker failed to load
+it reports in its heartbeat; the hub journals it and `plugin.list` shows it.
 
 Plugin code runs inside the hub, unsandboxed (PL3). Each load imports the hub
 module under a name of its own, so reinstalling one plugin cannot disturb another.
 """
 
+import asyncio
 import importlib.util
 import inspect
 import json
@@ -28,7 +36,7 @@ import shutil
 import sys
 import uuid
 
-from rook_protocol import ProtocolError, validate
+from rook_protocol import ProtocolError, encode, validate
 
 from . import records
 from .errors import HubError
@@ -38,6 +46,7 @@ from .journal import iso
 log = logging.getLogger(__name__)  # rook_hub.plugins: where a plugin that fails to load at start is reported
 
 MANIFEST = "plugin.json"
+PUSHED = "python"   # the worker form the hub pushes worker parts to (PL3); others are kept, not pushed
 _NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*\Z")
 
 SCHEMA = """
@@ -49,6 +58,9 @@ CREATE TABLE IF NOT EXISTS plugins (
     folder       TEXT NOT NULL,          -- its copy's name in <state dir>/plugins/, so the data directory can move (F3)
     manifest     TEXT NOT NULL,          -- plugin.json as installed
     installed_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plugin_optouts (  -- workers that receive no plugin worker parts (P4); kept at the hub (W4)
+    worker TEXT PRIMARY KEY REFERENCES workers(guid)
 );
 """
 
@@ -81,6 +93,17 @@ def read_manifest(folder):
     if "hub" in manifest and (not isinstance(module, str) or not (folder / module).is_file()):
         raise HubError("bad_manifest", f"{path}: hub.module must name the plugin's Python file in the folder; "
                                       f"it is {module!r}.", fix)
+    part = manifest.get("worker", {}).get(PUSHED)
+    if part is not None:
+        module = part.get("module") if isinstance(part, dict) else None
+        where = (folder / module).resolve() if isinstance(module, str) and module else None
+        if where is None or not where.is_relative_to(folder.resolve()) or not where.is_file():
+            raise HubError("bad_manifest", f"{path}: worker.{PUSHED}.module must name a Python file inside the "
+                                          f"plugin's folder; it is {module!r}.", fix)
+        try:
+            where.read_text("utf-8")
+        except UnicodeDecodeError:
+            raise HubError("bad_manifest", f"{path}: worker.{PUSHED}.module {module!r} is not UTF-8 text.", fix) from None
     skill = manifest.get("skill")
     if skill is not None and (not isinstance(skill, str) or not (folder / skill).is_file()):
         raise HubError("bad_manifest", f"{path}: skill must name a file in the folder; it is {skill!r}.", fix)
@@ -98,6 +121,9 @@ class Plugins:
         self.drivers = {}    # driver name -> (plugin name, library.Driver) (D2)
         self._modules = {}   # plugin name -> the module name its hub code is loaded under
         self._loads = 0
+        self.loaded = set()  # the plugins loaded at the hub: only theirs are pushed to workers
+        self._pushed = {}    # worker guid -> (link, parts): what that link was last sent (PL3)
+        self._sending = set()
 
     def _load(self, name, folder, manifest):
         """Import the plugin's hub module and run its setup(). Returns the declared Plugin."""
@@ -177,6 +203,7 @@ class Plugins:
         drivers = {name: entry for name, entry in self.drivers.items() if entry[0] != declared.name}
         drivers.update({name: (declared.name, driver) for name, driver in declared.drivers.items()})
         self.drivers = drivers
+        self.loaded.add(declared.name)
 
     # ----------------------------------------------------------- install
 
@@ -217,6 +244,7 @@ class Plugins:
         self._serve(declared, module_name)
         if old is not None and old["folder"] != folder.name:
             shutil.rmtree(self.root / old["folder"], ignore_errors=True)   # the replaced code; one copy per plugin
+        self.push()
         return self.get(name)
 
     def load_all(self):
@@ -243,12 +271,19 @@ class Plugins:
             types = [r[0] for r in self.hub._db.execute(
                 "SELECT type FROM record_types WHERE plugin = ? ORDER BY type", (row["name"],))]
         manifest = json.loads(row["manifest"])
+        loaded, failed = [], []
+        for w in self.hub.list_workers():
+            for part in w["plugins"] or []:
+                if part["name"] == row["name"]:
+                    (failed if "error" in part else loaded).append(
+                        {"worker": w["moniker"], **{k: v for k, v in part.items() if k != "name"}})
         return {"guid": row["guid"], "moniker": row["moniker"], "name": row["name"], "version": row["version"],
                 "installed_at": iso(row["installed_at"]),
                 "caps": sorted(cap for cap, entry in self.caps.items() if entry[0] == row["name"]),
                 "record_types": types,
                 "drivers": sorted(d for d, entry in self.drivers.items() if entry[0] == row["name"]),
-                "worker": "worker" in manifest, "site": "site" in manifest, "skill": "skill" in manifest}
+                "worker": "worker" in manifest, "site": "site" in manifest, "skill": "skill" in manifest,
+                "loaded_on": loaded, "failed_on": failed}
 
     def list(self):
         with self.hub._lock:
@@ -256,6 +291,71 @@ class Plugins:
         return [self.get(name) for name in names]
 
     # ------------------------------------------------------------ serving
+
+    # ------------------------------------------------- worker parts (PL3)
+
+    def worker_parts(self, guid):
+        """The worker parts `guid` should have now: each plugin loaded at the hub with an entry
+        for the pushed form, in install order, or none when the worker is opted out (P4)."""
+        with self.hub._lock:
+            if self.hub._db.execute("SELECT 1 FROM plugin_optouts WHERE worker = ?", (guid,)).fetchone():
+                return []
+            rows = self.hub._db.execute("SELECT name, version, folder, manifest FROM plugins "
+                                        "ORDER BY installed_at").fetchall()
+        parts = []
+        for row in rows:
+            part = json.loads(row["manifest"]).get("worker", {}).get(PUSHED)
+            if part is not None and row["name"] in self.loaded:
+                source = (self.root / row["folder"] / part["module"]).read_text("utf-8")
+                parts.append({"name": row["name"], "version": row["version"], "source": source})
+        return parts
+
+    def push(self, worker=None):
+        """Send each connected worker of the pushed form (or only `worker`, a GUID) its worker
+        parts, if they differ from what its link was last sent (PL3). The worker loads them."""
+        for guid, link in list(self.hub._links.items()):
+            if worker is not None and guid != worker:
+                continue
+            if (self.hub.get_worker(guid)["facts"] or {}).get("form") != PUSHED:
+                continue
+            parts = self.worker_parts(guid)
+            if self._pushed.get(guid) == (link, parts):
+                continue
+            self._pushed[guid] = (link, parts)
+            task = asyncio.get_running_loop().create_task(self._send(link, parts))
+            self._sending.add(task)
+            task.add_done_callback(self._sending.discard)
+
+    def connected(self, guid, link, reported):
+        """A worker's link is up: send it its worker parts, unless it reports holding none
+        (`reported`, from its heartbeat) and should have none."""
+        self._pushed[guid] = (link, None if reported else [])
+        self.push(guid)
+
+    async def _send(self, link, parts):
+        try:
+            await link.send(encode({"type": "plugins", "plugins": parts}))
+        except EOFError:
+            pass     # the link closed; the worker gets its list again when it connects
+
+    def set_receives(self, worker, receives, *, user=None, token=None):
+        """Whether `worker` receives plugins' worker parts; the default is yes (P4). Journaled (L1).
+        An opted-out worker is sent an empty list at once, and drops what it had."""
+        with self.hub._lock, self.hub._db:
+            actor = self.hub.auth.actor(user, token)
+            guid = self.hub._resolve(worker)["guid"]
+            if receives:
+                self.hub._db.execute("DELETE FROM plugin_optouts WHERE worker = ?", (guid,))
+            else:
+                self.hub._db.execute("INSERT OR IGNORE INTO plugin_optouts (worker) VALUES (?)", (guid,))
+            self.hub._journal("auth", actor, guid, {"receives_plugins": receives})
+        self.push(guid)
+        return receives
+
+    def opted_out(self):
+        """The GUIDs of the workers that receive no plugin worker parts."""
+        with self.hub._lock:
+            return {row[0] for row in self.hub._db.execute("SELECT worker FROM plugin_optouts")}
 
     def descriptors(self):
         return [dict(meta, name=cap, returns="result") for cap, (_, _, meta) in sorted(self.caps.items())]
@@ -311,6 +411,15 @@ def list_plugins(hub, args, actor):
     return {"plugins": hub.plugins.list()}
 
 
+def receives(hub, args, actor):
+    worker, receive = args.get("worker"), args.get("receive")
+    if not isinstance(worker, str) or not worker or not isinstance(receive, bool):
+        raise HubError("bad_message", "args.worker (a moniker or GUID) and args.receive (true or false) are required.",
+                       "Call again with the arguments in this cap's schema (see the caps tool).")
+    moniker = hub.get_worker(worker)["moniker"]
+    return {"worker": moniker, "receives_plugins": hub.plugins.set_receives(worker, receive, **actor)}
+
+
 CAPS = {
     "plugin.install": (install, {
         "description": "Install a plugin from a folder on the hub's disk, or replace it if one by that name is "
@@ -319,9 +428,16 @@ CAPS = {
             "path": {"type": "string", "description": "The plugin's folder, holding plugin.json."}}},
     }),
     "plugin.list": (list_plugins, {
-        "description": "List the installed plugins: version, the caps and record types each added, and whether "
-                       "it has a worker section, a site section and a skill.",
+        "description": "List the installed plugins: version, the caps and record types each added, whether "
+                       "it has a worker section, a site section and a skill, and which workers loaded its worker "
+                       "part or failed to.",
         "schema": {"type": "object", "additionalProperties": False, "properties": {}},
+    }),
+    "worker.plugins": (receives, {
+        "description": "Opt a worker out of plugins' worker parts, or back in; it drops or loads them at once.",
+        "schema": {"type": "object", "required": ["worker", "receive"], "additionalProperties": False, "properties": {
+            "worker": {"type": "string", "description": "The worker's moniker or GUID."},
+            "receive": {"type": "boolean", "description": "false to opt it out, true to opt it back in."}}},
     }),
 }
 

@@ -76,7 +76,7 @@ CREATE INDEX IF NOT EXISTS heartbeats_worker_at ON heartbeats (worker, at);
 CREATE TABLE IF NOT EXISTS journal (
     id     INTEGER PRIMARY KEY,
     at     REAL NOT NULL,
-    kind   TEXT NOT NULL,            -- call, auth, band, event, job (a job's run) or stream (a close)
+    kind   TEXT NOT NULL,            -- call, auth, band, event, job (a job's run), stream (a close) or plugin (a worker part that failed to load)
     user   TEXT,                     -- the acting user (L1); none for events of the hub's own
     token  TEXT,                     -- the token they acted through, if any (L1)
     worker TEXT,
@@ -359,7 +359,7 @@ class Hub:
             "interval": row["interval"], "protocol": row["protocol"], "last_heartbeat": last,
             "online": last is not None and self.clock() - last <= MISSED_HEARTBEATS * row["interval"],
             "caps": state.get("caps", []), "facts": state.get("facts"), "band": state.get("band"),
-            "health": state.get("health"), "streams": state.get("streams"),
+            "health": state.get("health"), "streams": state.get("streams"), "plugins": state.get("plugins"),
         }
 
     def get_worker(self, worker):
@@ -409,11 +409,13 @@ class Hub:
                     if accepted is None:
                         link.close()
                         return
-                    guid = accepted
+                    first, guid = guid is None, accepted
                     old = self._links.get(guid)
                     if old is not None and old is not link:
                         old.close()
                     self._links[guid] = link
+                    if first:       # connecting: the plugin worker parts it should have (PL3)
+                        self.plugins.connected(guid, link, message.get("plugins", []))
                     self.events.heartbeat(self.get_worker(guid))
                 elif message["type"] == "event" and guid is not None:   # a worker emits (J2)
                     record = self.get_worker(guid)
@@ -456,7 +458,7 @@ class Hub:
                              "Generate a new key, knock with it, and ask a person or agent to attach it."), None
             guid, now = row["worker"], self.clock()
             before = self._db.execute("SELECT * FROM workers WHERE guid = ?", (guid,)).fetchone()
-            state = {name: message[name] for name in ("facts", "caps", "band", "health", "streams")
+            state = {name: message[name] for name in ("facts", "caps", "band", "health", "streams", "plugins")
                      if name in message}
             self._db.execute(
                 "UPDATE workers SET name = ?, protocol = ?, last_heartbeat = ?, state = ? WHERE guid = ?",
@@ -468,6 +470,11 @@ class Hub:
             interval = before["interval"]
             if before["state"] is not None:     # a first heartbeat is not a change of band
                 bands.moved(self, before, (message["band"]["gateway_mac"] or "").lower() or None)
+            had = json.loads(before["state"]).get("plugins", []) if before["state"] else []
+            for part in message.get("plugins", []):
+                if "error" in part and part not in had:     # a worker part that failed to load (PL3)
+                    self._journal("plugin", (None, None), guid, {"plugin": part["name"], "version": part["version"],
+                                                                 "error": part["error"]})
         return {"type": "heartbeat_reply", "protocol": PROTOCOL, "interval": interval}, guid
 
     # ---------------------------------------------------------------- calls

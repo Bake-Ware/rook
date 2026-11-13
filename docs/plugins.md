@@ -2,7 +2,7 @@
 
 A plugin is how anything above core reaches Rook: tasks, knowledge, device drivers, and later shell and files too (PL7, K5). It is one folder with a manifest that says what runs at the hub, what runs on workers and what it adds to the site (PL3). Plugins add, never replace (PL1), and none hooks into routing, auth or the journal (PL2).
 
-What is built so far is the hub side (the manifest, installing from a folder, hot loading, and the library a plugin's hub code uses) and the site section: pages, settings sections and Vue components. The worker section is written down below as a proposal. The hub keeps it and reports that it is there, and does nothing else with it yet.
+What is built so far: the manifest, installing from a folder, hot loading, the library a plugin's hub code uses, the worker part for Python workers, pushed to them and hot loaded there, and the site section: pages, settings sections and Vue components.
 
 ## The folder
 
@@ -10,6 +10,7 @@ What is built so far is the hub side (the manifest, installing from a folder, ho
 notes/
   plugin.json     the manifest
   hub.py          the hub module (if the plugin runs at the hub)
+  worker.py       the worker module for Python workers (if it runs on workers)
   SKILL.md        a skill (optional, PL5)
   ...             anything else the plugin ships
 ```
@@ -23,7 +24,7 @@ A JSON object (JSON, because the standard library reads it).
 | `name` | string | yes | Lowercase letters and digits, with hyphens between them (`notes`, `lg-tv`). It names the plugin on this hub. Installing a plugin with a name that is already installed replaces it. `core` is taken: it owns the `blob` record type. |
 | `version` | string | yes | The plugin's version, free text (`1.0.0`). Shown by `plugin.list`. |
 | `hub` | object | no | What runs at the hub. See below. |
-| `worker` | object | no | What runs on workers. **Proposal**, see below. |
+| `worker` | object | no | What runs on workers, by worker form. See below. |
 | `site` | object | no | What it adds to the site: pages, settings sections, Vue components. See below. |
 | `skill` | string | no | A file in the folder that teaches an agent how to set up and use the plugin (PL5). |
 
@@ -120,13 +121,13 @@ These are the driver's only way to the network, and it never names a worker. The
 Agents install through MCP with the hub caps (PL4):
 
 - `plugin.install {path}` takes a plugin's folder on the hub's disk. The hub checks the manifest, copies the folder to `<state dir>/plugins/` and loads it at once, with no restart. A plugin of the same name is replaced at once, and its records stay.
-- `plugin.list` shows each plugin: name, GUID, moniker, version, the caps and record types it added, and whether it has a worker section, a site section and a skill.
+- `plugin.list` shows each plugin: name, GUID, moniker, version, the caps and record types it added, whether it has a worker section, a site section and a skill, and the workers that loaded its worker part (`loaded_on`) or failed to (`failed_on`, with the error).
 
-When the hub starts it loads every installed plugin. One that fails to load is logged (logger `rook_hub.plugins`) and skipped, and the hub carries on.
+When the hub starts it loads every installed plugin. One that fails to load is logged (logger `rook_hub.plugins`) and skipped, and the hub carries on. A skipped plugin's worker part is not pushed to workers either.
 
-### `worker`: what runs on workers (proposal, not built)
+### `worker`: what runs on workers (built for Python workers)
 
-PL3 says the hub pushes worker parts "to the right worker forms", and U1 says cores are written per language. The proposal is to key the section by the worker form that a heartbeat reports in `facts.form`:
+PL3 says the hub pushes worker parts "to the right worker forms", and U1 says cores are written per language. The section is keyed by the worker form that a heartbeat reports in `facts.form` (Bake 13 Nov):
 
 ```json
 "worker": {
@@ -135,11 +136,58 @@ PL3 says the hub pushes worker parts "to the right worker forms", and U1 says co
 }
 ```
 
-- Each key is a worker form. Its value names what the hub pushes to workers of that form: for a Python core, a module whose caps the worker then announces like its own (W5); for a form that cannot load code, whatever that form's core can take.
-- A worker whose form has no entry gets nothing, and the plugin's hub part still works.
-- The per-worker opt-out on the Workers row (P4) decides which workers receive it.
+- Each key is a worker form. For `python` the value names one Python file in the plugin's folder. Install refuses, saying what to fix, a `module` that is missing, is not a file, leaves the folder (`../x.py`, or a link to outside it) or is not UTF-8 text (`bad_manifest`). Whether the code loads is not checked at install: a worker loads it and reports how it went.
+- Other forms (`esp32` above) are kept as written and reported, and nothing is pushed to them yet. Their checks come with the slice that pushes to them.
+- A worker whose form has no entry gets nothing from that plugin, and the plugin's hub part still works.
 
-Open: how the hub delivers it (a new protocol message, or the update path of U2), and how a worker part is removed or replaced.
+**Delivery.** The hub sends a Python worker one `plugins` message ([protocol.md](protocol.md#plugins-hub-to-worker-optional-pl3)) that lists every worker part it should have now: each plugin's name, version and module source, in install order. It sends it when the worker connects (unless the worker holds none and should have none) and again, to each worker whose list changed, when a plugin is installed or replaced or a worker's opt-out changes. The message does not depend on how it is carried.
+
+**On the worker.** The worker makes its state match the list, with no restart (PL3):
+
+- a part that is no longer listed, or whose version or source changed, is dropped: its caps are no longer served or announced, a call to one fails with a reason (W5), and every stream they opened is closed;
+- a part that is new or changed is loaded; one that failed last time is tried again;
+- then it heartbeats, so the caps appear and disappear with the plugin (W5).
+
+A part that fails to load (it raises, calls `sys.exit()`, has no `CAPS`, or declares a bad cap) adds nothing, and the worker keeps running with its own caps and its other plugins. It reports each part in its heartbeat's `plugins`, with an `error` for one that failed. The hub journals a failure (kind `plugin`, under the worker) and `plugin.list` shows each plugin's `loaded_on` and `failed_on` workers.
+
+**One namespace.** A worker's own caps and its plugins' caps share one set of names. A part that declares a cap the worker already serves, its own or another plugin's, fails to load as a whole, with the error `<cap> is already served by this worker` (or `by plugin <name>`). Nothing is replaced (PL1). Parts load in install order, so the plugin installed first keeps the name.
+
+**The opt-out (P4).** A worker can be opted out of plugins at the hub, as it can be opted out of serving devices (W4). The hub cap `worker.plugins {worker, receive}` sets it, and so does the "Receives plugins" switch on the worker's row on the Workers page. Both are journaled under who did it (L1). An opted-out worker is sent an empty list, so it drops every part at once; opting it back in sends it the list again.
+
+#### The worker module
+
+A worker module declares its caps the way the worker core declares its own: a module-level dict `CAPS` of cap name to `Cap`, the class in `rook_worker`.
+
+```python
+import asyncio
+
+from rook_worker import Cap
+
+
+async def hello(args):                       # a cap that returns a result
+    return {"greeting": f"Hello, {args.get('name', 'you')}."}
+
+
+async def echo(args, stream):                # a cap that opens a stream (S1)
+    async def answer():
+        while (data := await stream.read()) is not None:     # input, as bytes; None once closed
+            await stream.send(b"heard: " + data)
+    asyncio.create_task(answer())
+    return {"title": args.get("title", "echo"), "description": "Echoes what is written to it."}   # S3
+
+
+CAPS = {
+    "greet.hello": Cap("Say hello.", {"type": "object", "properties": {"name": {"type": "string"}}}, hello),
+    "greet.echo": Cap("Open a stream that echoes input.", {"type": "object"}, echo, opens_stream=True),
+}
+```
+
+- `Cap(description, schema, handler, opens_stream=False)`: a one-line description, a JSON Schema object for the arguments and an `async` handler (W3). The name follows W3.
+- A plain cap's handler is `handler(args)` and returns any JSON value. A stream cap's handler is `handler(args, stream)` and returns `{"title", "description"}`. It keeps `stream` to `send` output, `read` input and `close` it (S1 to S4).
+- A handler that raises, or calls `sys.exit()`, fails that call with the error `cap_failed`, as for the worker's own caps; the worker keeps running. Ctrl-C and cancellation still stop the worker.
+- The worker runs the module's source inside its own process (not sandboxed, PL2), as a module with a name of its own each load, so a replaced version starts fresh.
+
+A plugin's worker caps are called and journaled exactly as any worker cap (PL2). Nothing else is needed yet. The shared helper library (PL6) is where anything that plugin worker code repeats will go.
 
 ### `site`: what it adds to the site (built)
 
@@ -200,5 +248,6 @@ export default {
 - Uninstalling, disabling or enabling a plugin, and what happens to its records and record types.
 - A plugin's hub code calling caps on workers (other than a driver's three network steps).
 - Serving a plugin's skill to agents (PL5).
-- Pushing worker parts (PL3).
+- Pushing worker parts to forms other than `python`, such as `esp32` (PL3).
+- Core's own caps (shell, files, delegate primitives, health) as plugins installed by default (PL7).
 - The registry (PL4: LATER).

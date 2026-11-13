@@ -1,8 +1,9 @@
-/* The Workers page (P4, P7, B2, B5, R2, R4, W6, D1, D4, D6, D8): workers and devices
+/* The Workers page (P4, P7, B2, B5, R2, R4, W6, D1, D4, D6, D8, PL3): workers and devices
    grouped by band, with a group for roaming ones; a filter for workers, devices or
    both; the stats strip; pending approvals; unrecognised networks; band rename; a
    worker expanded to its facts, health, caps, streams, the devices pinned to it and
-   whether it serves devices; a device expanded to its driver, route, latest status
+   whether it serves devices, and whether it receives plugins with the plugin parts it
+   loaded or failed to load; a device expanded to its driver, route, latest status
    and caps. A stream on the card opens in place as a terminal (P8), its closed
    streams on request (S5); a view may hold one stream open (P6). Ported from 0.4
    (P7): list, grid and 3D views, and the heartbeats graph; a worker's health charts
@@ -52,6 +53,12 @@ const WORKER_DETAIL = `
               <p v-if="!w.streams.length" class="note" style="margin:0">Nothing open.</p>
               <button class="btn sm ghost" type="button" style="margin-top:6px" @click.stop="toggleClosed(w)">{{ closedOf[w.moniker] ? 'hide closed streams' : 'show closed streams' }}</button>
               <p v-if="closedOf[w.moniker] && !closedOf[w.moniker].length" class="note" style="margin:0">No closed streams.</p></div>
+            <div class="dblock"><h4>Plugins <span class="dim2">worker parts from the hub's plugins</span></h4>
+              <div class="optout"><div class="p">Receives plugins<small>Loads the worker parts of the hub's plugins and serves their caps.</small></div>
+                <span class="state" :class="{out: !w.receives_plugins}">{{ w.receives_plugins ? 'allowed' : 'opted out' }}</span>
+                <button class="toggle" type="button" :class="{on: w.receives_plugins}" :aria-pressed="w.receives_plugins" :aria-label="'Plugins on ' + w.name"
+                  @click.stop="receive(w, !w.receives_plugins)"></button></div>
+              <div v-for="p in w.plugins" :key="p.name" class="capline"><code>{{ p.name }}</code><span class="badge plain">{{ p.version }}</span><span v-if="p.error" class="badge bad">failed to load</span><span class="note">{{ p.error }}</span></div></div>
             <div class="dblock full"><h4>Devices <span class="dim2">{{ pinnedTo(w).length }} pinned to {{ w.name }}</span></h4>
               <div class="optout"><div class="p">Serves devices<small>Carries out network steps for devices: those pinned to it, and floating ones on its band.</small></div>
                 <span class="state" :class="{out: !w.serves_devices}">{{ w.serves_devices ? 'allowed' : 'opted out' }}</span>
@@ -161,6 +168,10 @@ export default {
     serve(w, serves) {
       return this.act(() => api('POST', `/api/workers/${w.moniker}/serves-devices`, { serves }),
         serves ? w.name + ' serves devices again' : w.name + ' no longer serves devices');
+    },
+    receive(w, receives) {
+      return this.act(() => api('POST', `/api/workers/${w.moniker}/plugins`, { receives }),
+        receives ? w.name + ' receives plugins again' : w.name + ' no longer receives plugins');
     },
     status(s) {
       if (s === null || typeof s !== 'object' || Array.isArray(s)) return null;
@@ -356,7 +367,7 @@ ${DEVICE_DETAIL}
                :aria-expanded="!!open[w.moniker]" @keydown.enter="toggle(w.moniker)">
             <span class="caret">{{ open[w.moniker] ? '▾' : '▸' }}</span>
             <span class="sdot" :class="{off: !w.online}" :title="w.online ? 'online' : 'offline'"></span>
-            <div class="wname"><span class="n">{{ w.name }}<span v-if="!w.online" class="badge plain">offline</span><span v-if="!w.serves_devices" class="badge plain" title="opted out of serving devices">no devices</span></span><span class="m">{{ w.moniker }}</span></div>
+            <div class="wname"><span class="n">{{ w.name }}<span v-if="!w.online" class="badge plain">offline</span><span v-if="!w.serves_devices" class="badge plain" title="opted out of serving devices">no devices</span><span v-if="!w.receives_plugins" class="badge plain" title="opted out of plugins">no plugins</span></span><span class="m">{{ w.moniker }}</span></div>
             <span class="owner" :title="w.owner.moniker">{{ w.owner.name }}</span>
             <span class="owner">{{ ago(w.last_heartbeat) }}</span>
             <row-menu :items="rowMenu(w)"></row-menu>
