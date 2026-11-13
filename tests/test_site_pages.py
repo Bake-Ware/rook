@@ -289,7 +289,7 @@ async def scenario(tmp_path):
             assert [e["token"] for e in journal.read(hub, kind="auth", user=alice["guid"], limit=100)
                     if e["result"] == {"revoked_token": guids[agent_m]}] == [session_moniker]
 
-            # 10. New token: an agent token for this user, shown once, that works at the MCP door (T3, T5).
+            # 10. New token: an agent token the user mints directly, shown once, working at the MCP door (T3, T5).
             async with client.post(base + "/api/tokens") as response:
                 assert response.status == 200 and response.headers["Cache-Control"] == "no-store"
                 minted = await response.json()
@@ -298,7 +298,10 @@ async def scenario(tmp_path):
             assert journal.read(hub, text=minted["token"]) == []
             status, view = await ask(client, "GET", base + "/api/auth")
             assert minted["token"] not in json.dumps(view)
-            assert {t["moniker"]: t for t in view["tokens"]}[minted["moniker"]]["minted_by"] == session_moniker
+            assert {t["moniker"]: t for t in view["tokens"]}[minted["moniker"]]["minted_by"] is None   # by the person
+            [entry] = [e for e in journal.read(hub, kind="auth", user=alice["guid"], limit=100)
+                       if e["result"].get("minted") == record["guid"]]
+            assert entry["token"] is None and entry["result"]["purpose"] == "agent"
             async with mcp_client(f"{base}/mcp", minted["token"]) as mcp:
                 failed, workers = await tool(mcp, "workers")
                 assert not failed and box.moniker in json.dumps(workers)
@@ -330,6 +333,9 @@ async def scenario(tmp_path):
             assert status == 200 and reply == {"changed": True}
             assert "a new password" not in json.dumps(journal.read(hub, limit=1000))
             await ask(client, "POST", base + "/api/logout")
+            async with mcp_client(f"{base}/mcp", minted["token"]) as mcp:     # logging out leaves it working
+                failed, _ = await tool(mcp, "workers")
+                assert not failed
             assert (await login(client, base, "Alice", "correct horse"))[0] == 401
             assert (await login(client, base, "Alice", "a new password"))[0] == 200
     finally:

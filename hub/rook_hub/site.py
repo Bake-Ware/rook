@@ -546,7 +546,9 @@ def jobs_secrets_auth_routes(app, hub, logged_in):
 
     @logged_in
     async def new_token(request, token, user):
-        jwt = hub.auth.mint("agent", token=token)
+        # The person mints it directly (T5: "a user mints directly"), not through the session,
+        # so the token hangs on the person and not on this browser's login.
+        jwt = hub.auth.mint("agent", user=user)
         return {"token": jwt, "moniker": hub.auth.verify(jwt)["moniker"]}
 
     @logged_in
