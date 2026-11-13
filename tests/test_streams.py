@@ -203,7 +203,9 @@ async def scenario(tmp_path):
             # 11. Errors say what to try next.
             for args, code in (({"action": "read", "stream": "no-such-stream"}, "unknown_stream"),
                                ({"action": "write", "stream": name, "text": "x"}, "stream_closed"),
-                               ({"action": "read", "stream": name, "from": end + 99}, "bad_position")):
+                               ({"action": "read", "stream": name, "from": end + 99}, "bad_position"),
+                               ({"action": "read", "stream": name, "limit": "x"}, "bad_message"),
+                               ({"action": "read", "stream": name, "wait": "soon"}, "bad_message")):
                 failed, text = await stream(b, **args)
                 assert failed and text.startswith(code + ":") and "Next:" in text
     finally:

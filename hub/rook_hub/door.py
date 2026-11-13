@@ -166,7 +166,7 @@ async def stream(hub, token, args):
         raise HubError("bad_message", "stream is required for this action.",
                        "Give the stream's moniker or GUID; action \"list\" shows them.")
     if action == "read":
-        return _dumps(await hub.streams.read(name, args.get("from", 0), args.get("wait", 0), args.get("limit") or 200))
+        return _dumps(await hub.streams.read(name, args.get("from", 0), args.get("wait", 0), args.get("limit", 200)))
     if action == "write":
         if not isinstance(args.get("text"), str):
             raise HubError("bad_message", "text is required to write.", "Give the input as text.")

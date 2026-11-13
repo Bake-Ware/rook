@@ -167,7 +167,13 @@ class Streams:
     async def read(self, stream, position=0, wait=0, limit=200):
         """Entries from `position` on (at most `limit`), waiting up to `wait` seconds
         for one if there is none yet and the stream is open. Says where to read next."""
-        wait = max(0, min(float(wait or 0), MAX_WAIT))
+        if isinstance(wait, bool) or not isinstance(wait, (int, float)) or wait < 0:
+            raise HubError("bad_message", f"wait {wait!r} is not a number of seconds.",
+                           f"Give wait as a number from 0 to {MAX_WAIT}, or leave it out.")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise HubError("bad_message", f"limit {limit!r} is not a whole number of entries.",
+                           "Give limit as a whole number of 1 or more, or leave it out.")
+        wait = min(wait, MAX_WAIT)
         while True:
             with self.hub._lock:
                 row = self._row(stream)
