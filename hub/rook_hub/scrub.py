@@ -4,7 +4,7 @@ Every journal entry's text (its why, and every string in its result or event
 payload) passes through `scrub` before it is stored:
 
 - a vault value becomes `(secret:<name>)`. The text is scanned with the vault's
-  index of keyed hashes (vault.py), so nothing is decrypted;
+  in-memory index of 6-character pieces (vault.py), so nothing is decrypted;
 - text with a known secret shape becomes `(secret shape:<shape>)`.
 
 L4 calls this a reducer, not a guarantee: it misses vault values shorter than
@@ -19,49 +19,58 @@ import re
 
 from .errors import HubError
 
-# Known secret shapes, one named pattern each. Kept short and well known.
+# Known secret shapes, one named pattern each, kept short and well known. Each also
+# names the text it cannot match without, so its pattern runs only when that is there.
 SHAPES = {
-    "private-key": re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----", re.S),
-    "jwt": re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
-    "github-token": re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})"),
-    "aws-access-key-id": re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
-    "slack-token": re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}"),
-    "anthropic-key": re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}"),
-    "openai-key": re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}"),
-    "stripe-key": re.compile(r"\b[sr]k_live_[A-Za-z0-9]{20,}"),
-    "google-api-key": re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),
+    "private-key": (("PRIVATE KEY-----",),
+                    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----"),
+    "jwt": (("eyJ",), r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    "github-token": (("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"),
+                     r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})"),
+    "aws-access-key-id": (("AKIA", "ASIA"), r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+    "slack-token": (("xox",), r"\bxox[abposr]-[A-Za-z0-9-]{10,}"),
+    "anthropic-key": (("sk-ant-",), r"\bsk-ant-[A-Za-z0-9_-]{20,}"),     # before openai-key: both start sk-
+    "openai-key": (("sk-",), r"\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}"),
+    "stripe-key": (("_live_",), r"\b[sr]k_live_[A-Za-z0-9]{20,}"),
+    "google-api-key": (("AIza",), r"\bAIza[0-9A-Za-z_-]{35}"),
 }
+_SHAPES = [(name, hints, re.compile(pattern, re.S)) for name, (hints, pattern) in SHAPES.items()]
 
 REDACTED = "(redacted)"
 
 
 def _vault_values(text, vault):
-    """Replace vault values in one string, using the vault's keyed-hash index."""
-    if vault.state != "open" or not vault.index:
+    """Replace vault values in one string. Looks up the 6-character piece at every
+    3rd position in the vault's index and confirms each hit by comparing the text."""
+    index = vault.index
+    if vault.state != "open" or not index:
         return text
-    from .vault import HEAD
-    out, i, last = [], 0, len(text) - HEAD
-    while i <= last:
-        found = vault.index.get(vault.keyed_hash(text[i:i + HEAD]))
-        if found:
-            for length, full, name in sorted(found, reverse=True):     # longest first
-                if vault.keyed_hash(text[i:i + length]) == full:
-                    out.append(f"(secret:{name})")
-                    i += length
-                    break
-            else:
-                found = None
-        if not found:
-            out.append(text[i])
-            i += 1
-    out.append(text[i:])
+    from .vault import GRAM, STRIDE
+    hits = [i for i in range(0, len(text) - GRAM + 1, STRIDE) if text[i:i + GRAM] in index]
+    found = set()
+    for i in hits:
+        for offset, by_length in index[text[i:i + GRAM]].items():
+            start = i - offset
+            if start < 0:
+                continue
+            for length, values in by_length.items():
+                name = values.get(text[start:start + length])
+                if name is not None:
+                    found.add((start, -length, name))
+    out, position = [], 0
+    for start, minus_length, name in sorted(found):     # leftmost first, and the longest there
+        if start >= position:
+            out += [text[position:start], f"(secret:{name})"]
+            position = start - minus_length
+    out.append(text[position:])
     return "".join(out)
 
 
 def scrub_text(text, vault):
     text = _vault_values(text, vault)
-    for shape, pattern in SHAPES.items():
-        text = pattern.sub(f"(secret shape:{shape})", text)
+    for name, hints, pattern in _SHAPES:
+        if any(hint in text for hint in hints):
+            text = pattern.sub(f"(secret shape:{name})", text)
     return text
 
 

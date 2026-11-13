@@ -6,9 +6,12 @@ Values are encrypted with a vault key the hub is given when it starts (X2, X4);
 the key is never written to the hub's data directory. Without it the vault is
 locked: every secret operation says so, and the rest of the hub works.
 
-For the scrubber (L4) each value also has a keyed hash, and a keyed hash of its
-first few characters, kept in memory as an index, so writing a journal entry
-never decrypts anything (X6). Workers hold no vault (X5).
+On disk each value also has a keyed hash, and a keyed hash of its first
+characters (X6): without the key they say nothing about a value. For the
+scrubber (L4) the vault, once open, keeps an index in memory built from the
+values it decrypts once at unlock: every 6-character piece of each value, so a
+journal write looks up one piece per 3 characters and decrypts nothing.
+Workers hold no vault (X5).
 """
 
 import hashlib
@@ -46,7 +49,9 @@ CREATE TABLE IF NOT EXISTS vault_check (
 
 NAME = re.compile(r"[A-Za-z0-9._-]+\Z")
 REFERENCE = re.compile(r"secret:([A-Za-z0-9._-]+)\Z")   # a whole string, nothing around it (X2)
-HEAD = 8          # characters the scrubber's index looks at first; shorter values are not scrubbed
+HEAD = 8          # values shorter than this are not scrubbed
+GRAM, STRIDE = 6, 3   # any value of HEAD or more characters holds a GRAM-long piece that starts at a
+                      # multiple of STRIDE in any text containing it (HEAD >= GRAM + STRIDE - 1)
 _CHECK = b"rook vault check"
 _LOCKED = ("vault_locked", "The vault is locked: this hub was started without its vault key.",
            "Start the hub with its vault key. Calls that use no secret work as before.")
@@ -62,7 +67,7 @@ class Vault:
     def __init__(self, hub, key):
         self.hub = hub
         self.state, self._box, self._hash_key = "locked", None, None
-        self.index = {}   # keyed hash of a value's first HEAD characters -> [(length, hash, name)]
+        self.index = {}   # every GRAM-long piece of every value -> {offset in value: {length: {value: name}}}
         if key is None:
             return
         if not isinstance(key, bytes) or len(key) != 32:
@@ -81,8 +86,14 @@ class Vault:
                     return
         self.state, self._box, self._hash_key = "open", box, _subkey(key, b"rook-scrub-hash")
         with hub._lock:
-            for row in hub._db.execute("SELECT name, head, hash, length FROM secrets WHERE length >= ?", (HEAD,)):
-                self.index.setdefault(row["head"], []).append((row["length"], row["hash"], row["name"]))
+            for row in hub._db.execute("SELECT name, value FROM secrets WHERE length >= ?", (HEAD,)):
+                self._learn(row["name"], box.decrypt(row["value"]).decode("utf-8"))
+
+    def _learn(self, name, value):
+        """Add one value to the scrubber's in-memory index."""
+        for offset in range(len(value) - GRAM + 1):
+            by_offset = self.index.setdefault(value[offset:offset + GRAM], {})
+            by_offset.setdefault(offset, {}).setdefault(len(value), {})[value] = name
 
     def _open(self):
         if self.state == "locked":
@@ -141,7 +152,7 @@ class Vault:
                 (guid, self.hub._new_moniker(guid), kind, scope, name, self._box.encrypt(value.encode("utf-8")),
                  head, full, len(value), user, token, self.hub.clock()))
             if len(value) >= HEAD:
-                self.index.setdefault(head, []).append((len(value), full, name))
+                self._learn(name, value)
         return {"created": self._record(guid)}
 
     def _record(self, guid):

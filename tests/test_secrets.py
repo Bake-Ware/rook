@@ -276,3 +276,21 @@ def test_scrubber_finds_values_inside_text_and_not_short_ones(tmp_path):
         assert {s["scope"] for s in listed} == {"hub", "workshop"}            # a plain-string scope
     finally:
         hub.close()
+
+
+def test_scrubber_finds_values_at_every_position(tmp_path):
+    # The scan looks at every third position only; a value must be found wherever it starts,
+    # next to another, inside a longer one, and at exactly eight characters.
+    hub = Hub(tmp_path / "hub", vault_key=os.urandom(32))
+    try:
+        alice = hub.auth.create_user("Alice", "a password")["guid"]
+        values = {"eight": "8chars!!", "long": "a-much-longer-secret-value", "inner": "longer-secret"}
+        for name, value in values.items():
+            hub.vault.create({"scope": "hub", "name": name, "value": value}, {"user": alice, "token": None})
+        from rook_hub.scrub import scrub_text
+        for pad in range(7):
+            text = "x" * pad + values["eight"] + values["long"] + " " + values["inner"] + "y" * pad
+            assert scrub_text(text, hub.vault) == \
+                "x" * pad + "(secret:eight)(secret:long) (secret:inner)" + "y" * pad
+    finally:
+        hub.close()
