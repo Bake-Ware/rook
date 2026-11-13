@@ -93,6 +93,17 @@ def _subkey(key, purpose):
     return hashlib.blake2b(key, digest_size=32, person=purpose).digest()
 
 
+def key_opens(db, key):
+    """Whether `key` is the vault key of the hub database `db`, or that vault was never keyed."""
+    row = db.execute("SELECT check_value FROM vault_check").fetchone()
+    if row is None:
+        return True
+    try:
+        return SecretBox(_subkey(key, b"rook-vault-box")).decrypt(row[0]) == _CHECK
+    except CryptoError:
+        return False
+
+
 class Vault:
     def __init__(self, hub, key):
         self.hub = hub
