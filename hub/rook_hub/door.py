@@ -28,7 +28,14 @@ INSTRUCTIONS = (
     "(capabilities such as shell.exec). Use workers to see the machines, caps to see what "
     "they can do, and call to do it, always with a one-sentence why. journal shows what "
     "has happened. The hub's own caps (approving new machines, minting join tokens) are "
-    "called with worker \"hub\".")
+    "called with worker \"hub\". A call still running after 45 seconds answers {id, running: true, worker, "
+    "stream} at once and keeps running: follow it with the stream tool (action read, that stream, wait 40, "
+    "from the last next) until the stream is no longer open; its last entry is the call's reply. Do not call "
+    "again meanwhile, or the work runs twice.")
+
+FOLLOW = ("The call is still running and goes on by itself. Follow it with the stream tool: action \"read\", "
+          "stream \"{stream}\", wait 40, from 0 and then each reply's next, until open is false. The last entry "
+          "is the call's reply. Do not call again: that would run the work twice.")
 
 TOOLS = [
     {"name": "workers",
@@ -57,7 +64,11 @@ TOOLS = [
          "Run one cap on one worker and wait for its reply. worker: a moniker or GUID from workers, or "
          "\"hub\" for the hub's own caps. cap: a cap name from caps. args: arguments matching that cap's "
          "schema. why: one plain sentence saying why you are doing this; the journal keeps it with your "
-         "token and user. The reply is the cap's result, or an error that says what to try next."),
+         "token and user. The reply is the cap's result, or an error that says what to try next. A call "
+         "still running after 45 seconds answers {id, running: true, worker, stream} instead and keeps "
+         "running: read that stream with the stream tool, wait 40, passing back next as from, until it is "
+         "no longer open. Its last entry is the call's reply as JSON: {type: \"result\", result} or "
+         "{type: \"error\", code, message, next}. Do not call again meanwhile, or the work runs twice."),
      "inputSchema": {"type": "object", "required": ["worker", "cap", "why"], "additionalProperties": False,
                      "properties": {
                          "worker": {"type": "string"},
@@ -66,7 +77,8 @@ TOOLS = [
                          "why": {"type": "string"}}}},
     {"name": "journal",
      "description": (
-         "Read the hub's journal, newest first: every call (with its why and result), auth event "
+         "Read the hub's journal, newest first: every call (with its why and result, which is "
+         "{type: \"running\"} until the call ends), auth event "
          "(approvals, tokens, logins), change to a band, event on the hub's bus, job run, closed stream, and "
          "plugin worker part a worker failed to load. "
          "Narrow with worker, cap, user (moniker or GUID), kind (\"call\", \"auth\", \"band\", \"event\", "
@@ -152,7 +164,10 @@ async def call(hub, token, args):
         if not isinstance(args.get(name), str) or not args[name]:
             raise HubError("bad_message", f"{name} is required.",
                            "Give worker, cap and why as strings, and args as an object.")
-    reply = await hub.call(args["worker"], args["cap"], args.get("args") or {}, args["why"], token=token)
+    reply = await hub.call_or_follow(args["worker"], args["cap"], args.get("args") or {}, args["why"], token=token)
+    if reply["type"] == "running":       # still running: answer now with a stream to follow (Bake 13 Nov)
+        return _dumps({"id": reply["id"], "running": True, "worker": reply["worker"], "stream": reply["stream"],
+                       "next": FOLLOW.format(stream=reply["stream"])})
     if reply["type"] == "error":
         raise HubError(reply["code"], reply["message"], reply["next"])
     if reply["type"] == "stream_open":
