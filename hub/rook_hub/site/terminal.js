@@ -3,11 +3,15 @@
    asking the hub for more and waiting while there is none (no polling loop on a timer).
    Keys typed into it go to the worker as the logged-in person's input. It closes the
    stream only when the person asks, with a reason; leaving the page or detaching the
-   view closes nothing. A closed stream opens read-only. xterm.js draws it. */
+   view closes nothing. A closed stream opens read-only. xterm.js draws it.
+   A stream that is a terminal (its cap takes cols and rows) is told the size it is shown at
+   (Bake 13 Nov): when the view attaches, and again when the fitted size changes, once the
+   window has stopped changing for a moment, so dragging a window does not flood the worker. */
 import { api, toast } from '/site/shell.js';
 
 const WAIT = 25;            // seconds the hub may hold a read while nothing new arrives
 const SCROLLBACK = 100000;  // lines the view keeps; the hub keeps the whole recording
+const SETTLE_MS = 300;      // a new size goes out once it has held this long
 
 let loading = null;
 function loadXterm() {
@@ -50,6 +54,10 @@ export default {
       this.refit = () => this.fit.fit();
       window.addEventListener('resize', this.refit);
       this.term.onData(data => this.type(data));
+      if (this.stream.terminal && this.open) {
+        this.term.onResize(() => { clearTimeout(this.settling); this.settling = setTimeout(() => this.sendSize(), SETTLE_MS); });
+        this.sendSize();
+      }
       this.ready = true;
     } catch (e) {
       this.failed = 'The terminal could not load: ' + e.message;
@@ -60,6 +68,7 @@ export default {
   beforeUnmount() {
     this.gone = true;
     window.removeEventListener('resize', this.refit);
+    clearTimeout(this.settling);
     if (this.term) this.term.dispose();
   },
   methods: {
@@ -105,6 +114,15 @@ export default {
         }
         this.sending = null;
       })();
+    },
+    /* Tell the worker the size the terminal is fitted to, if it changed. A refusal (the stream
+       closed, its worker offline) changes nothing on screen, so it is not shown. */
+    async sendSize() {
+      const { cols, rows } = this.term, size = cols + 'x' + rows;
+      if (this.gone || !this.open || size === this.sent) return;
+      this.sent = size;
+      try { await api('POST', `/api/streams/${encodeURIComponent(this.stream.moniker)}/resize`, { cols, rows }); }
+      catch (e) { this.sent = ''; }
     },
     async close() {
       const why = this.why.trim();

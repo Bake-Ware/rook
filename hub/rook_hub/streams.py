@@ -22,6 +22,11 @@ the cap and the worker, described with the call's why (S3). It stays empty while
 the call runs. When the call ends, its reply, as the journal keeps it, is the
 last entry, and the hub closes the stream on purpose (S4): the call is over. It
 takes no input and no client closes it; it is read like any other.
+
+A client showing a stream as a terminal tells its worker the terminal's size with
+a resize (`stream_resize`, Bake 13 Nov). It goes to the worker and nowhere else:
+it is not input, it is not in the recording, and the hub keeps no size. When
+several clients show one stream, the last resize sent wins.
 """
 
 import asyncio
@@ -284,6 +289,26 @@ class Streams:
                                 "data": base64.b64encode(data).decode("ascii")}))
         self._append(row["guid"], "in", data, actor)
         return {"written": len(data)}
+
+    async def resize(self, stream, cols, rows, *, user=None, token=None):
+        """Tell the stream's worker the size of the terminal showing it (Bake 13 Nov). Not recorded."""
+        for name, value in (("cols", cols), ("rows", rows)):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise HubError("bad_message", f"{name} must be a whole number of 1 or more; it is {value!r}.",
+                               "Give the terminal's size in characters, such as cols 120 and rows 40.")
+        with self.hub._lock, self.hub._db:
+            self.hub.auth.actor(user, token)
+            row = self._row(stream)
+        if row["closed_at"] is not None:
+            raise HubError("stream_closed", f"Stream {row['moniker']} is closed.",
+                           "A closed stream draws nothing more; read it to see what it did.")
+        self._for_call(row)
+        link = self.hub._links.get(row["worker"])
+        if link is None:
+            raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
+                           "Wait for the worker to come back online, then resize again.")
+        await link.send(encode({"type": "stream_resize", "stream": row["handle"], "cols": cols, "rows": rows}))
+        return {"resized": row["moniker"], "cols": cols, "rows": rows}
 
     async def close(self, stream, why, *, user=None, token=None):
         """Close a stream on purpose: tell its worker, record who closed it."""

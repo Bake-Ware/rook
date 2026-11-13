@@ -218,6 +218,12 @@ MESSAGES = {
     "stream_close": {
         "stream": (_string, REQ),
     },
+    # Hub -> worker, optional: the size of the terminal showing a stream, in characters (Bake 13 Nov).
+    "stream_resize": {
+        "stream": (_string, REQ),
+        "cols": (_positive, REQ),
+        "rows": (_positive, REQ),
+    },
     # Hub -> worker, optional: every plugin worker part this worker should have now (PL3).
     "plugins": {
         "plugins": (_list_of(_struct({
