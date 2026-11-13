@@ -36,3 +36,23 @@ PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub --data ~/rook-hub --
 - `--host` and `--port` say where to listen: 127.0.0.1 and 8700 unless given.
 
 Open the address it prints. While the hub has no user, the site shows a setup page: choose a name and a password for the first user, and you are signed in. After that the site shows the login page. The hub runs until you stop it with Ctrl-C.
+
+## Backing up, restoring and moving a hub
+
+A backup is one file holding everything the hub needs to come back as itself: users and their sessions, tokens, the vault's secrets, installed plugins, records and blob bytes, the journal, stream recordings, heartbeat history, and the hub's own key, so its workers are still accepted. It can be taken while the hub is running: the hub keeps serving, and the backup holds the data as it was at one moment.
+
+```sh
+PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub backup --data ~/rook-hub --vault-key ~/rook-vault.key --to ~/rook-hub.backup
+```
+
+The backup is encrypted with a key made from the vault key. Without the vault key file nobody can read anything in it, and neither can you: the vault key is **not** in the backup. Keep the key file, and move it, apart from the backup.
+
+To restore, on this machine or another one, into a new or empty directory:
+
+```sh
+PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub restore --from ~/rook-hub.backup --data ~/rook-hub --vault-key ~/rook-vault.key
+```
+
+Then start the hub on that directory with the start command above. A restore refuses, and writes nothing, when the directory already holds anything (so it never writes into a hub's data, running or not), when the key file is not the one the backup was made with, and when the file is not a whole, unchanged backup.
+
+To move a hub to another machine: take a backup, copy it and the vault key file there, restore, and start the hub there. Its users, tokens, secrets, plugins, records and workers come with it.
