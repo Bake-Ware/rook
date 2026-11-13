@@ -192,7 +192,8 @@ async def scenario(tmp_path):
                                         "description": "following the build log", "worker": desk["moniker"],
                                         "cap": "shell.open", "open": True,
                                         "opened_by": {"name": "Alice", "moniker": alice["moniker"]},
-                                        "opened_at": stream["opened_at"], "closed_by": None, "closed_at": None}]
+                                        "opened_at": stream["opened_at"], "closed_by": None, "closed_at": None,
+                                        "terminal": False}]   # shell.open here takes no cols and rows
             assert workers["nas"]["streams"] == []
             [pending] = view["pending"]
             assert pending["name"] == "porch-light" and pending["key"] == knock_key
