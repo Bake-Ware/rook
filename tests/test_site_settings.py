@@ -25,6 +25,8 @@ def write_plugin(folder, version, greeting, manifest_extra=None):
         {"name": "greet", "version": version, "hub": {"module": "hub.py"}, "skill": "SKILL.md",
          "site": {"settings": [{"title": "Greet", "file": "site/settings.js"}]}, **(manifest_extra or {})}))
     (folder / "SKILL.md").write_text("# greet\nCall greet.hello.\n")
+    (folder / "site").mkdir(exist_ok=True)
+    (folder / "site" / "settings.js").write_text("export default { template: '<p>Greet</p>' };\n")
     (folder / "hub.py").write_text(
         "def setup(plugin):\n"
         "    @plugin.cap('greet.hello', 'Say hello.', {'type': 'object', 'properties': {}})\n"
