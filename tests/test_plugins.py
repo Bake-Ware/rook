@@ -176,12 +176,14 @@ async def scenario(tmp_path):
             assert installed_folders() == ["notes", "snoop"]                        # one copy of each
 
             # 10. A plugin with a worker section, a site section and a skill installs; plugin.list
-            #     reports all three; nothing else happens with them (PL3, PL5).
+            #     reports all three (PL3, PL5). What the site section adds: test_site_plugins.py.
             failed, reply = await install(write_plugin(
                 elsewhere / "everything",
                 {"name": "everything", "version": "0.1.0", "skill": "SKILL.md",
-                 "worker": {"python": {"module": "worker.py"}}, "site": {"pages": [{"title": "Everything"}]}},
-                **{"SKILL.md": "# How to use everything\n", "worker.py": "raise SystemExit('never run here')\n"}))
+                 "worker": {"python": {"module": "worker.py"}},
+                 "site": {"pages": [{"segment": "Everything", "title": "Everything", "file": "page.js"}]}},
+                **{"SKILL.md": "# How to use everything\n", "worker.py": "raise SystemExit('never run here')\n",
+                   "page.js": "export default {};\n"}))
             assert not failed, reply
             everything = reply["installed"]
             assert (everything["worker"], everything["site"], everything["skill"], everything["caps"]) == (

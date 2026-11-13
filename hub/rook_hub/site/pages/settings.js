@@ -1,6 +1,6 @@
 /* The Settings page (P4): one tab per section installed at the hub (GET /api/settings), each
    section an ES module whose default export is a Vue component, loaded as the shell loads
-   pages. Core installs one section, Plugins; a plugin's section will be added the same way (PL1). */
+   pages. Core installs one section, Plugins; a plugin's sections follow, added the same way (PL1). */
 import { api, viewHref, showView } from '/site/shell.js';
 
 const { markRaw } = Vue;
@@ -23,7 +23,11 @@ export default {
   methods: {
     async show() {
       if (!this.current) return;
-      try { this.component = markRaw((await import(this.current.script)).default); } catch (e) { this.error = e.message; }
+      try { this.component = markRaw((await import(this.current.script)).default); this.error = ''; }
+      catch (e) {
+        this.component = null;
+        this.error = (this.current.plugin ? `Plugin ${this.current.plugin}'s section ${this.current.label} failed to load: ` : '') + e.message;
+      }
     },
   },
   template: `<div>
