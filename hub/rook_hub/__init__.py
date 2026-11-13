@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, jobs, plugins, records, web
+from . import bands, caps, jobs, plugins, records, scrub, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -107,7 +107,8 @@ def _load_words():
 
 
 class Hub:
-    def __init__(self, state_dir, clock=time.time):
+    def __init__(self, state_dir, clock=time.time, vault_key=None):
+        """`vault_key` (32 bytes) opens the vault (X4); without it the vault is locked."""
         self.state_dir = pathlib.Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.clock = clock
@@ -118,7 +119,9 @@ class Hub:
         self._db.executescript(bands.SCHEMA)
         self._db.executescript(records.SCHEMA)
         self._db.executescript(jobs.SCHEMA)
+        self._db.executescript(vault.SCHEMA)
         self._db.executescript(plugins.SCHEMA)
+        self.vault = vault.Vault(self, vault_key)
         self.events = Events(self)
         self.auth = Auth(self)
         self._signing_key = self._load_signing_key()
@@ -282,8 +285,9 @@ class Hub:
         return self.get_worker(guid)
 
     def _journal(self, kind, actor, worker, result, cap=None, why=None, job=None, run=None):
-        """One journal entry (L1). `actor` is (user or None, token or None).
-        The caller holds the lock and the transaction."""
+        """One journal entry (L1), scrubbed of secrets as it is written (L4).
+        `actor` is (user or None, token or None). The caller holds the lock and the transaction."""
+        why, result = scrub.scrub(why, self.vault), scrub.scrub(result, self.vault)
         self._db.execute(
             "INSERT INTO journal (at, kind, user, token, worker, cap, why, result, job, run) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -423,6 +427,7 @@ class Hub:
                 return error("key_revoked", "This key was revoked.",
                              "Generate a new key, knock with it, and ask a person or agent to attach it."), None
             guid, now = row["worker"], self.clock()
+            before = self._db.execute("SELECT * FROM workers WHERE guid = ?", (guid,)).fetchone()
             state = {name: message[name] for name in ("facts", "caps", "band", "health", "streams")
                      if name in message}
             self._db.execute(
@@ -432,7 +437,9 @@ class Hub:
                              (guid, now, raw.decode("utf-8")))
             self._see(guid, "hostname", [message["facts"]["hostname"]], now)
             self._see(guid, "mac", message["facts"]["macs"], now)
-            interval = self._db.execute("SELECT interval FROM workers WHERE guid = ?", (guid,)).fetchone()[0]
+            interval = before["interval"]
+            if before["state"] is not None:     # a first heartbeat is not a change of band
+                bands.moved(self, before, (message["band"]["gateway_mac"] or "").lower() or None)
         return {"type": "heartbeat_reply", "protocol": PROTOCOL, "interval": interval}, guid
 
     # ---------------------------------------------------------------- calls
@@ -455,7 +462,8 @@ class Hub:
             request = encode({"type": "call", "id": call_id, "cap": cap, "args": args})
             if worker == caps.HUB:      # the hub's own caps (caps.py)
                 guid = caps.HUB
-                result = caps.run(self, cap, args, {"user": user, "token": token})
+                used = args if cap in caps.KEEP_REFERENCES else self.vault.substitute(args, caps.HUB)
+                result = caps.run(self, cap, used, {"user": user, "token": token})
                 reply = {"type": "result", "id": call_id, "result": result}
             else:
                 record = self.get_worker(worker)
@@ -469,6 +477,8 @@ class Hub:
                     reply = error("unknown_cap", f"{moniker} does not announce {cap}.",
                                   f"List the caps {moniker} announces and call one of those.", call_id)
                 else:
+                    request = encode({"type": "call", "id": call_id, "cap": cap,
+                                      "args": self.vault.substitute(args, guid)})   # secret:<name> (X2)
                     future = asyncio.get_running_loop().create_future()
                     self._calls[call_id] = (guid, future)
                     try:

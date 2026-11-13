@@ -55,6 +55,34 @@ def _record(hub, row):
             "created_at": row["created_at"], "gateways": gateways}
 
 
+def _summary(band):
+    return None if band is None else {"guid": band["guid"], "moniker": band["moniker"], "name": band["name"]}
+
+
+def _change(hub, worker_row, before, after):
+    """Emit band.change (J2) for one worker, from band `before` to band `after` (None: roaming)."""
+    hub.events.emit("band.change", {"worker": worker_row["guid"], "worker_moniker": worker_row["moniker"],
+                                    "name": worker_row["name"], "from": _summary(before), "to": _summary(after)},
+                    worker=worker_row["guid"])
+
+
+def moved(hub, worker_row, mac):
+    """A heartbeat reports gateway `mac` for the worker whose row (before this heartbeat)
+    is `worker_row`: emit band.change if that puts it in another band. The lock is held."""
+    known = _known(hub)
+    before, after = known.get(_gateway(worker_row)), known.get(mac)
+    if (before or {}).get("guid") != (after or {}).get("guid"):
+        _change(hub, worker_row, before, after)
+
+
+def _joined(hub, mac):
+    """Workers on gateway `mac` have just gone from roaming into its band: band.change. The lock is held."""
+    band = _known(hub)[mac]
+    for row in hub._db.execute("SELECT guid, moniker, name, state FROM workers").fetchall():
+        if _gateway(row) == mac:
+            _change(hub, row, None, band)
+
+
 def _add_gateway(hub, guid, mac):
     """Put `mac` in band `guid`, unless another band already holds it. The lock is held."""
     taken = hub._db.execute("SELECT b.moniker, b.name FROM band_gateways g JOIN bands b ON b.guid = g.band "
@@ -77,6 +105,7 @@ def create(hub, name, gateway_mac, *, user=None, token=None):
                         (guid, hub._new_moniker(guid), name, hub.clock()))
         _add_gateway(hub, guid, mac)
         hub._journal("band", actor, None, {"band_created": guid, "name": name, "gateway_mac": mac})
+        _joined(hub, mac)
         return _record(hub, _band(hub, guid))
 
 
@@ -88,6 +117,7 @@ def add_gateway(hub, band, gateway_mac, *, user=None, token=None):
         row = _band(hub, band)
         _add_gateway(hub, row["guid"], mac)
         hub._journal("band", actor, None, {"gateway_added": mac, "band": row["guid"]})
+        _joined(hub, mac)
         return _record(hub, row)
 
 

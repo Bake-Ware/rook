@@ -2,17 +2,22 @@
 
 Only what the plan requires an agent to be able to do: approve a knocking
 worker (R2), attach a knock to a known identity (W7), mint a join token (R3),
-manage jobs and emit events (J7, J2; defined in jobs.py), and install and list
-plugins (PL4; plugins.py). Installed plugins add caps of their own, served the
-same way (PL1).
+manage jobs and emit events (J7, J2; jobs.py), keep and list secrets (X3;
+vault.py), redact the journal (L5; scrub.py), and install and list plugins
+(PL4; plugins.py). Installed plugins add caps of their own, served the same
+way (PL1).
 """
 
 import datetime
 
-from . import jobs, plugins
+from . import jobs, plugins, scrub, vault
 from .errors import HubError
 
 HUB = "hub"  # the worker name that addresses the hub's own caps
+
+# Hub caps whose arguments are stored, not used: their secret:<name> references are kept
+# as written and resolved when the stored call runs (X2: a job stores the reference).
+KEEP_REFERENCES = {"job.create"}
 
 
 def _text(args, name):
@@ -70,6 +75,8 @@ CAPS = {
 
 
 CAPS.update(jobs.CAPS)  # create, list, pause, un-pause and delete jobs; emit an event (J7, J2)
+CAPS.update(vault.caps())  # create and list secrets, never their values (X3)
+CAPS.update(scrub.caps())  # take a value out of the journal (L5)
 CAPS.update(plugins.CAPS)  # install and list plugins (PL4)
 
 
