@@ -17,7 +17,7 @@ import json
 
 from aiohttp import web
 
-from . import caps, journal
+from . import bands, caps, journal
 from .errors import HubError
 
 PATH = "/mcp"
@@ -35,7 +35,8 @@ TOOLS = [
      "description": (
          "List the machines (workers) on this Rook hub, online or not, and the machines knocking to join. "
          "Each worker shows its moniker (use it to address the worker in call), owner, whether it is "
-         "online, what it runs on (facts), its health, its gateway MAC and the names of the caps it "
+         "online, what it runs on (facts), its health, its gateway MAC, its band (the named network it "
+         "is on) or roaming when it is on a network nobody has named, and the names of the caps it "
          "last announced. A knocking machine cannot be used until it is approved: call worker \"hub\", "
          "cap \"worker.approve\", args {\"key\": its key}. If likely_rekey_of names a known worker that "
          "lost its key, use cap \"worker.attach\" instead."),
@@ -64,13 +65,14 @@ TOOLS = [
     {"name": "journal",
      "description": (
          "Read the hub's journal, newest first: every call (with its why and result), auth event "
-         "(approvals, tokens, logins), event on the hub's bus, and job run. Narrow with worker, cap, user "
-         "(moniker or GUID), kind (\"call\", \"auth\", \"event\" or \"job\"), job (moniker or GUID), "
-         "run (a run ID; every run in one chain of jobs shares it), since and until (ISO 8601 times) and "
-         "text (found in the why, cap or result). limit is how many entries come back (default 50)."),
+         "(approvals, tokens, logins), change to a band, event on the hub's bus, and job run. Narrow with "
+         "worker, cap, user (moniker or GUID), kind (\"call\", \"auth\", \"band\", \"event\" or \"job\"), "
+         "job (moniker or GUID), run (a run ID; every run in one chain of jobs shares it), since and until "
+         "(ISO 8601 times) and text (found in the why, cap or result). limit is how many entries come back "
+         "(default 50)."),
      "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
          "worker": {"type": "string"}, "cap": {"type": "string"}, "user": {"type": "string"},
-         "kind": {"type": "string", "enum": ["call", "auth", "event", "job"]},
+         "kind": {"type": "string", "enum": ["call", "auth", "band", "event", "job"]},
          "job": {"type": "string"}, "run": {"type": "string"},
          "since": {"type": "string"}, "until": {"type": "string"}, "text": {"type": "string"},
          "limit": {"type": "integer", "minimum": 1}}}},
@@ -87,11 +89,13 @@ def _owner(hub, guid):
 
 
 async def workers(hub, token, args):
+    band_of = bands.membership(hub)
     found = [{
         "moniker": w["moniker"], "guid": w["guid"], "name": w["name"], "owner": _owner(hub, w["owner"]),
         "online": w["online"], "last_heartbeat": journal.iso(w["last_heartbeat"]),
         "facts": w["facts"], "health": w["health"],
         "gateway_mac": (w["band"] or {}).get("gateway_mac"),
+        "band": band_of.get(w["guid"]), "roaming": band_of.get(w["guid"]) is None,
         "caps": [c["name"] for c in w["caps"]],
         **({"streams": w["streams"]} if w["streams"] is not None else {}),
     } for w in hub.list_workers()]

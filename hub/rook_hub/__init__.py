@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import caps, jobs, web
+from . import bands, caps, jobs, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -76,7 +76,7 @@ CREATE INDEX IF NOT EXISTS heartbeats_worker_at ON heartbeats (worker, at);
 CREATE TABLE IF NOT EXISTS journal (
     id     INTEGER PRIMARY KEY,
     at     REAL NOT NULL,
-    kind   TEXT NOT NULL,            -- call, auth, event or job (a job's run)
+    kind   TEXT NOT NULL,            -- call, auth, band, event or job (a job's run)
     user   TEXT,                     -- the acting user (L1); none for events of the hub's own
     token  TEXT,                     -- the token they acted through, if any (L1)
     worker TEXT,
@@ -115,6 +115,7 @@ class Hub:
         self._db = sqlite3.connect(self.state_dir / "hub.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
+        self._db.executescript(bands.SCHEMA)
         self._db.executescript(jobs.SCHEMA)
         self.events = Events(self)
         self.auth = Auth(self)
