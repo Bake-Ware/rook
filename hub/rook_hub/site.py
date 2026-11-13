@@ -78,8 +78,10 @@ def _text(body, name):
 
 def workers_view(hub):
     """Everything the Workers page shows (P4, P7, B2, B5, R4, W6), with the devices
-    in the band they are on (D1, D4, D6) and each worker's opt-out (D8)."""
+    in the band they are on (D1, D4, D6), each worker's opt-outs (D8, P4) and the plugin
+    worker parts it reports (PL3)."""
     members, owners, out = bands.membership(hub), {}, devices.opted_out(hub)
+    no_plugins = hub.plugins.opted_out()
     open_streams = {}
     for stream in hub.streams.list(open=True):
         open_streams.setdefault(stream["worker"], []).append(stream_view(hub, stream))
@@ -97,7 +99,8 @@ def workers_view(hub):
         return {"guid": w["guid"], "moniker": w["moniker"], "name": w["name"], "online": w["online"],
                 "owner": owner(w["owner"]), "last_heartbeat": iso(w["last_heartbeat"]),
                 "facts": w["facts"] or {}, "health": w["health"] or {}, "caps": cap_list(w["caps"]),
-                "streams": open_streams.get(w["moniker"], []), "serves_devices": w["guid"] not in out}
+                "streams": open_streams.get(w["moniker"], []), "serves_devices": w["guid"] not in out,
+                "receives_plugins": w["guid"] not in no_plugins, "plugins": w["plugins"] or []}
 
     def device(d):
         return {"guid": d["guid"], "moniker": d["moniker"], "name": d["name"], "device": True,
@@ -385,7 +388,7 @@ def add_routes(app, hub):
     app.router.add_post("/api/streams/{stream}/input", stream_input)
     app.router.add_post("/api/streams/{stream}/close", close_stream)
 
-    # ------------------------------------------- the Data page, and device opt-out (P4, L1, L2, L5, K1-K4, D8)
+    # ------------------------------- the Data page, and device and plugin opt-outs (P4, L1, L2, L5, K1-K4, D8, PL3)
 
     @logged_in
     async def read_journal(request, token, user):
@@ -451,6 +454,13 @@ def add_routes(app, hub):
             raise HubError("bad_message", "serves must be true or false.", "Send {\"serves\": true} or false.")
         return {"serves_devices": devices.set_serves_devices(hub, request.match_info["worker"], serves, token=token)}
 
+    @logged_in
+    async def receives_plugins(request, token, user):
+        receives = (await _body(request)).get("receives")
+        if not isinstance(receives, bool):
+            raise HubError("bad_message", "receives must be true or false.", "Send {\"receives\": true} or false.")
+        return {"receives_plugins": hub.plugins.set_receives(request.match_info["worker"], receives, token=token)}
+
     app.router.add_get("/api/journal", read_journal)
     app.router.add_get("/api/journal/choices", choices)
     app.router.add_post("/api/redact", redact)
@@ -460,6 +470,7 @@ def add_routes(app, hub):
     app.router.add_get("/api/records/{record}", one_record)
     app.router.add_get("/api/records/{record}/bytes", blob_bytes)
     app.router.add_post("/api/workers/{worker}/serves-devices", serves_devices)
+    app.router.add_post("/api/workers/{worker}/plugins", receives_plugins)
 
     app.router.add_get("/", page)
     for pages in SEGMENTS.values():

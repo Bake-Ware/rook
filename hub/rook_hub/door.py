@@ -67,15 +67,16 @@ TOOLS = [
     {"name": "journal",
      "description": (
          "Read the hub's journal, newest first: every call (with its why and result), auth event "
-         "(approvals, tokens, logins), change to a band, event on the hub's bus, job run, and closed stream. "
+         "(approvals, tokens, logins), change to a band, event on the hub's bus, job run, closed stream, and "
+         "plugin worker part a worker failed to load. "
          "Narrow with worker, cap, user (moniker or GUID), kind (\"call\", \"auth\", \"band\", \"event\", "
-         "\"job\" or \"stream\"), "
+         "\"job\", \"stream\" or \"plugin\"), "
          "job (moniker or GUID), run (a run ID; every run in one chain of jobs shares it), since and until "
          "(ISO 8601 times) and text (found in the why, cap or result). limit is how many entries come back "
          "(default 50)."),
      "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
          "worker": {"type": "string"}, "cap": {"type": "string"}, "user": {"type": "string"},
-         "kind": {"type": "string", "enum": ["call", "auth", "band", "event", "job", "stream"]},
+         "kind": {"type": "string", "enum": ["call", "auth", "band", "event", "job", "stream", "plugin"]},
          "job": {"type": "string"}, "run": {"type": "string"},
          "since": {"type": "string"}, "until": {"type": "string"}, "text": {"type": "string"},
          "limit": {"type": "integer", "minimum": 1}}}},
