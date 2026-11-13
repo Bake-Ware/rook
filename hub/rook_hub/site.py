@@ -137,7 +137,23 @@ def stream_view(hub, stream):
     return {"moniker": stream["moniker"], "title": stream["title"], "description": stream["description"],
             "worker": stream["worker"], "cap": stream["cap"], "open": stream["open"],
             "opened_by": person(stream["opened_by"]), "opened_at": stream["opened_at"],
-            "closed_by": person(stream["closed_by"]), "closed_at": stream["closed_at"]}
+            "closed_by": person(stream["closed_by"]), "closed_at": stream["closed_at"],
+            "terminal": is_terminal(hub, stream)}
+
+
+def is_terminal(hub, stream):
+    """Whether a stream is a terminal, so the site tells its worker the terminal's size: by the
+    protocol's convention (Bake 13 Nov), its cap, as its worker announces it, opens a stream and
+    takes cols and rows. A long call's stream never is."""
+    with hub._lock:
+        worker = hub._db.execute("SELECT state FROM workers WHERE moniker = ?", (stream["worker"],)).fetchone()
+        follows = hub._db.execute("SELECT 1 FROM call_streams WHERE stream = ?", (stream["guid"],)).fetchone()
+    announced = json.loads(worker["state"] or "{}").get("caps", []) if worker else []
+    for cap in announced:
+        if cap["name"] == stream["cap"] and cap.get("returns") == "stream" and not follows:
+            properties = (cap.get("schema") or {}).get("properties") or {}
+            return "cols" in properties and "rows" in properties
+    return False
 
 
 # ----------------------------------------------------------- the Data page
@@ -390,6 +406,14 @@ def add_routes(app, hub):
     app.router.add_get("/api/streams/{stream}/read", read_stream)
     app.router.add_post("/api/streams/{stream}/input", stream_input)
     app.router.add_post("/api/streams/{stream}/close", close_stream)
+
+    @logged_in
+    async def resize_stream(request, token, user):
+        """The size the person's terminal shows the stream at, to its worker (Bake 13 Nov). Not recorded."""
+        body = await _body(request)
+        return await hub.streams.resize(request.match_info["stream"], body.get("cols"), body.get("rows"), token=token)
+
+    app.router.add_post("/api/streams/{stream}/resize", resize_stream)
 
     # ------------------------------- the Data page, and device and plugin opt-outs (P4, L1, L2, L5, K1-K4, D8, PL3)
 
