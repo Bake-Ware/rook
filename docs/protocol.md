@@ -28,7 +28,7 @@ A message is a JSON object (RFC 8259) encoded as UTF-8, with a string field `typ
 
 ## Minimum worker (W2)
 
-A worker must implement `knock`, `knock_reply`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, heartbeat and answer calls. The three `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them.
+A worker must implement `knock`, `knock_reply`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, heartbeat and answer calls. The three `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them. `event` is optional too.
 
 ## Shared blocks
 
@@ -178,6 +178,15 @@ New codes may be added without a version change; receivers treat an unknown code
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `stream` | string | yes | Stream handle. Streams live until one side closes them on purpose (S4). |
+
+### `event`: worker to hub, optional (J2)
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `name` | string | yes | The event's name, which jobs match on. |
+| `payload` | object | yes | The event's data. The hub adds `worker` (the worker's GUID) and `worker_moniker`, replacing any the worker sent. |
+
+A worker sends it whenever something happens that jobs may care about, for example from inside a cap. The hub puts it on its event bus and answers nothing. Added in v1 as an optional message (U8): a worker that never sends it is unaffected.
 
 ## Sequences
 

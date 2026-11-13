@@ -64,13 +64,16 @@ TOOLS = [
                          "why": {"type": "string"}}}},
     {"name": "journal",
      "description": (
-         "Read the hub's journal, newest first: every call (with its why and result), every auth "
-         "event (approvals, tokens, logins) and every change to a band. Narrow with worker, cap, user "
-         "(moniker or GUID), kind (\"call\", \"auth\" or \"band\"), since and until (ISO 8601 times) and "
-         "text (found in the why, cap or result). limit is how many entries come back (default 50)."),
+         "Read the hub's journal, newest first: every call (with its why and result), auth event "
+         "(approvals, tokens, logins), change to a band, event on the hub's bus, and job run. Narrow with "
+         "worker, cap, user (moniker or GUID), kind (\"call\", \"auth\", \"band\", \"event\" or \"job\"), "
+         "job (moniker or GUID), run (a run ID; every run in one chain of jobs shares it), since and until "
+         "(ISO 8601 times) and text (found in the why, cap or result). limit is how many entries come back "
+         "(default 50)."),
      "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
          "worker": {"type": "string"}, "cap": {"type": "string"}, "user": {"type": "string"},
-         "kind": {"type": "string", "enum": ["call", "auth", "band"]},
+         "kind": {"type": "string", "enum": ["call", "auth", "band", "event", "job"]},
+         "job": {"type": "string"}, "run": {"type": "string"},
          "since": {"type": "string"}, "until": {"type": "string"}, "text": {"type": "string"},
          "limit": {"type": "integer", "minimum": 1}}}},
 ]
@@ -132,7 +135,7 @@ async def call(hub, token, args):
 
 
 async def read_journal(hub, token, args):
-    filters = {name: args.get(name) for name in ("worker", "cap", "user", "kind", "since", "until", "text")}
+    filters = {name: args.get(name) for name in ("worker", "cap", "user", "kind", "since", "until", "text", "job", "run")}
     return _dumps({"entries": journal.read(hub, **filters, limit=args.get("limit") or 50)})
 
 
@@ -173,7 +176,7 @@ async def _tool(hub, token, params):
 def add_routes(app, hub):
     async def post(request):
         try:
-            message = json.loads(await request.read())
+            message = json.loads(await request.content.read())   # no size limit: arguments carry files
         except ValueError:
             return _rpc(None, 400, error={"code": -32700, "message": "The body is not JSON."})
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":

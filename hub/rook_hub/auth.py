@@ -16,8 +16,9 @@ The claims are standard JWT plus two of Rook's own (T2):
 
 A scope names the mechanism a token is for, nothing more (F8): `client`
 acts through the hub (calls, minting, approving); `join` is an unattended
-join (R3). Lifetime, one use and scopes come from the hub's stored defaults
-per purpose, never from whoever mints (T2).
+join (R3); `webhook` posts to the hub's webhook URL (J2). Lifetime, one use
+and scopes come from the hub's stored defaults per purpose, never from whoever
+mints (T2).
 """
 
 import base64
@@ -48,6 +49,7 @@ CREATE TABLE IF NOT EXISTS token_defaults (
 );
 INSERT OR IGNORE INTO token_defaults VALUES ('agent', 'client', NULL, 0);
 INSERT OR IGNORE INTO token_defaults VALUES ('join', 'join', 600, 1);
+INSERT OR IGNORE INTO token_defaults VALUES ('webhook', 'webhook', NULL, 0);
 CREATE TABLE IF NOT EXISTS tokens (
     guid       TEXT PRIMARY KEY,     -- the jti claim
     moniker    TEXT NOT NULL UNIQUE,
@@ -293,6 +295,9 @@ class Auth:
         now = self.hub.clock()
         self.db.execute("UPDATE tokens SET last_used = ?, spent_at = CASE WHEN once THEN ? END WHERE guid = ?",
                         (now, now, row["guid"]))
+        self.hub.events.emit("token.used", {"token": row["guid"], "token_moniker": row["moniker"], "user": row["owner"],
+                                            "purpose": row["purpose"]}, user=row["owner"], token=row["guid"],
+                             journal=False)  # on the bus for jobs; not journaled each time (see Needs Bake)
         return row["owner"], row["guid"]
 
     def actor(self, user, token):

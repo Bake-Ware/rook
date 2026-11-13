@@ -213,6 +213,11 @@ MESSAGES = {
     "stream_close": {
         "stream": (_string, REQ),
     },
+    # Worker -> hub, optional: puts an event on the hub's bus (J2).
+    "event": {
+        "name": (_string, REQ),
+        "payload": (_object, REQ),
+    },
 }
 
 

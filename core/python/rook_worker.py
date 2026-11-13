@@ -95,6 +95,10 @@ class Worker:
         if self._link is not None:
             self._link.close()
 
+    async def emit(self, name, payload):
+        """Put an event on the hub's bus (J2), for example from inside a cap."""
+        await self._send({"type": "event", "name": name, "payload": payload})
+
     def changed(self):
         """Something in the worker's state changed: heartbeat now (H1)."""
         self._changed.set()

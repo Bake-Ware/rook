@@ -28,8 +28,9 @@ CAPS = {
 }
 
 
-def journal(hub):
-    return [dict(row) for row in hub._db.execute("SELECT * FROM journal ORDER BY id")]
+def journal(hub, kinds=("call", "auth")):
+    """Calls and auth entries; events are covered in test_jobs.py."""
+    return [dict(row) for row in hub._db.execute("SELECT * FROM journal ORDER BY id") if row["kind"] in kinds]
 
 
 def test_worker_lifecycle(tmp_path):

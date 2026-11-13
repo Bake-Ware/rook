@@ -23,9 +23,11 @@ def _seconds(text, name):
     return moment.timestamp()
 
 
-def read(hub, worker=None, cap=None, user=None, kind=None, since=None, until=None, text=None, limit=50):
+def read(hub, worker=None, cap=None, user=None, kind=None, since=None, until=None, text=None, limit=50,
+         job=None, run=None):
     """Journal entries matching every filter given, newest first, at most `limit`.
     `worker` and `user` take a GUID or moniker (`hub` for the hub's own caps);
+    `job` takes a GUID or moniker, even of a deleted job; `run` a run ID (J5);
     `text` is found case-insensitively in the why, the cap and the result."""
     where, params = [], []
     with hub._lock:
@@ -35,7 +37,10 @@ def read(hub, worker=None, cap=None, user=None, kind=None, since=None, until=Non
         if user is not None:
             where.append("j.user = ?")
             params.append(hub.auth._user(user)["guid"])
-        for column, value in (("cap", cap), ("kind", kind)):
+        if job is not None:
+            where.append("j.job = (SELECT guid FROM monikers WHERE moniker = ? OR guid = ?)")
+            params += [job, job]
+        for column, value in (("cap", cap), ("kind", kind), ("run", run)):
             if value is not None:
                 where.append(f"j.{column} = ?")
                 params.append(value)
@@ -49,12 +54,15 @@ def read(hub, worker=None, cap=None, user=None, kind=None, since=None, until=Non
             where.append("instr(lower(coalesce(j.why, '') || ' ' || coalesce(j.cap, '') || ' ' || j.result), lower(?)) > 0")
             params.append(text)
         rows = hub._db.execute(
-            "SELECT j.*, u.moniker AS user_moniker, t.moniker AS token_moniker, w.moniker AS worker_moniker "
+            "SELECT j.*, u.moniker AS user_moniker, t.moniker AS token_moniker, w.moniker AS worker_moniker, "
+            "b.moniker AS job_moniker "
             "FROM journal j LEFT JOIN monikers u ON u.guid = j.user LEFT JOIN monikers t ON t.guid = j.token "
-            "LEFT JOIN monikers w ON w.guid = j.worker "
+            "LEFT JOIN monikers w ON w.guid = j.worker LEFT JOIN monikers b ON b.guid = j.job "
             f"{'WHERE ' + ' AND '.join(where) if where else ''} ORDER BY j.id DESC LIMIT ?",
             (*params, limit)).fetchall()
     return [{"id": row["id"], "at": iso(row["at"]), "kind": row["kind"],
              "user": row["user_moniker"], "token": row["token_moniker"],
              "worker": row["worker_moniker"] or row["worker"], "cap": row["cap"], "why": row["why"],
-             "result": json.loads(row["result"])} for row in rows]
+             "result": json.loads(row["result"]),
+             **({"job": row["job_moniker"]} if row["job"] else {}), **({"run": row["run"]} if row["run"] else {})}
+            for row in rows]
