@@ -123,6 +123,10 @@ async def scenario(tmp_path):
                  "plugin shelf already has a component called 'book-card'"),
                 ({"components": [{"name": "card", "file": "site/book-card.js"}]}, "bad_manifest", "at least one hyphen"),
                 ({"pages": [{"segment": "Library", "file": "site/shelf.js"}]}, "bad_manifest", "segment, title, file"),
+                ({"settings": [{"title": "Odds", "file": "site/settings.js"}, {"title": "odds!", "file": "site/settings.js"}]},
+                 "bad_manifest", "used twice in this plugin"),
+                ({"pages": [{"segment": "A", "title": "Twin", "file": "site/shelf.js"},
+                            {"segment": "B", "title": "twin", "file": "site/shelf.js"}]}, "bad_manifest", "used twice"),
             ]
             for i, (change, code, said) in enumerate(refusals):
                 folder, manifest = copy_shelf(tmp_path, f"other{i}", pages=[], settings=[], components=[])

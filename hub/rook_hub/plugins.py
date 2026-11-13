@@ -369,9 +369,9 @@ def read_site(folder, manifest, path, fix):
                 raise HubError("bad_manifest", f"{where}: name {entry['name']!r} must be lowercase letters and digits "
                                               "with at least one hyphen, such as note-card.", fix)
             name = entry["name"] if part == "components" else page_name(entry["title"])
-            if part != "settings" and (not name or name in names):
-                raise HubError("bad_manifest", f"{where}: {'title' if part == 'pages' else 'name'} "
-                                              f"{entry.get('title', entry['name'])!r} is empty or used twice in this plugin.", fix)
+            if not name or name in names:
+                raise HubError("bad_manifest", f"{where}: {'name' if part == 'components' else 'title'} "
+                                              f"{entry.get('title') or entry.get('name')!r} is empty or used twice in this plugin.", fix)
             names.add(name)
 
 
