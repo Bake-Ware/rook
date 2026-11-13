@@ -148,7 +148,7 @@ PL3 says the hub pushes worker parts "to the right worker forms", and U1 says co
 - a part that is new or changed is loaded; one that failed last time is tried again;
 - then it heartbeats, so the caps appear and disappear with the plugin (W5).
 
-A part that fails to load (it raises, has no `CAPS`, or declares a bad cap) adds nothing, and the worker keeps running with its own caps and its other plugins. It reports each part in its heartbeat's `plugins`, with an `error` for one that failed. The hub journals a failure (kind `plugin`, under the worker) and `plugin.list` shows each plugin's `loaded_on` and `failed_on` workers.
+A part that fails to load (it raises, calls `sys.exit()`, has no `CAPS`, or declares a bad cap) adds nothing, and the worker keeps running with its own caps and its other plugins. It reports each part in its heartbeat's `plugins`, with an `error` for one that failed. The hub journals a failure (kind `plugin`, under the worker) and `plugin.list` shows each plugin's `loaded_on` and `failed_on` workers.
 
 **One namespace.** A worker's own caps and its plugins' caps share one set of names. A part that declares a cap the worker already serves, its own or another plugin's, fails to load as a whole, with the error `<cap> is already served by this worker` (or `by plugin <name>`). Nothing is replaced (PL1). Parts load in install order, so the plugin installed first keeps the name.
 
@@ -184,7 +184,7 @@ CAPS = {
 
 - `Cap(description, schema, handler, opens_stream=False)`: a one-line description, a JSON Schema object for the arguments and an `async` handler (W3). The name follows W3.
 - A plain cap's handler is `handler(args)` and returns any JSON value. A stream cap's handler is `handler(args, stream)` and returns `{"title", "description"}`. It keeps `stream` to `send` output, `read` input and `close` it (S1 to S4).
-- A handler that raises becomes the error `cap_failed`, as for the worker's own caps.
+- A handler that raises, or calls `sys.exit()`, fails that call with the error `cap_failed`, as for the worker's own caps; the worker keeps running. Ctrl-C and cancellation still stop the worker.
 - The worker runs the module's source inside its own process (not sandboxed, PL2), as a module with a name of its own each load, so a replaced version starts fresh.
 
 A plugin's worker caps are called and journaled exactly as any worker cap (PL2). Nothing else is needed yet. The shared helper library (PL6) is where anything that plugin worker code repeats will go.

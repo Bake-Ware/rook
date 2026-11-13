@@ -38,6 +38,11 @@ from rook_protocol import PROTOCOL, ProtocolError, decode, encode, validate
 
 VERSION = "0.1.0"
 
+# What a cap's handler, or a plugin part as it loads, may raise and only fail that call or
+# that part: any Exception, and SystemExit, so code that calls sys.exit() cannot stop the
+# worker. KeyboardInterrupt and cancellation are not caught: they still stop it.
+FAILS = (Exception, SystemExit)
+
 
 @dataclass
 class Cap:
@@ -246,8 +251,8 @@ class Worker:
             try:
                 reply = {"type": "result", "id": call["id"], "result": await cap.handler(call["args"])}
                 encode(reply)
-            except Exception as e:
-                reply = error("cap_failed", f"{call['cap']} failed: {e}",
+            except FAILS as e:
+                reply = error("cap_failed", f"{call['cap']} failed: {reason(e)}",
                               f"Check the arguments against the schema of {call['cap']}.", call["id"])
         await self._send(reply)
 
@@ -261,8 +266,8 @@ class Worker:
             reply = {"type": "stream_open", "id": call["id"], "stream": stream.handle,
                      "title": str(named["title"]), "description": str(named["description"])}
             encode(reply)
-        except Exception as e:
-            await self._send(error("cap_failed", f"{call['cap']} failed: {e}",
+        except FAILS as e:
+            await self._send(error("cap_failed", f"{call['cap']} failed: {reason(e)}",
                                    f"Check the arguments against the schema of {call['cap']}.", call["id"]))
             return
         self.streams[stream.handle] = stream
@@ -317,7 +322,7 @@ class Worker:
                                      "a JSON Schema object and a handler")
                 if name in self.caps:
                     raise ValueError(f"{name} is already served by {self._owner(name)}")
-        except Exception as e:
+        except FAILS as e:
             sys.modules.pop(module_name, None)
             return Part(part["version"], part["source"], error=f"{type(e).__name__}: {e}")
         self.caps.update(caps)
@@ -388,6 +393,11 @@ def primitives():
         return handler
     return {name: Cap(description, schema, serve(function))
             for name, (function, description, schema) in rook_net.CAPS.items()}
+
+
+def reason(e):
+    """Why a handler failed, in a few words."""
+    return f"it called sys.exit({e.code!r})" if isinstance(e, SystemExit) else str(e)
 
 
 def error(code, message, next_step, call_id=None):
