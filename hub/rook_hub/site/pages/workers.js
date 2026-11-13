@@ -1,10 +1,13 @@
 /* The Workers page (P4, P7, B2, B5, R2, R4, W6, D1, D4, D6, D8): workers and devices
    grouped by band, with a group for roaming ones; a filter for workers, devices or
    both; the stats strip; pending approvals; unrecognised networks; band rename; a
-   worker expanded to its facts, health, caps, open streams, the devices pinned to
-   it and whether it serves devices; a device expanded to its driver, route, latest
-   status and caps. It asks the hub again every few seconds, so it stays up to date. */
+   worker expanded to its facts, health, caps, streams, the devices pinned to it and
+   whether it serves devices; a device expanded to its driver, route, latest status
+   and caps. A stream on the card opens in place as a terminal (P8), its closed
+   streams on request (S5); a view may hold one stream open (P6). It asks the hub
+   again every few seconds, so it stays up to date. */
 import { api, toast, viewHref, showView } from '/site/shell.js';
+import StreamTerminal from '/site/terminal.js';
 
 const REFRESH_MS = 5000;
 
@@ -17,22 +20,25 @@ function bytes(n) {
 }
 
 export default {
+  components: { 'stream-terminal': StreamTerminal },
   data() {
     const view = new URLSearchParams(location.search);
     return {
       data: null, error: '', q: view.get('q') || '', only: view.get('worker') || '', open: {},
       show: ['workers', 'devices'].includes(view.get('show')) ? view.get('show') : 'all',
       renaming: {}, rename: {}, newBand: {}, addTo: {}, timer: null,
+      attached: {}, closedOf: {}, focus: view.get('stream') || '', focusStream: null,
     };
   },
   computed: {
-    view() { return { q: this.q, worker: this.only, show: this.show === 'all' ? '' : this.show }; },
+    view() { return { q: this.q, worker: this.only, show: this.show === 'all' ? '' : this.show, stream: this.focus }; },
     href() { return viewHref('/workers', this.view); },
     onlyName() {
       const w = [...this.allWorkers, ...this.allDevices].find(x => x.moniker === this.only);
       return w ? w.name : this.only;
     },
     pinLabel() {
+      if (this.focus && this.focusStream) return 'Stream: ' + this.focusStream.title;
       if (this.only) return 'Workers: ' + this.onlyName;
       return 'Workers' + (this.show !== 'all' || this.q ? ': ' : '') + [this.show !== 'all' ? this.show : '', this.q].filter(Boolean).join(' · ');
     },
@@ -49,6 +55,7 @@ export default {
   watch: { view: { handler() { showView('/workers', this.view); }, deep: true } },
   mounted() {
     if (this.only) this.open[this.only] = true;
+    if (this.focus) this.openStream(this.focus);
     this.load();
     this.timer = setInterval(this.load, REFRESH_MS);
   },
@@ -95,6 +102,41 @@ export default {
     },
     json(value) { return JSON.stringify(value, null, 2); },
     toggle(moniker) { this.open[moniker] = !this.open[moniker]; },
+    /* A pinned view with a stream open: its worker expanded, the stream attached (P6, P8). */
+    async openStream(moniker) {
+      try {
+        const { stream } = await api('GET', '/api/streams/' + encodeURIComponent(moniker));
+        this.open[stream.worker] = true;
+        if (!stream.open) await this.loadClosed(stream.worker);
+        this.attach(stream);
+      } catch (e) { toast(e.message); this.focus = ''; }
+    },
+    /* A worker's streams on its card: the open ones, then the closed ones once asked for (S5). */
+    streamsOf(w) {
+      const open = new Set(w.streams.map(s => s.moniker));
+      return [...w.streams, ...(this.closedOf[w.moniker] || []).filter(s => !open.has(s.moniker))];
+    },
+    async loadClosed(worker) {
+      this.closedOf[worker] = (await api('GET', `/api/streams?worker=${encodeURIComponent(worker)}&open=false`)).streams;
+    },
+    toggleClosed(w) {
+      if (this.closedOf[w.moniker]) { delete this.closedOf[w.moniker]; return; }
+      this.loadClosed(w.moniker).catch(e => toast(e.message));
+    },
+    attach(s) { this.attached[s.moniker] = true; this.focus = s.moniker; this.focusStream = s; },
+    detach(s) {
+      delete this.attached[s.moniker];
+      if (this.focus === s.moniker) { this.focus = ''; this.focusStream = null; }
+    },
+    /* An attached stream closed: keep it on the card, read-only, among the closed ones. */
+    closedNow(w, s) {
+      this.closedOf[w.moniker] = [{ ...s, open: false }, ...(this.closedOf[w.moniker] || []).filter(x => x.moniker !== s.moniker)];
+      this.loadClosed(w.moniker).catch(() => {});
+    },
+    streamMenu(w, s) {
+      return [{ label: 'Pin this stream', pin: { label: 'Stream: ' + s.title, href: viewHref('/workers', { worker: w.moniker, stream: s.moniker }) } }];
+    },
+    who(s) { return s.opened_by ? s.opened_by.name : 'the hub'; },
     async act(request, done) {
       try { await request(); toast(done); await this.load(); } catch (e) { toast(e.message); }
     },
@@ -249,9 +291,19 @@ export default {
             <div class="dblock"><h4>Caps <span class="dim2">{{ w.caps.length }} served</span></h4>
               <div v-for="c in w.caps" :key="c.name" class="capline"><code>{{ c.name }}</code><span v-if="c.returns==='stream'" class="badge plain">stream</span><span class="note">{{ c.description }}</span></div>
               <p v-if="!w.caps.length" class="note" style="margin:0">No caps.</p></div>
-            <div class="dblock"><h4>Open streams <span class="dim2">{{ w.streams.length }} open</span></h4>
-              <div v-for="s in w.streams" :key="s.moniker" class="stream"><span class="k">{{ s.moniker }}</span><div><b>{{ s.title }}</b><p>{{ s.description }}</p></div><span></span></div>
-              <p v-if="!w.streams.length" class="note" style="margin:0">Nothing open.</p></div>
+            <div class="dblock" :class="{full: streamsOf(w).some(s => attached[s.moniker])}"><h4>Streams <span class="dim2">{{ w.streams.length }} open</span></h4>
+              <div v-for="s in streamsOf(w)" :key="s.moniker" class="stream" :class="{attached: attached[s.moniker]}">
+                <span class="k">{{ s.moniker }}</span>
+                <div><b>{{ s.title }}<span v-if="!s.open" class="badge plain" style="margin-left:6px">closed</span></b><p>{{ s.description }}</p>
+                  <p class="dim2 mono small">opened by {{ who(s) }} {{ ago(s.opened_at) }}<template v-if="!s.open && s.closed_at"> · closed by {{ s.closed_by === 'worker' ? 'the worker' : s.closed_by ? s.closed_by.name : 'someone' }} {{ ago(s.closed_at) }}</template></p></div>
+                <span style="display:flex;gap:4px;align-items:start">
+                  <button class="btn sm" :class="{accent: attached[s.moniker]}" type="button" @click.stop="attached[s.moniker] ? detach(s) : attach(s)">{{ attached[s.moniker] ? 'detach' : s.open ? 'attach' : 'open read-only' }}</button>
+                  <row-menu :items="streamMenu(w, s)" label="Stream actions"></row-menu></span>
+                <stream-terminal v-if="attached[s.moniker]" :stream="s" :worker="w.name" @detach="detach(s)" @closed="closedNow(w, s)"></stream-terminal>
+              </div>
+              <p v-if="!w.streams.length" class="note" style="margin:0">Nothing open.</p>
+              <button class="btn sm ghost" type="button" style="margin-top:6px" @click.stop="toggleClosed(w)">{{ closedOf[w.moniker] ? 'hide closed streams' : 'show closed streams' }}</button>
+              <p v-if="closedOf[w.moniker] && !closedOf[w.moniker].length" class="note" style="margin:0">No closed streams.</p></div>
             <div class="dblock full"><h4>Devices <span class="dim2">{{ pinnedTo(w).length }} pinned to {{ w.name }}</span></h4>
               <div class="optout"><div class="p">Serves devices<small>Carries out network steps for devices: those pinned to it, and floating ones on its band.</small></div>
                 <span class="state" :class="{out: !w.serves_devices}">{{ w.serves_devices ? 'allowed' : 'opted out' }}</span>
