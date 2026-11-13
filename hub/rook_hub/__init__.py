@@ -8,6 +8,7 @@ Knocks arrive over HTTP (docs/protocol.md, "Carriage").
 """
 
 import asyncio
+import fcntl
 import json
 import os
 import pathlib
@@ -160,7 +161,7 @@ class Hub:
         self._calls = {}  # call id -> (worker guid, future, actor, cap)
         self._running = {}  # call id -> {actor, worker, entry, reply}, while Hub.call runs it
         self._runner = None  # the HTTP server, while serving
-        self._calls_cut_short()  # calls a previous run of the hub left running
+        self._serving_dir = None  # the open hub.lock while this hub holds its data directory (serve)
         self.plugins = plugins.Plugins(self)
         self.plugins.load_all()  # every installed plugin, at start (PL3)
 
@@ -173,10 +174,13 @@ class Hub:
         return SigningKey(bytes.fromhex(path.read_text().strip()))
 
     def close(self):
-        """Close links and the database. Call stop_serving() first if serving."""
+        """Close links and the database, and let go of the data directory. Call stop_serving() first if serving."""
         for link in list(self._links.values()):
             link.close()
         self._db.close()
+        if self._serving_dir is not None:
+            self._serving_dir.close()       # the lock goes with the file
+            self._serving_dir = None
 
     # ---------------------------------------------------------------- knock
 
@@ -223,10 +227,28 @@ class Hub:
 
     async def serve(self, host, port):
         """Serve the hub over HTTP: the knock endpoint and the MCP door (web.py).
-        Returns the (host, port) it listens on."""
+        Returns the (host, port) it listens on. Only one hub serves a data directory: this one
+        takes it over first, or raises HubError `data_in_use` and changes nothing. Having taken
+        it over, it ends the calls a previous run of the hub left running."""
+        self._take_over()
         self._runner, address = await web.serve(self, host, port)
+        self._calls_cut_short()
         self.events.start()
         return address
+
+    def _take_over(self):
+        """Hold the data directory: an exclusive lock on <data>/hub.lock, kept until close().
+        The system lets go of it when the process ends, however it ends."""
+        if self._serving_dir is not None:
+            return
+        held = open(self.state_dir / "hub.lock", "a")
+        try:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            held.close()
+            raise HubError("data_in_use", f"Another hub is serving {self.state_dir.resolve()}.",
+                           "Stop that hub first, or give this one a data directory of its own.") from None
+        self._serving_dir = held
 
     async def stop_serving(self):
         await self.events.stop()
@@ -569,7 +591,8 @@ class Hub:
             running["reply"] = reply
             self._running.pop(call_id, None)
             with self._lock, self._db:
-                self._db.execute("UPDATE journal SET worker = ?, result = ? WHERE id = ?",
+                self._db.execute("UPDATE journal SET worker = ?, result = ? WHERE id = ? "
+                                 "AND json_extract(result, '$.type') = 'running'",
                                  (guid, json.dumps(self._kept(guid, reply)), entry))
         return reply
 

@@ -54,6 +54,8 @@ def main(argv=None):
         sys.exit(f"rook hub: {e.message['message']} {e.message['next']}")
     try:
         asyncio.run(run(hub, args.host, args.port))
+    except HubError as e:          # another hub serves this data directory
+        sys.exit(f"rook hub: {e.message['message']} {e.message['next']}")
     except OSError as e:
         sys.exit(f"rook hub: cannot listen on {args.host} port {args.port}: {e.strerror or e}")
     finally:

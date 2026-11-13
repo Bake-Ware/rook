@@ -127,11 +127,14 @@ class Streams:
 
     def call_ended(self, stream, reply):
         """The call ended: `reply`, already as the journal keeps it, becomes the stream's last entry,
-        and the hub closes the stream (S4)."""
-        self._append(stream, "out", json.dumps(reply, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-                     (None, None))
+        and the hub closes the stream (S4). A stream already closed is left as it is: nothing is
+        ever added after the hub closed it."""
         with self.hub._lock:
             row = self._row(stream)
+        if row["closed_at"] is not None:
+            return
+        self._append(stream, "out", json.dumps(reply, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+                     (None, None))
         self._close(row, "hub", (None, None), "The call ended; its reply is the stream's last entry.")
 
     def cut_short(self, reply_for):
