@@ -26,14 +26,17 @@ def _seconds(text, name):
 def read(hub, worker=None, cap=None, user=None, kind=None, since=None, until=None, text=None, limit=50,
          job=None, run=None):
     """Journal entries matching every filter given, newest first, at most `limit`.
-    `worker` and `user` take a GUID or moniker (`hub` for the hub's own caps);
-    `job` takes a GUID or moniker, even of a deleted job; `run` a run ID (J5);
-    `text` is found case-insensitively in the why, the cap and the result."""
+    `worker` and `user` take a GUID or moniker (`hub` for the hub's own caps; a
+    device's for a device, D1); `job` takes a GUID or moniker, even of a deleted
+    job; `run` a run ID (J5); `text` is found case-insensitively in the why, the
+    cap and the result."""
     where, params = [], []
     with hub._lock:
         if worker is not None:
+            device = hub._db.execute("SELECT guid FROM devices WHERE guid = ? OR moniker = ?",
+                                     (worker, worker)).fetchone()
             where.append("j.worker = ?")
-            params.append(worker if worker == "hub" else hub._resolve(worker)["guid"])
+            params.append(worker if worker == "hub" else device["guid"] if device else hub._resolve(worker)["guid"])
         if user is not None:
             where.append("j.user = ?")
             params.append(hub.auth._user(user)["guid"])
