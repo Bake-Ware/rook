@@ -12,7 +12,11 @@
 
 namespace {
 
+#ifdef ROOK_BRIDGE
+const int EXPECTED = 0;       // a bridge has no buttons of its own
+#else
 const int EXPECTED = 11;
+#endif
 const int DOWN_SCANS = 5;       // consecutive scans before it counts as down
 const int UP_SCANS = 8;         // consecutive scans absent before it counts as up
 const uint32_t LONG_MS = 600;
@@ -125,6 +129,9 @@ namespace buttons {
 
 bool begin(uint8_t pcf) {
     addr = pcf;
+#ifdef ROOK_BRIDGE
+    return true;
+#endif
     prefs.begin("rook-buttons", false);
     load();
     for (int i = 0; i < NG; i++) pinMode(GP[i], INPUT_PULLUP);
@@ -134,6 +141,9 @@ bool begin(uint8_t pcf) {
 std::function<void(const ButtonEvent&)>& on_event() { return cb; }
 
 void poll() {
+#ifdef ROOK_BRIDGE
+    return;
+#endif
     // 1. Lines held low with every line released: buttons to ground.
     if (!write(0xFF)) return;
     delayMicroseconds(40);

@@ -24,8 +24,17 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.3.1"
-static const int PIN_SDA = 5, PIN_SCL = 6;
+#define FW_VERSION "0.4.0"
+#ifdef ROOK_BRIDGE
+static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
+#else
+static const int PIN_SDA = 5, PIN_SCL = 6;      // XIAO ESP32-S3: D4, D5
+#endif
+#if CONFIG_FREERTOS_UNICORE
+static const int APP_CORE = 0;
+#else
+static const int APP_CORE = 1;
+#endif
 static const uint8_t PCF_ADDR = 0x20, OLED_ADDR = 0x3C;
 
 static rc::Worker worker;
@@ -44,7 +53,11 @@ static uint32_t menu_until = 0;             // the menu closes itself when left 
 static bool swallow = false;                // drop the release of the press that left the game
 static const uint32_t MENU_IDLE_MS = 20000;
 static uint32_t seq_all = 0;                // one count over the handheld's buttons and a paired remote's keys
+#ifdef ROOK_BRIDGE
+static const char* const BT_PAIR_TEXT = "Pair a remote:\n\nhold Back + Home on it\nuntil its light blinks";
+#else
 static const char* const BT_PAIR_TEXT = "BT\npair:\n\nput\nthe\nother\nremote\nin\npair\nmode";
+#endif
 
 static void logf(const char* fmt, ...) {
     char b[200];
@@ -64,7 +77,9 @@ static bool is_name(const std::string& n, std::initializer_list<const char*> set
 
 static void open_menu() {
     std::vector<std::string> items = settings::targets();
-    items.push_back("Tetris");
+#ifndef ROOK_BRIDGE
+    items.push_back("Tetris");       // drawn for the upright screen
+#endif
     items.push_back("Pair BT");
     if (bt::saved()) items.push_back("Forget BT");
     ui::menu_begin("MENU", items, settings::target());
@@ -75,15 +90,19 @@ static void open_menu() {
 static void menu_pick(int i) {
     auto ts = settings::targets();
     ui::menu_end();
+    int extra = i - (int)ts.size();     // 0 Tetris, 1 Pair BT, 2 Forget BT
+#ifdef ROOK_BRIDGE
+    extra += 1;                         // no Tetris in its menu
+#endif
     if (i < (int)ts.size()) {
         settings::set_target(i);
         mode = REMOTE;
         ui::flash(ts[i]);
-    } else if (i == (int)ts.size()) {
+    } else if (extra == 0) {
         tetris::start(millis());
         ui::game(true);
         mode = GAME;
-    } else if (i == (int)ts.size() + 1) {
+    } else if (extra == 1) {
         mode = REMOTE;
         bt::pair();
         ui::text(BT_PAIR_TEXT, 35);
@@ -126,7 +145,7 @@ static void on_button(const ButtonEvent& ev) {
         else if (is_name(e.name, {"back", "input", "home"})) { ui::menu_end(); mode = REMOTE; }
         return;
     }
-    if (e.name == "input" && !buttons::learning()) {
+    if ((e.name == "input" || e.name == "bt_menu") && !buttons::learning()) {
         if (!strcmp(e.action, "press")) open_menu();
         return;
     }
@@ -615,7 +634,11 @@ void setup() {
         rc::WorkerConfig c;
         c.worker_id = e.worker_id;
         c.name = settings::name();
+#ifdef ROOK_BRIDGE
+        c.description = "Rook remote bridge: puts a Bluetooth remote's keys on the band, with a small screen";
+#else
         c.description = "Rook remote: a handheld with 11 buttons and a small screen";
+#endif
         c.version = std::string(FW_VERSION "+remote.") + REMOTE_MANIFEST_VERSION;
         c.psk = e.psk;
         c.relay = e.relay;
@@ -641,7 +664,7 @@ void setup() {
             logf("enrollment is unusable (hub root key or manifest); enroll again");
         }
     }
-    xTaskCreatePinnedToCore(rook_task, "rook", 16384, nullptr, 1, nullptr, 1);
+    xTaskCreatePinnedToCore(rook_task, "rook", 16384, nullptr, 1, nullptr, APP_CORE);
     xTaskCreatePinnedToCore(wifi_task, "wifi", 4096, nullptr, 1, nullptr, 0);
     bt_names_mu = xSemaphoreCreateMutex();
     load_bt_names();
@@ -681,6 +704,16 @@ void loop() {
     }
     static std::string bt_was = "off";
     std::string bt_now = bt::state();
+#ifdef ROOK_BRIDGE
+    // Nothing to press here: keep looking for a remote to pair until there is one.
+    static uint32_t next_pair = 4000;
+    if (!bt::saved() && bt_now != "pairing" && (int32_t)(ms - next_pair) >= 0) {
+        next_pair = ms + 40000;
+        bt::pair(30);
+        ui::text(BT_PAIR_TEXT, 30);
+        bt_now = bt::state();
+    }
+#endif
     if (bt_now != bt_was) {
         if (bt_was == "pairing") ui::text("", 0);
         if (bt_now == "connected") ui::flash("BT on\n" + bt::name());

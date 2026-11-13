@@ -6,7 +6,11 @@
 
 namespace {
 
+#ifdef ROOK_BRIDGE
+Adafruit_SSD1306 oled(128, 64, &Wire, -1);
+#else
 Adafruit_SSD1306 oled(128, 32, &Wire, -1);
+#endif
 bool ok = false, dirty = true;
 bool anim = false;             // the last frame had a scrolling line: keep redrawing
 uint32_t last_draw = 0, scroll_t0 = 0;
@@ -26,7 +30,11 @@ std::string menu_title;
 std::vector<std::string> menu_items;
 int menu_sel = 0;
 bool game_on = false;
+#ifdef ROOK_BRIDGE
+const int W = 128, H = 64, COLS = 21, ROWS = 8, PITCH = 10;     // 0.96" 128x64, landscape
+#else
 const int W = 32, H = 128, COLS = 5, ROWS = 16, PITCH = 10;
+#endif
 
 // Lines of at most COLS characters: broken at a space, or after - or _, when
 // one is in reach, else mid-word.
@@ -104,7 +112,7 @@ void draw() {
     uint32_t ms = millis();
     anim = false;
     if (ask_on) {
-        auto p = wrap(ask_prompt, 8);
+        auto p = wrap(ask_prompt, H / 16);
         lines(p, 0, 8);
         list(p.size() * 8 + 3, ask_opts, ask_sel, ms);
     } else if (game_on) {
@@ -122,10 +130,10 @@ void draw() {
         oled.setCursor(1, 0);
         oled.print(status[0].substr(0, COLS).c_str());
         oled.drawFastHLine(0, 9, W, SSD1306_WHITE);
-        lines(wrap(note, 10), 16, 9);
+        lines(wrap(note, (H - 16) / 9), 16, 9);
     } else if (agent_on && agent_big) {
-        oled.setTextSize(agent_text.size() <= 2 ? 2 : 1);
-        oled.setCursor(1, 52);
+        oled.setTextSize((int)agent_text.size() * 12 <= W ? 2 : 1);
+        oled.setCursor(1, H / 2 - 12);
         oled.print(agent_text.substr(0, COLS).c_str());
     } else if (agent_on) {
         lines(wrap(agent_text, ROWS), 0, 8);

@@ -20,7 +20,7 @@ static void put(const char* k, const std::string& v) { prefs.putString(k, v.c_st
 static void load_targets() {
     tgts.clear();
     std::string s = get("targets");
-    if (s.empty()) s = "office-tv,living-room-tv";
+    if (s.empty()) s = "office-tv,living-room-tv,bedroom-tv";
     size_t pos = 0;
     while (pos <= s.size()) {
         size_t c = s.find(',', pos);
@@ -197,7 +197,11 @@ std::string target_name() {
     return n;
 }
 
+#ifdef ROOK_BRIDGE
+int rotation() { return prefs.getInt("rot", 2) & 3; }      // landscape, connector side down
+#else
 int rotation() { return prefs.getInt("rot", 3) & 3; }
+#endif
 
 void set_rotation(int r) { prefs.putInt("rot", r & 3); }
 
