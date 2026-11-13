@@ -28,6 +28,7 @@ function outcome(e) {
   if (e.kind === 'call' || e.kind === 'job') {
     if (r && r.type === 'error') return { text: r.code, cls: 'bad' };
     if (r && r.type === 'stream_open') return { text: 'stream', cls: 'good' };
+    if (r && r.type === 'running') return { text: 'running', cls: '' };      // not ended yet (L1)
     return { text: 'ok', cls: 'good' };
   }
   if (e.kind === 'event' && r && r.event) return { text: r.event, cls: r.event === 'job.fail' ? 'bad' : '' };
