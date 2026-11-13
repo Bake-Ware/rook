@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, jobs, vault, web
+from . import bands, caps, jobs, scrub, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -281,8 +281,9 @@ class Hub:
         return self.get_worker(guid)
 
     def _journal(self, kind, actor, worker, result, cap=None, why=None, job=None, run=None):
-        """One journal entry (L1). `actor` is (user or None, token or None).
-        The caller holds the lock and the transaction."""
+        """One journal entry (L1), scrubbed of secrets as it is written (L4).
+        `actor` is (user or None, token or None). The caller holds the lock and the transaction."""
+        why, result = scrub.scrub(why, self.vault), scrub.scrub(result, self.vault)
         self._db.execute(
             "INSERT INTO journal (at, kind, user, token, worker, cap, why, result, job, run) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

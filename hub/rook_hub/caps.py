@@ -3,12 +3,12 @@
 Only what the plan requires an agent to be able to do: approve a knocking
 worker (R2), attach a knock to a known identity (W7), mint a join token (R3),
 manage jobs and emit events (J7, J2; jobs.py), keep and list secrets (X3;
-vault.py).
+vault.py) and redact the journal (L5; scrub.py).
 """
 
 import datetime
 
-from . import jobs, vault
+from . import jobs, scrub, vault
 from .errors import HubError
 
 HUB = "hub"  # the worker name that addresses the hub's own caps
@@ -74,6 +74,7 @@ CAPS = {
 
 CAPS.update(jobs.CAPS)  # create, list, pause, un-pause and delete jobs; emit an event (J7, J2)
 CAPS.update(vault.caps())  # create and list secrets, never their values (X3)
+CAPS.update(scrub.caps())  # take a value out of the journal (L5)
 
 
 def descriptors():
