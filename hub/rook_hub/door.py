@@ -101,14 +101,18 @@ TOOLS = [
          "start): output from the worker as \"out\", input as \"in\" with who sent it. The reply's `next` "
          "is where to read from next time. With `wait` (seconds, up to 40) a read with nothing new waits for "
          "more. action \"write\": send `text` as input (end it with \"\\n\" to finish a line). action "
-         "\"close\": close it, with a `why`. Several agents can read one stream at once. A stream stays open "
-         "until someone closes it, so close it when its work is done."),
+         "\"close\": close it, with a `why`. action \"resize\": tell the worker the size, in characters "
+         "(`cols` and `rows`), of the terminal you show the stream in; use it when a full-screen program in a "
+         "terminal stream draws for the wrong width. A terminal cap also takes cols and rows when it opens. "
+         "Several clients can read one stream at once; when they resize it, the last resize wins. A stream "
+         "stays open until someone closes it, so close it when its work is done."),
      "inputSchema": {"type": "object", "required": ["action"], "additionalProperties": False, "properties": {
-         "action": {"type": "string", "enum": ["list", "read", "write", "close"]},
+         "action": {"type": "string", "enum": ["list", "read", "write", "close", "resize"]},
          "stream": {"type": "string", "description": "The stream's moniker or GUID."},
          "from": {"type": "integer", "minimum": 0}, "wait": {"type": "number", "minimum": 0, "maximum": 40},
          "limit": {"type": "integer", "minimum": 1}, "text": {"type": "string"}, "why": {"type": "string"},
-         "open": {"type": "boolean"}}}},
+         "open": {"type": "boolean"}, "cols": {"type": "integer", "minimum": 1},
+         "rows": {"type": "integer", "minimum": 1}}}},
 ]
 
 
@@ -199,8 +203,10 @@ async def stream(hub, token, args):
             raise HubError("bad_message", "why is required to close a stream.",
                            "Say in one sentence why it is done; the journal keeps it.")
         return _dumps(await hub.streams.close(name, args["why"], token=token))
-    raise HubError("bad_message", f"action {action!r} is not one of list, read, write, close.",
-                   "Use action list, read, write or close.")
+    if action == "resize":
+        return _dumps(await hub.streams.resize(name, args.get("cols"), args.get("rows"), token=token))
+    raise HubError("bad_message", f"action {action!r} is not one of list, read, write, close, resize.",
+                   "Use action list, read, write, close or resize.")
 
 
 HANDLERS = {"workers": workers, "caps": list_caps, "call": call, "journal": read_journal, "stream": stream}
