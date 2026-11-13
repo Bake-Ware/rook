@@ -207,4 +207,8 @@ void set_wifi_last(const std::string& ssid) {
     if (get("wifi_last") != ssid) put("wifi_last", ssid);
 }
 
+std::string bt_names() { return get("bt_names"); }
+
+void set_bt_names(const std::string& json) { put("bt_names", json); }
+
 }  // namespace settings

@@ -12,6 +12,7 @@
 #include <Wire.h>
 #include <algorithm>
 #include <deque>
+#include <map>
 #include <esp_wifi.h>
 #include <time.h>
 #include "bt.h"
@@ -23,7 +24,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.3.0"
+#define FW_VERSION "0.3.1"
 static const int PIN_SDA = 5, PIN_SCL = 6;
 static const uint8_t PCF_ADDR = 0x20, OLED_ADDR = 0x3C;
 
@@ -150,6 +151,30 @@ static void on_button(const ButtonEvent& ev) {
 
 // ---- caps -------------------------------------------------------------------
 
+// The paired remote's keys by the names they are sent under (remote.bt names).
+static std::map<std::string, std::string> bt_names;
+static SemaphoreHandle_t bt_names_mu;
+
+static void load_bt_names() {
+    JsonDocument d;
+    deserializeJson(d, settings::bt_names());
+    xSemaphoreTake(bt_names_mu, portMAX_DELAY);
+    bt_names.clear();
+    for (JsonPairConst kv : d.as<JsonObjectConst>()) {
+        std::string to = kv.value() | "";
+        if (!to.empty()) bt_names[kv.key().c_str()] = to;
+    }
+    xSemaphoreGive(bt_names_mu);
+}
+
+static std::string bt_name_of(const std::string& raw) {
+    xSemaphoreTake(bt_names_mu, portMAX_DELAY);
+    auto it = bt_names.find(raw);
+    std::string n = it == bt_names.end() ? raw : it->second;
+    xSemaphoreGive(bt_names_mu);
+    return n;
+}
+
 static void fill_bt(JsonObject o) {
     o["state"] = bt::state();
     if (bt::saved()) {
@@ -157,6 +182,10 @@ static void fill_bt(JsonObject o) {
         o["address"] = bt::address();
     }
     if (!bt::last_report().empty()) o["last_report"] = bt::last_report();
+    JsonObject names = o["names"].to<JsonObject>();
+    xSemaphoreTake(bt_names_mu, portMAX_DELAY);
+    for (auto& kv : bt_names) names[kv.first] = kv.second;
+    xSemaphoreGive(bt_names_mu);
 }
 
 static void fill_state(JsonObject r) {
@@ -271,6 +300,13 @@ static bool cap_bt(JsonObjectConst a, JsonObject r, std::string&) {
         ui::text(BT_PAIR_TEXT, 35);
     } else if (action == "forget") {
         bt::forget();
+    }
+    JsonObjectConst names = a["names"].as<JsonObjectConst>();
+    if (!names.isNull()) {
+        std::string json;
+        serializeJson(names, json);
+        settings::set_bt_names(json);
+        load_bt_names();
     }
     fill_bt(r);
     return true;
@@ -607,6 +643,8 @@ void setup() {
     }
     xTaskCreatePinnedToCore(rook_task, "rook", 16384, nullptr, 1, nullptr, 1);
     xTaskCreatePinnedToCore(wifi_task, "wifi", 4096, nullptr, 1, nullptr, 0);
+    bt_names_mu = xSemaphoreCreateMutex();
+    load_bt_names();
     bt::begin([](const char* m) { logf("%s", m); });
     logf("Rook remote %s ready; worker %s", FW_VERSION, worker_on ? "on" : "off (not enrolled)");
 }
@@ -638,7 +676,7 @@ void loop() {
     // The paired Bluetooth remote's keys, and what became of it.
     std::string bt_key;
     while (bt::next_key(bt_key)) {
-        ButtonEvent e{0, -1, bt_key, "bt", "press", 0, ms};
+        ButtonEvent e{0, -1, bt_name_of(bt_key), "bt:" + bt_key, "press", 0, ms};
         on_button(e);
     }
     static std::string bt_was = "off";

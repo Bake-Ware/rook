@@ -47,6 +47,11 @@ std::string target_name();
 int rotation();
 void set_rotation(int r);
 
+// What the paired Bluetooth remote's keys are called: a JSON object, raw key
+// name (bt_c3) to the name it is sent under (up).
+std::string bt_names();
+void set_bt_names(const std::string& json);
+
 void factory_reset();
 
 }  // namespace settings

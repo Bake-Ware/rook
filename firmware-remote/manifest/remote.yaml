@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.3.0
+version: 0.3.1
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -50,6 +50,7 @@ caps:
     scope: local
     args:
       action: { type: str, enum: [status, pair, forget], default: status }
+      names: { type: map, doc: "What its keys are called, raw key name (bt_c3) to the name it is sent under (up). Replaces the whole list." }
     result: { type: map }
   map:
     doc: Name the buttons and the devices. names lists one name per button, in the order remote.state lists them; blank keeps the current names. targets lists the devices the remote's own menu offers (its input button opens it); the one picked there rides every remote.button event as target.

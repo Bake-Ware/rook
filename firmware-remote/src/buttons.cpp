@@ -63,7 +63,15 @@ int index_of(const std::string& k, bool learn) {
 }
 
 void fire(const std::string& key, const char* action, uint32_t held) {
-    int i = index_of(key, !ident);
+    // Once every button is known, anything else on the lines is noise (the
+    // radio's bursts look like a press of two lines at once): never a new button.
+    if ((int)pairs.size() > EXPECTED) {
+        pairs.resize(EXPECTED);
+        if ((int)names.size() > EXPECTED) names.resize(EXPECTED);
+        save();
+    }
+    int i = index_of(key, !ident && (int)pairs.size() < EXPECTED);
+    if (i < 0 && !ident) return;
     ButtonEvent e;
     e.seq = ++seq;
     e.index = i;
