@@ -91,7 +91,7 @@ async def scenario(tmp_path):
         async with mcp_client(url, agent) as session:
             # 2. An agent token connects and sees exactly the four tools.
             listed = await session.list_tools()
-            assert sorted(t.name for t in listed.tools) == ["call", "caps", "journal", "workers"]
+            assert sorted(t.name for t in listed.tools) == ["call", "caps", "journal", "stream", "workers"]
             assert all(t.description for t in listed.tools)
 
             # 3. A worker knocks; the agent sees it knocking with name and offered caps,
