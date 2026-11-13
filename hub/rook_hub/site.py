@@ -18,7 +18,7 @@ import pathlib
 
 from aiohttp import web
 
-from . import bands, caps, devices, jobs, journal, plugins, records
+from . import bands, caps, devices, history, jobs, journal, plugins, records
 from .errors import HubError
 from .journal import iso
 
@@ -302,6 +302,22 @@ def add_routes(app, hub):
             hub._db.executemany("INSERT INTO pins (user, position, label, href) VALUES (?, ?, ?, ?)",
                                 [(user, i, p["label"], p["href"]) for i, p in enumerate(pins)])
         return pins_of(user)
+
+    # ------------------------------------------- heartbeat history for the Workers page's graphs (P4, P7, H5)
+
+    @logged_in
+    async def heartbeat_counts(request, token, user):
+        """Every worker's heartbeats per step over the last `span` seconds: the heartbeats graph (P7)."""
+        return await history.counts(hub, request.query.get("span", 60), request.query.get("step"))
+
+    @logged_in
+    async def heartbeat_series(request, token, user):
+        """One worker's health per step over the last `span` seconds: its health charts (P4, H4)."""
+        return await history.series(hub, request.match_info["worker"], request.query.get("span", 86400),
+                                    request.query.get("step"))
+
+    app.router.add_get("/api/heartbeats", heartbeat_counts)
+    app.router.add_get("/api/heartbeats/{worker}", heartbeat_series)
 
     # ----------------------------------------------- streams as a terminal on the worker card (P8, S2-S5, L1)
 
