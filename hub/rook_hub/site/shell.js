@@ -27,6 +27,14 @@ export async function api(method, path, body) {
   return data;
 }
 
+/* One cap call as the logged-in user, journaled under them with `why` (L1): how a page,
+   core's or a plugin's, calls a cap (Bake 13 Nov). The cap's result, or for a cap that
+   opens a stream its stream_open reply; an error throws, saying what to try next. */
+export async function call(worker, cap, args, why) {
+  const reply = await api('POST', '/api/call', { worker, cap, args: args || {}, why });
+  return reply.type === 'result' ? reply.result : reply;
+}
+
 let toastTimer;
 export function toast(message) {
   store.toast = message;
@@ -136,10 +144,10 @@ const SideBar = {
     <div>
       <div class="nav-label"><span>Pinned</span></div>
       <ol class="pinned-strip" aria-label="Pinned views; drag to reorder">
-        <li v-for="(p, i) in store.pins" :key="p.href + i" class="pin" :class="{dragging: drag===i, over: over===i && drag!==i, here: isHere(p)}"
+        <li v-for="(p, i) in store.pins" :key="p.href + i" class="pin" :class="{dragging: drag===i, over: over===i && drag!==i, here: isHere(p), gone: p.gone}"
             draggable="true" @dragstart="start(i, $event)" @dragenter.prevent="enter(i)" @dragover.prevent @drop.prevent="drop(i)" @dragend="end">
           <span class="grip" aria-hidden="true" title="Drag to reorder">⠿</span>
-          <a :href="p.href" :title="p.label"><i v-if="split(p.label)[0]">{{ split(p.label)[0] }}</i>{{ split(p.label)[1] }}</a>
+          <a :href="p.href" :title="p.gone ? 'Gone: ' + p.gone : p.label"><i v-if="split(p.label)[0]">{{ split(p.label)[0] }}</i>{{ split(p.label)[1] }}<small v-if="p.gone" class="pin-gone">page gone</small></a>
           <button type="button" class="pin-x" @click="remove(i)" :aria-label="'Unpin ' + p.label" title="Unpin">×</button>
           <span class="sr-move"><button type="button" @click="nudge(i,-1)" :aria-label="'Move ' + p.label + ' up'">↑</button><button type="button" @click="nudge(i,1)" :aria-label="'Move ' + p.label + ' down'">↓</button></span>
         </li>
@@ -223,8 +231,10 @@ function mountArt() {
 const artToggle = Object.assign(document.createElement('button'), { className: 'art-toggle', type: 'button', hidden: true, textContent: 'Pause artwork' });
 
 /* ---------------- The app ---------------- */
+/* Plugins' pages and components (PL1, P1) load like core's. One that fails to load, or a
+   plugin page that is gone, is said in the page area; the rest of the site works. */
 const App = {
-  data() { return { store, page: null, component: null }; },
+  data() { return { store, page: null, component: null, failed: '' }; },
   async mounted() { await this.load(); },
   methods: {
     async load() {
@@ -232,20 +242,30 @@ const App = {
         const session = await api('GET', '/api/session');
         store.user = session.user; store.nav = session.nav;
         store.pins = (await api('GET', '/api/pins')).pins;
+        await Promise.all(session.components.map(async c => {
+          if (app.component(c.name)) return;
+          try { app.component(c.name, markRaw((await import(c.script)).default)); }
+          catch (e) { toast(`Plugin ${c.plugin}'s component ${c.name} failed to load: ${e.message}`); }
+        }));
         const pages = session.nav.flatMap(s => s.pages);
-        this.page = pages.find(p => p.path === location.pathname) || pages[0];
+        const [, top, plugin, name] = location.pathname.split('/');
+        this.page = pages.find(p => p.path === location.pathname) || (top === 'plugins' ? null : pages[0]);
+        if (!this.page) { this.failed = `This page is gone: plugin ${plugin} has no page ${name} now, or is not installed.`; return; }
         if (location.pathname === '/') showView(this.page.path + location.search);
-        this.component = markRaw((await import(this.page.script)).default);
+        try { this.component = markRaw((await import(this.page.script)).default); }
+        catch (e) { if (!this.page.plugin) throw e; this.failed = `Plugin ${this.page.plugin}'s page ${this.page.label} failed to load: ${e.message}`; }
       } catch (e) {
         if (store.user) toast(e.message);
+      } finally {
+        store.ready = true;
       }
-      store.ready = true;
     },
   },
   template: `<template v-if="store.ready">
       <login-view v-if="!store.user" @in="load"></login-view>
       <div v-else class="layout"><side-bar :active="page && page.id"></side-bar>
-        <main class="main"><component v-if="component" :is="component"></component></main></div>
+        <main class="main"><component v-if="component" :is="component"></component>
+          <div v-else-if="failed" class="wrap"><p class="callout bad page-failed" role="alert">{{ failed }}</p></div></main></div>
     </template><toast-line></toast-line>`,
 };
 

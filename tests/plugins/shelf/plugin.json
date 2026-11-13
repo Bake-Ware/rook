@@ -1,0 +1,10 @@
+{
+  "name": "shelf",
+  "version": "1.0.0",
+  "hub": {"module": "hub.py"},
+  "site": {
+    "pages": [{"segment": "Library", "title": "Shelf", "file": "site/shelf.js"}],
+    "settings": [{"title": "Shelf", "file": "site/settings.js"}],
+    "components": [{"name": "book-card", "file": "site/book-card.js"}]
+  }
+}

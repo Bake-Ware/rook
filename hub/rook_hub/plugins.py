@@ -10,8 +10,8 @@ once. When the hub starts it loads every installed plugin (PL3).
 A plugin adds, never replaces (PL1): a cap name or a record type that the hub or
 another plugin already has is refused, and then nothing of that plugin is kept.
 An install is all or nothing. A plugin is a hub object with a GUID and a moniker
-(G1). Its site section is kept and reported, nothing more, until the slice that
-acts on it.
+(G1). Its site section (the last block of this file) adds pages, settings
+sections and Vue components to the site (PL1, P1).
 
 A plugin's worker part (PL3) is a module per worker form. The hub pushes the
 parts to each connected worker as one `plugins` message listing every part that
@@ -107,6 +107,7 @@ def read_manifest(folder):
     skill = manifest.get("skill")
     if skill is not None and (not isinstance(skill, str) or not (folder / skill).is_file()):
         raise HubError("bad_manifest", f"{path}: skill must name a file in the folder; it is {skill!r}.", fix)
+    read_site(folder, manifest, path, fix)
     return manifest
 
 
@@ -220,6 +221,7 @@ class Plugins:
             shutil.copytree(source, folder, ignore=shutil.ignore_patterns("__pycache__"))
             declared, module_name = self._load(name, folder, manifest)
             self._clashes(declared)
+            site_clashes(self.hub, manifest)
             for kind in declared.record_types:
                 records.declare_type(self.hub, kind, name)
             with self.hub._lock, self.hub._db:
@@ -438,3 +440,87 @@ CAPS = {
             "receive": {"type": "boolean", "description": "false to opt it out, true to opt it back in."}}},
     }),
 }
+
+
+# ------------------------------------------------------------ the site section (PL1, P1, P2, P6)
+#
+# "site": {"pages": [{"segment", "title", "file"}], "settings": [{"title", "file"}],
+#          "components": [{"name", "file"}]}   (docs/plugins.md; Bake 13 Nov)
+# Each file is an ES module in the plugin's folder whose default export is a Vue component.
+# A page's name is its title in lowercase, words joined by hyphens: the plugin's page `notes`
+# is at /plugins/<plugin>/notes, so a pin names the plugin and the page (Bake 13 Nov).
+
+SITE_FIELDS = {"pages": ("segment", "title", "file"), "settings": ("title", "file"), "components": ("name", "file")}
+_COMPONENT = re.compile(r"[a-z0-9]+(-[a-z0-9]+)+\Z")    # a hyphen, so it is never an HTML element's name
+
+
+def page_name(title):
+    return "-".join(re.findall(r"[a-z0-9]+", title.lower()))
+
+
+def read_site(folder, manifest, path, fix):
+    """Check the site section, or HubError saying what to fix: each entry has its fields,
+    each file is in the folder, and names are good and not repeated within the plugin."""
+    site = manifest.get("site")
+    if site is None:
+        return
+    root = folder.resolve()
+    for part, fields in SITE_FIELDS.items():
+        entries = site.get(part, [])
+        if not isinstance(entries, list):
+            raise HubError("bad_manifest", f"{path}: site.{part} must be a list.", fix)
+        names = set()
+        for i, entry in enumerate(entries):
+            where = f"{path}: site.{part}[{i}]"
+            if not isinstance(entry, dict) or not all(isinstance(entry.get(f), str) and entry[f].strip() for f in fields):
+                raise HubError("bad_manifest", f"{where} must be an object with {', '.join(fields)}, each a string.", fix)
+            target = (folder / entry["file"]).resolve()
+            if not target.is_relative_to(root):
+                raise HubError("bad_manifest", f"{where}: file {entry['file']!r} leaves the plugin's folder.",
+                               f"Put the file inside {folder} and name it by its path there, such as site/page.js.")
+            if not target.is_file():
+                raise HubError("bad_manifest", f"{where}: file {entry['file']!r} is missing.",
+                               f"Add the file to {folder}, or fix its path in {MANIFEST}.")
+            if part == "components" and not _COMPONENT.match(entry["name"]):
+                raise HubError("bad_manifest", f"{where}: name {entry['name']!r} must be lowercase letters and digits "
+                                              "with at least one hyphen, such as note-card.", fix)
+            name = entry["name"] if part == "components" else page_name(entry["title"])
+            if not name or name in names:
+                raise HubError("bad_manifest", f"{where}: {'name' if part == 'components' else 'title'} "
+                                              f"{entry.get('title') or entry.get('name')!r} is empty or used twice in this plugin.", fix)
+            names.add(name)
+
+
+def site_file(folder, file):
+    """A manifest's file name as the site serves it: its path in the folder, with forward slashes."""
+    return (folder / file).resolve().relative_to(folder.resolve()).as_posix()
+
+
+def site_parts(hub):
+    """Every installed plugin's site section, in install order: [(plugin name, installed folder, site)]."""
+    with hub._lock:
+        rows = hub._db.execute("SELECT name, folder, manifest FROM plugins ORDER BY installed_at").fetchall()
+    return [(row["name"], hub.plugins.root / row["folder"], json.loads(row["manifest"]).get("site") or {})
+            for row in rows]
+
+
+def site_clashes(hub, manifest):
+    """Refuse a page or component name that core or another plugin already has (PL1)."""
+    from . import site           # site.py imports this module
+    name, mine = manifest["name"], manifest.get("site") or {}
+    pages = {p["id"]: "core" for segment in site.SEGMENTS.values() for p in segment}
+    components = {c: "core" for c in site.COMPONENTS}
+    for other, _, parts in site_parts(hub):
+        if other != name:
+            pages.update({page_name(p["title"]): f"plugin {other}" for p in parts.get("pages", [])})
+            components.update({c["name"]: f"plugin {other}" for c in parts.get("components", [])})
+    for page in mine.get("pages", []):
+        if page_name(page["title"]) in pages:
+            raise HubError("page_taken", f"{pages[page_name(page['title'])]} already has a page called "
+                                         f"{page_name(page['title'])!r}.",
+                           "Plugins add, never replace: give the page another title and install again.")
+    for component in mine.get("components", []):
+        if component["name"] in components:
+            raise HubError("component_taken", f"{components[component['name']]} already has a component called "
+                                              f"{component['name']!r}.",
+                           "Plugins add, never replace: give the component another name and install again.")
