@@ -164,16 +164,17 @@ async def scenario(tmp_path):
                 assert response.status == 403
 
             # 5. The shell: who is logged in, and the navigation (P2). Core installs one
-            #    segment, Hub, holding the pages that exist: Workers.
+            #    segment, Hub, holding the pages that exist: Workers and Data.
             status, reply = await ask(client, "GET", base + "/api/session")
             assert status == 200 and reply["user"]["name"] == "Alice"
             assert reply["nav"] == [{"segment": "Hub", "pages": [
-                {"id": "workers", "label": "Workers", "path": "/workers", "script": "/site/pages/workers.js"}]}]
+                {"id": "workers", "label": "Workers", "path": "/workers", "script": "/site/pages/workers.js"},
+                {"id": "data", "label": "Data", "path": "/data", "script": "/site/pages/data.js"}]}]
 
             # 6. The Workers page's data (P4, P7, B2, B5, R4, W6).
             status, view = await ask(client, "GET", base + "/api/workers")
             assert status == 200
-            assert view["stats"] == {"online": 6, "pending": 1}
+            assert view["stats"] == {"online": 6, "pending": 1, "devices": 0}
             assert by_band(view) == {"Home": ["desk", "nas"], "Office": ["shop"],
                                      "roaming": ["phone", "laptop", "tablet", "spare"]}
             workers = {w["name"]: w for g in view["groups"] for w in g["workers"]}
