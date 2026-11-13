@@ -162,7 +162,7 @@ The hub serves these files at `/plugin-files/<plugin>/<file>` to a logged-in ses
 What the hub refuses at install, saying what to fix (an install is all or nothing):
 
 - an entry without its fields, or a `file` that is missing or leaves the plugin's folder (`bad_manifest`);
-- a page or component name used twice in the plugin, or a component name without a hyphen (`bad_manifest`);
+- a page, settings section or component name used twice in the plugin, or a component name without a hyphen (`bad_manifest`). A settings section's name is made from its title as a page's is;
 - a page name that core or another plugin already has (`page_taken`);
 - a component name that core or another plugin already has (`component_taken`). Core's are `side-bar`, `login-view`, `pin-view`, `row-menu` and `toast-line`.
 
