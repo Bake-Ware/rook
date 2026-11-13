@@ -131,8 +131,10 @@ async def scenario(tmp_path):
             assert gpubox["buckets"][-1] == {"at": gpubox["buckets"][-1]["at"], "count": 1, "gpu": 90.0, "vram": 75.0,
                                              "npu": 5.0, "battery": 89.0}
 
-            esp = await series("esp", "span=3600&step=3600")         # an ESP32: free heap and uptime only
-            assert esp["fields"] == ["heap_free", "uptime"] and esp["totals"] == {}
+            # An ESP32: free heap and uptime only. A step of an hour or more is read from the hourly
+            # roll-up, in clock hours (H5): one two-hour bucket holds the whole hour of heartbeats.
+            esp = await series("esp", "span=7200&step=7200")
+            assert esp["fields"] == ["heap_free", "uptime"] and esp["totals"] == {} and esp["source"] == "hourly"
             [whole] = esp["buckets"]
             assert whole["count"] == 12 and whole["uptime"] == 3600
             assert whole["heap_free"] == sum(180000 - 1000 * i for i in range(12)) / 12

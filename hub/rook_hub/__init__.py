@@ -22,7 +22,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, devices, jobs, plugins, records, scrub, site, streams, vault, web
+from . import bands, caps, devices, history, jobs, plugins, records, scrub, site, streams, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -149,6 +149,8 @@ class Hub:
         self._db.executescript(plugins.SCHEMA)
         self._db.executescript(devices.SCHEMA)
         self._db.executescript(site.SCHEMA)
+        self._db.executescript(history.SCHEMA)
+        history.roll_up_existing(self)   # once, for a hub that kept heartbeats before the roll-up (H5)
         if vault_key_file is not None:
             vault_key = vault.key_from_file(self, vault_key_file)
         self.vault = vault.Vault(self, vault_key)
@@ -509,8 +511,9 @@ class Hub:
             self._db.execute(
                 "UPDATE workers SET name = ?, protocol = ?, last_heartbeat = ?, state = ? WHERE guid = ?",
                 (message["identity"]["name"], message["protocol"], now, json.dumps(state), guid))
-            self._db.execute("INSERT INTO heartbeats (worker, at, body) VALUES (?, ?, ?)",
-                             (guid, now, raw.decode("utf-8")))
+            stored = self._db.execute("INSERT INTO heartbeats (worker, at, body) VALUES (?, ?, ?)",
+                                      (guid, now, raw.decode("utf-8")))
+            history.roll(self, stored.lastrowid)    # the hourly roll-up, in the same transaction (H5)
             self._see(guid, "hostname", [message["facts"]["hostname"]], now)
             self._see(guid, "mac", message["facts"]["macs"], now)
             interval = before["interval"]
