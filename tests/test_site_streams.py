@@ -98,6 +98,10 @@ async def scenario(tmp_path):
             assert card["streams"][1]["opened_at"] and card["streams"][1]["open"] is True
             status, reply = await ask(client, "GET", f"{base}/api/streams/{name}")
             assert reply["stream"]["title"] == "build" and reply["stream"]["worker"] == box
+            for path in ("terminal.js", "vendor/xterm/xterm.mjs", "vendor/xterm/addon-fit.mjs", "vendor/xterm/xterm.css",
+                         "vendor/xterm/LICENSE.txt", "vendor/xterm/ADDON-FIT-LICENSE.txt"):
+                async with client.get(f"{base}/site/{path}") as response:
+                    assert response.status == 200, path      # the terminal is served by the hub itself (P1, P8)
 
             # 3. The bytes as they were: colour codes and bytes that are not text, unchanged.
             status, read = await ask(client, "GET", f"{read_url}?from=0")
