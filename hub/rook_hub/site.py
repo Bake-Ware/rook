@@ -51,6 +51,9 @@ install_page("Hub", "auth", "Auth", "/site/pages/auth.js")
 install_page("Hub", "secrets", "Secrets", "/site/pages/secrets.js")
 install_page("Hub", "jobs", "Jobs", "/site/pages/jobs.js")
 install_page("Hub", "data", "Data", "/site/pages/data.js")
+# The Vue components shell.js registers by name, for every page to use. A plugin's component
+# may not take one of these names (PL1); keep this in step with the app.component calls there.
+COMPONENTS = ("side-bar", "login-view", "pin-view", "row-menu", "toast-line")
 
 
 def _refused(error):
@@ -273,7 +276,7 @@ def add_routes(app, hub):
     async def me(request, token, user):
         person = hub.auth.get_user(user)
         return {"user": {"name": person["name"], "moniker": person["moniker"]},
-                "nav": [{"segment": name, "pages": pages} for name, pages in SEGMENTS.items()]}
+                "nav": navigation(hub), "components": plugin_components(hub)}
 
     @logged_in
     async def workers(request, token, user):
@@ -303,8 +306,8 @@ def add_routes(app, hub):
 
     def pins_of(user):
         with hub._lock:
-            return {"pins": [{"label": r["label"], "href": r["href"]} for r in hub._db.execute(
-                "SELECT label, href FROM pins WHERE user = ? ORDER BY position", (user,))]}
+            rows = hub._db.execute("SELECT label, href FROM pins WHERE user = ? ORDER BY position", (user,)).fetchall()
+        return {"pins": [pin_view(hub, r["label"], r["href"]) for r in rows]}
 
     @logged_in
     async def get_pins(request, token, user):
@@ -480,6 +483,7 @@ def add_routes(app, hub):
     app.router.add_put("/api/pins", put_pins)
     jobs_secrets_auth_routes(app, hub, logged_in)
     settings_routes(app, hub, logged_in)
+    plugin_site_routes(app, hub, logged_in, session)
 
 
 # ------------------------------------------------- the Jobs, Secrets and Auth pages
@@ -722,11 +726,11 @@ def settings_routes(app, hub, logged_in):
     """The Settings page's sections, and its Plugins section's data and install (P4, PL3, PL4)."""
     @logged_in
     async def get_settings(request, token, user):
-        return {"sections": SETTINGS}
+        return {"sections": SETTINGS + plugin_sections(hub)}
 
     @logged_in
     async def get_plugins(request, token, user):
-        return {"plugins": hub.plugins.list()}
+        return {"plugins": [dict(p, **plugin_adds(hub, p["name"])) for p in hub.plugins.list()]}
 
     @logged_in
     async def check_plugin(request, token, user):
@@ -743,9 +747,113 @@ def settings_routes(app, hub, logged_in):
     @logged_in
     async def install_plugin(request, token, user):
         path = _text(await _body(request), "path")
-        return await _hub_cap(hub, "plugin.install", {"path": path}, "Installed on the Settings page.", token)
+        reply = await _hub_cap(hub, "plugin.install", {"path": path}, "Installed on the Settings page.", token)
+        return {"installed": dict(reply["installed"], **plugin_adds(hub, reply["installed"]["name"]))}
 
     app.router.add_get("/api/settings", get_settings)
     app.router.add_get("/api/plugins", get_plugins)
     app.router.add_post("/api/plugins/check", check_plugin)
     app.router.add_post("/api/plugins", install_plugin)
+
+
+# ------------------------------------------------- what plugins add to the site (PL1, P1, P2, P6)
+#
+# A plugin's site section (plugins.py) adds pages, settings sections and Vue components. They
+# are read from the installed plugins on every request, so installing or replacing a plugin
+# shows on the next page load, with no restart (PL3). A page is at /plugins/<plugin>/<page>:
+# a pin names the plugin and the page, so it survives a reinstall and never reaches another
+# plugin's page (Bake 13 Nov). The files are served only to a session, and only those the
+# manifest names. A plugin's page calls caps with shell.js's call(), through POST /api/call,
+# as the logged-in user, journaled under them (Bake 13 Nov).
+
+def _file_url(plugin, folder, file):
+    return f"/plugin-files/{plugin}/{plugins.site_file(folder, file)}"
+
+
+def navigation(hub):
+    """The segments and their pages: core's, then each plugin's in install order. A segment
+    appears with the first page installed into it (P2)."""
+    segments = {name: list(pages) for name, pages in SEGMENTS.items()}
+    for plugin, folder, site in plugins.site_parts(hub):
+        for page in site.get("pages", []):
+            name = plugins.page_name(page["title"])
+            segments.setdefault(page["segment"], []).append({
+                "id": f"{plugin}/{name}", "label": page["title"], "path": f"/plugins/{plugin}/{name}",
+                "script": _file_url(plugin, folder, page["file"]), "plugin": plugin})
+    return [{"segment": name, "pages": pages} for name, pages in segments.items()]
+
+
+def plugin_components(hub):
+    return [{"name": c["name"], "script": _file_url(plugin, folder, c["file"]), "plugin": plugin}
+            for plugin, folder, site in plugins.site_parts(hub) for c in site.get("components", [])]
+
+
+def plugin_sections(hub):
+    """Plugins' sections on the Settings page, after core's (P4, PL1)."""
+    return [{"id": f"{plugin}/{plugins.page_name(s['title'])}", "label": s["title"],
+             "script": _file_url(plugin, folder, s["file"]), "plugin": plugin}
+            for plugin, folder, site in plugins.site_parts(hub) for s in site.get("settings", [])]
+
+
+def plugin_adds(hub, name):
+    """What one plugin adds to the site, as the Settings page's Plugins list shows it."""
+    for plugin, _, site in plugins.site_parts(hub):
+        if plugin == name:
+            return {"pages": [{"segment": p["segment"], "title": p["title"],
+                               "path": f"/plugins/{plugin}/{plugins.page_name(p['title'])}"}
+                              for p in site.get("pages", [])],
+                    "settings_sections": [s["title"] for s in site.get("settings", [])],
+                    "components": [c["name"] for c in site.get("components", [])]}
+    return {"pages": [], "settings_sections": [], "components": []}
+
+
+def pin_view(hub, label, href):
+    """A pin (P6). A pin on a plugin's page that is gone, because the plugin no longer has that
+    page, says so: `gone` with what is missing, and the strip shows it as gone."""
+    pin = {"label": label, "href": href}
+    parts = href.split("?")[0].split("/")
+    if len(parts) == 4 and parts[1] == "plugins":
+        plugin, name = parts[2], parts[3]
+        installed = {p: site for p, _, site in plugins.site_parts(hub)}
+        if plugin not in installed:
+            pin["gone"] = f"No plugin called {plugin} is installed."
+        elif name not in [plugins.page_name(p["title"]) for p in installed[plugin].get("pages", [])]:
+            pin["gone"] = f"Plugin {plugin} has no page {name} now."
+    return pin
+
+
+def plugin_site_routes(app, hub, logged_in, session):
+    async def plugin_file(request):
+        """One file a plugin's manifest names, to a session only (P1)."""
+        try:
+            session(request)
+            plugin, wanted = request.match_info["plugin"], request.match_info["file"]
+            for name, folder, site in plugins.site_parts(hub):
+                files = {plugins.site_file(folder, entry["file"])
+                         for part in plugins.SITE_FIELDS for entry in site.get(part, [])}
+                if name == plugin and wanted in files:
+                    return web.FileResponse(folder / wanted, headers={
+                        "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store"})
+            raise HubError("unknown_file", f"Plugin {plugin} has no site file {wanted}.",
+                           "Load the plugin's pages through the site's navigation.")
+        except HubError as e:
+            return web.json_response(e.message, status=404) if e.message["code"] == "unknown_file" else _refused(e)
+
+    @logged_in
+    async def call(request, token, user):
+        """One cap call as the logged-in user, journaled under them (L1): what a page's call() sends."""
+        body = await _body(request)
+        args = body.get("args", {})
+        if not isinstance(args, dict):
+            raise HubError("bad_message", "args must be an object.", "Send the cap's arguments as an object.")
+        reply = await hub.call(_text(body, "worker"), _text(body, "cap"), args, _text(body, "why"), token=token)
+        if reply["type"] == "error":
+            raise HubError(reply["code"], reply["message"], reply["next"])
+        return reply
+
+    async def page(request):
+        return web.FileResponse(FILES / "index.html")   # the shell finds the page, or says it is gone
+
+    app.router.add_get("/plugins/{plugin}/{page}", page)
+    app.router.add_get("/plugin-files/{plugin}/{file:.+}", plugin_file)
+    app.router.add_post("/api/call", call)
