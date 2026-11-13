@@ -9,8 +9,11 @@ import pathlib
 import re
 import shutil
 
-from helpers import Clock
+from helpers import Clock, eventually
+from memory_link import connector
 from rook_hub import Hub, journal, site
+from rook_worker import Worker
+from test_plugins import write_plugin
 from test_site import ask, browser, login
 
 PLUGINS = pathlib.Path(__file__).parent / "plugins"
@@ -189,3 +192,55 @@ def test_plugin_site_loads_at_start(tmp_path):
 def test_core_components_match_the_shell():
     """The names refused to plugins are the components shell.js registers."""
     assert tuple(re.findall(r"app\.component\('([a-z-]+)', ", SHELL.read_text())) == site.COMPONENTS
+
+
+def test_plugins_list_shows_where_worker_parts_loaded(tmp_path):
+    asyncio.run(worker_parts(tmp_path))
+
+
+async def worker_parts(tmp_path):
+    """The Settings page's Plugins list says, per plugin, which workers loaded its worker part
+    and which failed to, with why (PL3; brief 21 item 7). Real Python workers on in-memory links."""
+    hub = Hub(tmp_path / "hub")
+    host, port = await hub.serve("127.0.0.1", 0)
+    base = f"http://{host}:{port}"
+    alice = hub.auth.create_user("Alice", "correct horse")
+    running, monikers = [], []
+    for name in ("alpha", "beta"):
+        worker = Worker(tmp_path / name, base, connector(hub), name=name, caps={}, macs=[], knock_every=0.02)
+        running.append((worker, asyncio.create_task(worker.run())))
+        await eventually(lambda: any(k["key"] == worker.key for k in hub.list_pending()))
+        monikers.append(hub.approve(worker.key, user=alice["guid"])["moniker"])
+        await eventually(lambda: hub.get_worker(monikers[-1])["online"])
+    try:
+        async with browser() as client:
+            assert (await login(client, base, "Alice", "correct horse"))[0] == 200
+            status, reply = await ask(client, "POST", base + "/api/plugins", {"path": str(PLUGINS / "greeter")})
+            assert status == 200 and (reply["installed"]["loaded_on"], reply["installed"]["failed_on"]) == ([], [])
+            broken = write_plugin(tmp_path / "broken", {"name": "broken", "version": "0.1.0",
+                                                         "worker": {"python": {"module": "w.py"}}},
+                                  **{"w.py": "raise RuntimeError('this part needs a GPU')\n"})
+            assert (await ask(client, "POST", base + "/api/plugins", {"path": broken}))[0] == 200
+
+            async def listed():
+                status, reply = await ask(client, "GET", base + "/api/plugins")
+                by_name = {p["name"]: p for p in reply["plugins"]}
+                done = len(by_name["greeter"]["loaded_on"]) == 2 and len(by_name["broken"]["failed_on"]) == 2
+                return by_name if done else None
+            for _ in range(200):
+                if by_name := await listed():
+                    break
+                await asyncio.sleep(0.02)
+            assert by_name, "the workers never reported their plugin parts"
+            assert sorted(p["worker"] for p in by_name["greeter"]["loaded_on"]) == sorted(monikers)
+            assert all(p["version"] == "1.0.0" and "error" not in p for p in by_name["greeter"]["loaded_on"])
+            assert by_name["greeter"]["failed_on"] == [] and by_name["broken"]["loaded_on"] == []
+            assert sorted(by_name["broken"]["failed_on"], key=lambda p: p["worker"]) == [
+                {"worker": m, "version": "0.1.0", "error": "RuntimeError: this part needs a GPU"} for m in sorted(monikers)]
+            assert by_name["greeter"]["worker"] and by_name["greeter"]["pages"] == []    # site parts listed beside them
+    finally:
+        for worker, task in running:
+            task.cancel()
+        await asyncio.gather(*(task for _, task in running), return_exceptions=True)
+        await hub.stop_serving()
+        hub.close()
