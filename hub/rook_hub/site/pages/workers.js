@@ -4,23 +4,68 @@
    worker expanded to its facts, health, caps, streams, the devices pinned to it and
    whether it serves devices; a device expanded to its driver, route, latest status
    and caps. A stream on the card opens in place as a terminal (P8), its closed
-   streams on request (S5); a view may hold one stream open (P6). It asks the hub
-   again every few seconds, so it stays up to date. */
+   streams on request (S5); a view may hold one stream open (P6). Ported from 0.4
+   (P7): list, grid and 3D views, and the heartbeats graph; a worker's health charts
+   from its heartbeat history (P4, H4, H5). It asks the hub again every few seconds,
+   so it stays up to date. */
 import { api, toast, viewHref, showView } from '/site/shell.js';
 import StreamTerminal from '/site/terminal.js';
+import { FleetView, HB_WINDOW, HealthCharts, HeartbeatsTile, sceneKind } from '/site/pages/workers-graphs.js';
 
 const REFRESH_MS = 5000;
+const BEATS_MS = 2000;     // the heartbeats graph asks for the last minute this often
 
-function bytes(n) {
-  if (typeof n !== 'number') return '';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-  return (n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)) + ' ' + units[i];
-}
+/* A device's and a worker's expanded detail: the same markup in the list and the grid. */
+const DEVICE_DETAIL = `
+            <div class="dblock"><h4>Device</h4>
+              <div class="kv"><span class="k">Driver</span><span class="v">{{ w.driver }}</span>
+                <span class="k">Route</span><span class="v">{{ w.route.kind }}<template v-if="w.route.via"> · through {{ nameOf(w.route.via) }} ({{ w.route.via }})</template></span>
+                <span class="k">Band</span><span class="v">{{ g.band ? g.band.name : 'none' }}</span>
+                <span class="k">Status poll</span><span class="v">{{ w.interval ? 'every ' + w.interval + ' s' : 'not polled' }}</span>
+                <span class="k">Last poll</span><span class="v">{{ w.polled_at ? ago(w.polled_at) + ' · ' + reach(w) : 'never' }}</span></div></div>
+            <div class="dblock"><h4>Status <span class="dim2">latest poll</span></h4>
+              <div v-if="status(w.status)" class="kv"><template v-for="[k, v] in status(w.status)" :key="k"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></template></div>
+              <pre v-else-if="w.status !== null" class="json">{{ json(w.status) }}</pre>
+              <p v-else class="note" style="margin:0">No status yet.</p></div>
+            <div class="dblock"><h4>Caps <span class="dim2">{{ w.caps.length }} from driver {{ w.driver }}</span></h4>
+              <div v-for="c in w.caps" :key="c.name" class="capline"><code>{{ c.name }}</code><span class="note">{{ c.description }}</span></div>
+              <p v-if="!w.caps.length" class="note" style="margin:0">No caps: no installed plugin declares driver {{ w.driver }}.</p></div>`;
+
+const WORKER_DETAIL = `
+            <health-charts :worker="w.moniker"></health-charts>
+            <div class="dblock"><h4>Runs on</h4>
+              <div class="kv"><template v-for="[k, v] in facts(w.facts)" :key="k"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></template></div>
+              <p v-if="!facts(w.facts).length" class="note" style="margin:0">It has not reported yet.</p></div>
+            <div class="dblock"><h4>Caps <span class="dim2">{{ w.caps.length }} served</span></h4>
+              <div v-for="c in w.caps" :key="c.name" class="capline"><code>{{ c.name }}</code><span v-if="c.returns==='stream'" class="badge plain">stream</span><span class="note">{{ c.description }}</span></div>
+              <p v-if="!w.caps.length" class="note" style="margin:0">No caps.</p></div>
+            <div class="dblock" :class="{full: streamsOf(w).some(s => attached[s.moniker])}"><h4>Streams <span class="dim2">{{ w.streams.length }} open</span></h4>
+              <div v-for="s in streamsOf(w)" :key="s.moniker" class="stream" :class="{attached: attached[s.moniker]}">
+                <span class="k">{{ s.moniker }}</span>
+                <div><b>{{ s.title }}<span v-if="!s.open" class="badge plain" style="margin-left:6px">closed</span></b><p>{{ s.description }}</p>
+                  <p class="dim2 mono small">opened by {{ who(s) }} {{ ago(s.opened_at) }}<template v-if="!s.open && s.closed_at"> · closed by {{ s.closed_by === 'worker' ? 'the worker' : s.closed_by ? s.closed_by.name : 'someone' }} {{ ago(s.closed_at) }}</template></p></div>
+                <span style="display:flex;gap:4px;align-items:start">
+                  <button class="btn sm" :class="{accent: attached[s.moniker]}" type="button" @click.stop="attached[s.moniker] ? detach(s) : attach(s)">{{ attached[s.moniker] ? 'detach' : s.open ? 'attach' : 'open read-only' }}</button>
+                  <row-menu :items="streamMenu(w, s)" label="Stream actions"></row-menu></span>
+                <stream-terminal v-if="attached[s.moniker]" :stream="s" :worker="w.name" @detach="detach(s)" @closed="closedNow(w, s)"></stream-terminal>
+              </div>
+              <p v-if="!w.streams.length" class="note" style="margin:0">Nothing open.</p>
+              <button class="btn sm ghost" type="button" style="margin-top:6px" @click.stop="toggleClosed(w)">{{ closedOf[w.moniker] ? 'hide closed streams' : 'show closed streams' }}</button>
+              <p v-if="closedOf[w.moniker] && !closedOf[w.moniker].length" class="note" style="margin:0">No closed streams.</p></div>
+            <div class="dblock full"><h4>Devices <span class="dim2">{{ pinnedTo(w).length }} pinned to {{ w.name }}</span></h4>
+              <div class="optout"><div class="p">Serves devices<small>Carries out network steps for devices: those pinned to it, and floating ones on its band.</small></div>
+                <span class="state" :class="{out: !w.serves_devices}">{{ w.serves_devices ? 'allowed' : 'opted out' }}</span>
+                <button class="toggle" type="button" :class="{on: w.serves_devices}" :aria-pressed="w.serves_devices" :aria-label="'Serve devices from ' + w.name"
+                  @click.stop="serve(w, !w.serves_devices)"></button></div>
+              <div v-for="d in pinnedTo(w)" :key="d.moniker" class="devcard" style="margin-top:8px">
+                <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v11H4zM9 20h6M12 16v4"/></svg></span>
+                <div><b>{{ d.name }}</b> <span class="dim2 mono small">· {{ d.moniker }}</span><br><span class="note">driver {{ d.driver }} · {{ d.caps.length }} caps</span></div>
+                <span class="badge" :class="{good: d.reachable, bad: d.reachable === false}">{{ reach(d) }}</span>
+              </div></div>`;
 
 export default {
-  components: { 'stream-terminal': StreamTerminal },
+  components: { 'stream-terminal': StreamTerminal, 'heartbeats-tile': HeartbeatsTile, 'health-charts': HealthCharts,
+    'fleet-view': FleetView },
   data() {
     const view = new URLSearchParams(location.search);
     return {
@@ -28,10 +73,14 @@ export default {
       show: ['workers', 'devices'].includes(view.get('show')) ? view.get('show') : 'all',
       renaming: {}, rename: {}, newBand: {}, addTo: {}, timer: null,
       attached: {}, closedOf: {}, focus: view.get('stream') || '', focusStream: null,
+      layout: ['grid', '3d'].includes(view.get('view')) ? view.get('view') : 'list', beats: null, beatTimer: null,
     };
   },
   computed: {
-    view() { return { q: this.q, worker: this.only, show: this.show === 'all' ? '' : this.show, stream: this.focus }; },
+    view() {
+      return { q: this.q, worker: this.only, show: this.show === 'all' ? '' : this.show, view: this.layout === 'list' ? '' : this.layout,
+        stream: this.focus };
+    },
     href() { return viewHref('/workers', this.view); },
     onlyName() {
       const w = [...this.allWorkers, ...this.allDevices].find(x => x.moniker === this.only);
@@ -40,7 +89,8 @@ export default {
     pinLabel() {
       if (this.focus && this.focusStream) return 'Stream: ' + this.focusStream.title;
       if (this.only) return 'Workers: ' + this.onlyName;
-      return 'Workers' + (this.show !== 'all' || this.q ? ': ' : '') + [this.show !== 'all' ? this.show : '', this.q].filter(Boolean).join(' · ');
+      const bits = [this.show !== 'all' ? this.show : '', this.layout !== 'list' ? this.layout : '', this.q].filter(Boolean);
+      return 'Workers' + (bits.length ? ': ' + bits.join(' · ') : '');
     },
     allWorkers() { return this.data ? this.data.groups.flatMap(g => g.workers) : []; },
     allDevices() { return this.data ? this.data.groups.flatMap(g => g.devices) : []; },
@@ -51,15 +101,32 @@ export default {
         .filter(g => g.shown.length || (g.band && !this.only && !this.q && this.show === 'all'));
     },
     bands() { return this.data ? this.data.groups.filter(g => g.band).map(g => g.band) : []; },
+    /* The heartbeats graph's bars, in the order the page lists the workers (P7). */
+    beatOrder() { return this.allWorkers.map(w => ({ moniker: w.moniker, name: w.name })); },
+    /* The 3D view's pieces: what the list shows, grouped by band, ages from the heartbeat history (P7). */
+    pieces() {
+      if (!this.data) return [];
+      const last = Object.fromEntries((this.beats ? this.beats.workers : []).map(w => [w.moniker, w.last_heartbeat]));
+      const now = this.beats ? Date.parse(this.beats.now) / 1000 : Date.now() / 1000;
+      return this.groups.flatMap(g => g.shown.map(({ w }) => ({
+        id: w.moniker, name: w.name, group: g.band ? g.band.name : 'Roaming', bandName: g.band ? g.band.name : 'roaming',
+        kind: sceneKind(w), hub: false, banned: false, serves: null, caps: w.caps.map(c => c.name),
+        age: w.device ? (w.reachable ? 0 : 10 * HB_WINDOW) : last[w.moniker] ? Math.max(0, now - Date.parse(last[w.moniker]) / 1000) : 10 * HB_WINDOW,
+        description: w.device ? 'device · driver ' + w.driver + ' · ' + this.route(w) : [w.facts.os, w.facts.arch, w.facts.form].filter(Boolean).join(' · '),
+        version: w.device ? '' : w.facts.version || '', battery: w.device ? null : w.health.battery ?? null,
+      })));
+    },
   },
   watch: { view: { handler() { showView('/workers', this.view); }, deep: true } },
   mounted() {
     if (this.only) this.open[this.only] = true;
     if (this.focus) this.openStream(this.focus);
     this.load();
+    this.loadBeats();
     this.timer = setInterval(this.load, REFRESH_MS);
+    this.beatTimer = setInterval(this.loadBeats, BEATS_MS);
   },
-  unmounted() { clearInterval(this.timer); },
+  unmounted() { clearInterval(this.timer); clearInterval(this.beatTimer); },
   methods: {
     async load() {
       try { this.data = await api('GET', '/api/workers'); this.error = ''; } catch (e) { this.error = e.message; return; }
@@ -102,6 +169,15 @@ export default {
     },
     json(value) { return JSON.stringify(value, null, 2); },
     toggle(moniker) { this.open[moniker] = !this.open[moniker]; },
+    async loadBeats() {
+      try { this.beats = { ...(await api('GET', `/api/heartbeats?span=${HB_WINDOW}&step=${HB_WINDOW}`)), at: Date.now() }; } catch (e) { /* the page's own load reports */ }
+    },
+    /* A bar of the heartbeats graph, or a pawn in 3D, was picked: show that worker in the list or grid. */
+    find(moniker) {
+      if (this.layout === '3d') this.layout = 'list';
+      this.open[moniker] = true;
+      this.$nextTick(() => { const el = document.getElementById('w-' + moniker); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+    },
     /* A pinned view with a stream open: its worker expanded, the stream attached (P6, P8). */
     async openStream(moniker) {
       try {
@@ -163,15 +239,6 @@ export default {
       const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
       return s < 60 ? s + ' s ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago';
     },
-    health(h) {
-      const size = v => v && typeof v === 'object' ? `${bytes(v.free)} free of ${bytes(v.total)}` : null;
-      const pct = v => typeof v === 'number' ? v + '%' : null;
-      return [['CPU', pct(h.cpu)], ['RAM', size(h.ram)], ['Disk', size(h.disk)], ['GPU', pct(h.gpu)], ['VRAM', size(h.vram)],
-        ['NPU', pct(h.npu)], ['Battery', pct(h.battery)], ['Temperature', typeof h.temperature === 'number' ? h.temperature + ' °C' : null],
-        ['Free heap', typeof h.heap_free === 'number' ? bytes(h.heap_free) : null],
-        ['Up', typeof h.uptime === 'number' ? this.ago(new Date(Date.now() - h.uptime * 1000).toISOString()).replace(' ago', '') : null]]
-        .filter(([, v]) => v);
-    },
     facts(f) {
       return [['Hostname', f.hostname], ['System', [f.os, f.arch].filter(Boolean).join(' · ')], ['Form', f.form],
         ['Version', f.version], ['MACs', (f.macs || []).join(', ')]].filter(([, v]) => v);
@@ -189,6 +256,11 @@ export default {
         <div v-if="data" class="chips" role="group" aria-label="Show">
           <button v-for="f in ['all', 'workers', 'devices']" :key="f" class="chip" type="button" :aria-pressed="show===f" @click="show=f">{{ f }} <span class="n">{{ count(f) }}</span></button>
         </div>
+        <div class="seg" role="group" aria-label="Worker view">
+          <button type="button" :class="{on: layout==='list'}" :aria-pressed="layout==='list'" @click="layout='list'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>list</button>
+          <button type="button" :class="{on: layout==='grid'}" :aria-pressed="layout==='grid'" @click="layout='grid'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>grid</button>
+          <button type="button" :class="{on: layout==='3d'}" :aria-pressed="layout==='3d'" @click="layout='3d'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2l9 5v10l-9 5-9-5V7zM12 12l9-5M12 12v10M12 12L3 7"/></svg>3D</button>
+        </div>
       </div>
     </header>
 
@@ -199,6 +271,7 @@ export default {
         <div class="tile mini online"><div class="k">{{ data.stats.online }}</div><div class="l">workers online</div></div>
         <div class="tile mini pend"><div class="k">{{ data.stats.pending }}</div><div class="l">pending</div></div>
         <div class="tile mini dev"><div class="k">{{ data.stats.devices }}</div><div class="l">devices</div></div>
+        <heartbeats-tile :beats="beats" :order="beatOrder" @pick="find"></heartbeats-tile>
       </section>
 
       <div v-if="only" class="one-banner">Showing one: <b>{{ onlyName }}</b><span style="flex:1"></span><button class="btn sm" type="button" @click="only=''">show all workers</button></div>
@@ -232,6 +305,8 @@ export default {
         </div>
       </section>
 
+      <fleet-view v-if="layout==='3d'" :pieces="pieces" @open="find"></fleet-view>
+      <template v-else>
       <section v-for="g in groups" :key="g.band ? g.band.moniker : 'roaming'" class="panel">
         <div class="band-head">
           <template v-if="g.band && renaming[g.band.moniker]">
@@ -245,10 +320,27 @@ export default {
           <button v-if="g.band && !renaming[g.band.moniker]" class="btn sm ghost" type="button"
             @click="rename[g.band.moniker]=g.band.name; renaming[g.band.moniker]=true">✎ rename</button>
         </div>
-        <div class="wcols wsite wlist-head" aria-hidden="true"><span></span><span></span><span>name · moniker</span><span>owner</span><span>last heartbeat</span><span></span></div>
         <p v-if="!g.shown.length" class="note" style="margin:0;padding:10px 14px">Nothing on this band right now.</p>
+        <div v-else-if="layout==='grid'" class="wgrid">
+          <article v-for="{ w, child } in g.shown" :key="w.moniker" :id="'w-' + w.moniker" class="wcard" :class="{open: open[w.moniker], child}"
+                   :style="open[w.moniker] ? {columnSpan: 'all', display: 'block'} : null">
+            <div class="top" @click="toggle(w.moniker)" role="button" tabindex="0" :aria-expanded="!!open[w.moniker]" @keydown.enter="toggle(w.moniker)">
+              <span class="sdot" :class="{off: w.device ? !w.reachable : !w.online}" :title="w.device ? reach(w) : w.online ? 'online' : 'offline'"></span>
+              <div class="wname"><span class="n">{{ w.name }} <span v-if="w.device" class="via">{{ route(w) }}</span><span v-if="w.device" class="badge plain">device · {{ w.driver }}</span><span v-else-if="!w.online" class="badge plain">offline</span></span><span class="m">{{ w.moniker }}</span></div>
+              <row-menu :items="rowMenu(w)"></row-menu>
+            </div>
+            <div class="meta">
+              <template v-if="w.device"><span>{{ w.polled_at ? 'polled ' + ago(w.polled_at) : 'not polled' }}</span><span>{{ reach(w) }}</span></template>
+              <template v-else><span v-if="w.facts.form">{{ w.facts.form }}</span><span v-if="w.facts.version">v{{ w.facts.version }}</span><span>heartbeat {{ ago(w.last_heartbeat) }}</span></template>
+              <span>{{ w.owner.name }}</span><span>{{ w.caps.length }} caps</span></div>
+            <div v-if="open[w.moniker]" class="more" @click.stop><div class="wdetail" style="grid-template-columns:1fr;padding:0;border:0;background:none">
+              <template v-if="w.device">${DEVICE_DETAIL}</template><template v-else>${WORKER_DETAIL}</template></div></div>
+          </article>
+        </div>
+        <template v-else>
+        <div class="wcols wsite wlist-head" aria-hidden="true"><span></span><span></span><span>name · moniker</span><span>owner</span><span>last heartbeat</span><span></span></div>
         <template v-for="{ w, child } in g.shown" :key="w.moniker">
-          <div v-if="w.device" class="wcols wsite wrow" :class="{open: open[w.moniker], child}" @click="toggle(w.moniker)" role="button" tabindex="0"
+          <div v-if="w.device" :id="'w-' + w.moniker" class="wcols wsite wrow" :class="{open: open[w.moniker], child}" @click="toggle(w.moniker)" role="button" tabindex="0"
                :aria-expanded="!!open[w.moniker]" @keydown.enter="toggle(w.moniker)">
             <span class="caret">{{ open[w.moniker] ? '▾' : '▸' }}</span>
             <span class="sdot" :class="{off: !w.reachable}" :title="reach(w)"></span>
@@ -258,21 +350,9 @@ export default {
             <row-menu :items="rowMenu(w)"></row-menu>
           </div>
           <div v-if="w.device && open[w.moniker]" class="wdetail">
-            <div class="dblock"><h4>Device</h4>
-              <div class="kv"><span class="k">Driver</span><span class="v">{{ w.driver }}</span>
-                <span class="k">Route</span><span class="v">{{ w.route.kind }}<template v-if="w.route.via"> · through {{ nameOf(w.route.via) }} ({{ w.route.via }})</template></span>
-                <span class="k">Band</span><span class="v">{{ g.band ? g.band.name : 'none' }}</span>
-                <span class="k">Status poll</span><span class="v">{{ w.interval ? 'every ' + w.interval + ' s' : 'not polled' }}</span>
-                <span class="k">Last poll</span><span class="v">{{ w.polled_at ? ago(w.polled_at) + ' · ' + reach(w) : 'never' }}</span></div></div>
-            <div class="dblock"><h4>Status <span class="dim2">latest poll</span></h4>
-              <div v-if="status(w.status)" class="kv"><template v-for="[k, v] in status(w.status)" :key="k"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></template></div>
-              <pre v-else-if="w.status !== null" class="json">{{ json(w.status) }}</pre>
-              <p v-else class="note" style="margin:0">No status yet.</p></div>
-            <div class="dblock"><h4>Caps <span class="dim2">{{ w.caps.length }} from driver {{ w.driver }}</span></h4>
-              <div v-for="c in w.caps" :key="c.name" class="capline"><code>{{ c.name }}</code><span class="note">{{ c.description }}</span></div>
-              <p v-if="!w.caps.length" class="note" style="margin:0">No caps: no installed plugin declares driver {{ w.driver }}.</p></div>
+${DEVICE_DETAIL}
           </div>
-          <div v-if="!w.device" class="wcols wsite wrow" :class="{open: open[w.moniker]}" @click="toggle(w.moniker)" role="button" tabindex="0"
+          <div v-if="!w.device" :id="'w-' + w.moniker" class="wcols wsite wrow" :class="{open: open[w.moniker]}" @click="toggle(w.moniker)" role="button" tabindex="0"
                :aria-expanded="!!open[w.moniker]" @keydown.enter="toggle(w.moniker)">
             <span class="caret">{{ open[w.moniker] ? '▾' : '▸' }}</span>
             <span class="sdot" :class="{off: !w.online}" :title="w.online ? 'online' : 'offline'"></span>
@@ -282,41 +362,12 @@ export default {
             <row-menu :items="rowMenu(w)"></row-menu>
           </div>
           <div v-if="!w.device && open[w.moniker]" class="wdetail">
-            <div class="dblock"><h4>Runs on</h4>
-              <div class="kv"><template v-for="[k, v] in facts(w.facts)" :key="k"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></template></div>
-              <p v-if="!facts(w.facts).length" class="note" style="margin:0">It has not reported yet.</p></div>
-            <div class="dblock"><h4>Health <span class="dim2">latest heartbeat</span></h4>
-              <div class="kv"><template v-for="[k, v] in health(w.health)" :key="k"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></template></div>
-              <p v-if="!health(w.health).length" class="note" style="margin:0">No health reported.</p></div>
-            <div class="dblock"><h4>Caps <span class="dim2">{{ w.caps.length }} served</span></h4>
-              <div v-for="c in w.caps" :key="c.name" class="capline"><code>{{ c.name }}</code><span v-if="c.returns==='stream'" class="badge plain">stream</span><span class="note">{{ c.description }}</span></div>
-              <p v-if="!w.caps.length" class="note" style="margin:0">No caps.</p></div>
-            <div class="dblock" :class="{full: streamsOf(w).some(s => attached[s.moniker])}"><h4>Streams <span class="dim2">{{ w.streams.length }} open</span></h4>
-              <div v-for="s in streamsOf(w)" :key="s.moniker" class="stream" :class="{attached: attached[s.moniker]}">
-                <span class="k">{{ s.moniker }}</span>
-                <div><b>{{ s.title }}<span v-if="!s.open" class="badge plain" style="margin-left:6px">closed</span></b><p>{{ s.description }}</p>
-                  <p class="dim2 mono small">opened by {{ who(s) }} {{ ago(s.opened_at) }}<template v-if="!s.open && s.closed_at"> · closed by {{ s.closed_by === 'worker' ? 'the worker' : s.closed_by ? s.closed_by.name : 'someone' }} {{ ago(s.closed_at) }}</template></p></div>
-                <span style="display:flex;gap:4px;align-items:start">
-                  <button class="btn sm" :class="{accent: attached[s.moniker]}" type="button" @click.stop="attached[s.moniker] ? detach(s) : attach(s)">{{ attached[s.moniker] ? 'detach' : s.open ? 'attach' : 'open read-only' }}</button>
-                  <row-menu :items="streamMenu(w, s)" label="Stream actions"></row-menu></span>
-                <stream-terminal v-if="attached[s.moniker]" :stream="s" :worker="w.name" @detach="detach(s)" @closed="closedNow(w, s)"></stream-terminal>
-              </div>
-              <p v-if="!w.streams.length" class="note" style="margin:0">Nothing open.</p>
-              <button class="btn sm ghost" type="button" style="margin-top:6px" @click.stop="toggleClosed(w)">{{ closedOf[w.moniker] ? 'hide closed streams' : 'show closed streams' }}</button>
-              <p v-if="closedOf[w.moniker] && !closedOf[w.moniker].length" class="note" style="margin:0">No closed streams.</p></div>
-            <div class="dblock full"><h4>Devices <span class="dim2">{{ pinnedTo(w).length }} pinned to {{ w.name }}</span></h4>
-              <div class="optout"><div class="p">Serves devices<small>Carries out network steps for devices: those pinned to it, and floating ones on its band.</small></div>
-                <span class="state" :class="{out: !w.serves_devices}">{{ w.serves_devices ? 'allowed' : 'opted out' }}</span>
-                <button class="toggle" type="button" :class="{on: w.serves_devices}" :aria-pressed="w.serves_devices" :aria-label="'Serve devices from ' + w.name"
-                  @click.stop="serve(w, !w.serves_devices)"></button></div>
-              <div v-for="d in pinnedTo(w)" :key="d.moniker" class="devcard" style="margin-top:8px">
-                <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v11H4zM9 20h6M12 16v4"/></svg></span>
-                <div><b>{{ d.name }}</b> <span class="dim2 mono small">· {{ d.moniker }}</span><br><span class="note">driver {{ d.driver }} · {{ d.caps.length }} caps</span></div>
-                <span class="badge" :class="{good: d.reachable, bad: d.reachable === false}">{{ reach(d) }}</span>
-              </div></div>
+${WORKER_DETAIL}
           </div>
         </template>
+        </template>
       </section>
+      </template>
       </template>
     </div>
   </div>`,
