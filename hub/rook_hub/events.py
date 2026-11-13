@@ -8,7 +8,8 @@ protocol message). Every event is journaled (J8), except token.used for now
 `emit` only queues the event, so any code may call it, even while holding the
 hub's lock. One task, started with the hub, journals each event in order and
 starts the runs of the jobs it matches. A second task wakes every second to
-notice workers that have missed three heartbeats (H3) and schedules that are due.
+notice workers that have missed three heartbeats (H3), schedules that are due,
+and device status polls that are due (D6, devices.py).
 """
 
 import asyncio
@@ -18,7 +19,7 @@ import logging
 
 from aiohttp import web
 
-from . import caps, jobs
+from . import caps, devices, jobs
 from .errors import HubError
 
 TICK = 1.0  # seconds between looks at heartbeats and schedules
@@ -104,6 +105,8 @@ class Events:
         for spec in jobs.schedules(self.hub):
             if jobs.schedule_due(spec, last, now):
                 self.emit("schedule", {"schedule": spec})
+        for device in devices.due(self.hub, now):       # device status polls (D6)
+            self._spawn(devices.poll(self.hub, device))
 
     def heartbeat(self, record):
         """A worker heartbeated: worker.online if it was not online before."""

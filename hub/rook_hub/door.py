@@ -17,7 +17,7 @@ import json
 
 from aiohttp import web
 
-from . import bands, caps, journal
+from . import bands, caps, devices, journal
 from .errors import HubError
 
 PATH = "/mcp"
@@ -39,7 +39,9 @@ TOOLS = [
          "is on) or roaming when it is on a network nobody has named, and the names of the caps it "
          "last announced. A knocking machine cannot be used until it is approved: call worker \"hub\", "
          "cap \"worker.approve\", args {\"key\": its key}. If likely_rekey_of names a known worker that "
-         "lost its key, use cap \"worker.attach\" instead."),
+         "lost its key, use cap \"worker.attach\" instead. Devices (a TV, a lamp: anything with an API "
+         "that cannot run a worker) are listed as workers with device true, their band, their route "
+         "and whether they were reachable at the last status poll; call their caps by their moniker."),
      "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
     {"name": "caps",
      "description": (
@@ -107,16 +109,18 @@ def _owner(hub, guid):
 
 
 async def workers(hub, token, args):
-    band_of = bands.membership(hub)
+    band_of, opted_out = bands.membership(hub), devices.opted_out(hub)
     found = [{
         "moniker": w["moniker"], "guid": w["guid"], "name": w["name"], "owner": _owner(hub, w["owner"]),
         "online": w["online"], "last_heartbeat": journal.iso(w["last_heartbeat"]),
         "facts": w["facts"], "health": w["health"],
         "gateway_mac": (w["band"] or {}).get("gateway_mac"),
         "band": band_of.get(w["guid"]), "roaming": band_of.get(w["guid"]) is None,
-        "caps": [c["name"] for c in w["caps"]],
+        "caps": [c["name"] for c in w["caps"]], "serves_devices": w["guid"] not in opted_out,
         **({"streams": w["streams"]} if w["streams"] is not None else {}),
     } for w in hub.list_workers()]
+    found += [dict(d, owner=_owner(hub, d["owner"]), caps=[c["name"] for c in d["caps"]])
+              for d in devices.list_devices(hub)]                          # a device is a worker with caps (D1)
     knocking = [{
         "key": k["key"], "name": k["name"], "macs": k["macs"],
         "caps": [{"name": c["name"], "description": c["description"]} for c in k["caps"]],
@@ -130,8 +134,11 @@ async def list_caps(hub, token, args):
     worker, match = args.get("worker"), args.get("match") or ""
     groups = [] if worker not in (None, caps.HUB) else [("hub", True, caps.descriptors(hub))]
     if worker != caps.HUB:
-        chosen = [hub.get_worker(worker)] if worker is not None else hub.list_workers()
+        device = devices.find(hub, worker) if worker is not None else None
+        chosen = [] if device else [hub.get_worker(worker)] if worker is not None else hub.list_workers()
         groups += [(w["moniker"], w["online"], w["caps"]) for w in chosen]
+        groups += [(d["moniker"], d["reachable"] is not False, d["caps"]) for d in devices.list_devices(hub)
+                   if worker is None or (device is not None and d["guid"] == device["guid"])]              # devices too (D1)
     return _dumps({"caps": [
         {"worker": name, "online": online, "caps": [
             {"name": c["name"], "description": c["description"], "returns": c["returns"], "schema": c["schema"]}

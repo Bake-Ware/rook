@@ -151,7 +151,8 @@ def create(hub, args, actor):
     guid = str(uuid.uuid4())
     with hub._lock, hub._db:
         user, _ = hub.auth.actor(**actor)
-        target = worker if worker == "hub" else hub._resolve(worker)["guid"]
+        device = hub._db.execute("SELECT guid FROM devices WHERE guid = ? OR moniker = ?", (worker, worker)).fetchone()
+        target = worker if worker == "hub" else device["guid"] if device else hub._resolve(worker)["guid"]   # D1
         hub._db.execute(
             "INSERT INTO jobs (guid, moniker, title, description, owner, event, payload, worker, cap, args, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -226,7 +227,7 @@ CAPS = {
                                        "\"every 15m\"} or {\"schedule\": \"at 07:30\"}; for job.success and "
                                        "job.fail, {\"job_moniker\": ...} picks the job."}}},
                        "call": {"type": "object", "required": ["worker", "cap"], "properties": {
-                           "worker": {"type": "string", "description": "Moniker or GUID, or \"hub\"."},
+                           "worker": {"type": "string", "description": "Moniker or GUID of a worker or a device, or \"hub\"."},
                            "cap": {"type": "string"},
                            "args": {"type": "object"}}}}},
     }),
