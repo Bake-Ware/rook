@@ -9,7 +9,7 @@ from aiohttp import web
 
 from rook_protocol import ProtocolError, decode, encode
 
-from . import door
+from . import door, events
 from .errors import error
 
 
@@ -29,6 +29,7 @@ def app(hub):
     application = web.Application()
     application.router.add_post("/knock", knock)
     door.add_routes(application, hub)
+    events.add_routes(application, hub)
     return application
 
 

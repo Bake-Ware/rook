@@ -123,7 +123,8 @@ async def scenario(tmp_path):
                 "schema": {"type": "object", "properties": {"text": {"type": "string"}}}}]}]}
             failed, hub_caps = await tool(session, "caps", worker="hub")
             assert [c["name"] for c in hub_caps["caps"][0]["caps"]] == [
-                "worker.approve", "worker.attach", "worker.join-token"]
+                "worker.approve", "worker.attach", "worker.join-token",
+                "job.create", "job.list", "job.pause", "job.unpause", "job.delete", "event.emit"]
             failed, matched = await tool(session, "caps", match="join")
             assert [(g["worker"], [c["name"] for c in g["caps"]]) for g in matched["caps"]] == [
                 ("hub", ["worker.join-token"]), (moniker, [])]
@@ -158,7 +159,9 @@ async def scenario(tmp_path):
             assert (alice["moniker"], agent_moniker, "hub", "approve the new lab box") in whys
             failed, by_worker = await tool(session, "journal", worker=moniker)
             assert {e["worker"] for e in by_worker["entries"]} == {moniker}
-            assert [(e["kind"], e["why"]) for e in by_worker["entries"]] == [
+            assert ("event", "worker.online") in [(e["kind"], e["result"].get("event"))
+                                                  for e in by_worker["entries"]]          # its coming online
+            assert [(e["kind"], e["why"]) for e in by_worker["entries"] if e["kind"] != "event"] == [
                 ("call", "try a cap it does not have"), ("call", "check the echo cap answers"),
                 ("auth", None)]                                  # its approval
             failed, by_word = await tool(session, "journal", text="ECHO CAP")
@@ -254,3 +257,23 @@ def test_attach_through_the_door(tmp_path):
         asyncio.run(go())
     finally:
         hub.close()
+
+
+def test_no_body_limit_on_the_door(tmp_path):
+    # Call arguments will carry file contents: /mcp takes any size; /knock keeps aiohttp's default.
+    async def go():
+        hub = Hub(tmp_path / "hub")
+        host, port = await hub.serve("127.0.0.1", 0)
+        agent = hub.auth.mint("agent", user=hub.auth.create_user("Alice", "a password")["guid"])
+        big = "x" * (2 * 1024 * 1024)
+        try:
+            async with httpx2.AsyncClient() as http:
+                reply = await post(http, f"http://{host}:{port}/mcp", agent, "tools/call",
+                                   {"name": "workers", "arguments": {"padding": big}})
+                assert reply.status_code == 200 and not reply.json()["result"]["isError"]
+                knock = await http.post(f"http://{host}:{port}/knock", content=big.encode())
+                assert knock.status_code == 413
+        finally:
+            await hub.stop_serving()
+            hub.close()
+    asyncio.run(go())

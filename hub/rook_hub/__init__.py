@@ -21,8 +21,9 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, web
+from . import bands, caps, jobs, web
 from .auth import Auth
+from .events import Events
 from .errors import HubError, error
 
 DEFAULT_INTERVAL = 15    # seconds; the hub can change it per worker (H2)
@@ -75,10 +76,12 @@ CREATE INDEX IF NOT EXISTS heartbeats_worker_at ON heartbeats (worker, at);
 CREATE TABLE IF NOT EXISTS journal (
     id     INTEGER PRIMARY KEY,
     at     REAL NOT NULL,
-    kind   TEXT NOT NULL,            -- call, auth or band
-    user   TEXT NOT NULL,            -- the acting user (L1)
+    kind   TEXT NOT NULL,            -- call, auth, band, event or job (a job's run)
+    user   TEXT,                     -- the acting user (L1); none for events of the hub's own
     token  TEXT,                     -- the token they acted through, if any (L1)
     worker TEXT,
+    job    TEXT,                     -- a job's run: the job (J8) ...
+    run    TEXT,                     -- ... and the run ID its chain shares (J5)
     cap    TEXT,
     why    TEXT,
     result TEXT NOT NULL             -- call: the reply message; auth: what happened (JSON)
@@ -113,6 +116,8 @@ class Hub:
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
         self._db.executescript(bands.SCHEMA)
+        self._db.executescript(jobs.SCHEMA)
+        self.events = Events(self)
         self.auth = Auth(self)
         self._signing_key = self._load_signing_key()
         self.public_key = self._signing_key.verify_key.encode().hex()
@@ -182,9 +187,11 @@ class Hub:
         """Serve the hub over HTTP: the knock endpoint and the MCP door (web.py).
         Returns the (host, port) it listens on."""
         self._runner, address = await web.serve(self, host, port)
+        self.events.start()
         return address
 
     async def stop_serving(self):
+        await self.events.stop()
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
@@ -270,12 +277,13 @@ class Hub:
             link.close()  # the old key's link ends; the old key is refused from now on
         return self.get_worker(guid)
 
-    def _journal(self, kind, actor, worker, result, cap=None, why=None):
-        """One journal entry (L1). `actor` is (user, token or None).
+    def _journal(self, kind, actor, worker, result, cap=None, why=None, job=None, run=None):
+        """One journal entry (L1). `actor` is (user or None, token or None).
         The caller holds the lock and the transaction."""
         self._db.execute(
-            "INSERT INTO journal (at, kind, user, token, worker, cap, why, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (self.clock(), kind, actor[0], actor[1], worker, cap, why, json.dumps(result)))
+            "INSERT INTO journal (at, kind, user, token, worker, cap, why, result, job, run) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (self.clock(), kind, actor[0], actor[1], worker, cap, why, json.dumps(result), job, run))
 
     def _attach_key(self, guid, key, now):
         # R5: approval is the hub signing the worker's key (docs/protocol.md, knock_reply).
@@ -376,6 +384,11 @@ class Hub:
                     if old is not None and old is not link:
                         old.close()
                     self._links[guid] = link
+                    self.events.heartbeat(self.get_worker(guid))
+                elif message["type"] == "event" and guid is not None:   # a worker emits (J2)
+                    record = self.get_worker(guid)
+                    self.events.emit(message["name"], dict(message["payload"], worker=guid,
+                                                           worker_moniker=record["moniker"]), worker=guid)
                 elif message["type"] in ("result", "error", "stream_open") and "id" in message:
                     pending = self._calls.get(message["id"])
                     if pending and pending[0] == guid and not pending[1].done():
@@ -420,12 +433,13 @@ class Hub:
 
     # ---------------------------------------------------------------- calls
 
-    async def call(self, worker, cap, args, why, *, user=None, token=None):
+    async def call(self, worker, cap, args, why, *, user=None, token=None, job=None, run=None):
         """Call `cap` on `worker` (GUID or moniker, or `hub` for the hub's own caps)
         and return the reply message:
         `result`, `stream_open` or `error` (C3, W5). The caller is a user acting
         directly or a client token (T4). Every call is journaled with both (L1);
-        a caller who cannot be identified gets an error and no call is made."""
+        a caller who cannot be identified gets an error and no call is made.
+        A job's run passes its `job` and `run`; the journal keeps it as kind `job` (J8)."""
         call_id = uuid.uuid4().hex
         guid = None
         try:
@@ -466,5 +480,6 @@ class Hub:
         except HubError as e:
             reply = dict(e.message, id=call_id)
         with self._lock, self._db:
-            self._journal("call", actor, guid, caps.for_journal(reply) if guid == caps.HUB else reply, cap, why)
+            self._journal("job" if job else "call", actor, guid, caps.for_journal(reply) if guid == caps.HUB else reply,
+                          cap, why, job, run)
         return reply

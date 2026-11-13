@@ -300,6 +300,18 @@
     "stream": "s1"
    },
    "hex": "7b2273747265616d223a227331222c2274797065223a2273747265616d5f636c6f7365227d"
+  },
+  {
+   "name": "event from a worker",
+   "message": {
+    "type": "event",
+    "name": "door.opened",
+    "payload": {
+     "door": "back",
+     "open": true
+    }
+   },
+   "hex": "7b226e616d65223a22646f6f722e6f70656e6564222c227061796c6f6164223a7b22646f6f72223a226261636b222c226f70656e223a747275657d2c2274797065223a226576656e74227d"
   }
  ],
  "invalid": [
