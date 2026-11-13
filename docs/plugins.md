@@ -214,7 +214,7 @@ What the hub refuses at install, saying what to fix (an install is all or nothin
 - a page name that core or another plugin already has (`page_taken`);
 - a component name that core or another plugin already has (`component_taken`). Core's are `side-bar`, `login-view`, `pin-view`, `row-menu` and `toast-line`.
 
-A page file looks like this. It calls a cap with the site's `call(worker, cap, args, why)`: the call goes out as the signed-in person, through `POST /api/call`, the same as any page's, and is journaled under them with the `why` (L1). It returns the cap's result, or throws an error that says what to try next. A plugin's caps at the hub are called with worker `"hub"`.
+A page file looks like this. It calls a cap with the site's `call(worker, cap, args, why)`: the call goes out as the signed-in person, through `POST /api/call`, the same as any page's, and is journaled under them with the `why` (L1). It returns the cap's result, or throws an error that says what to try next. A call still running after 45 seconds returns `{running: true, id, worker, stream, follow}` instead and goes on by itself; `await answer.follow()` gives its result, or throws its error, when it ends (Bake 13 Nov). A plugin's caps at the hub are called with worker `"hub"`.
 
 ```js
 import { call, viewHref } from '/site/shell.js';
