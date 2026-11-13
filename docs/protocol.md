@@ -28,7 +28,7 @@ A message is a JSON object (RFC 8259) encoded as UTF-8, with a string field `typ
 
 ## Minimum worker (W2)
 
-A worker must implement `knock`, `knock_reply`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, heartbeat and answer calls. The three `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them. `event` is optional too.
+A worker must implement `knock`, `knock_reply`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, heartbeat and answer calls. The three `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`).
 
 ## Shared blocks
 
@@ -101,6 +101,7 @@ Connecting is the first heartbeat. The worker sends one at the interval the hub 
 | `band` | object | yes | `gateway_mac`: the MAC address of the worker's default gateway, or `null` when it has none, as on cellular (B2). This is the band fingerprint. |
 | `health` | health | yes | See above. May be `{}`. |
 | `streams` | integer | no | Number of open streams (S4). Workers without streams leave it out. |
+| `plugins` | list of object | no | The plugin worker parts it holds (PL3), each `{name, version}` as the `plugins` message gave them, with `error` (string) for one that failed to load. Workers that take no plugin parts leave it out. Added in v1 as an optional field (U8). |
 
 ### `heartbeat_reply`: hub to worker (H2)
 
@@ -187,6 +188,14 @@ New codes may be added without a version change; receivers treat an unknown code
 | `payload` | object | yes | The event's data. The hub adds `worker` (the worker's GUID) and `worker_moniker`, replacing any the worker sent. |
 
 A worker sends it whenever something happens that jobs may care about, for example from inside a cap. The hub puts it on its event bus and answers nothing. Added in v1 as an optional message (U8): a worker that never sends it is unaffected.
+
+### `plugins`: hub to worker, optional (PL3)
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `plugins` | list of object | yes | Every plugin worker part this worker should have now, in the order to load them. Each is `name` (the plugin's name), `version` (its version, free text) and `source` (the part's code, as text: for the form `python`, a Python module). May be empty. |
+
+The list is the whole state, not a change. The worker drops what is no longer listed or whose version or source changed, loads what is new, and then heartbeats with its caps (W5) and its `plugins` report, which carries an `error` for each part that failed to load. It answers nothing else. The hub sends it when a worker connects (unless the worker holds no parts and should have none) and again whenever that worker's list changes (a plugin is installed or replaced, or the worker's opt-out changes). Added in v1 as an optional message (U8): the hub sends it only to the worker forms it pushes plugin parts to, which is `python` today.
 
 ## Sequences
 

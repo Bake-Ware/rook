@@ -173,6 +173,11 @@ MESSAGES = {
         "band": (_struct({"gateway_mac": (_nullable(_string), REQ)}), REQ),
         "health": (HEALTH, REQ),
         "streams": (_integer, OPT),
+        "plugins": (_list_of(_struct({                 # PL3: the plugin worker parts it has, or failed to load
+            "name": (_string, REQ),
+            "version": (_string, REQ),
+            "error": (_string, OPT),
+        })), OPT),
     },
     # Hub -> worker (H2).
     "heartbeat_reply": {
@@ -212,6 +217,14 @@ MESSAGES = {
     # Either direction (S1).
     "stream_close": {
         "stream": (_string, REQ),
+    },
+    # Hub -> worker, optional: every plugin worker part this worker should have now (PL3).
+    "plugins": {
+        "plugins": (_list_of(_struct({
+            "name": (_string, REQ),
+            "version": (_string, REQ),
+            "source": (_string, REQ),
+        })), REQ),
     },
     # Worker -> hub, optional: puts an event on the hub's bus (J2).
     "event": {
