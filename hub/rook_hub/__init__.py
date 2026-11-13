@@ -107,9 +107,19 @@ def _load_words():
 
 
 class Hub:
-    def __init__(self, state_dir, clock=time.time, vault_key=None):
-        """`vault_key` (32 bytes) opens the vault (X4); without it the vault is locked."""
+    def __init__(self, state_dir, clock=time.time, vault_key=None, vault_key_file=None):
+        """`vault_key` (32 bytes) opens the vault (X4); without it the vault is locked.
+        Or `vault_key_file`: the file the key is kept in, outside `state_dir`, made on the
+        first start of a vault never keyed and read on every start (vault.key_from_file)."""
         self.state_dir = pathlib.Path(state_dir)
+        if vault_key_file is not None:
+            vault_key_file = pathlib.Path(vault_key_file).expanduser().absolute()
+            if vault_key_file.resolve().is_relative_to(self.state_dir.resolve()):
+                raise HubError("vault_key_inside_data",
+                               f"The vault key file {vault_key_file} is inside the data directory {self.state_dir}.",
+                               "Keep the key file outside the data directory, so a copy of the data alone "
+                               "opens no secret (X4), and start again.")
+        self.vault_key_file = vault_key_file
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.clock = clock
         self._lock = threading.Lock()  # every entry point takes it before touching the database
@@ -131,6 +141,8 @@ class Hub:
         self._db.executescript(plugins.SCHEMA)
         self._db.executescript(devices.SCHEMA)
         self._db.executescript(site.SCHEMA)
+        if vault_key_file is not None:
+            vault_key = vault.key_from_file(self, vault_key_file)
         self.vault = vault.Vault(self, vault_key)
         self.events = Events(self)
         self.auth = Auth(self)
