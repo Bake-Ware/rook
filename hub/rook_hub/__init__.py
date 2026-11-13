@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, jobs, scrub, vault, web
+from . import bands, caps, jobs, records, scrub, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -117,6 +117,7 @@ class Hub:
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
         self._db.executescript(bands.SCHEMA)
+        self._db.executescript(records.SCHEMA)
         self._db.executescript(jobs.SCHEMA)
         self._db.executescript(vault.SCHEMA)
         self.vault = vault.Vault(self, vault_key)
