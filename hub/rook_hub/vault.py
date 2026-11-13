@@ -3,8 +3,9 @@
 A secret is a scope plus a name (X1). The scope is a worker, a band, the hub,
 or a plain string. Each secret is a hub object with a GUID and a moniker (G1).
 Values are encrypted with a vault key the hub is given when it starts (X2, X4);
-the key is never written to the hub's data directory. Without it the vault is
-locked: every secret operation says so, and the rest of the hub works.
+the key is never written to the hub's data directory. Started with the hub's
+start command, the key is in a key file outside it (key_from_file). Without the
+key the vault is locked: every secret operation says so, and the rest of the hub works.
 
 On disk each value also has a keyed hash, and a keyed hash of its first
 characters (X6): without the key they say nothing about a value. For the
@@ -15,6 +16,7 @@ Workers hold no vault (X5).
 """
 
 import hashlib
+import os
 import re
 import uuid
 
@@ -57,6 +59,34 @@ _LOCKED = ("vault_locked", "The vault is locked: this hub was started without it
            "Start the hub with its vault key. Calls that use no secret work as before.")
 _WRONG = ("vault_key_wrong", "The vault key this hub was started with is not the key its secrets were sealed with.",
           "Start the hub again with the right vault key.")
+
+
+def key_from_file(hub, path):
+    """The vault key kept in the file at `path`, outside the data directory (X4; Bake 13 Nov:
+    "Key file on disc."). On the first start of a hub whose vault was never keyed, a new
+    random key is written there first, readable by its owner only. A vault keyed before is
+    never given a new key, which could not open its secrets: with the file missing, this
+    returns None and the vault stays locked; with the wrong key in it, the vault says so."""
+    if not path.exists():
+        if hub._db.execute("SELECT 1 FROM vault_check").fetchone():
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            pass    # another start made it just now: read that one
+        else:
+            with os.fdopen(fd, "w") as f:
+                f.write(os.urandom(32).hex() + "\n")
+    try:
+        key = bytes.fromhex(path.read_text().strip())
+        if len(key) != 32:
+            raise ValueError
+    except (OSError, ValueError):
+        raise HubError("vault_key_file_bad", f"{path} does not hold a vault key.",
+                       "Give the path of this hub's vault key file, the one made on its first start, "
+                       "or a path where no file is yet if this hub's vault was never keyed.") from None
+    return key
 
 
 def _subkey(key, purpose):

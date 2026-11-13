@@ -121,11 +121,16 @@ class Auth:
 
     # ---------------------------------------------------------------- users
 
-    def create_user(self, name, password):
+    def create_user(self, name, password, first=False):
         """A new user with a password (T4), a GUID and a three-word moniker (G1).
-        Names identify users at login, so no two users share one."""
+        Names identify users at login, so no two users share one. `first`: the hub's
+        first user, made by the setup page (Bake 13 Nov); refused once any user exists,
+        so of two setups at once one makes the user and the other is refused."""
         guid, hashed = str(uuid.uuid4()), _hash_password(password)
         with self.hub._lock, self.db:
+            if first and self.has_users():
+                raise HubError("setup_done", "This hub is set up already: it has a user.",
+                               "Log in with your name and password.")
             if self.db.execute("SELECT 1 FROM users WHERE name_key = ?", (_name_key(name),)).fetchone():
                 raise HubError("name_taken", f"A user is already called {name!r}.",
                                "Choose a different name for the new user.")
@@ -134,6 +139,10 @@ class Auth:
                 "INSERT INTO users (guid, moniker, name, name_key, password, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (guid, moniker, name, _name_key(name), hashed, self.hub.clock()))
         return self.get_user(guid)
+
+    def has_users(self):
+        """Whether any user was ever made, revoked or not. While none was, the site offers setup."""
+        return self.db.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
 
     def login(self, name, password):
         """The user with this name and password (T4), or HubError. A wrong password

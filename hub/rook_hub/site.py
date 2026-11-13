@@ -4,7 +4,8 @@ A person logs in with a name and a password (T4). A good login gives the browser
 a session: a hub token (T1) of purpose `session`, owned by the user, kept in a
 cookie the page's scripts cannot read, so the person never sees it (T3).
 Logging out revokes it. Without a session every page shows the login, and
-every data request is refused with what to do.
+every data request is refused with what to do. While the hub has no user at
+all, the login gives way to setup, which makes the first user.
 
 Pages are installed into segments of the navigation (P2). Core's own Workers
 page is installed by `install_page`, the same way a plugin's page will be (P1).
@@ -225,16 +226,38 @@ def add_routes(app, hub):
     async def page(request):
         return web.FileResponse(FILES / "index.html")
 
-    async def login(request):
-        try:
-            body = await _body(request)
-            user = hub.auth.login(_text(body, "name"), body.get("password") or "")
-            token = hub.auth.mint("session", user=user["guid"])
-        except HubError as e:
-            return web.json_response(e.message, status=401 if e.message["code"] != "bad_message" else 400)
+    def signed_in(user):
+        """A reply that signs the user in: a new session, in the cookie (T3, T4)."""
+        token = hub.auth.mint("session", user=user["guid"])
         reply = web.json_response({"user": {"name": user["name"], "moniker": user["moniker"]}})
         reply.set_cookie(COOKIE, token, httponly=True, samesite="Strict", path="/")
         return reply
+
+    async def login(request):
+        try:
+            body = await _body(request)
+            return signed_in(hub.auth.login(_text(body, "name"), body.get("password") or ""))
+        except HubError as e:
+            return web.json_response(e.message, status=401 if e.message["code"] != "bad_message" else 400)
+
+    # Setup (Bake 13 Nov: "First user needs a setup wizard if no user is created."): while the
+    # hub has no user, the site shows a setup page in place of the login page. It makes the
+    # first user and signs them in; once any user exists, setup is over for good.
+    async def setup_state(request):
+        with hub._lock:
+            needed = not hub.auth.has_users()
+        key_file = str(hub.vault_key_file) if needed and hub.vault_key_file else None
+        return web.json_response({"needed": needed, "vault_key_file": key_file})
+
+    async def setup(request):
+        try:
+            body = await _body(request)
+            password = body.get("password")
+            if not isinstance(password, str) or not password:
+                raise HubError("bad_message", "password is required.", "Give a password.")
+            return signed_in(hub.auth.create_user(_text(body, "name"), password, first=True))
+        except HubError as e:
+            return web.json_response(e.message, status=403 if e.message["code"] == "setup_done" else 400)
 
     async def logout(request):
         reply = web.json_response({"logged_out": True})
@@ -444,6 +467,8 @@ def add_routes(app, hub):
             app.router.add_get(p["path"], page)
     app.router.add_static("/site/", FILES)
     app.router.add_post("/api/login", login)
+    app.router.add_get("/api/setup", setup_state)
+    app.router.add_post("/api/setup", setup)
     app.router.add_post("/api/logout", logout)
     app.router.add_get("/api/session", me)
     app.router.add_get("/api/workers", workers)
