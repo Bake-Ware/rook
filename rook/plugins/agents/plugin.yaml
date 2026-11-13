@@ -227,8 +227,8 @@ caps:
 # The house agent beside every page of the hub site: the chat dock, Rookie
 # (its avatar), the work pane and the guided first run, and the look pickers
 # on Your account. The shell loads these files and lets them call these caps.
-# rookie.js is Rookie by Bake (castling-wave12/rookie.js, sha256 fd17c3ee...),
-# vendored unchanged as a drop-in: replace the file to update it; agent.look
+# rookie.js is Rookie by Bake (first vendored from castling-wave12/rookie.js),
+# now with enter/exit variants and the 3D rook skin; agent.look
 # reads its SKINS and THEMES. rookie-map.js is the 0.5 wiring (events ->
 # states), chat-widgets.js the [[...]] blocks in the agent's messages.
 shell:
