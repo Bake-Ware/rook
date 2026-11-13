@@ -1,5 +1,5 @@
 /* Rook hub site: the shell (P1, P2, P6, P10).
-   The login, the sidebar (a Pinned strip, then the segments with the pages
+   The login (or setup, while the hub has no user), the sidebar (a Pinned strip, then the segments with the pages
    installed in them), pins kept at the hub, the page header's pin control,
    a row menu, a toast line, and the background rook scene. A page is an
    ES module whose default export is a Vue component; the hub says which
@@ -157,25 +157,41 @@ const SideBar = {
   </aside>`,
 };
 
-/* ---------------- Login (T4) ---------------- */
+/* ---------------- Login (T4), or setup while the hub has no user ---------------- */
+/* Setup (Bake 13 Nov): the hub's first user is made here, and signed in. The login asks the
+   hub whether setup is needed; if that request fails, it shows the login as before. */
 const LoginView = {
   emits: ['in'],
-  data() { return { name: '', password: '', error: '', busy: false }; },
+  data() { return { name: '', password: '', error: '', busy: false, setup: null, asked: false }; },
+  async mounted() {
+    try { const state = await api('GET', '/api/setup'); if (state.needed) this.setup = state; } catch (e) { /* show the login */ }
+    this.asked = true;
+  },
   methods: {
     async submit() {
       this.busy = true; this.error = '';
-      try { await api('POST', '/api/login', { name: this.name, password: this.password }); this.password = ''; this.$emit('in'); }
-      catch (e) { this.error = e.message; }
+      try {
+        await api('POST', this.setup ? '/api/setup' : '/api/login', { name: this.name, password: this.password });
+        this.password = ''; this.$emit('in');
+      } catch (e) {
+        this.error = e.message;
+        if (e.data && e.data.code === 'setup_done') this.setup = null;   // someone else set it up: log in instead
+      }
       this.busy = false;
     },
   },
   template: `<main class="login">
-    <form class="panel login-box" @submit.prevent="submit">
-      <div class="brand"><img src="/site/assets/rook-logo.png" alt="" width="30" height="45"><div><b>♜ ROOK</b><small>log in to this hub</small></div></div>
+    <form v-if="asked" class="panel login-box" :class="{setup}" @submit.prevent="submit">
+      <div class="brand"><img src="/site/assets/rook-logo.png" alt="" width="30" height="45"><div><b>♜ ROOK</b><small>{{ setup ? 'set up this hub' : 'log in to this hub' }}</small></div></div>
+      <template v-if="setup">
+        <p class="login-note">This hub has no user yet. Choose a name and a password for its first user.</p>
+        <p v-if="setup.vault_key_file" class="callout login-note">The vault key is in <b class="mono">{{ setup.vault_key_file }}</b>.
+          Back up that file, apart from the hub’s data: if it is lost, every secret in the vault is lost with it.</p>
+      </template>
       <label class="field">Name<input class="mono" v-model="name" autocomplete="username" required autofocus></label>
-      <label class="field">Password<input class="mono" type="password" v-model="password" autocomplete="current-password" required></label>
+      <label class="field">Password<input class="mono" type="password" v-model="password" :autocomplete="setup ? 'new-password' : 'current-password'" required></label>
       <p v-if="error" class="login-error" role="alert">{{ error }}</p>
-      <button class="btn primary" type="submit" :disabled="busy">Log in</button>
+      <button class="btn primary" type="submit" :disabled="busy">{{ setup ? 'Create user and log in' : 'Log in' }}</button>
     </form></main>`,
 };
 
