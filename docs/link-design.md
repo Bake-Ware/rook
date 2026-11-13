@@ -67,6 +67,10 @@ The request is a new message, `link_open`; the response is `link_accept`, or an 
 
 The ephemeral secrets are erased as soon as the session key is computed. Neither side ever writes a session key or an ephemeral secret to disk.
 
+**`hub_link.key` and backups.**
+- **It travels with the hub's backup.** Brief 24's backup (pull request 410) copies `hub.key` and `token.secret` by name (`backup.py`, `FILES`), and PR L2 adds `hub_link.key` to that list, with a test that a restored hub answers `link_accept` with the same `hub_link_key`.
+- **Nothing breaks if it is lost.** A hub that starts without the file makes a new one. Workers never store the hub link key: they take it from each `link_accept`, signed by the hub key they do keep. So the next connection simply uses the new one. Only `hub.key` must survive, as today (U9).
+
 ### 2.3 Fields
 
 `knock` gains two fields (exact text in section 11):
@@ -141,7 +145,12 @@ Why each step:
 3. `signature` verifies under `key`. Otherwise `bad_signature` (a new code), and it keeps nothing.
 4. `ephemeral` is 32 bytes. `ee` and `ss` are not all zero (an all-zero result means a small-order point). Otherwise `bad_message`.
 
-Then it computes `psk`, adds the key to its Telesthete `Endpoint` as this worker's **pending session**, and answers `link_accept`. If the worker already had a pending session, that one is removed first (`Endpoint.remove_key`). The worker's **live** session, if any, is left alone until the new one is used (section 3.1).
+Then it computes `psk`, adds the key to its Telesthete `Endpoint` as a **pending session** of this worker, keyed by the worker's `ephemeral`, and answers `link_accept`.
+- A `link_open` with an ephemeral the worker already has pending replaces that one entry and no other.
+- When any pending session is used (its Channel 0 opens, section 3.1), it becomes the worker's live session, and every other pending session of that worker is removed (`Endpoint.remove_key`).
+- The worker's **live** session, if any, is left alone until a new one is used.
+
+Section 2.6 says why pending sessions are kept per ephemeral (decision D10).
 
 **The worker, on `link_accept`:**
 
@@ -153,10 +162,15 @@ Then it computes `psk`, adds the key to its Telesthete `Endpoint` as this worker
 
 **An eavesdropper on the HTTPS path.** It sees TLS ciphertext. Even with TLS stripped (a LAN hub on plain `http`, or a TLS-terminating proxy that logs bodies), it learns only public keys and signatures. It cannot compute `ee` or `ss` without one of the secrets, so it cannot derive the session key or read the link. On the link itself it sees each session's `band_id` in cleartext. That is a new value per connection, so it does not even link one session to the next.
 
-**A recorded exchange replayed later.**
-- A replayed `link_open` makes the hub produce a fresh hub ephemeral, and the replayer cannot compute `ee` without the worker's ephemeral secret, long erased. The hub adds a pending key that never authenticates a frame.
-- The live session is untouched, because only a session that is used replaces it. At worst a replay displaces the real worker's pending exchange if it lands in the same moment, and the worker tries again.
-- A replayed `link_accept` is ignored: its signature covers an old worker ephemeral.
+**A recorded exchange replayed later.** A `link_open` carries no time and no challenge, so a recorded one stays valid for ever. Reading one needs a hub on plain `http` (a LAN hub), a proxy that logs request bodies, or a broken TLS.
+- **It never yields a session.** The hub answers a replay with a fresh hub ephemeral, and the replayer cannot compute `ee` without the worker's ephemeral secret, long erased. The pending key it causes never authenticates a frame.
+- **It never displaces the live session,** because only a session that is used replaces another.
+- **It could keep the worker out.** Under a rule of one pending session per worker, a looped replay would keep the worker from ever connecting: each replay would remove the real worker's pending session before it could be used. So the hub keeps pending sessions **per worker ephemeral** (section 2.5).
+  - A replay replaces only the entry for its own recorded ephemeral, never the real worker's fresh one.
+  - The first session that is used clears the rest.
+  - Cost: one Endpoint key, one Band of a few kilobytes, per distinct recorded `link_open`, until the worker's next live session. A loop of the same recording holds one. The hub also does one X25519 pair and one signature per replayed request.
+  - The alternative is to accept the lockout as a risk of plain `http` (decision D10).
+- **A replayed `link_accept` is ignored:** its signature covers an old worker ephemeral.
 
 **Recorded link frames replayed.** This is the case brief 26 is about.
 - To a worker or a hub that restarted: neither holds the old session key any more. The hub drops the frames before decryption, because their `band_id` is not in its table (Telesthete design T1, §3.6 rule 1). The worker's new band is under a different key, so they fail authentication.
@@ -238,7 +252,7 @@ A `key_revoked` or `unknown_key` answer is not retried: the worker stops and rep
 - a revoke removes it;
 - the hub sends it a call, and the Channel gives up, resets and closes the link.
 
-That is at most one live and one pending session per worker. The Workers page's "offline" is H3, computed from the last heartbeat as today.
+That is one live session per worker. Pending ones are cleared when a session is used, or when a revoke removes the key (section 2.5). The Workers page's "offline" is H3, computed from the last heartbeat as today.
 
 ---
 
@@ -310,7 +324,7 @@ Two small changes fall below `serve_link`:
 
 ### 5.3 What the start command gains
 
-One option: `--udp ADDRESS:PORT`, the UDP address the hub serves the link on. Its default is the `--host` address and port 7474, the port the hand-over keeps (hand-over §2). `--udp off` serves no UDP, and `link_accept.udp_port` is then null.
+One option: `--udp ADDRESS:PORT`, the UDP address the hub serves the link on. Its default is the `--host` address and port 7474, the port the hand-over keeps (hand-over §2). `--udp off` serves no UDP, and `link_accept.udp_port` is then null. That is what a hub behind a tunnel or a TCP-only proxy runs, so that its workers never wait for UDP (section 6.1).
 
 The WebSocket route needs no option: it is on the HTTP server the hub already serves. The hub link key file is made in the data directory on first start, like `hub.key` and `token.secret`, so it needs no option either.
 
@@ -324,7 +338,10 @@ The WebSocket route needs no option: it is on the HTTP server the hub already se
 - **The exchange.** `POST /link` with the standard library's `urllib`, as the knock already does. The signatures and X25519 use PyNaCl, which the worker already depends on.
 - **The carrier.** A Telesthete `Band(session psk, reconnect=True)`, with Channel 0 opened by the worker and wrapped as a link object of the same shape as the hub's. `Worker.run` and `_serve` stay as they are above it.
 - **The loop.** `Worker.run` today returns when its link closes. It becomes a loop: make a session (section 3.1), serve it, and on loss start again (section 3.2). It ends when `stop()` is called or the hub refuses the key. Tests that pass an in-memory `connect` keep working: the loop calls it again only after a loss, and `stop()` ends it.
-- **Transport order: UDP first, then WebSocket.** The worker tries UDP to `udp_port` when the hub serves it. If no HELLO_ACK arrives within 4 s (the HELLO retries at 0.5, 1 and 2 s have then all gone unanswered), it starts a WebSocket Band under the **same** session key; the hub's path following accepts either (§5.4). Without `udp_port` it goes straight to WebSocket. This is Telesthete's own order (SPEC §9.1 primary, §9.3 fallback). D3 offers WebSocket only.
+- **Transport order: UDP first, then WebSocket.** The worker tries UDP to `udp_port` when the hub serves it. If no HELLO_ACK arrives within 4 s (the HELLO retries at 0.5, 1 and 2 s have then all gone unanswered), it starts a WebSocket Band under the **same** session key; the hub's path following accepts either (§5.4). Without `udp_port` it goes straight to WebSocket. This is Telesthete's own order (SPEC §9.1 primary, §9.3 fallback).
+  - **Not paying the 4 s every time.** The worker remembers, in memory for the life of its process, which transport its last session used, and tries that one first. A worker that fell back to WebSocket pays the 4 s once per process start, not on every reconnect.
+  - **A hub behind a tunnel or a TCP-only proxy** (where UDP cannot reach it) starts with `--udp off` (section 5.3). It then answers `udp_port: null`, and no worker tries UDP at all.
+  - D3 offers WebSocket only, and states the cost.
 - **Dependencies.** Telesthete (pinned, section 8), with its `ws` extra for the WebSocket client (`websockets`, Telesthete decision 4).
 
 ### 6.2 The ESP32 worker (W2, U5, the link profile)
@@ -417,8 +434,9 @@ All through the one command in README.md, on localhost with ephemeral ports and 
 - unknown key, revoked key and pending knock are refused with what to do;
 - a bad signature is refused with `bad_signature`;
 - a good `link_open` gets a `link_accept` that verifies, and both sides derive the same `psk`;
-- a second `link_open` replaces the pending session, and the live one stays;
+- a second `link_open` adds a pending session beside the first, and the first one used clears the others;
 - a replayed `link_open` leaves the live session working;
+- a recorded `link_open` replayed in a loop while the worker reconnects does not keep the worker out, and holds one pending entry, not one per replay;
 - a `link_accept` for another ephemeral is refused by the worker;
 - the knock refuses a bad `link_signature`.
 
@@ -428,7 +446,7 @@ All through the one command in README.md, on localhost with ephemeral ports and 
 - the worker restarts: the new session takes over, and a call in flight fails with `worker_disconnected`;
 - the hub restarts: the worker is back within 20 s;
 - partitions of 3 s (the session carries on) and of 20 s (a new session);
-- UDP blocked: the worker falls back to WebSocket within 4 s;
+- UDP blocked: the worker falls back to WebSocket within 4 s, and its next session in the same process goes straight to WebSocket; a hub started with `--udp off` answers `udp_port: null` and the worker never tries UDP;
 - the path changes from UDP to WebSocket during a session (the session carries on);
 - revoke: frames are dropped at once, and the worker stops on `key_revoked`;
 - rekey through `attach`;
@@ -457,7 +475,7 @@ Rook pull requests, in order. Each is small enough to review against this docume
 | PR | Delivers | Tested by | Needs |
 |---|---|---|---|
 | **L1 Protocol** | `docs/protocol.md` changes of section 11. The protocol library: validation of `link_open`, `link_accept` and the new `knock` fields; the derivation as one function, `session_psk(...)`, with its checks; signing and verifying the four signed texts. Vectors. HKDF-SHA256 written over `hmac` (about 15 lines), unless Bake prefers a dependency. | the vectors (section 9) | — |
-| **L2 Hub exchange** | `hub_link.key` in the data directory. The `keys` and `knocks` tables gain `link_key`, and the knock checks `link_signature`. `POST /link` with its checks and refusals. A session table (pending and live per worker) behind a small interface that L4 points at the Endpoint. The size limit in `Hub.call` and `Streams.write`. | the exchange tests through real HTTP | L1 |
+| **L2 Hub exchange** | `hub_link.key` in the data directory, and in the backup's `FILES`. The `keys` and `knocks` tables gain `link_key`, and the knock checks `link_signature`. `POST /link` with its checks and refusals. A session table (pending per worker ephemeral, one live per worker) behind a small interface that L4 points at the Endpoint. The size limit in `Hub.call` and `Streams.write`. | the exchange tests through real HTTP; a backup and restore keeps `hub_link.key` | L1 |
 | **L3 Worker exchange** | The `link_key` file; the knock's new fields; the `/link` client and its checks; `Worker.run` as a loop (section 6.1), over in-memory links; stream output split at 65,536 bytes. | the exchange from the worker's side; the loop's restart and stop over memory links; every existing test unchanged | L1, L2 |
 | **L4 Hub carrier** | `hub/rook_hub/link.py`: the Endpoint, the UDP socket, `GET /band`, `TelestheteLink`, the accept hook to `serve_link`, remove on close and on revoke. The `--udp` option. README updated. | link tests with a Telesthete `Band` playing the worker, over UDP and WebSocket; the hub-restart replay test | L2; Telesthete 1a, 2, 3a pinned |
 | **L5 Worker carrier** | The worker's Band, UDP first then WebSocket, wrapped as its link; the loss rules of section 3.2. | the whole link matrix of section 9; the worker-restart replay test | L3, L4 |
@@ -487,7 +505,7 @@ Protocol v1 is not released, so these changes keep version 1 and change its vect
    worker                                   hub
      | POST /link  link_open{key, ephemeral, signature}
      |<-- link_accept{ephemeral, hub_link_key, udp_port, signature}
-     |    both derive psk; the hub holds it as the worker's pending session
+     |    both derive psk; the hub holds it as a pending session of the worker
      | Telesthete band under psk: HELLO / HELLO_ACK, then Channel 0 SYN
      |--- heartbeat ------------------------->|   this session is now live
      |<-- heartbeat_reply{interval} ----------|
@@ -531,7 +549,10 @@ Each with my recommendation first and the alternative in one line.
 
 **D3. The Python worker's transport order.**
 - **Recommended:** UDP first, WebSocket after 4 s without an answer (section 6.1), as Telesthete orders its transports.
-- **Alternative:** WebSocket only for workers, through the same port and TLS as the knock. It is one path and works wherever the knock works; the hub still serves UDP for an ESP32.
+- **Its cost:** where UDP cannot pass but the hub serves it, every connection would wait 4 s before WebSocket. This applies to a hub behind a tunnel or a TCP-only proxy, and to a worker on a network that blocks UDP. Two rules keep that from being paid each time:
+  - a hub that knows UDP cannot reach it starts with `--udp off`, and its workers never try UDP;
+  - a worker tries first the transport its last session used, so a worker on a UDP-blocking network pays the 4 s once per process start, not per reconnect.
+- **Alternative:** WebSocket only for workers, through the same port and TLS as the knock. It is one path, works wherever the knock works, and never waits. It gives up UDP's lower overhead on a LAN. The hub still serves UDP for an ESP32.
 
 **D4. How a small worker states its largest message.**
 - **Recommended:** an optional heartbeat field `max_message` (integer bytes). The hub refuses with `message_too_large` any call or input above it, as it does above 16,000,000. Python workers leave it out.
@@ -556,6 +577,14 @@ Each with my recommendation first and the alternative in one line.
 - **Alternative:** leave the line, with the hand-over's reading as its meaning.
 
 **D9. For information, no action: Telesthete decision 9** (whether Telesthete later makes its data key depend on the receiver too) is open for Bake. This design does not wait for it. If Telesthete adopts it, Rook's fresh keys are still correct and nothing here needs to change; Rook could then keep its sessions across a Telesthete-level reconnect, but it would not have to.
+
+**D10. A replayed `link_open`.**
+- A recorded `link_open` stays valid for ever. Anyone who has read one (a LAN hub on plain `http`, a proxy that logs request bodies) can replay it at will.
+- It can never make a session, nor displace a live one (section 2.6).
+- Under a rule of one pending session per worker, replaying it in a loop would keep that worker from ever connecting.
+- **Recommended:** pending sessions per worker ephemeral; the first one used clears the rest (section 2.5). A replay replaces only its own entry and never the real worker's.
+  - Cost: one Endpoint key per distinct recorded request, held until the worker's next live session, and one X25519 pair and one signature per replayed request.
+- **Alternative:** one pending session per worker, and accept the lockout as a risk of serving the hub over plain `http` or behind a logging proxy.
 
 ---
 
