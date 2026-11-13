@@ -47,6 +47,8 @@ PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub backup --data ~/rook
 
 The backup is encrypted with a key made from the vault key. Without the vault key file nobody can read anything in it, and neither can you: the vault key is **not** in the backup. Keep the key file, and move it, apart from the backup.
 
+While it runs, a backup keeps a plain working copy of the database in the data directory itself (`.backup.db`), never where the backup is written, and removes it when done; the data directory's disk needs free space for that copy, as big as `hub.db`. The backup file's disk needs room for the backup, about the size of the data directory.
+
 To restore, on this machine or another one, into a new or empty directory:
 
 ```sh

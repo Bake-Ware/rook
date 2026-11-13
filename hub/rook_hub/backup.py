@@ -5,7 +5,12 @@ consistent copy of the database, the hub's own key (`hub.key`, R5), the token
 secret (`token.secret`), the installed plugins' folders and the blob bytes. It
 is taken while the hub serves the directory and writes to it: the database is
 copied through SQLite's backup API on a read-only connection, which sees one
-consistent moment and needs neither the hub nor its lock.
+consistent moment and needs neither the hub nor its lock. That plain working
+copy is kept in the data directory itself (`.backup.db`), beside the database
+it copies, never where the backup goes: the destination only ever sees sealed
+bytes (X4). A backup holds an exclusive lock on the copy while it works, so two
+backups never share it; a copy left by an interrupted backup is overwritten and
+then removed by the next one.
 
 The file is encrypted and authenticated with a key derived from the vault key
 (X4: "Backups are encrypted"; Bake 13 Nov). The vault key itself is never in it.
@@ -26,6 +31,7 @@ place only once the whole file has been read and proven. Anything wrong
 leaves nothing behind.
 """
 
+import fcntl
 import hashlib
 import os
 import pathlib
@@ -46,6 +52,7 @@ SEALED = CHUNK + sodium.crypto_secretstream_xchacha20poly1305_ABYTES
 HEADER = sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES
 FINAL = sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL
 FILES = ("hub.key", "token.secret")     # beside the database; hub.lock and the WAL are not data
+COPY = ".backup.db"                     # the plain working copy of the database: in the data directory only
 
 
 def _key(vault_key):
@@ -150,11 +157,19 @@ def backup(data, vault_key_file, to):
     if to.exists():
         raise HubError("backup_exists", f"{to} already exists.", "Give a path where no file is yet.")
     to.parent.mkdir(parents=True, exist_ok=True)
-    fd, copy = tempfile.mkstemp(prefix=".hub.db.", dir=to.parent)   # the database copy, beside the backup
-    os.close(fd)
+    copy = data / COPY
+    held = open(os.open(copy, os.O_WRONLY | os.O_CREAT, 0o600), "wb")
     try:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        held.close()
+        raise HubError("backup_running", f"Another backup of {data} is running.",
+                       "Wait for it to finish, then take this one.") from None
+    try:
+        held.truncate(0)            # a copy an interrupted backup left goes now
         source = sqlite3.connect(data.resolve().as_uri() + "/hub.db?mode=ro", uri=True)
         target = sqlite3.connect(copy)
+        target.execute("PRAGMA journal_mode=OFF")     # no journal file beside the copy
         try:
             source.backup(target)            # one consistent moment, while the hub goes on writing
             _check_key(target, key, vault_key_file)
@@ -183,7 +198,8 @@ def backup(data, vault_key_file, to):
                 to.unlink()
                 raise
     finally:
-        os.unlink(copy)
+        copy.unlink(missing_ok=True)
+        held.close()
     return to.stat().st_size
 
 
