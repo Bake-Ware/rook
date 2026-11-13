@@ -21,7 +21,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import PROTOCOL, ProtocolError, decode, encode
 
-from . import bands, caps, jobs, web
+from . import bands, caps, jobs, records, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -116,6 +116,7 @@ class Hub:
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
         self._db.executescript(bands.SCHEMA)
+        self._db.executescript(records.SCHEMA)
         self._db.executescript(jobs.SCHEMA)
         self.events = Events(self)
         self.auth = Auth(self)
