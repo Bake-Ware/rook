@@ -294,3 +294,73 @@ def test_job_create_says_what_is_wrong(tmp_path):
         finally:
             hub.close()
     asyncio.run(go())
+
+
+def test_a_bad_event_does_not_stop_the_bus(tmp_path):
+    # Anyone may emit job.success or job.fail, with any payload. Forged ones are
+    # journaled as they are, and the bus goes on to the next event.
+    from memory_link import link_pair
+    from rook_protocol import encode
+    from test_hub import heartbeat, knock, new_key
+
+    async def go():
+        hub = Hub(tmp_path / "hub")
+        await hub.serve("127.0.0.1", 0)
+        try:
+            alice = hub.auth.create_user("Alice", "a password")["guid"]
+            for title, match in (("ping", {"event": "ping"}), ("any success", {"event": "job.success"})):
+                reply = await hub.call("hub", "job.create", {
+                    "title": title, "match": match,
+                    "call": {"worker": "hub", "cap": "event.emit", "args": {"name": f"{title} ran"}}}, "set up", user=alice)
+                assert reply["type"] == "result"
+            key = new_key()
+            hub.knock(knock(key))
+            hub.approve(key, user=alice)
+            hub_end, link = link_pair(key)
+            asyncio.get_running_loop().create_task(hub.serve_link(hub_end))
+            await link.send(encode(heartbeat(key)))
+            await link.recv()
+            forged = ({}, {"result": "x"}, {"result": {"token": 1}, "run": {"not": "a string"}, "job": 7})
+            for name in ("job.success", "job.fail"):
+                for payload in forged:
+                    await hub.call("hub", "event.emit", {"name": name, "payload": payload}, "forge one", user=alice)
+                    await link.send(encode({"type": "event", "name": name, "payload": payload}))
+            await hub.call("hub", "event.emit", {"name": "ping"}, "a normal event", user=alice)
+            await eventually(lambda: events(hub, "ping ran"))
+            assert len([e for e in events(hub) if e["event"] in ("job.success", "job.fail")
+                        and set(e["payload"]) - {"worker", "worker_moniker"} <= {"result", "run", "job"}]) >= 12
+            assert events(hub, "any success ran")           # the job matching every success ran on forged ones too
+        finally:
+            await hub.stop_serving()
+            hub.close()
+    asyncio.run(go())
+
+
+def test_a_run_that_raises_still_ends_in_job_fail(tmp_path, monkeypatch):
+    # J3: every run ends in job.success or job.fail, even when the call raises.
+    from rook_hub import caps
+
+    def explode(hub, args, actor):
+        raise RuntimeError("something inside the hub broke")
+
+    monkeypatch.setitem(caps.CAPS, "test.explode", (explode, {"description": "Raise.", "schema": {}}))
+
+    async def go():
+        hub = Hub(tmp_path / "hub")
+        await hub.serve("127.0.0.1", 0)
+        try:
+            alice = hub.auth.create_user("Alice", "a password")["guid"]
+            reply = await hub.call("hub", "job.create", {
+                "title": "fragile", "match": {"event": "boom"},
+                "call": {"worker": "hub", "cap": "test.explode"}}, "set up", user=alice)
+            job = reply["result"]["job"]
+            await hub.call("hub", "event.emit", {"name": "boom"}, "set it off", user=alice)
+            [failed] = await eventually(lambda: events(hub, "job.fail"))
+            assert failed["payload"]["job_moniker"] == job["moniker"]
+            assert failed["payload"]["result"]["code"] == "run_failed" and failed["payload"]["result"]["next"]
+            [run] = journal(hub, kind="job", job=job["guid"])
+            assert json.loads(run["result"])["code"] == "run_failed" and run["run"] == failed["payload"]["run"]
+        finally:
+            await hub.stop_serving()
+            hub.close()
+    asyncio.run(go())
