@@ -24,7 +24,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.4.0"
+#define FW_VERSION "0.4.1"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -77,9 +77,7 @@ static bool is_name(const std::string& n, std::initializer_list<const char*> set
 
 static void open_menu() {
     std::vector<std::string> items = settings::targets();
-#ifndef ROOK_BRIDGE
-    items.push_back("Tetris");       // drawn for the upright screen
-#endif
+    items.push_back("Tetris");
     items.push_back("Pair BT");
     if (bt::saved()) items.push_back("Forget BT");
     ui::menu_begin("MENU", items, settings::target());
@@ -91,9 +89,6 @@ static void menu_pick(int i) {
     auto ts = settings::targets();
     ui::menu_end();
     int extra = i - (int)ts.size();     // 0 Tetris, 1 Pair BT, 2 Forget BT
-#ifdef ROOK_BRIDGE
-    extra += 1;                         // no Tetris in its menu
-#endif
     if (i < (int)ts.size()) {
         settings::set_target(i);
         mode = REMOTE;
@@ -672,21 +667,28 @@ void setup() {
     logf("Rook remote %s ready; worker %s", FW_VERSION, worker_on ? "on" : "off (not enrolled)");
 }
 
+// What a held button (the handheld's, or the paired remote's) does in the game.
+static uint8_t game_key(const std::string& n) {
+    return n == "left" ? tetris::LEFT : n == "right" ? tetris::RIGHT : n == "down" ? tetris::DOWN :
+           n == "up" ? tetris::ROTATE : n == "ok" ? tetris::DROP : n == "home" ? tetris::PAUSE :
+           n == "back" ? tetris::QUIT : 0;
+}
+
 void loop() {
     static uint32_t next_status = 0, next_scan = 0;
     uint32_t ms = millis();
     if ((int32_t)(ms - next_scan) >= 0) {
         next_scan = ms + 5;
         buttons::poll();
-        if (swallow && buttons::held().empty()) swallow = false;
+        if (swallow && buttons::held().empty() && bt::held().empty()) swallow = false;
         if (mode == GAME && !ui::asking()) {
             uint8_t keys = 0;
             for (int i : buttons::held()) {
                 std::string n = buttons::name(i);
-                keys |= n == "left" ? tetris::LEFT : n == "right" ? tetris::RIGHT : n == "down" ? tetris::DOWN :
-                        n == "up" ? tetris::ROTATE : n == "ok" ? tetris::DROP : n == "home" ? tetris::PAUSE :
-                        n == "back" ? tetris::QUIT : 0;
+                keys |= game_key(n);
             }
+            std::string bt_held = bt::held();
+            if (!bt_held.empty()) keys |= game_key(bt_name_of(bt_held));
             if (tetris::tick(ms, keys)) ui::redraw();
             if (tetris::quit()) {
                 ui::game(false);

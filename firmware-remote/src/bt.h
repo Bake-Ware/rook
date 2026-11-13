@@ -21,5 +21,6 @@ std::string name();                   // the remembered remote
 std::string address();
 std::string last_report();            // the last raw HID report, hex (to map odd keys)
 bool next_key(std::string& name);     // a key pressed since the last call
+std::string held();                   // the key held down now (its raw name), or blank
 
 }  // namespace bt

@@ -4,7 +4,12 @@
 
 namespace {
 
-const int COLS = 10, ROWS = 36, CELL = 3, TOP = 20;
+#ifdef ROOK_BRIDGE
+// 128x64 landscape: the classic 10 x 20 well in the middle, the score beside it.
+const int COLS = 10, ROWS = 20, CELL = 3, TOP = 3, X0 = 48, BASE_MS = 650;
+#else
+const int COLS = 10, ROWS = 36, CELL = 3, TOP = 20, X0 = 0, BASE_MS = 450;
+#endif
 const uint16_t FULL = (1u << COLS) - 1;
 // Each piece's four turns as a 4x4 bitmap, top-left bit first.
 const uint16_t SHAPES[7][4] = {
@@ -51,7 +56,7 @@ bool hits(int k, int r, int x, int y) {
 }
 
 uint32_t interval() {
-    int v = 450 - (cleared / 10) * 40;
+    int v = BASE_MS - (cleared / 10) * 40;
     return v < 60 ? 60 : v;
 }
 
@@ -96,7 +101,7 @@ bool step_down() {
     return false;
 }
 
-void cell(Adafruit_GFX& d, int x, int y) { d.fillRect(1 + x * CELL, TOP + y * CELL, CELL - 1, CELL - 1, 1); }
+void cell(Adafruit_GFX& d, int x, int y) { d.fillRect(X0 + 1 + x * CELL, TOP + y * CELL, CELL - 1, CELL - 1, 1); }
 
 }  // namespace
 
@@ -196,14 +201,26 @@ void draw(Adafruit_GFX& d) {
     d.setTextColor(1);
     char b[8];
     snprintf(b, sizeof b, "%5lu", (unsigned long)(points > 99999 ? 99999 : points));
+    uint16_t nm = SHAPES[next_kind][0];
+#ifdef ROOK_BRIDGE
+    d.setCursor(88, 4);
+    d.print("SCORE");
+    d.setCursor(88, 14);
+    d.print(b);
+    d.setCursor(88, 30);
+    d.print("NEXT");
+    for (int i = 0; i < 16; i++)
+        if (nm & (0x8000 >> i)) d.fillRect(92 + (i % 4) * 3, 40 + (i / 4) * 3, 3, 3, 1);
+    d.drawFastHLine(X0, TOP + ROWS * CELL, COLS * CELL + 2, 1);
+#else
     d.setCursor(1, 0);
     d.print(b);
-    uint16_t nm = SHAPES[next_kind][0];
     for (int i = 0; i < 16; i++)
         if (nm & (0x8000 >> i)) d.fillRect(12 + (i % 4) * 2, 10 + (i / 4) * 2, 2, 2, 1);
     d.drawFastHLine(0, TOP - 1, 32, 1);
-    d.drawFastVLine(0, TOP, ROWS * CELL, 1);
-    d.drawFastVLine(31, TOP, ROWS * CELL, 1);
+#endif
+    d.drawFastVLine(X0, TOP, ROWS * CELL, 1);
+    d.drawFastVLine(X0 + COLS * CELL + 1, TOP, ROWS * CELL, 1);
     for (int y = 0; y < ROWS; y++)
         for (int x = 0; x < COLS; x++)
             if (board[y] >> x & 1) cell(d, x, y);
@@ -212,6 +229,19 @@ void draw(Adafruit_GFX& d) {
         for (int i = 0; i < 16; i++)
             if ((m & (0x8000 >> i)) && py + i / 4 >= 0) cell(d, px + i % 4, py + i / 4);
     }
+#ifdef ROOK_BRIDGE
+    if (over) {
+        d.setCursor(8, 14);
+        d.print("GAME");
+        d.setCursor(8, 24);
+        d.print("OVER");
+        d.setCursor(4, 42);
+        d.print("OK=go");
+    } else if (paused) {
+        d.setCursor(6, 28);
+        d.print("PAUSE");
+    }
+#else
     if (over) {
         d.fillRect(1, 50, 30, 31, 0);
         d.setCursor(4, 52);
@@ -225,6 +255,7 @@ void draw(Adafruit_GFX& d) {
         d.setCursor(1, 60);
         d.print("PAUSE");
     }
+#endif
 }
 
 }  // namespace tetris

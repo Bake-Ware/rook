@@ -11,7 +11,7 @@ bool inited = false;
 volatile bool pairing = false, want_connect = false, connected = false;
 uint32_t pair_until = 0;
 NimBLEClient* client = nullptr;
-std::string saved_addr, saved_name, cand_addr, cand_name, last_hex;
+std::string saved_addr, saved_name, cand_addr, cand_name, last_hex, held_name;
 uint8_t saved_type = 0, cand_type = 0;
 QueueHandle_t keys;
 SemaphoreHandle_t mu;
@@ -107,11 +107,19 @@ void on_report(NimBLERemoteCharacteristic* c, uint8_t* d, size_t len, bool) {
         if (l->usage == usage) return;
         l->usage = usage;
     }
-    if (!usage) return;
+    if (!usage) {
+        xSemaphoreTake(mu, portMAX_DELAY);
+        held_name.clear();
+        xSemaphoreGive(mu);
+        return;
+    }
     char name[20];
     const char* known = keyboard ? keyboard_name(usage) : consumer_name(usage);
     if (known) strlcpy(name, known, sizeof name);
     else snprintf(name, sizeof name, "bt_%c%lx", keyboard ? 'k' : 'c', (unsigned long)usage);
+    xSemaphoreTake(mu, portMAX_DELAY);
+    held_name = name;
+    xSemaphoreGive(mu);
     xQueueSend(keys, name, 0);
 }
 
@@ -194,6 +202,9 @@ void task(void*) {
         if (!inited) continue;
         if (connected && !(client && client->isConnected())) {
             connected = false;
+            xSemaphoreTake(mu, portMAX_DELAY);
+            held_name.clear();
+            xSemaphoreGive(mu);
             logf("bt: disconnected");
         }
         if (pairing && (int32_t)(millis() - pair_until) >= 0) {
@@ -297,6 +308,14 @@ std::string address() {
 std::string last_report() {
     xSemaphoreTake(mu, portMAX_DELAY);
     std::string h = last_hex;
+    xSemaphoreGive(mu);
+    return h;
+}
+
+std::string held() {
+    if (!mu) return "";
+    xSemaphoreTake(mu, portMAX_DELAY);
+    std::string h = held_name;
     xSemaphoreGive(mu);
     return h;
 }
