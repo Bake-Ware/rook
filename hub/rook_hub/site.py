@@ -18,7 +18,7 @@ import pathlib
 
 from aiohttp import web
 
-from . import bands, caps, devices, jobs, journal, records
+from . import bands, caps, devices, jobs, journal, plugins, records
 from .errors import HubError
 from .journal import iso
 
@@ -438,6 +438,7 @@ def add_routes(app, hub):
     app.router.add_get("/api/pins", get_pins)
     app.router.add_put("/api/pins", put_pins)
     jobs_secrets_auth_routes(app, hub, logged_in)
+    settings_routes(app, hub, logged_in)
 
 
 # ------------------------------------------------- the Jobs, Secrets and Auth pages
@@ -498,7 +499,9 @@ def runs(hub, job=None):
         grouped.append({"run": run, "at": steps[0]["at"], "steps": [
             {"id": e["id"], "at": e["at"], "job": e.get("job"), "title": titles.get(e.get("job")),
              "worker": e["worker"], "name": names.get(e["worker"], e["worker"]), "cap": e["cap"], "why": e["why"],
-             "ok": e["result"].get("type") != "error", "result": e["result"]} for e in steps]})
+             "ok": e["result"].get("type") != "error", "result": e["result"],
+             "stream": e["result"].get("stream") if e["result"].get("type") == "stream_open" else None}  # P8
+            for e in steps]})
     return grouped
 
 
@@ -558,14 +561,19 @@ def auth_view(hub, token, user):
                     "this_session": t["guid"] == session} for t in tokens][::-1]}   # newest first
 
 
+async def _hub_cap(hub, cap, args, why, token):
+    """Call one of the hub's caps as the logged-in user, journaled as a call (L1); its result, or HubError."""
+    reply = await hub.call("hub", cap, args, why, token=token)
+    if reply["type"] == "error":
+        raise HubError(reply["code"], reply["message"], reply["next"])
+    return reply["result"]
+
+
 def jobs_secrets_auth_routes(app, hub, logged_in):
     """The data and actions of the Jobs, Secrets and Auth pages, as the logged-in user.
     Actions a hub cap already does go through it as a call, so they are journaled as calls (L1)."""
     async def hub_cap(cap, args, why, token):
-        reply = await hub.call("hub", cap, args, why, token=token)
-        if reply["type"] == "error":
-            raise HubError(reply["code"], reply["message"], reply["next"])
-        return reply["result"]
+        return await _hub_cap(hub, cap, args, why, token)
 
     # Jobs (P4, J1, J3, J4, J5, J7, P8)
     @logged_in
@@ -650,3 +658,53 @@ def jobs_secrets_auth_routes(app, hub, logged_in):
     app.router.add_post("/api/tokens/{token}/revoke", revoke_token)
     app.router.add_post("/api/users/{user}/revoke", revoke_user)
     app.router.add_post("/api/password", change_password)
+
+
+# ------------------------------------------------- the Settings page and its Plugins section
+
+# The Settings page is the last page of the Hub segment (P4). Its sections are installed the
+# way pages are installed into segments (P2), so a plugin's settings section can be added
+# the same way later (PL1). Core installs one: Plugins.
+install_page("Hub", "settings", "Settings", "/site/pages/settings.js")
+SETTINGS = []
+
+
+def install_settings_section(section, label, script):
+    """Put a section on the Settings page. The page shows the sections installed, in order."""
+    SETTINGS.append({"id": section, "label": label, "script": script})
+
+
+install_settings_section("plugins", "Plugins", "/site/sections/plugins.js")
+
+
+def settings_routes(app, hub, logged_in):
+    """The Settings page's sections, and its Plugins section's data and install (P4, PL3, PL4)."""
+    @logged_in
+    async def get_settings(request, token, user):
+        return {"sections": SETTINGS}
+
+    @logged_in
+    async def get_plugins(request, token, user):
+        return {"plugins": hub.plugins.list()}
+
+    @logged_in
+    async def check_plugin(request, token, user):
+        """What installing from `path` would do, before the person confirms: the folder's plugin,
+        and the installed one it would replace at once (PL3). Or the refusal, with what to fix."""
+        path = _text(await _body(request), "path")
+        manifest = plugins.read_manifest(pathlib.Path(path).expanduser().resolve())
+        try:
+            installed = hub.plugins.get(manifest["name"])
+        except HubError:
+            installed = None
+        return {"plugin": {"name": manifest["name"], "version": manifest["version"]}, "replaces": installed}
+
+    @logged_in
+    async def install_plugin(request, token, user):
+        path = _text(await _body(request), "path")
+        return await _hub_cap(hub, "plugin.install", {"path": path}, "Installed on the Settings page.", token)
+
+    app.router.add_get("/api/settings", get_settings)
+    app.router.add_get("/api/plugins", get_plugins)
+    app.router.add_post("/api/plugins/check", check_plugin)
+    app.router.add_post("/api/plugins", install_plugin)

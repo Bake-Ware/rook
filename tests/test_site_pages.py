@@ -109,7 +109,7 @@ async def scenario(tmp_path):
             session = client.cookie_jar.filter_cookies(yarl.URL(base))[COOKIE].value
             session_moniker = hub.auth.verify(session)["moniker"]
             status, reply = await ask(client, "GET", base + "/api/session")
-            assert [p["id"] for p in reply["nav"][0]["pages"]] == ["workers", "auth", "secrets", "jobs", "data"]
+            assert [p["id"] for p in reply["nav"][0]["pages"]] == ["workers", "auth", "secrets", "jobs", "data", "settings"]
 
             # ------------------------------------------------------------ Jobs
             # 1. What a new job can call: the hub, and each worker, with its caps' schemas.
