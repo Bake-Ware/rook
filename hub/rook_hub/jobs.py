@@ -13,14 +13,17 @@ every key in `payload` must be present in the event's payload with an equal valu
 """
 
 import json
+import logging
 import re
 import time
 import uuid
 
 from rook_protocol import ProtocolError, validate
 
-from .errors import HubError
+from .errors import HubError, error
 from .journal import iso
+
+log = logging.getLogger(__name__)  # rook_hub.jobs: where a run that raised is reported
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -265,10 +268,18 @@ async def run(hub, job, event):
     """One run: the job's call as its owner, then job.success or job.fail (J3).
     A run started by a completion joins that chain's run ID; any other starts one (J5)."""
     run_id = event["payload"].get("run") if event["name"] in COMPLETIONS else None
-    run_id = run_id or uuid.uuid4().hex
+    if not isinstance(run_id, str) or not run_id:
+        run_id = uuid.uuid4().hex
     why = f"Job {job['moniker']} ({job['title']}) on event {event['name']}."
-    reply = await hub.call(job["worker"], job["cap"], json.loads(job["args"]), why,
-                           user=job["owner"], job=job["guid"], run=run_id)
+    try:
+        reply = await hub.call(job["worker"], job["cap"], json.loads(job["args"]), why,
+                               user=job["owner"], job=job["guid"], run=run_id)
+    except Exception as e:   # the call raised instead of answering: the run still ends, as a failure (J3)
+        log.exception("Job %s run %s raised", job["moniker"], run_id)
+        reply = error("run_failed", f"The run stopped inside the hub: {type(e).__name__}: {e}",
+                      "Read the hub's log (logger rook_hub.jobs) for the details; the job itself is unchanged.")
+        with hub._lock, hub._db:
+            hub._journal("job", (job["owner"], None), job["worker"], reply, job["cap"], why, job["guid"], run_id)
     outcome = "job.fail" if reply["type"] == "error" else "job.success"
     hub.events.emit(outcome, {"job": job["guid"], "job_moniker": job["moniker"], "run": run_id, "result": reply},
                     user=job["owner"])
