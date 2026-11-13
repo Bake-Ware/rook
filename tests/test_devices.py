@@ -212,11 +212,11 @@ async def scenario(tmp_path):
 
             # 6. Y is back but opts out of serving devices (D8, W4): it is not used. Opted back in, it is.
             await start("y", HOME_GW)
-            devices.set_serves_devices(hub, y["moniker"], False)
+            devices.set_serves_devices(hub, y["moniker"], False, user=alice["guid"])
             assert (await listed(y["moniker"]))["serves_devices"] is False
             failed, text = await call(desk, "lamp.on", "on with the only worker opted out")
             assert failed and f"{y['moniker']} does not serve devices" in text and len(lamp.requests) == count
-            devices.set_serves_devices(hub, y["moniker"], True)
+            devices.set_serves_devices(hub, y["moniker"], True, user=alice["guid"])
             failed, answer = await call(desk, "lamp.on", "on through Y")
             assert not failed and lamp.via() == "y"
 

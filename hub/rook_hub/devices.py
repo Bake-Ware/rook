@@ -69,14 +69,17 @@ PRIMITIVES = {name: function for name, (function, _, _) in rook_net.CAPS.items()
 
 # ------------------------------------------------------------- opt-out (D8)
 
-def set_serves_devices(hub, worker, serves):
-    """Whether `worker` may carry out primitives for devices. The default is yes (D8)."""
+def set_serves_devices(hub, worker, serves, *, user=None, token=None):
+    """Whether `worker` may carry out primitives for devices. The default is yes (D8).
+    The actor is a user acting directly or a client token or site session (T4); journaled (L1)."""
     with hub._lock, hub._db:
+        actor = hub.auth.actor(user, token)
         guid = hub._resolve(worker)["guid"]
         if serves:
             hub._db.execute("DELETE FROM device_optouts WHERE worker = ?", (guid,))
         else:
             hub._db.execute("INSERT OR IGNORE INTO device_optouts (worker) VALUES (?)", (guid,))
+        hub._journal("auth", actor, guid, {"serves_devices": serves})
     return serves
 
 

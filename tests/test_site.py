@@ -169,12 +169,12 @@ async def scenario(tmp_path):
             assert status == 200 and reply["user"]["name"] == "Alice"
             assert reply["nav"] == [{"segment": "Hub", "pages": [
                 {"id": page, "label": page.title(), "path": f"/{page}", "script": f"/site/pages/{page}.js"}
-                for page in ("workers", "auth", "secrets", "jobs")]}]
+                for page in ("workers", "auth", "secrets", "jobs", "data")]}]
 
             # 6. The Workers page's data (P4, P7, B2, B5, R4, W6).
             status, view = await ask(client, "GET", base + "/api/workers")
             assert status == 200
-            assert view["stats"] == {"online": 6, "pending": 1}
+            assert view["stats"] == {"online": 6, "pending": 1, "devices": 0}
             assert by_band(view) == {"Home": ["desk", "nas"], "Office": ["shop"],
                                      "roaming": ["phone", "laptop", "tablet", "spare"]}
             workers = {w["name"]: w for g in view["groups"] for w in g["workers"]}
