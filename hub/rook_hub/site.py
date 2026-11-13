@@ -8,16 +8,17 @@ every data request is refused with what to do.
 
 Pages are installed into segments of the navigation (P2). Core's own Workers
 page is installed by `install_page`, the same way a plugin's page will be (P1).
-The data requests are only what the Workers page needs, as the logged-in user.
-Approving a worker goes through the `worker.approve` hub cap, so it is a call
-in the journal (L1).
+The data requests are only what the pages need, as the logged-in user.
+Approving a worker goes through the `worker.approve` hub cap, and a redact
+through `journal.redact`, so each is a call in the journal (L1).
 """
 
+import json
 import pathlib
 
 from aiohttp import web
 
-from . import bands
+from . import bands, caps, devices, jobs, journal, records
 from .errors import HubError
 from .journal import iso
 
@@ -44,6 +45,7 @@ def install_page(segment, page, label, script):
 
 
 install_page("Hub", "workers", "Workers", "/site/pages/workers.js")
+install_page("Hub", "data", "Data", "/site/pages/data.js")
 
 
 def _refused(error):
@@ -70,8 +72,9 @@ def _text(body, name):
 
 
 def workers_view(hub):
-    """Everything the Workers page shows (P4, P7, B2, B5, R4, W6)."""
-    members, owners = bands.membership(hub), {}
+    """Everything the Workers page shows (P4, P7, B2, B5, R4, W6), with the devices
+    in the band they are on (D1, D4, D6) and each worker's opt-out (D8)."""
+    members, owners, out = bands.membership(hub), {}, devices.opted_out(hub)
     open_streams = {}
     for stream in hub.streams.list(open=True):
         open_streams.setdefault(stream["worker"], []).append(
@@ -83,24 +86,93 @@ def workers_view(hub):
             owners[guid] = {"name": user["name"], "moniker": user["moniker"]}
         return owners[guid]
 
+    def cap_list(announced):
+        return [{"name": c["name"], "description": c["description"], "returns": c["returns"]} for c in announced]
+
     def worker(w):
         return {"guid": w["guid"], "moniker": w["moniker"], "name": w["name"], "online": w["online"],
                 "owner": owner(w["owner"]), "last_heartbeat": iso(w["last_heartbeat"]),
-                "facts": w["facts"] or {}, "health": w["health"] or {},
-                "caps": [{"name": c["name"], "description": c["description"], "returns": c["returns"]}
-                         for c in w["caps"]],
-                "streams": open_streams.get(w["moniker"], [])}
+                "facts": w["facts"] or {}, "health": w["health"] or {}, "caps": cap_list(w["caps"]),
+                "streams": open_streams.get(w["moniker"], []), "serves_devices": w["guid"] not in out}
 
-    workers = hub.list_workers()
+    def device(d):
+        return {"guid": d["guid"], "moniker": d["moniker"], "name": d["name"], "device": True,
+                "driver": d["driver"], "owner": owner(d["owner"]), "route": d["route"], "interval": d["interval"],
+                "reachable": d["reachable"], "status": d["status"], "polled_at": d["polled_at"],
+                "caps": cap_list(d["caps"])}
+
+    workers, all_devices = hub.list_workers(), devices.list_devices(hub)
     groups = [{"band": {"guid": b["guid"], "moniker": b["moniker"], "name": b["name"], "gateways": b["gateways"]},
-               "workers": [worker(w) for w in workers if (members.get(w["guid"]) or {}).get("guid") == b["guid"]]}
+               "workers": [worker(w) for w in workers if (members.get(w["guid"]) or {}).get("guid") == b["guid"]],
+               "devices": [device(d) for d in all_devices if (d["band"] or {}).get("guid") == b["guid"]]}
               for b in bands.list_bands(hub)]
-    groups.append({"band": None, "workers": [worker(w) for w in workers if members.get(w["guid"]) is None]})
+    groups.append({"band": None, "workers": [worker(w) for w in workers if members.get(w["guid"]) is None],
+                   "devices": [device(d) for d in all_devices if d["band"] is None]})
     pending = [{"key": k["key"], "name": k["name"], "macs": k["macs"], "first_seen": iso(k["first_at"]),
                 "caps": [{"name": c["name"], "description": c["description"]} for c in k["caps"]]}
                for k in hub.list_pending()]
-    return {"stats": {"online": sum(w["online"] for w in workers), "pending": len(pending)},
+    return {"stats": {"online": sum(w["online"] for w in workers), "pending": len(pending),
+                      "devices": len(all_devices)},
             "groups": groups, "pending": pending, "unrecognised": bands.unrecognised(hub)}
+
+
+# ----------------------------------------------------------- the Data page
+
+KINDS = ("call", "auth", "band", "event", "job", "stream")   # what the journal holds (L1)
+JOURNAL_FILTERS = ("kind", "worker", "cap", "user", "text", "since", "until", "job", "run")
+
+
+def _limit(query, default=50):
+    """The `limit` of a query string: how many to show. Any whole number from 1 up."""
+    try:
+        limit = int(query.get("limit", default))
+    except ValueError:
+        limit = 0
+    if limit < 1:
+        raise HubError("bad_message", "limit must be a whole number, 1 or more.", "Give how many to show, like 50.")
+    return limit
+
+
+def journal_choices(hub):
+    """What the Journal tab's filters offer: the kinds, users, workers and devices, caps and jobs (L2)."""
+    workers, all_devices = hub.list_workers(), devices.list_devices(hub)
+    announced = {c["name"] for c in caps.descriptors(hub)}
+    announced.update(c["name"] for w in [*workers, *all_devices] for c in w["caps"])
+    return {"kinds": list(KINDS),
+            "users": [{"name": u["name"], "moniker": u["moniker"]} for u in hub.auth.list_users()],
+            "workers": [{"name": "hub", "moniker": "hub", "device": False}]
+                       + [{"name": w["name"], "moniker": w["moniker"], "device": False} for w in workers]
+                       + [{"name": d["name"], "moniker": d["moniker"], "device": True} for d in all_devices],
+            "caps": sorted(announced),
+            "jobs": [{"title": j["title"], "moniker": j["moniker"]} for j in jobs.list_jobs(hub, {}, None)["jobs"]]}
+
+
+def _person(hub, guid, names):
+    """{name, moniker} of a user GUID, or None."""
+    if guid is None:
+        return None
+    if guid not in names:
+        user = hub.auth.get_user(guid)
+        names[guid] = {"name": user["name"], "moniker": user["moniker"]}
+    return names[guid]
+
+
+def record_view(hub, record, names):
+    """A record as the Records tab shows it (K1): owner and creator by name, the token an agent used."""
+    with hub._lock:
+        token = hub._db.execute("SELECT moniker FROM monikers WHERE guid = ?",
+                                (record["creator_token"],)).fetchone() if record["creator_token"] else None
+    return {"guid": record["guid"], "moniker": record["moniker"], "type": record["type"], "title": record["title"],
+            "description": record["description"], "owner": _person(hub, record["owner"], names),
+            "creator": _person(hub, record["creator"], names), "creator_token": token[0] if token else None,
+            "body": record["body"], "created_at": iso(record["created_at"]), "updated_at": iso(record["updated_at"])}
+
+
+def record_types(hub):
+    """Every record type, the plugin that owns it, and how many records it has (K2)."""
+    with hub._lock:
+        counts = dict(hub._db.execute("SELECT type, count(*) FROM records GROUP BY type").fetchall())
+    return [dict(t, count=counts.get(t["type"], 0)) for t in records.list_types(hub)]
 
 
 def add_routes(app, hub):
@@ -202,6 +274,82 @@ def add_routes(app, hub):
             hub._db.executemany("INSERT INTO pins (user, position, label, href) VALUES (?, ?, ?, ?)",
                                 [(user, i, p["label"], p["href"]) for i, p in enumerate(pins)])
         return pins_of(user)
+
+    # ------------------------------------------- the Data page, and device opt-out (P4, L1, L2, L5, K1-K4, D8)
+
+    @logged_in
+    async def read_journal(request, token, user):
+        filters = {name: request.query[name] for name in JOURNAL_FILTERS if request.query.get(name)}
+        return {"entries": journal.read(hub, **filters, limit=_limit(request.query))}
+
+    @logged_in
+    async def choices(request, token, user):
+        return journal_choices(hub)
+
+    @logged_in
+    async def redact(request, token, user):
+        """journal.redact as a call by the user; the value is never kept or echoed (L5)."""
+        body = await _body(request)
+        if not isinstance(body.get("value"), str) or not body["value"]:
+            raise HubError("bad_message", "value is required.", "Give the exact text to take out of the journal.")
+        reply = await hub.call("hub", "journal.redact", {"value": body["value"]}, "Redacted on the Data page.",
+                               token=token)
+        if reply["type"] == "error":
+            raise HubError(reply["code"], reply["message"], reply["next"])
+        return reply["result"]
+
+    @logged_in
+    async def list_records(request, token, user):
+        names = {}
+        found = records.search(hub, type=request.query.get("type") or None, text=request.query.get("text") or None,
+                               limit=_limit(request.query))
+        return {"records": [record_view(hub, r, names) for r in found]}
+
+    @logged_in
+    async def types(request, token, user):
+        return {"types": record_types(hub)}
+
+    @logged_in
+    async def unlinked(request, token, user):
+        names = {}
+        return {"records": [record_view(hub, r, names) for r in records.unlinked_blobs(hub)]}
+
+    @logged_in
+    async def one_record(request, token, user):
+        names, name = {}, request.match_info["record"]
+        linked = records.links(hub, name)
+        return {"record": record_view(hub, records.get(hub, name), names),
+                "links": {way: [record_view(hub, r, names) for r in linked[way]] for way in ("to", "from")}}
+
+    async def blob_bytes(request):
+        """A blob's bytes, as a download: never shown as a page of this site."""
+        try:
+            session(request)
+            name = request.match_info["record"]
+            record, data = records.get(hub, name), records.read_blob(hub, name)
+        except HubError as e:
+            return _refused(e)
+        filename = json.dumps(record["title"] or record["moniker"], ensure_ascii=True)
+        return web.Response(body=data, headers={
+            "Content-Type": record["body"]["mime"], "Content-Disposition": f"attachment; filename={filename}",
+            "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"})
+
+    @logged_in
+    async def serves_devices(request, token, user):
+        serves = (await _body(request)).get("serves")
+        if not isinstance(serves, bool):
+            raise HubError("bad_message", "serves must be true or false.", "Send {\"serves\": true} or false.")
+        return {"serves_devices": devices.set_serves_devices(hub, request.match_info["worker"], serves, token=token)}
+
+    app.router.add_get("/api/journal", read_journal)
+    app.router.add_get("/api/journal/choices", choices)
+    app.router.add_post("/api/redact", redact)
+    app.router.add_get("/api/records", list_records)
+    app.router.add_get("/api/record-types", types)
+    app.router.add_get("/api/unlinked-blobs", unlinked)
+    app.router.add_get("/api/records/{record}", one_record)
+    app.router.add_get("/api/records/{record}/bytes", blob_bytes)
+    app.router.add_post("/api/workers/{worker}/serves-devices", serves_devices)
 
     app.router.add_get("/", page)
     for pages in SEGMENTS.values():
