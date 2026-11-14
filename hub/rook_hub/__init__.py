@@ -3,7 +3,8 @@ calls and the journal.
 
 The hub never sees a transport. A worker's link is any object with
 `key` (the worker key the link authenticated), `async send(bytes)`,
-`async recv() -> bytes` (raises EOFError once closed) and `close()`.
+`async recv() -> bytes` (raises EOFError once closed) and `close()`: a
+`TelestheteLink` from the carrier in link.py, or a memory link in the tests.
 Knocks and the link exchange arrive over HTTP (docs/protocol.md, "Carriage"; link.py).
 """
 
@@ -193,7 +194,8 @@ class Hub:
         self.public_key = self._signing_key.verify_key.encode().hex()
         self.link_secret = self._load_key("hub_link.key", PrivateKey)    # X25519, for the link (link design 2.2)
         self.link_key = self.link_secret.public_key.encode().hex()
-        self.sessions = link.Sessions()      # in memory only: a restart forgets every session
+        self.carrier = link.Carrier(self)    # the Telesthete Endpoint and /band (link design 5)
+        self.sessions = link.Sessions(self.carrier)  # in memory only: a restart forgets every session
         self._adjectives, self._nouns = _load_words()
         self._links = {}  # worker guid -> its live link
         self._calls = {}  # call id -> (worker guid, future, actor, cap)
@@ -274,6 +276,7 @@ class Hub:
         takes it over first, or raises HubError `data_in_use` and changes nothing. Having taken
         it over, it ends the calls a previous run of the hub left running."""
         self._take_over()
+        await self.carrier.start()
         self._runner, address = await web.serve(self, host, port)
         self._calls_cut_short()
         self.events.start()
@@ -298,6 +301,7 @@ class Hub:
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
+        await self.carrier.stop()
 
     def list_pending(self):
         """Pending knocks with name and offered caps, read-only (R4), each flagged
