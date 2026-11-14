@@ -1,7 +1,8 @@
 """A minimal Rook worker core in Python: register, heartbeat, answer calls (W2).
 
 State directory (W7, U2): `key` holds the private key the worker generated,
-`identity.json` the GUID, moniker, hub signature and hub key it got on approval. Both
+`link_key` the X25519 secret it makes its link's keys with (docs/link-design.md 2.2),
+`identity.json` the GUID, moniker, hub signature and hub key it got on approval. All
 survive restarts, so a restarted worker is the same identity (R5).
 
 Plugins (PL3): the hub sends a `plugins` message with every plugin worker part
@@ -31,10 +32,11 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from nacl.public import PrivateKey
 from nacl.signing import SigningKey, VerifyKey
 
 import rook_net
-from rook_protocol import PROTOCOL, ProtocolError, decode, encode, validate
+from rook_protocol import PROTOCOL, ProtocolError, decode, encode, sign_link_key, validate
 
 VERSION = "0.1.0"
 
@@ -141,8 +143,9 @@ class Worker:
         self.macs = own_macs() if macs is None else macs
         self.knock_every = knock_every
         self.token = token  # a join token: approved at once, no pending step (R3)
-        self.signing_key = self._load_key()
+        self.signing_key = self._load_key("key", SigningKey)
         self.key = self.signing_key.verify_key.encode().hex()
+        self.link_secret = self._load_key("link_key", PrivateKey)
         path = self.state_dir / "identity.json"
         self.identity = json.loads(path.read_text()) if path.exists() else None
         self.interval = None
@@ -154,14 +157,14 @@ class Worker:
         self._interval_known = asyncio.Event()
         self._cpu = None
 
-    def _load_key(self):
-        """Generate the keypair on first start; reuse it after (R5, W7)."""
-        path = self.state_dir / "key"
+    def _load_key(self, name, kind):
+        """Generate a key of `kind` on first start; reuse it after (R5, W7)."""
+        path = self.state_dir / name
         if not path.exists():
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w") as f:
-                f.write(SigningKey.generate().encode().hex())
-        return SigningKey(bytes.fromhex(path.read_text().strip()))
+                f.write(kind.generate().encode().hex())
+        return kind(bytes.fromhex(path.read_text().strip()))
 
     async def run(self):
         """Knock until approved (first start only), then connect, heartbeat and
@@ -194,8 +197,10 @@ class Worker:
     # ---------------------------------------------------------------- knock
 
     async def _knock_until_approved(self):
+        link_key = self.link_secret.public_key.encode().hex()
         knock = {"type": "knock", "protocol": PROTOCOL, "name": self.name, "key": self.key,
-                 "macs": self.macs, "caps": self._cap_list()}
+                 "macs": self.macs, "caps": self._cap_list(),
+                 "link_key": link_key, "link_signature": sign_link_key(self.signing_key, link_key)}
         if self.token is not None:
             knock["token"] = self.token
         knock = encode(knock)

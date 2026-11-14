@@ -7,7 +7,7 @@ import os
 import pytest
 from nacl.signing import SigningKey
 
-from helpers import Clock, eventually
+from helpers import Clock, eventually, link_fields
 from memory_link import link_pair
 from rook_hub import Hub, bands, caps
 from rook_hub.errors import HubError
@@ -30,8 +30,10 @@ class Box:
 
     def __init__(self, hub, name, owner, gateway):
         self.name, self.gateway, self.seen = name, gateway, []
-        self.key = SigningKey.generate().verify_key.encode().hex()
-        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": self.key, "macs": [], "caps": []})
+        signing_key = SigningKey.generate()
+        self.key = signing_key.verify_key.encode().hex()
+        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": self.key, "macs": [], "caps": [],
+                   **link_fields(signing_key)})
         record = hub.approve(self.key, user=owner)
         self.guid, self.moniker = record["guid"], record["moniker"]
 

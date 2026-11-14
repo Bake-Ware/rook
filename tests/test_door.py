@@ -9,7 +9,7 @@ import pytest
 from mcp import ClientSession, MCPError
 from mcp.client.streamable_http import streamable_http_client
 
-from helpers import Clock, eventually
+from helpers import Clock, eventually, link_fields
 from memory_link import connector
 from rook_hub import Hub
 from rook_worker import Cap, Worker
@@ -228,8 +228,10 @@ def test_attach_through_the_door(tmp_path):
     from nacl.signing import SigningKey
 
     def knock(name):
-        key = SigningKey.generate().verify_key.encode().hex()
-        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": key, "macs": [], "caps": []})
+        signing_key = SigningKey.generate()
+        key = signing_key.verify_key.encode().hex()
+        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": key, "macs": [], "caps": [],
+                   **link_fields(signing_key)})
         return key
 
     async def go():
