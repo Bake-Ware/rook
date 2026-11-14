@@ -193,20 +193,27 @@ const SideBar = {
 
 /* ---------------- Login (T4), or setup while the hub has no user ---------------- */
 /* Setup (Bake 13 Nov): the hub's first user is made here, and signed in. The login asks the
-   hub whether setup is needed; if that request fails, it shows the login as before. */
+   hub whether setup is needed; if that request fails, it shows the login as before. Setup asks
+   for the password twice and sends nothing while the two differ (T4; Bake 13 Nov): a typing
+   mistake there would leave a hub whose only user nobody can log in as. */
 const LoginView = {
   emits: ['in'],
-  data() { return { name: '', password: '', error: '', busy: false, setup: null, asked: false }; },
+  data() { return { name: '', password: '', repeat: '', error: '', busy: false, setup: null, asked: false }; },
+  computed: {
+    differs() { return !!this.setup && this.repeat !== '' && this.repeat !== this.password; },
+  },
   async mounted() {
     try { const state = await api('GET', '/api/setup'); if (state.needed) this.setup = state; } catch (e) { /* show the login */ }
     this.asked = true;
   },
   methods: {
     async submit() {
-      this.busy = true; this.error = '';
+      this.error = '';
+      if (this.setup && this.repeat !== this.password) return;      // the message under the fields says why
+      this.busy = true;
       try {
         await api('POST', this.setup ? '/api/setup' : '/api/login', { name: this.name, password: this.password });
-        this.password = ''; this.$emit('in');
+        this.password = ''; this.repeat = ''; this.$emit('in');
       } catch (e) {
         this.error = e.message;
         if (e.data && e.data.code === 'setup_done') this.setup = null;   // someone else set it up: log in instead
@@ -224,6 +231,8 @@ const LoginView = {
       </template>
       <label class="field">Name<input class="mono" v-model="name" autocomplete="username" required autofocus></label>
       <label class="field">Password<input class="mono" type="password" v-model="password" :autocomplete="setup ? 'new-password' : 'current-password'" required></label>
+      <label v-if="setup" class="field">Repeat password<input class="mono" type="password" v-model="repeat" autocomplete="new-password" required></label>
+      <p v-if="differs" class="login-error" role="alert">The two passwords differ. Type the same password in both fields.</p>
       <p v-if="error" class="login-error" role="alert">{{ error }}</p>
       <button class="btn primary" type="submit" :disabled="busy">{{ setup ? 'Create user and log in' : 'Log in' }}</button>
     </form></main>`,

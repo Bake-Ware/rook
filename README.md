@@ -31,11 +31,11 @@ From the clone, after the first two commands above:
 PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub --data ~/rook-hub --vault-key ~/rook-vault.key
 ```
 
-- `--data` is the hub's data directory. It is made on the first start.
+- `--data` is the hub's data directory. It is made on the first start, readable by you only, and so is everything the hub writes in it. If an older start left anything there readable by other users, the hub makes it owner-only as it starts and says so in a `tightened:` line. What another user owns there it cannot change: it leaves it, says how many and the first path in a `could not tighten` line, and serves as usual.
 - `--vault-key` is the vault key file. It must be outside the data directory. On the first start the hub makes a random key there, readable by you only, and reads it on every start after. Back it up apart from the data: if it is lost, every secret in the vault is lost with it. If the file is missing after the vault was keyed, the hub starts with the vault locked and makes no new key.
 - `--host` and `--port` say where to listen: 127.0.0.1 and 8700 unless given.
 
-Open the address it prints. While the hub has no user, the site shows a setup page: choose a name and a password for the first user, and you are signed in. After that the site shows the login page. The hub runs until you stop it with Ctrl-C.
+Open the address it prints. While the hub has no user, the site shows a setup page: choose a name and a password for the first user, typing the password twice, and you are signed in. After that the site shows the login page. The hub runs until you stop it with Ctrl-C.
 
 ## Backing up, restoring and moving a hub
 
@@ -47,7 +47,7 @@ PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub backup --data ~/rook
 
 The backup is encrypted with a key made from the vault key. Without the vault key file nobody can read anything in it, and neither can you: the vault key is **not** in the backup. Keep the key file, and move it, apart from the backup.
 
-While it runs, a backup keeps a plain working copy of the database in the data directory itself (`.backup.db`), never where the backup is written, and removes it when done; the data directory's disk needs free space for that copy, as big as `hub.db`. The backup file's disk needs room for the backup, about the size of the data directory.
+While it runs, a backup keeps a plain working copy of the database in the data directory itself (`.backup.db`), never where the backup is written, and removes it when done; the data directory's disk needs free space for that copy, as big as `hub.db`. The backup file is written readable by you only. Its disk needs room for the backup, about the size of the data directory.
 
 To restore, on this machine or another one, into a new or empty directory:
 
