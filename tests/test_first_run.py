@@ -27,12 +27,13 @@ def start_command(data, key):
 class Started:
     """`python -m rook_hub` as a person runs it from a clone, on a free port."""
 
-    def __init__(self, data, key):
+    def __init__(self, data, key, umask=-1):
         self.args, self.env = start_command(data, key)
+        self.umask = umask          # -1 keeps the test's own
 
     async def __aenter__(self):
         self.process = await asyncio.create_subprocess_exec(*self.args, cwd=ROOT, env=self.env, stdout=asyncio.subprocess.PIPE,
-                                                            stderr=asyncio.subprocess.PIPE)
+                                                            stderr=asyncio.subprocess.PIPE, umask=self.umask)
         self.lines = []
         while not self.lines or not self.lines[-1].startswith("  vault:"):
             line = await asyncio.wait_for(self.process.stdout.readline(), 20)
