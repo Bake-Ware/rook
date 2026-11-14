@@ -269,9 +269,10 @@ def store_blob(hub, data, mime, title="", description="", *, owner=None, user=No
         actor = hub.auth.actor(user, token)
         path = _blob_path(hub, digest)
         if not path.exists():
-            path.parent.mkdir(exist_ok=True)
+            path.parent.mkdir(exist_ok=True, mode=0o700)
             partial = path.with_name(f"{digest}.partial")
-            partial.write_bytes(data)
+            with open(os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:   # owner-only
+                f.write(data)
             os.replace(partial, path)
         return _create(hub, BLOB, title, description, body, owner, actor)
 

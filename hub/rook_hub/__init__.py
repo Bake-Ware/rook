@@ -14,6 +14,7 @@ import os
 import pathlib
 import secrets
 import sqlite3
+import stat
 import threading
 import time
 import uuid
@@ -114,6 +115,20 @@ def _load_words():
     return sections["adjectives"], sections["nouns"]
 
 
+def owner_only(top):
+    """Take every permission of group and others off `top` and everything under it (not following
+    links). Returns how many files and folders had any."""
+    paths, changed = [top], 0
+    for folder, folders, files in os.walk(top):
+        paths += [os.path.join(folder, name) for name in folders + files]
+    for path in paths:
+        mode = os.lstat(path).st_mode
+        if mode & 0o077 and not stat.S_ISLNK(mode):
+            os.chmod(path, stat.S_IMODE(mode) & 0o700)
+            changed += 1
+    return changed
+
+
 class Hub:
     def __init__(self, state_dir, clock=time.time, vault_key=None, vault_key_file=None):
         """`vault_key` (32 bytes) opens the vault (X4); without it the vault is locked.
@@ -128,9 +143,16 @@ class Hub:
                                "Keep the key file outside the data directory, so a copy of the data alone "
                                "opens no secret (X4), and start again.")
         self.vault_key_file = vault_key_file
-        self.state_dir.mkdir(parents=True, exist_ok=True)
+        # The hub's data is its owner's only (X4, X2, L1; Bake 13 Nov): the directory is 0700 and
+        # every file the hub writes in it 0600, whatever the umask. What an older start left open
+        # to other users is tightened here, once; the start command says so (`tightened`).
+        self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.tightened = owner_only(self.state_dir)
         self.clock = clock
         self._lock = threading.Lock()  # every entry point takes it before touching the database
+        # hub.db is made 0600 before SQLite opens it. SQLite gives the -wal and -shm files it makes
+        # beside a database the database's own mode, so they come out 0600 too, on every start.
+        os.close(os.open(self.state_dir / "hub.db", os.O_WRONLY | os.O_CREAT, 0o600))
         self._db = sqlite3.connect(self.state_dir / "hub.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         # WAL with synchronous=NORMAL: a write is one append, not an fsync, so recording
@@ -243,7 +265,7 @@ class Hub:
         The system lets go of it when the process ends, however it ends."""
         if self._serving_dir is not None:
             return
-        held = open(self.state_dir / "hub.lock", "a")
+        held = open(os.open(self.state_dir / "hub.lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "a")
         try:
             fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

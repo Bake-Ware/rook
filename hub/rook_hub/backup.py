@@ -43,7 +43,7 @@ import tempfile
 from nacl import bindings as sodium
 from nacl.exceptions import CryptoError
 
-from . import vault
+from . import owner_only, vault
 from .errors import HubError
 
 MAGIC = b"rook-backup 1\n"
@@ -243,6 +243,7 @@ def restore(source, data, vault_key_file):
                 raise opening._cut()
         if not (work / "hub.db").is_file() or not all((work / name).is_file() for name in FILES):
             raise HubError("not_a_backup", f"{source} does not hold a hub's data.", "Give the file the backup command wrote.")
+        owner_only(work)            # the folders mkdir made above a file (plugins/) got the umask's mode, not 0700
         if data.exists():
             data.rmdir()            # empty, checked above
         os.replace(work, data)

@@ -127,6 +127,7 @@ class Plugins:
 
     def _load(self, name, folder, manifest):
         """Import the plugin's hub module and run its setup(). Returns the declared Plugin."""
+        from . import owner_only     # __init__.py imports this module first
         declared = Plugin(name)
         if "hub" not in manifest:
             return declared, None
@@ -149,6 +150,8 @@ class Plugins:
             sys.modules.pop(module_name, None)
             raise HubError("plugin_load_failed", f"Plugin {name}'s hub code failed to load: {type(e).__name__}: {e}",
                            f"Fix {path.name} so that importing it and calling setup() succeed, then install again.") from None
+        finally:
+            owner_only(folder)          # the __pycache__ Python wrote as it imported, owner-only like the rest
         for cap, (handler, meta) in declared.caps.items():
             try:
                 validate({"type": "call", "id": "-", "cap": cap, "args": {}})
@@ -214,11 +217,13 @@ class Plugins:
         name = manifest["name"]
         with self.hub._lock, self.hub._db:
             self.hub.auth.actor(**actor)
-        self.root.mkdir(exist_ok=True)
+        self.root.mkdir(exist_ok=True, mode=0o700)
         folder = self.root / f"{name}.{uuid.uuid4().hex[:8]}"
         module_name = None
+        from . import owner_only     # __init__.py imports this module first
         try:
             shutil.copytree(source, folder, ignore=shutil.ignore_patterns("__pycache__"))
+            owner_only(folder)          # the copy kept the source's modes; the hub's data is owner-only
             declared, module_name = self._load(name, folder, manifest)
             self._clashes(declared)
             site_clashes(self.hub, manifest)
