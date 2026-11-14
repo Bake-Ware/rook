@@ -54,6 +54,7 @@ CHANNEL = 0             # every Rook message rides Channel 0, opened by the work
 PENDING_WAIT = 60       # seconds a pending session may wait for its Channel 0 (reviewer, told to Bake 13 Nov)
 SILENT = 60             # /band: a connection that sends nothing for this long is closed (Telesthete SPEC 9.3)
 QUEUE = 256             # /band: frames waiting to go out on one connection; past this they are dropped
+FLUSH = 0.25            # at stop: seconds, at most, for /band connections to take the frames queued for them
 
 
 class Sessions:
@@ -198,6 +199,8 @@ class Carrier:
         self._timers = {}       # psk -> its PENDING_WAIT timer, while the session is pending
         self._links = {}        # psk -> its TelestheteLink, once the worker opened Channel 0
         self._queues = {}       # path -> frames waiting to go out on that /band connection
+        self._requests = {}     # path -> the /band request, so stop can cut its connection
+        self._stopping = False  # set by stop: from then on no frame reaches the Endpoint
         self._numbers = itertools.count(1)
         self._served = set()    # the serve_link tasks
 
@@ -205,14 +208,29 @@ class Carrier:
         await self.endpoint.start()
 
     async def stop(self):
-        """Close every link (removing its key), then stop the Endpoint."""
-        for link in list(self._links.values()):
-            link.close()
-        await asyncio.gather(*self._served, return_exceptions=True)
+        """Stop promptly, whatever is connected to /band (F1). The Endpoint stops first, so every
+        session says GOODBYE, handed to its connection's queue; then every link closes (removing its
+        key). Each /band connection then has at most FLUSH seconds to take what is queued for it,
+        and is cut: no client, idle or not reading, holds the hub's stop."""
+        self._stopping = True
         for timer in self._timers.values():
             timer.cancel()
         self._timers.clear()
         await self.endpoint.stop()
+        for link in list(self._links.values()):
+            link.close()
+        await asyncio.gather(*self._served, return_exceptions=True)
+        deadline = asyncio.get_running_loop().time() + FLUSH
+        while any(not self._sent(path) for path in self._requests) and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+        for request in list(self._requests.values()):
+            if request.transport is not None:
+                request.transport.abort()
+
+    def _sent(self, path):
+        """Everything queued for this /band connection has left the hub."""
+        transport = self._requests[path].transport
+        return self._queues[path].empty() and (transport is None or transport.get_write_buffer_size() == 0)
 
     # ------------------------------------------------- where Sessions puts keys
 
@@ -269,10 +287,13 @@ class Carrier:
 
     async def band(self, request):
         """`GET /band`: one WebSocket connection is one path into the Endpoint (section 5.1)."""
+        if self._stopping:
+            raise web.HTTPServiceUnavailable()
         ws = web.WebSocketResponse(receive_timeout=SILENT)      # pings are answered (autoping)
         await ws.prepare(request)
         path = ("ws", next(self._numbers))
         queue = self._queues[path] = asyncio.Queue(QUEUE)
+        self._requests[path] = request
 
         async def pump():
             while True:
@@ -285,14 +306,15 @@ class Carrier:
                     message = await ws.receive()
                 except TimeoutError:                        # silent for SILENT seconds
                     break
-                if message.type == WSMsgType.BINARY:
+                if message.type == WSMsgType.BINARY and not self._stopping:
                     self.endpoint.receive(path, message.data)   # under 43 bytes: dropped by the Endpoint
                 elif message.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED, WSMsgType.ERROR):
                     break
                 # Text messages are ignored.
         finally:
-            self.endpoint.close_path(path)
-            del self._queues[path]
+            if not self._stopping:
+                self.endpoint.close_path(path)
+            del self._queues[path], self._requests[path]
             writer.cancel()
             await asyncio.gather(writer, return_exceptions=True)
             await ws.close()
