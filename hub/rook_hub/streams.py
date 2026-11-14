@@ -13,7 +13,9 @@ each from its own position, so a late or returning client misses nothing.
 
 A stream outlives whoever opened it (S2) and never times out (S4). It closes
 only when the worker closes it or a client closes it on purpose. A closed
-stream can still be read. Closing is journaled with who closed it (L1), and the
+stream can still be read. A worker that restarted has lost the streams it had:
+each heartbeat lists the streams it still has open (`open_streams`, D5), and
+the hub closes the others that worker opened, as closed by the worker. Closing is journaled with who closed it (L1), and the
 hub emits `stream.open` and `stream.close` (J2).
 
 A call that is still running when its client stops waiting (Bake 13 Nov; see
@@ -111,6 +113,20 @@ class Streams:
         row = self._open_by_handle(worker, message["stream"])
         if row is not None:
             self._close(row, "worker", (None, None), None)
+
+    def still_open(self, worker, handles):
+        """A heartbeat's `open_streams` (D5): `handles` are every stream `worker` opened and still has
+        open. Close the others it opened, as closed by the worker, exactly as its stream_close would: a
+        worker that restarted has lost them. A long call's stream is the hub's own, and a stream on
+        another worker is not this worker's, so neither is touched."""
+        listed = set(handles)
+        with self.hub._lock:
+            rows = self.hub._db.execute(
+                "SELECT * FROM streams WHERE worker = ? AND closed_at IS NULL "
+                "AND guid NOT IN (SELECT stream FROM call_streams)", (worker,)).fetchall()
+        for row in rows:
+            if row["handle"] not in listed:
+                self._close(row, "worker", (None, None), None)
 
     # ------------------------------------------------ a long call's stream
 

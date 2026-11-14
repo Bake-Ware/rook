@@ -489,6 +489,8 @@ class Hub:
                     if old is not None and old is not link:
                         old.close()
                     self._links[guid] = link
+                    if "open_streams" in message:   # the streams it still has; the rest it lost (D5)
+                        self.streams.still_open(guid, message["open_streams"])
                     if first:       # connecting: the plugin worker parts it should have (PL3)
                         self.plugins.connected(guid, link, message.get("plugins", []))
                     self.events.heartbeat(self.get_worker(guid))
