@@ -23,6 +23,8 @@ python3 -m venv .venv
 .venv/bin/python -m pytest
 ```
 
+`requirements.txt` installs Telesthete from GitHub at the commit Rook pins (`docs/link-design.md`, section 8), so the install needs `git` and network access.
+
 ## Starting a hub
 
 From the clone, after the first two commands above:
@@ -34,6 +36,7 @@ PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub --data ~/rook-hub --
 - `--data` is the hub's data directory. It is made on the first start, readable by you only, and so is everything the hub writes in it. If an older start left anything there readable by other users, the hub makes it owner-only as it starts and says so in a `tightened:` line. What another user owns there it cannot change: it leaves it, says how many and the first path in a `could not tighten` line, and serves as usual.
 - `--vault-key` is the vault key file. It must be outside the data directory. On the first start the hub makes a random key there, readable by you only, and reads it on every start after. Back it up apart from the data: if it is lost, every secret in the vault is lost with it. If the file is missing after the vault was keyed, the hub starts with the vault locked and makes no new key.
 - `--host` and `--port` say where to listen: 127.0.0.1 and 8700 unless given.
+- Everything is served at that one address: the site, the MCP door at `/mcp`, and for workers `POST /knock`, `POST /link` and `GET /band`, the WebSocket every worker's link runs over (Telesthete; `docs/link-design.md`). The hub opens no other port, UDP included. Behind HTTPS, the proxy passes `/band` upgrades through with the rest.
 
 Open the address it prints. While the hub has no user, the site shows a setup page: choose a name and a password for the first user, typing the password twice, and you are signed in. After that the site shows the login page. The hub runs until you stop it with Ctrl-C.
 
