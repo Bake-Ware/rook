@@ -1,0 +1,629 @@
+# The worker-hub link: design
+
+**Status: signed by Bake, 13 November 2026. Nothing here is built yet.** Written 13 November 2026 for brief 26. Bake's decisions are in section 13, and the document follows them throughout: the first build carries the link over WebSocket only (D3), and the UDP side is kept, designed but not built, in section 14.
+
+Rook core has no real link between a worker and its hub yet: the tests carry protocol v1 messages over in-memory links (`tests/memory_link.py`). This document says how a worker and a hub will talk over Telesthete, what each side does, what changes in `docs/protocol.md`, and in what order it is built.
+
+Sources, all read in full for this design: `PLAN.md` (Layering, Topology, W1 to W7, H1 to H5, C and S lines, R1 to R5, T1 to T6, U1 to U9, A1 to A3, Explicitly out), `docs/protocol.md`, `protocol/python/rook_protocol.py`, `core/python/rook_worker.py`, `Hub.serve_link` and the knock route in `hub/rook_hub/`, `tests/memory_link.py`, and the reference copies of the approved Telesthete design (`telesthete-terminating-endpoints.md`, called "the Telesthete design" below, with its section numbers), the Telesthete wire spec (`telesthete-SPEC.md`, "SPEC §"), the hand-over note to Rook (`telesthete-handover-for-rook.md`, "hand-over §") and the replay reproduction (`replay-after-restart.py`).
+
+## Contents
+
+1. [Fixed points and the fresh key](#1-fixed-points-and-the-fresh-key)
+2. [The exchange that makes a connection's key](#2-the-exchange-that-makes-a-connections-key)
+3. [The life of a connection](#3-the-life-of-a-connection)
+4. [How Rook's messages ride the link](#4-how-rooks-messages-ride-the-link)
+5. [The hub side](#5-the-hub-side)
+6. [The worker side, per form](#6-the-worker-side-per-form)
+7. [Unattended joins and the dongle](#7-unattended-joins-and-the-dongle)
+8. [What Rook needs from Telesthete, and when](#8-what-rook-needs-from-telesthete-and-when)
+9. [How it will be proven](#9-how-it-will-be-proven)
+10. [Build plan](#10-build-plan)
+11. [Changes to docs/protocol.md, exactly](#11-changes-to-docsprotocolmd-exactly)
+12. [What this leaves room for](#12-what-this-leaves-room-for)
+13. [Decisions](#13-decisions)
+14. [Designed, not built: UDP](#14-designed-not-built-udp)
+15. [What I checked, and what I could not verify](#15-what-i-checked-and-what-i-could-not-verify)
+
+---
+
+## 1. Fixed points and the fresh key
+
+Bake has ruled these. The design builds on them and does not reopen them:
+
+- **The hub is its own Telesthete terminating endpoint.** It is one process, with no relay and no attachment (Bake 13 Nov; Topology). Every worker's band has two members, the worker and the hub (Telesthete design §5.1).
+- **Keys are Rook's.** Telesthete carries frames under a key the application supplies. Deriving keys and deciding which are accepted is Rook's job (Layering; Bake 13 Nov).
+- **A worker has a separate X25519 key for key agreement.** Its public half goes in the knock, signed by the worker's identity key (Bake 13 Nov: "Separate key.").
+- **Humans log in with a password and never type tokens** (T3, T4).
+
+**The design is built on a fresh key for every connection.** It was the reviewer's proposal; Bake took it on 13 November 2026 (D1, section 13).
+
+Telesthete does not protect a receiver that restarts against a replay of a session recorded before the restart. Its replay defences live in the receiver's memory, and its data key depends on nothing the receiver contributes (Telesthete design §7.6; SPEC §3.3 note in the addendum; the reproduction). A worker acts on what it receives, so a replayed `call` would run a command again.
+
+So Rook never puts a long-lived key under its messages. Each connection's key is made new during an exchange over HTTPS, from the two sides' long-term keys plus something fresh from each side. Neither side keeps a session key after it restarts, so neither can accept an earlier key.
+
+---
+
+## 2. The exchange that makes a connection's key
+
+### 2.1 Which request carries it
+
+It is a **new HTTPS request after approval**, `POST <hub URL>/link`, made **every time the worker connects**: at start, and whenever it loses the link. It is not the knock. Why:
+
+- The knock happens once per identity: on first start, and again only on a rekey (R5, W7). Every connection needs its own exchange.
+- Anyone may knock (R2), but only an approved key may make a session. Keeping the two apart keeps each check simple.
+- The knock already travels as HTTPS to the hub URL, the only input a worker has (R1, protocol.md "Carriage"). `/link` uses the same path, so a worker that can knock can make a session.
+
+The request is a new message, `link_open`; the response is `link_accept`, or an `error`. Both are JSON, encoded as protocol v1 encodes every message (`docs/protocol.md`, "Encoding").
+
+### 2.2 The keys involved
+
+| Key | Who holds the secret | Lifetime | Where the public half travels |
+|---|---|---|---|
+| Worker identity key (Ed25519) | worker (state, W7) | until rekey | `knock.key` (exists) |
+| Worker link key (X25519) | worker (state, next to the identity key) | until rekey | `knock.link_key`, signed by the identity key (new; Bake's ruling) |
+| Hub key (Ed25519) | hub (`hub.key` in its data directory, exists) | the hub's life | `knock_reply.hub_key` (exists); the worker keeps it (U9) |
+| Hub link key (X25519) | hub (new file `hub_link.key` in its data directory, 0600) | the hub's life | `link_accept.hub_link_key`, signed by the hub key |
+| Worker ephemeral (X25519) | worker, in memory | one exchange | `link_open.ephemeral` |
+| Hub ephemeral (X25519) | hub, in memory | one exchange | `link_accept.ephemeral` |
+
+The ephemeral secrets are erased as soon as the session key is computed. Neither side ever writes a session key or an ephemeral secret to disk.
+
+**`hub_link.key` and backups.**
+- **It travels with the hub's backup.** Brief 24's backup (pull request 410) copies `hub.key` and `token.secret` by name (`backup.py`, `FILES`), and PR L2 adds `hub_link.key` to that list, with a test that a restored hub answers `link_accept` with the same `hub_link_key`.
+- **Nothing breaks if it is lost.** A hub that starts without the file makes a new one. Workers never store the hub link key: they take it from each `link_accept`, signed by the hub key they do keep. So the next connection simply uses the new one. Only `hub.key` must survive, as today (U9).
+
+### 2.3 Fields
+
+`knock` gains two fields (exact text in section 11):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `link_key` | string, 64 lowercase hex | The worker's X25519 public key. |
+| `link_signature` | string, 128 lowercase hex | Ed25519 signature by the identity key (`knock.key`) over the ASCII text `rook-link-key-v1:` followed by the 32 raw bytes of `link_key`. |
+
+The hub checks `link_signature` before it keeps a knock. It stores `link_key` with the knock, and with the key once approved: the `keys` table gains a column.
+
+`link_open`, worker to hub, the body of `POST /link`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `protocol` | integer | Version (U8). |
+| `key` | string, 64 hex | The worker's identity key, as approved. |
+| `ephemeral` | string, 64 hex | A new X25519 public key, made for this exchange only. |
+| `signature` | string, 128 hex | Ed25519 signature by the identity key over `rook-link-open-v1:` ‖ hub key (32 bytes, as the worker stored it at approval) ‖ `key` (32) ‖ `ephemeral` (32). |
+
+`link_accept`, hub to worker, the HTTPS response:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `protocol` | integer | The hub's version. |
+| `ephemeral` | string, 64 hex | The hub's new X25519 public key for this exchange. |
+| `hub_link_key` | string, 64 hex | The hub's X25519 public key. |
+| `signature` | string, 128 hex | Ed25519 signature by the hub key over `rook-link-accept-v1:` ‖ `key` (32) ‖ the worker's `ephemeral` (32) ‖ this `ephemeral` (32) ‖ `hub_link_key` (32). |
+
+The WebSocket URL is not sent. It is the hub URL with `https` replaced by `wss` (or `http` by `ws`) and path `/band`, the path Telesthete servers SHOULD use (Telesthete decision 7). The worker derives it.
+
+`link_accept` has no `udp_port` field in this build. The hub serves no UDP (D3), so the field could only ever be null, and a field that always says "nothing here" describes a transport protocol v1 does not have. It arrives with UDP as an optional field, which v1 allows without a new version: a receiver ignores fields it does not know (`docs/protocol.md`, "Versions"), so a WebSocket-only worker that meets it simply carries on over WebSocket, which is the right fallback anyway (section 14).
+
+**Why each signature:**
+
+- **On `link_key` in the knock (ruled).** It shows that the holder of the identity key chose this link key. Without it, anyone in the knock's path could swap the link key.
+- **On `link_open`.** A session changes state at the hub: it adds a key, and it will replace the live session when used. Only the holder of the identity key may cause that. The hub key is inside the signed bytes, so a request signed for one hub is worthless at another.
+- **On `link_accept`.** The worker learns the hub's ephemeral and link key from a source it can check (the hub key it kept at approval), whatever happens to TLS. The signed bytes include the worker's own ephemeral, so an old `link_accept` never answers a new request.
+
+### 2.4 The derivation
+
+Both sides compute, the worker as shown and the hub with the roles swapped:
+
+```
+ee  = X25519(worker ephemeral secret, hub ephemeral public)      32 bytes
+ss  = X25519(worker link secret,      hub link public)           32 bytes
+      reject if either is all zero
+okm = HKDF-SHA256(salt = "rook-link-v1",
+                  ikm  = ee || ss                                 64 bytes
+                  info = key || worker ephemeral || hub ephemeral 96 bytes (raw public keys)
+                  L    = 32)
+psk = lowercase hexadecimal of okm                                64 ASCII characters
+```
+
+Telesthete then takes `psk` as an ordinary PSK. Its `band_id` is `SHA256(psk)[:16]` (SPEC §3.1), and its base and data keys follow from it as for any band.
+
+Why each step:
+
+- **X25519 ephemerals on both sides.** Each side contributes something fresh, so no session key is ever made twice. The ephemerals also give forward secrecy (2.6) at no extra round trip. They replace the 32-byte nonces of the hand-over's sketch (hand-over §1.7), which would have done the freshness part only.
+- **`ss`, from the two long-term link keys (Bake's ruling).** Only the true worker and the true hub can compute it. A slip in a signature check therefore still yields a key nobody else can derive. It is the one use of the ruled X25519 key: the signatures alone already authenticate the ephemerals.
+- **Fixed order, no sorting.** Roles are fixed (the worker always opens), so `ikm` and `info` put the worker first. The hand-over's sorting was for a role-free derivation.
+- **`info` binds the session to this identity and these two ephemerals,** so a key derived for one exchange can never match another.
+- **The salt names Rook and a version.** It separates this use of X25519 output from any other, and a later derivation is `rook-link-v2`.
+- **Hex string.** Telesthete's Python API takes `psk: str` and its Rust API takes bytes (hand-over §1.2). ASCII hex is the same bytes in both, and on an ESP32.
+- **Primitives:** X25519 (RFC 7748), Ed25519 (RFC 8032), HKDF-SHA256 (RFC 5869). PyNaCl, which Rook already depends on, provides all three apart from HKDF. HKDF-SHA256 is written in a few lines over the standard library's `hmac` (section 10, PR L1), so no dependency is added.
+
+### 2.5 What each side must check
+
+**The hub, on `link_open`:**
+
+1. The message is valid (protocol library).
+2. `key` is approved and not revoked. Otherwise it answers `unknown_key` or `key_revoked`, as the knock does, and keeps nothing.
+3. `signature` verifies under `key`. Otherwise `bad_signature` (a new code), and it keeps nothing.
+4. `ephemeral` is 32 bytes. `ee` and `ss` are not all zero (an all-zero result means a small-order point). Otherwise `bad_message`.
+
+Then it computes `psk`, adds the key to its Telesthete `Endpoint` as a **pending session** of this worker, keyed by the worker's `ephemeral`, and answers `link_accept`.
+- A `link_open` with an ephemeral the worker already has pending replaces that one entry and no other.
+- When any pending session is used (its Channel 0 opens, section 3.1), it becomes the worker's live session, and every other pending session of that worker is removed (`Endpoint.remove_key`).
+- The worker's **live** session, if any, is left alone until a new one is used.
+
+Section 2.6 says why pending sessions are kept per ephemeral (decision D10).
+
+**The worker, on `link_accept`:**
+
+1. The message is valid, and it answers the request just sent: the signature covers that ephemeral.
+2. `signature` verifies under the hub key it stored at approval. Otherwise it treats the attempt as failed and tries again later (section 3.2). It never uses the key.
+3. `ee` and `ss` are not all zero.
+
+### 2.6 What an attacker can and cannot do
+
+**An eavesdropper on the HTTPS path.** It sees TLS ciphertext. Even with TLS stripped (a LAN hub on plain `http`, or a TLS-terminating proxy that logs bodies), it learns only public keys and signatures. It cannot compute `ee` or `ss` without one of the secrets, so it cannot derive the session key or read the link. On the link itself, which is inside TLS under `wss`, a plain `ws` link (a LAN hub on `http`) shows it each session's `band_id` in cleartext. That is a new value per connection, so it does not even link one session to the next.
+
+**A recorded exchange replayed later.** A `link_open` carries no time and no challenge, so a recorded one stays valid for ever. Reading one needs a hub on plain `http` (a LAN hub), a proxy that logs request bodies, or a broken TLS.
+- **It never yields a session.** The hub answers a replay with a fresh hub ephemeral, and the replayer cannot compute `ee` without the worker's ephemeral secret, long erased. The pending key it causes never authenticates a frame.
+- **It never displaces the live session,** because only a session that is used replaces another.
+- **It could keep the worker out.** Under a rule of one pending session per worker, a looped replay would keep the worker from ever connecting: each replay would remove the real worker's pending session before it could be used. So the hub keeps pending sessions **per worker ephemeral** (section 2.5).
+  - A replay replaces only the entry for its own recorded ephemeral, never the real worker's fresh one.
+  - The first session that is used clears the rest.
+  - Cost: one Endpoint key, one Band of a few kilobytes, per distinct recorded `link_open`, until the worker's next live session. A loop of the same recording holds one. The hub also does one X25519 pair and one signature per replayed request.
+  - The alternative is to accept the lockout as a risk of plain `http` (decision D10).
+- **A replayed `link_accept` is ignored:** its signature covers an old worker ephemeral.
+
+**Recorded link frames replayed.** This is the case brief 26 is about.
+- To a worker or a hub that restarted: neither holds the old session key any more. The hub drops the frames before decryption, because their `band_id` is not in its table (Telesthete design T1, §3.6 rule 1). The worker's new band is under a different key, so they fail authentication.
+- To a side that did not restart: Telesthete's own replay check applies within the session (SPEC §3.3; T15 at the hub).
+
+Nothing is delivered either way.
+
+**A stolen worker key** (the identity and link secrets from the worker's state directory):
+- **It can** make exchanges as that worker and so connect as it. It would receive the calls meant for it, including arguments into which the hub substituted secrets (X2). It could report false heartbeats and results. This lasts until the key is revoked (R5, W7). When the thief and the real worker both connect, the newer session replaces the older each time. The flapping shows on the Workers page (online and offline) and in the journal of approvals and revocations.
+- **It cannot** read sessions recorded before the theft: forward secrecy, below. It cannot pose as the hub to the real worker, because `link_accept` is signed by the hub key. It cannot touch any other worker.
+
+**A stolen hub key** (`hub.key` and `hub_link.key` from the hub's data directory, or from a backup, which brief 24 encrypts with the vault key). This lets the thief pose as the hub to every worker that can reach it. That is the hub's whole trust, as today with `hub.key` alone. Forward secrecy still protects sessions recorded before the theft.
+
+**Forward secrecy: yes.** The session key depends on `ee`, and both ephemeral secrets are erased as soon as the key is made. A thief who later takes every long-term secret still cannot compute `ee` for a recorded session.
+
+The protection does not cover a side that is compromised during a session. That side holds the session key in memory.
+
+What it costs: one X25519 key generation and one extra X25519 per side per connection, all under a millisecond on a PC (an ESP32 estimate is in section 6.2). There is no extra round trip.
+
+Without it (the nonce sketch of hand-over §1.7, decision D2): the session key would follow from the two long-term link keys plus public nonces. Anyone who later stole either long-term link secret could decrypt every recorded session of that worker, including any secret the hub substituted into a call.
+
+---
+
+## 3. The life of a connection
+
+Numbers used below come from the Telesthete wire spec and design:
+- `KEEPALIVE_INTERVAL` is 5 s and `PEER_TIMEOUT` is 15 s (SPEC §4.5, §12.4).
+- HELLO is retried after 0.5, 1, 2 and 4 s, then every 5 s (Telesthete design §7.2, §4.11).
+- A Channel retransmits after 500 ms and gives up after 10 tries, about 5 s, then resets with `PeerUnresponsive` (§7.2 g).
+- A WebSocket client reconnects after 0.5 s, doubling to 30 s (§6.2).
+- The hub's heartbeat interval is 15 s by default, and a worker is shown offline after three missed intervals (H2, H3).
+
+### 3.1 From start to the first heartbeat
+
+1. **An approved worker starts.** It has its identity, its link secret and the hub key in its state (W7). It does `POST /link` (section 2) and gets `link_accept`.
+2. It starts a Telesthete `Band` under the session `psk`, with reconnection on (`reconnect=True`, Telesthete design §7.2), over WebSocket to `<hub URL>/band` (section 6.1). WebSocket is the only transport in this build (D3).
+3. The Band sends HELLO, retried until answered. The hub's `Endpoint` holds the pending key, so the HELLO authenticates, the hub answers HELLO_ACK, and the hub's band now knows the worker's path (§5.4).
+4. **The worker opens Channel 0** (the link profile's initiator role, SPEC §12.6). At the hub the accept hook (`Band.on_channel`, §6.7 b) creates the Channel. The hub wraps it as a link object and starts `Hub.serve_link(link)` (section 5.2). This session is now the worker's **live** session.
+5. **The worker sends its first heartbeat** (H1: connect is the first heartbeat). `serve_link` checks the heartbeat's key against the link's key, records the worker online, and closes the worker's previous link if it had one. Closing a link removes its key from the Endpoint, so frames under the old session are dropped before decryption from then on.
+
+The first heartbeat arrives after one HTTPS round trip, one WebSocket connection (TCP and TLS handshakes) and one HELLO round trip. That is well under a second on a normal network.
+
+### 3.2 The worker's rule
+
+**The worker makes a new session whenever it loses the old one, and never reuses a session key.** "Loses" means any of:
+- Channel 0 resets, for any reason (§6.7 c: the peer restarted, left, reset, or was unresponsive);
+- the Band declares the hub lost after `PEER_TIMEOUT`;
+- the worker process starts.
+
+It then repeats section 3.1 from step 1. If the HTTPS exchange itself fails (no network, the hub down), it waits 0.5 s, doubling to 30 s with ±20 % jitter, and tries again. These are the Telesthete WebSocket client's numbers, so the two layers back off alike.
+
+A `key_revoked` or `unknown_key` answer is not retried: the worker stops and reports, as it does today for a refused knock (`Refused` in `rook_worker.py`).
+
+### 3.3 Case by case
+
+| Case | Who notices, and how | How long | What is lost | Who acts |
+|---|---|---|---|---|
+| **Worker restarts** (crash, update, reboot) | The worker, by starting. The hub, when the new session's first heartbeat arrives; the old session is then closed (3.1 step 5). | One exchange: under a second. | Calls in flight on the old session fail with `worker_disconnected` (`serve_link` already does this when a link closes). The restarted worker's streams are gone, because it owned them (S2); see D5. | Rook: the new exchange. Telesthete: nothing. |
+| **Core update** (U3: start new core, hand over, exit old) | As a restart: the new core makes its own session. The hub moves to it at its first heartbeat, and the old core's session closes. | Under a second. | As a restart. The old core's streams end when it exits. | Rook. |
+| **Hub restarts** | The hub has no session keys; the worker's frames are dropped. The worker's WebSocket connection drops at once, but its Telesthete client reconnects and sends HELLO under the old key, which the hub cannot answer, so that drop tells the worker nothing (D7). The worker notices when Channel 0 gives up on unacknowledged data (about 5 s after its next send: at most the next heartbeat) or at `PEER_TIMEOUT` (15 s), whichever comes first. | Up to about 20 s: 15 s plus the exchange. | Everything in flight both ways. Calls the hub had open (long calls are already cut short at start, brief 22). Stream output the worker sent during the gap. | Rook: the worker's rule (3.2). The hub's `Endpoint.connect` at start does not apply, because the hub holds no keys (hand-over §1.7). |
+| **Network drops briefly** (under about 5 s, no data waiting) | Possibly nobody. If the WebSocket connection survives, TCP and Telesthete retransmit. If it drops, the Telesthete client reconnects (0.5 s, doubling) under the same key, which the hub still holds, and the hub follows the new path (§5.4). | 0, or the client's reconnect. | Nothing. | Telesthete. |
+| **Network drops longer** | The worker: Channel give-up (about 5 s after its next send) or `PEER_TIMEOUT` (15 s). The hub: the new session's first heartbeat, or a give-up on a call it was sending. | 5 to 20 s, plus the exchange once the network is back. | Messages that were unacknowledged when the Channel reset: calls in flight (they fail with `worker_disconnected`) and stream data in flight. | Rook: a new session (3.2). |
+| **The worker's address changes** (NAT rebinding, Wi-Fi to wired) | The WebSocket connection breaks; the Telesthete client opens a new one under the same key, and the hub's Endpoint follows the new path from its first accepted frame (§5.4, T7). | The client's reconnect: about 0.5 s, plus a retransmit if a frame was in flight. | Nothing: the session and Channel 0 carry on. | Telesthete. |
+| **Key revoked at the hub** (`attach` revokes old keys, W7; a revoke of the worker's key) | The hub: at once. It removes every session of that key from the Endpoint, so no further frame is decrypted (§4.4, T4), and it closes the link. The worker: by give-up or `PEER_TIMEOUT`; its next `link_open` is answered `key_revoked`, and it stops. | Hub at once; worker within about 20 s. | Everything in flight. | Rook: the remove, the refusal and the stop. |
+| **Rekey** (W7) | A new knock, attached to the identity by a person or agent. Attaching revokes the old key, as in the row above, and the worker's next session uses the new key. | As revoke. | As revoke. | Rook. |
+| **Two processes with one identity** (a thief, or an old core that has not exited) | Each makes its own sessions, and the hub keeps the newest live one. | — | The older process's calls in flight. | Rook (section 2.6). |
+
+**Where Rook acts and Telesthete does not:**
+- the exchange and its refusals;
+- the rule that a lost session is never resumed;
+- replacing a live session when a newer one is used;
+- removing keys on revoke;
+- failing open calls when a link closes (already in `serve_link`).
+
+**What Telesthete provides and Rook uses as is:** HELLO retry, `PEER_TIMEOUT`, Channel give-up and reset with a reason, the accept hook, path following, `remove_key`, and WebSocket reconnection. All of these are designed in the Telesthete design and not yet built (section 8).
+
+**The hub sets no timer for links.** A session whose worker vanished without a word stays in the Endpoint until one of three things removes it:
+- the worker's next session replaces it;
+- a revoke removes it;
+- the hub sends it a call, and the Channel gives up, resets and closes the link.
+
+That is one live session per worker. Pending ones are cleared when a session is used, or when a revoke removes the key (section 2.5). The Workers page's "offline" is H3, computed from the last heartbeat as today.
+
+---
+
+## 4. How Rook's messages ride the link
+
+### 4.1 The Channel
+
+Every protocol v1 message travels as **one Telesthete Channel message** (channel type `0x02`, SPEC §6), on **channel id 0**, **opened by the worker**. This keeps to what `docs/protocol.md` already says ("one message per link message") and to hand-over §2.
+
+- **Why a Channel.** It is reliable and ordered (SPEC §6). Control is not reliable (Telesthete decision 5), and Streams are lossy (SPEC §5). A worker answers calls, so it needs the Channel. That is why the link profile includes it (Telesthete design §8.1).
+- **Why the worker opens it.** The link profile's client is an initiator (SPEC §12.6), and a hub that has just restarted holds no session to open from. The hub's accept hook means a worker's SYN is never dropped (§6.7 b).
+- **Mapping.** The bytes of one Rook message (canonical JSON, UTF-8) are the data of one Channel message. Telesthete's §6.6 envelope splits it into chunks of at most 1,003 bytes and reassembles it, so Rook adds no length prefix and no framing.
+
+### 4.2 One Channel for everything
+
+Heartbeats, calls, results, errors, events, plugin pushes and every `stream_*` message share channel 0.
+
+- **Why one.** Protocol v1 depends on order across message types: the worker sends `stream_open` before any `stream_data` of that stream, and the hub records the stream "before any data follows" (`Hub.serve_link`). Separate Channels would lose that order and need a new rule to restore it. One Channel per worker also keeps the hub's per-key state small, and an ESP32 link client implements only one Channel (SPEC §12.6).
+- **The cost.** A large message delays everything behind it. A heartbeat queued behind a 16 MB `result` waits for it.
+  - At Telesthete's default window of 32 packets of about 1 KB, that is about 0.6 MB/s on a 50 ms round trip, so about 27 s for 16 MB.
+  - That is under H3's three missed intervals (45 s at the default interval), so a worker sending its largest message is not shown offline on such a path.
+  - On a slower path it can be. The sizes below keep such waits rare, and large file transfer belongs to Drop or peer-to-peer later (section 12).
+
+### 4.3 Sizes
+
+- **Largest message: 16,000,000 bytes**, the encoded message, in either direction. Telesthete's reference reassembler accepts up to 16,384 chunks (SPEC §6.6), and 16,384 × 1,003 is 16,433,152 bytes. A round number under that means every conformant receiver with reference defaults accepts every message Rook may send.
+  - The hub refuses a call whose encoded size is over the limit before sending it, with the new error `message_too_large`. It refuses typed input the same way. A worker that states a smaller limit (`heartbeat.max_message`, D4) gets the same refusal at its own limit.
+  - A worker whose result would be over the limit answers `error` with `cap_failed`, saying the result is too large.
+  - Today's hub has no limit: the MCP door takes call arguments of any size so that they can carry files. That changes, and section 11 says so.
+- **Stream data: at most 65,536 bytes of data per `stream_data`.** A sender splits larger output into several messages. Stream output then never holds a heartbeat or a call for long: 64 KB at about 0.6 MB/s is about 0.1 s. Input from clients is typed text and stays far below this.
+- **Small workers.** An ESP32 link client has a local reassembly cap (the Telesthete design suggests 16 KB, §8.2). A call larger than that would never arrive, and the hub would wait until the Channel or the worker gave up. So a worker may state its limit in the optional heartbeat field `max_message` (D4, section 11), and the hub sends it nothing larger.
+
+### 4.4 What else stays the same
+
+- **No protocol v1 message changes** apart from the two new `knock` fields. `heartbeat`, `call`, `result`, `error`, `stream_*`, `event` and `plugins` are carried as they are.
+- **The heartbeat still names its key.** `heartbeat.identity.key` must equal the link's key, which is now the identity key that made the session's exchange. `serve_link` already checks this.
+- **No Telesthete Streams, Board or Drop** are used by core. Telesthete Control carries HELLO, KEEPALIVE and GOODBYE as it does for any band.
+
+---
+
+## 5. The hub side
+
+### 5.1 Feeding the Endpoint
+
+The hub owns its transports and feeds one Telesthete `Endpoint` through the seam of Telesthete design §5.3 (`Endpoint(hostname="hub", send=send_to_path)`, `receive(path, frame)`, `close_path(path)`). In this build it has one transport, WebSocket (D3). It opens no UDP socket; how it will, when the first small worker needs it, is section 14.
+
+- **WebSocket.** A route `GET /band` on the hub's existing aiohttp server, which already serves the knock, the MCP door and the site. Each connection is one path, `("ws", connection number)`. Binary messages go to `ep.receive`. Text messages and binaries under 43 bytes are ignored. The connection's frames go out through a bounded queue of 256 frames that drops when full (the seam's contract: `send` must not block, T9). The route answers pings, closes a connection silent for 60 s (aiohttp's `receive_timeout`), and calls `ep.close_path` when it ends. All of this is from §5.2 and the §9.3 server rules.
+- **Session epoch.** Milliseconds since the Unix epoch at start, passed as `session_epoch`, so it increases across restarts on a synced clock (§4.2, SPEC §4.3).
+- **TLS.** None in the hub process. Whatever serves HTTPS on 443 (Caddy on the recommended VM) proxies everything to the hub's HTTP server, `/band` upgrades included (hand-over §3). The installer is not part of this design.
+
+### 5.2 One more carrier; nothing above it changes
+
+The hub already takes any link object with `key`, `async send(bytes)`, `async recv()` (raising `EOFError` once closed) and `close()` (`hub/rook_hub/__init__.py`, module docstring). The Telesthete carrier is one more such object, `TelestheteLink`, in a new module `hub/rook_hub/link.py`:
+
+- `key` is the identity key that made the session's exchange.
+- `send(data)` sends one Channel message on channel 0. It refuses data over the 16,000,000-byte limit (section 4.3).
+- `recv()` returns the next Channel message. It raises `EOFError` when the Channel resets (any reason) or the link is closed.
+- `close()` calls `Endpoint.remove_key` for the session, then ends `recv`.
+
+`link.py` also holds the `/link` route (section 2) and the `/band` route. When the accept hook hands over Channel 0 of a pending session, it builds a `TelestheteLink` and starts `hub.serve_link(link)` as a task, exactly as the tests start it for a memory link.
+
+`Hub.serve_link`, the call path, streams, plugins and everything above stay as they are. `tests/memory_link.py` and every test that uses it stay valid: the in-memory link remains a carrier the hub accepts.
+
+Two small changes fall below `serve_link`:
+
+- **The size check in `Hub.call` and `Streams.write`.** It answers `message_too_large` instead of sending (section 4.3).
+- **A revoke closes a live link.** The hub already closes a worker's link when `attach` revokes its key (`Hub.attach`). A revoke of a worker's only key does the same, through the session table in `link.py`.
+
+### 5.3 The start command gains nothing
+
+The WebSocket route is on the HTTP server the hub already serves, at the `--host` and `--port` it already takes, so it needs no option. The hub link key file is made in the data directory on first start, like `hub.key` and `token.secret`, so it needs no option either. There is no `--udp` option in this build (D3; section 14 keeps its design).
+
+---
+
+## 6. The worker side, per form
+
+### 6.1 The Python core, now
+
+- **State.** Next to `key` and `identity.json`, a file `link_key` (0600) holds the X25519 secret. It is generated on first start with the identity key and knocked with it (section 2.3).
+- **The exchange.** `POST /link` with the standard library's `urllib`, as the knock already does. The signatures and X25519 use PyNaCl, which the worker already depends on.
+- **The carrier.** A Telesthete `Band(session psk, reconnect=True)` over a `WebSocketTransport` to `<hub URL>/band`, with Channel 0 opened by the worker and wrapped as a link object of the same shape as the hub's. `Worker.run` and `_serve` stay as they are above it.
+- **The loop.** `Worker.run` today returns when its link closes. It becomes a loop: make a session (section 3.1), serve it, and on loss start again (section 3.2). It ends when `stop()` is called or the hub refuses the key. Tests that pass an in-memory `connect` keep working: the loop calls it again only after a loss, and `stop()` ends it.
+- **Transport: WebSocket only (D3).** The link goes through the same host, port and TLS as the knock and the exchange, so it works wherever they work, behind a tunnel or a TCP-only proxy included, and never waits for another transport to fail. There is no transport order, no fallback timer and nothing to remember between sessions. What it gives up is UDP's lower overhead on a LAN; section 14 keeps that design for when a worker needs it.
+- **Dependencies.** Telesthete (pinned, section 8), with its `ws` extra for the WebSocket client (`websockets`, Telesthete decision 4).
+
+### 6.2 The ESP32 worker (W2, U5, the link profile)
+
+What an ESP32 needs, and nothing chosen here shuts it out:
+
+- **The link profile** (SPEC §12.6, Telesthete design §8.2): the baseline cipher, Control, one Channel as initiator with a window of 1 to 4, reconnection, and one transport. About 1,100 lines of C (the Telesthete design's estimate). Rook needs exactly channel 0 as initiator, which the profile is built around.
+- **The exchange.**
+  - One HTTPS POST (`esp_http_client` over mbedTLS, which a Wi-Fi device links already) and JSON (cJSON).
+  - Per connection: one X25519 key generation, two X25519 operations, one Ed25519 signature, one Ed25519 verification and one HKDF-SHA256.
+  - mbedTLS provides HKDF. X25519 and Ed25519 come from the libsodium component for ESP-IDF, about 30 to 60 KB of flash (hand-over §5, not measured).
+  - Time per connection: tens of milliseconds at most for the curve operations (not measured). A device that reconnects a few times a day does not notice.
+- **No epoch storage.** Telesthete requires a session epoch that increases across restarts, persisted when a device has no clock (SPEC §4.3). With a fresh key per connection, no receiver has ever seen an epoch under the new key, so any epoch is accepted. The ESP32 needs no NVS write per connection: one less wear and one less failure mode.
+- **Stored secrets.** The identity seed and the link secret, 32 bytes each, in NVS (U5: the ESP32 is bootstrap and core in one). Session keys are never stored.
+- **Message size.** Its reassembly cap is well under 16 MB. It states it in the optional heartbeat field `max_message` (D4), so that the hub never sends it more than it can take.
+- **Transport.** UDP is the cheaper one for it: no TLS per frame, no TCP. The HTTPS exchange already uses TLS once per connection. The hub of this build serves WebSocket only (D3), so the brief that brings the ESP32 link client also builds the UDP side, as designed in section 14. The firmware picks one transport, as the profile allows.
+
+### 6.3 The Android app (A1 to A3)
+
+- **Joining.** The app signs in (A2). The hub issues the device a token under that user, and the app's core knocks with it. A good token approves the knock at once (R3), which is A3's implicit approval. From then on the device is an ordinary worker: the same exchange, the same link.
+- **The link client** is whichever Telesthete library the Android core uses. A Rust core would need the Rust link lifecycle and WebSocket client (Telesthete PRs 1b and 4, section 8), not the Rust Endpoint.
+- **Reconnects.** Doze and network switches drop connections often. Each loss costs one HTTPS round trip, then a new Band: about the cost of the TLS handshake a WebSocket reconnect makes anyway. WebSocket over 443 is the transport that survives mobile networks best, and it is the one the hub serves (D3).
+- **A1** (the hub stamps its URL into the APK) gives the app its hub URL, the only input the exchange needs.
+
+### 6.4 U2: the bootstrap never speaks Telesthete
+
+The bootstrap holds the identity, keeps state that survives core reinstalls, and downloads over plain HTTPS (U2). In this design:
+- the exchange is plain HTTPS;
+- it is made by the core, not the bootstrap;
+- Telesthete is linked only into the core.
+
+The bootstrap's part is to keep the new `link_key` file with the identity key it already keeps (W7). It never opens a Band and never derives a session key. U3's failure report, "over HTTPS so the Workers page shows it", is unaffected.
+
+---
+
+## 7. Unattended joins and the dongle
+
+**Join tokens (R3) do not touch the link exchange.** A join token rides in the knock (`knock.token`, which exists). A good one approves the knock at once, and the new worker's owner is the token's user (R3, W6). The approved worker then makes sessions like any other: `/link` needs an approved key, and how the key was approved does not matter. The knock's new `link_key` and `link_signature` are required with or without a token.
+
+**The dongle** (R3) is an ESP32-S3 worker with its own identity. To set up a host it must:
+
+1. Install a worker on the attached host from its core payload (U5).
+2. Mint a fresh one-use join token through its own identity.
+3. Hand the token to the new worker over its tty or HID connection. The host never sees the dongle's key or token, only the new token, which is spent by its first use.
+
+Step 2 needs a way for a worker to ask its hub for something. Protocol v1 has none today: calls go from the hub to workers. Bake decided it (D6): a worker-to-hub message on the link, `mint`, which keeps step 2 on the authenticated, fresh session with no new crypto. It is built later, with the dongle, and nothing else in this design depends on it. The token is owned by the dongle's owner (T5), so the new worker is too (R3).
+
+---
+
+## 8. What Rook needs from Telesthete, and when
+
+The Telesthete design's section 12 lists eight implementation pull requests: 0, 1a, 1b, 2, 3a, 3b, 4 and 5. Rook's Python hub and Python worker need:
+
+| Telesthete PR | What Rook uses from it | Needed by |
+|---|---|---|
+| **1a** Python link lifecycle | `Band(reconnect=True)`, HELLO retry, `on_channel` (accept hook), `Channel.on_reset` with a reason, reopen, give-up reset | worker carrier (L5); hub carrier (L4), through 3a |
+| **2** Python `Band(transport=)` and `WebSocketTransport` | the worker's only transport (D3); `transport=` is also what 3a builds on | worker carrier (L5) |
+| **3a** Python `Endpoint` with the path seam | `add_key`, `remove_key`, `receive`, `close_path`, `send` callback, path following, keys kept across GOODBYE (T15) | hub carrier (L4) |
+| **0** stale text | nothing to build against; it corrects SPEC §11.1, which still says Rook uses msgpack | — |
+| **5** interop and release | a release to pin (Python 0.4.0) instead of a commit | pinning |
+
+Rook's Python side needs **neither 1b, 3b nor 4** (the Rust pull requests). 1b and 4 matter when an Android or Rust core is built (section 6.3). 3b matters only for a Rust hub, which no plan line calls for.
+
+Order: 1a and 2 in parallel, then 3a (which needs both), then 5. Rook pins a commit containing 1a, 2 and 3a until 5 releases.
+
+**Requested of Telesthete, additive, not blocking (D7):** a connection-state signal on `WebSocketTransport` (a callback, or a reset reason when the server's connection closes). With it, a worker would learn of a hub restart when its WebSocket drops and make a new session at once, about a second instead of up to about 20 s. Rook does not wait for it: until it exists, the worker learns at `PEER_TIMEOUT` or a Channel give-up (section 3.3).
+
+**What Rook can build and test before each exists:**
+
+- **Before any of them** (Rook PRs L1 to L3, section 10):
+  - the derivation and its vectors;
+  - the new `knock` fields and the `link_open` and `link_accept` messages;
+  - the hub's `/link` route, link key file and session table (with an Endpoint stand-in that records `add_key` and `remove_key`);
+  - the worker's exchange, `link_key` file and session loop, over in-memory links.
+
+  Everything is tested through real HTTP, as the knock is today.
+- **After 1a and 2:** the worker's carrier can be written, but not run end to end: its only transport is WebSocket (D3), and the WebSocket server is the hub carrier's `/band` route, which needs 3a.
+- **After 3a:** the hub carrier, then the worker carrier against it, and every end-to-end test of section 9.
+
+---
+
+## 9. How it will be proven
+
+All through the one command in README.md, on localhost with ephemeral ports and throwaway keys.
+
+**Vectors** (`protocol/vectors.json`, a new `link` section):
+- **Valid:** fixed identity, link and ephemeral keys on both sides, the four signatures, `ee`, `ss`, `okm`, `psk`, and `band_id` (`SHA256(psk)[:16]`, which pins the Telesthete side too).
+- **Must be refused:** a small-order ephemeral (`ee` all zero); a small-order link key (`ss` all zero); a `link_open` signature over another hub key; a `link_accept` signature over another worker ephemeral.
+- **Message vectors,** as for every message: `link_open` and `link_accept` valid and invalid, and `knock` with and without its new fields.
+
+**The exchange, through real HTTP** (no Telesthete):
+- unknown key, revoked key and pending knock are refused with what to do;
+- a bad signature is refused with `bad_signature`;
+- a good `link_open` gets a `link_accept` that verifies, and both sides derive the same `psk`;
+- a second `link_open` adds a pending session beside the first, and the first one used clears the others;
+- a replayed `link_open` leaves the live session working;
+- a recorded `link_open` replayed in a loop while the worker reconnects does not keep the worker out, and holds one pending entry, not one per replay;
+- a `link_accept` for another ephemeral is refused by the worker;
+- the knock refuses a bad `link_signature`.
+
+**Over memory links, now** (no Telesthete), for D4 and D5:
+- a worker that heartbeats `max_message` gets no call or input above it: the hub answers `message_too_large`, and a message of exactly that size passes;
+- a worker restarted with the same identity heartbeats `open_streams` without its old streams, and the hub closes them as closed by the worker; a stream it still lists stays open; a heartbeat without the field closes nothing; a long call's stream (the hub's own) is never closed this way.
+
+**The link, over loopback WebSocket**, with a real `rook_worker` and the real hub, through a small WebSocket proxy in the test that can record, stall, cut and re-send binary messages:
+- a call and a stream round trip;
+- a message of 16,000,000 bytes passes and 16,000,001 is refused with `message_too_large`;
+- the worker restarts: the new session takes over, and a call in flight fails with `worker_disconnected`;
+- the hub restarts: the worker is back within 20 s;
+- stalls of 3 s (the session carries on) and of 20 s (a new session);
+- the proxy cuts the WebSocket connection mid-session: the Telesthete client reconnects under the same key, the hub follows the new path, and the session and Channel 0 carry on;
+- revoke: frames are dropped at once, and the worker stops on `key_revoked`;
+- rekey through `attach`;
+- the hub opens no UDP socket and `link_accept` carries no `udp_port` (D3).
+
+**Replay, from `replay-after-restart.py`,** as tests that must fail to replay, over WebSocket:
+
+1. **Against a restarted worker.**
+   - The proxy records every binary message the hub sends during a session in which the hub sends the worker a `call` (the test's own cap counts its runs).
+   - The worker process stops, and a new one starts with the same identity and makes a new session through the proxy.
+   - The proxy then injects every recorded message into the new worker's WebSocket connection.
+   - The test asserts that the cap ran exactly once and that the new session carried on undisturbed.
+2. **Against a restarted hub.**
+   - The same recording, of the worker's messages: heartbeats, a `result`, `stream_data`.
+   - The hub restarts (same data directory), and the proxy opens a WebSocket connection to its `/band` and sends the recording.
+   - The test asserts that nothing reached `serve_link`: no heartbeat recorded, no stream data recorded, no call answered. It also asserts that the Endpoint counted the frames as unknown (`dropped_unknown`, Telesthete design §4.2).
+3. **A control test that proves the test can see a replay.** With fresh keys disabled (a fixed session key reused across the restart, test-only), the replay is accepted. It is the Telesthete non-claim, kept so that a change in behaviour is noticed.
+
+The same replay tests over UDP come with the UDP side (section 14).
+
+---
+
+## 10. Build plan
+
+Rook pull requests, in order. Each is small enough to review against this document line by line.
+
+| PR | Delivers | Tested by | Needs |
+|---|---|---|---|
+| **L1 Protocol** | `docs/protocol.md` changes of section 11, including the two optional heartbeat fields `max_message` (D4) and `open_streams` (D5). The protocol library: validation of `link_open`, `link_accept`, the new `knock` fields and the two heartbeat fields; the derivation as one function, `session_psk(...)`, with its checks; signing and verifying the four signed texts. Vectors. HKDF-SHA256 written over the standard library's `hmac` (about 15 lines). | the vectors (section 9) | — |
+| **L2 Hub exchange** | `hub_link.key` in the data directory, and in the backup's `FILES`. The `keys` and `knocks` tables gain `link_key`, and the knock checks `link_signature`. `POST /link` with its checks and refusals. A session table (pending per worker ephemeral, one live per worker, D10) behind a small interface that L4 points at the Endpoint. The size limit in `Hub.call` and `Streams.write`, at 16,000,000 bytes or the worker's `max_message`, whichever is smaller (D4). | the exchange tests through real HTTP; a backup and restore keeps `hub_link.key`; the `max_message` tests over memory links | L1 |
+| **L3 Worker exchange** | The `link_key` file; the knock's new fields; the `/link` client and its checks; `Worker.run` as a loop (section 6.1), over in-memory links; stream output split at 65,536 bytes. | the exchange from the worker's side; the loop's restart and stop over memory links; every existing test unchanged | L1, L2 |
+| **L4 Hub carrier** | `hub/rook_hub/link.py`: the Endpoint, `GET /band`, `TelestheteLink`, the accept hook to `serve_link`, remove on close and on revoke. No UDP socket and no new start option (D3). README updated. | link tests with a Telesthete `Band` playing the worker over WebSocket; the hub-restart replay test | L2; Telesthete 1a, 2, 3a pinned |
+| **L5 Worker carrier** | The worker's Band over WebSocket, wrapped as its link; the loss rules of section 3.2. | the whole link matrix of section 9; the worker-restart replay test | L3, L4 |
+| **L6 Streams across a restart** (D5) | The Python worker heartbeats `open_streams`, the handles of the streams it opened. On a heartbeat that carries the field, the hub closes every open stream that worker opened and did not list, as closed by the worker. | the `open_streams` tests over memory links (section 9) | L1 |
+
+L1 to L3 and L6 can be built and reviewed now; L6 does not wait for L2 or L3, because the gap it closes exists with memory links today. L4 and L5 wait for Telesthete's 1a, 2 and 3a.
+
+D4 has no pull request of its own: its protocol text is in L1 and the hub's check is the size limit L2 builds anyway. Python workers leave `max_message` out.
+
+Not in this plan, each its own brief: the installer (hand-over §3); the ESP32 link client, which brings the UDP side of section 14 with it; the Android core; and the dongle's `mint` message (D6), built with the dongle.
+
+---
+
+## 11. Changes to docs/protocol.md, exactly
+
+Protocol v1 is not released, so these changes keep version 1 and change its vectors. They are made in PR L1, not by this design.
+
+1. **"Carriage", second bullet,** replaced by:
+   > **Every other message** travels over the worker's link to its hub, one message per Telesthete Channel message (channel type `0x02`, channel id 0, opened by the worker; SPEC §6, §6.6). Telesthete's fragmentation keeps message boundaries, so Rook adds no length prefix. The link is a Telesthete band under a key made for this connection only, by `link_open` and `link_accept` over HTTPS (below). It runs over WebSocket at the hub URL with scheme `wss` (or `ws`) and path `/band`.
+2. **"Carriage", a third bullet added:**
+   > **The link exchange** (`link_open`, and its reply `link_accept` or an `error`) travels as one HTTPS `POST` to `<hub URL>/link`, each time the worker connects.
+3. **"Minimum worker":** `link_open` and `link_accept` are added to the messages every worker must implement.
+4. **`knock`:** two rows added, `link_key` and `link_signature`, both required, as in section 2.3. One paragraph added: the signed text, and that the hub refuses a knock whose `link_signature` does not verify (`bad_signature`).
+5. **New sections `link_open` and `link_accept`:** the fields of section 2.3, the derivation of section 2.4, the checks of section 2.5, and the rule that neither side stores a session key or an ephemeral secret.
+6. **A new section "Sizes":**
+   > An encoded message is at most 16,000,000 bytes, in either direction, or, hub to worker, the worker's `max_message` if that is smaller. The hub refuses a call or input that would be larger, with `message_too_large`. A worker whose result would be larger answers `cap_failed`. `stream_data` carries at most 65,536 bytes of data; a sender splits larger output.
+7. **Error codes** gain `bad_signature` (hub: a knock's `link_signature` or a `link_open`'s `signature` does not verify) and `message_too_large` (hub: a message would exceed the size limit). The `unknown_key` and `key_revoked` rows add "or a `link_open`".
+8. **"Sequences"** gains the exchange and the first link messages:
+   ```
+   worker                                   hub
+     | POST /link  link_open{key, ephemeral, signature}
+     |<-- link_accept{ephemeral, hub_link_key, signature}
+     |    both derive psk; the hub holds it as a pending session of the worker
+     | WebSocket to /band; Telesthete band under psk: HELLO / HELLO_ACK, then Channel 0 SYN
+     |--- heartbeat ------------------------->|   this session is now live
+     |<-- heartbeat_reply{interval} ----------|
+   ```
+   The paragraph after it becomes: "A restart reuses the stored key and identity, makes a new `link_open`, and goes straight to the link (R5). A worker that loses its link makes a new `link_open`; it never reuses a session key."
+9. **`heartbeat`, a row added (D4):**
+   > | Field | Type | Req. | Meaning |
+   > |---|---|---|---|
+   > | `max_message` | integer | no | The largest encoded message, in bytes, this worker can receive. The hub sends it no call or input above it and refuses such a call or input with `message_too_large`. Left out, or above 16,000,000, the limit is 16,000,000. Small workers set it; others leave it out. Added in v1 as an optional field (U8). |
+10. **`heartbeat`, a row added (D5):**
+    > | Field | Type | Req. | Meaning |
+    > |---|---|---|---|
+    > | `open_streams` | list of string | no | The handles of every stream this worker opened and still has open (S2). When it is present, the hub closes, as closed by the worker, every open stream this worker opened that is not listed: a worker that restarted has lost them. Left out, the hub closes nothing. Added in v1 as an optional field (U8). |
+
+Both are optional fields, which v1 allows without a new version (`docs/protocol.md`, "Versions"). A hub that applies `open_streams` on every heartbeat that carries it stays consistent, because the heartbeat and the worker's `stream_open` and `stream_close` share one ordered Channel (section 4.2): a heartbeat never omits a stream the hub has heard opened unless the worker has really lost or closed it.
+
+Not in L1: `link_accept.udp_port` arrives with UDP (section 14), and the worker-to-hub `mint` message (D6) with the dongle. Each is added to `docs/protocol.md` by the pull request that builds it.
+
+Outside `docs/protocol.md`: `docs/telesthete-surface.md` says "How the link is keyed per worker is open". L1 updates that sentence to point here.
+
+---
+
+## 12. What this leaves room for
+
+Hub and spoke only (Topology). This design does not add peer-to-peer, relaying or federation. It leaves room for them:
+
+- **Federation** (F4 to F8) is hub to hub. A share between two hubs can use the same exchange shape, two identity keys plus ephemerals over HTTPS, with each hub one side of a two-member band. The `info` and salt would name the use (`rook-share-v1`).
+- **Heavy streams** later go peer to peer with the hub as introducer (Topology). The hub can introduce two of its workers by running an exchange with each and handing each the other's address, without changing the worker-hub link.
+- **A stock Telesthete relay** can run beside the hub on another port or path if something ever needs WebTransport or relaying (Telesthete design §5.7). Workers cannot tell which they reached.
+
+None of this is designed here.
+
+---
+
+## 13. Decisions
+
+Taken by Bake on 13 November 2026, 20:15 CT, through the reviewer's list, which set each decision beside the reviewer's pick. Bake answered: "Your judgements seems correct for everything." Each is recorded as taken, with the alternative that was not chosen in one line.
+
+**D1. A fresh key for every connection.** Taken: yes, as designed in sections 2 and 3. A recorded session is useless after either side restarts, and a replay never runs a call twice.
+- Its costs, accepted: one HTTPS round trip per connection; after a hub restart, workers are back in up to about 20 s; a new session, with its in-flight losses, after every loss; per-connection curve operations on an ESP32.
+- Not chosen: Rook's own freshness, with an id and an expiry on every `call` and every action-causing message, ids kept on disk by workers, and worker clocks within the expiry window (hand-over §1.7).
+
+**D2. Forward secrecy, through ephemeral X25519 keys on both sides.** Taken: yes (section 2.4).
+- Not chosen: 32-byte nonces instead of ephemerals (hand-over §1.7), under which a later theft of a long-term link key reads every recorded session of that worker.
+
+**D3. The Python worker's transport.** Taken: **WebSocket only**, through the same host, port and TLS as the knock. This was the alternative in the design as first written, not its recommendation, and the reviewer's pick. Carried through: the hub serves `/band` and opens no UDP socket, there is no `--udp` option and no `link_accept.udp_port`, and the worker has no transport order and no 4 s rule (sections 3, 5, 6, 9, 10, 11). The UDP side waits, designed, in section 14, for the brief that brings the first small worker.
+- Not chosen: UDP first, WebSocket after 4 s without an answer, as Telesthete orders its transports; it gave lower overhead on a LAN at the price of a 4 s wait wherever UDP cannot pass.
+
+**D4. How a small worker states its largest message.** Taken: an optional heartbeat field `max_message`; the hub refuses any call or input above it with `message_too_large` (section 11 item 9; built in L1 and L2). Python workers leave it out.
+- Not chosen: no field, so that an ESP32 drops what it cannot reassemble and the hub learns only when the Channel gives up.
+
+**D5. Streams across a worker restart.** Taken: an optional heartbeat field `open_streams`; the hub closes, as closed by the worker, every open stream that worker opened and did not list (section 11 item 10; built in L6). The gap exists with memory links today, so L6 does not wait for Telesthete.
+- Not chosen: leave dead streams open on the Workers page until someone closes them (S5).
+
+**D6. The dongle's way to mint a join token** (R3). Taken: a worker-to-hub message on the link, `mint` (`id`, `purpose: "join"`), answered with `result` (the token) or `error`; the token is owned by the worker's owner (T5), and older hubs answer `bad_message`. Built later, with the dongle, not in this plan.
+- Not chosen: a signed HTTPS request, `POST /mint`, which would need its own freshness against replay.
+
+**D7. Telesthete lacks a connection signal Rook could use.** Taken: accept the 15 s for now, and note the signal for Telesthete as an additive request (section 8). After a hub restart a worker learns at `PEER_TIMEOUT` or a Channel give-up, up to about 20 s.
+- Not chosen: ask Telesthete for the callback before L5.
+
+**D8. PLAN.md, Topology.** Taken: yes. This pull request replaces "The Rook hub implements the Telesthete relay as its base." with "The Rook hub is its own Telesthete terminating endpoint: one process, no relay." and records the amendment, dated 13 November 2026, in the plan's header note.
+- Not chosen: leave the line, with the hand-over's reading (§4) as its meaning.
+
+**D9. For information, no action: Telesthete decision 9** (whether Telesthete later makes its data key depend on the receiver too) is open for Bake. This design does not wait for it. If Telesthete adopts it, Rook's fresh keys are still correct and nothing here needs to change.
+
+**D10. A replayed `link_open`.** Taken: pending sessions per worker ephemeral; the first one used clears the rest (sections 2.5 and 2.6). A replay replaces only its own entry and never the real worker's.
+- Not chosen: one pending session per worker, accepting that a looped replay of a recorded request could keep that worker out on a hub served over plain `http` or behind a logging proxy.
+
+---
+
+## 14. Designed, not built: UDP
+
+**Not built in this plan (D3).** This is the design for the brief that brings the first small worker, the ESP32 link client (section 6.2), which is the first worker that needs UDP. Nothing in sections 1 to 11 depends on it, and that brief builds all of it, with its own tests and its own protocol text.
+
+**Hub: the UDP socket.** One asyncio datagram socket feeding the same Endpoint as `/band` (section 5.1). Each datagram goes to `ep.receive(("udp", source), data)`. The `send` callback answers with `sendto` on the same socket, so replies come from the address and port the worker sent to (Telesthete design §5.2, T5). On a multi-homed host bound to a wildcard address this needs one socket per local address, or `IP_PKTINFO` (§5.2). A single-address VM, the recommended host (Topology), does not; the first build binds one address and says so.
+
+**Hub: the start option.** `--udp ADDRESS:PORT`, the address the hub serves UDP on. Its default is the `--host` address and port 7474, the port the hand-over keeps (hand-over §2). `--udp off` serves none, for a hub behind a tunnel or a TCP-only proxy, where UDP cannot reach it.
+
+**Protocol: `link_accept.udp_port`.** An optional field (integer), the UDP port at the hub URL's host; left out when the hub serves no UDP. Optional fields need no new version (section 2.3), and a worker that does not know it ignores it and uses WebSocket. It stays outside the signed text of `link_accept`, which keeps that text as v1 defines it. A tampered port can only send a worker's HELLO to the wrong place, under a session key the tamperer cannot compute: the worker then times out and uses WebSocket, a denial anyone able to alter the HTTPS response could cause anyway.
+
+**Workers: transport order.** Each worker form picks its own.
+- A worker with one transport (an ESP32 link client, as the profile allows) uses UDP when `udp_port` is present. A UDP-only worker therefore needs a hub that serves UDP; it reports the missing field as it reports any refusal.
+- A worker with both tries UDP first. If no HELLO_ACK arrives within 4 s (HELLO retries at 0.5, 1 and 2 s all unanswered), it starts a WebSocket Band under the same session key, and the hub's path following accepts either (§5.4). It remembers, in memory for the life of its process, which transport its last session used, and tries that one first, so a worker on a network that blocks UDP pays the 4 s once per process start. The Python worker of this plan does not do this (D3); a later brief that wants UDP for it adds it.
+
+**What changes elsewhere when it is built.** Section 3.3 gains a path change from UDP to WebSocket mid-session (the session carries on). Section 9 gains, over loopback UDP: the round trips; UDP blocked, with the fallback within 4 s and the next session going straight to WebSocket; a hub started with `--udp off`, whose workers never try UDP; the path change; and the two replay tests of section 9 with datagrams recorded and re-sent by a UDP proxy.
+
+---
+
+## 15. What I checked, and what I could not verify
+
+**Checked by reading the reference copies and Rook's code:**
+- every Telesthete number used here: `KEEPALIVE_INTERVAL`, `PEER_TIMEOUT`, RTO, retries, window, 1,024-byte frame data, 1,003-byte chunks, the 16,384-chunk reassembly default, 43-byte minimum (SPEC §4.5, §6.4, §6.6, §12.4; Telesthete design §7.2, §8.2);
+- that the data key depends on the PSK and the sender's epoch only, and that HELLO is under the base key (SPEC §3.1, §4.3);
+- the Endpoint API, the seam, path following, keys kept across GOODBYE, T1 to T15 and the stated non-claim (Telesthete design §4.2, §5.3, §5.4, §5.6);
+- the lifecycle, the accept hook, reset reasons and the WebSocket client (§6.2, §7.2, §10);
+- the eight pull requests and their dependencies (§12);
+- the reproduction's method (`replay-after-restart.py`);
+- that `Hub.serve_link` takes any object with `key`, `send`, `recv` and `close`, checks the heartbeat key against `link.key`, closes an older link for the same worker, and fails open calls with `worker_disconnected` when a link ends;
+- that the knock is HTTPS today and the worker knocks only until approved;
+- that `Worker.run` returns when its link closes.
+
+**Not verified, because it is not built:**
+- Every Telesthete behaviour this design relies on is designed, not built: the `Endpoint`, the seam, path following, `on_channel`, `on_reset`, reconnection, `WebSocketTransport`. In particular, the Telesthete design itself says path following is not prototyped (its §13).
+- For the UDP side only (section 14, not built in this plan): whether a worker can start a WebSocket Band under the same session key after a UDP attempt rests on reading §4.2 and §6.2, not on trying it.
+
+**Not run:**
+- The replay reproduction. Running it needs a Telesthete checkout, and the brief keeps me out of the Telesthete repository. I rely on the Telesthete design's report of it (§3, §7.6).
+- No code at all: this is a design.
+
+**Estimates, not measurements:**
+- the curve operation times on an ESP32;
+- libsodium's flash size there (hand-over §5's 30 to 60 KB);
+- the about 0.6 MB/s Channel throughput at a 50 ms round trip (window × frame size ÷ round trip; Telesthete has not measured it, its §5.7);
+- the throughput of a Python terminating endpoint (not measured by the Telesthete design either).
+
+**Not reviewed by a cryptographer:** the exchange (section 2). It is a signed ephemeral Diffie-Hellman with a static-static term mixed in. That is a common shape (close to SIGMA-style and Noise-style patterns), but I have not proved it and did not model it formally. The checks in section 2.5 are the ones the hand-over and RFC 7748 call for.
