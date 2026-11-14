@@ -8,7 +8,8 @@ never by the worker's own handle.
 The worker owns the stream (S2). Everything that passes through it, output from
 the worker and input from clients (with who sent it), is kept in order in the
 stream's recording, numbered from 0. Clients pull: a client reads from any
-position, and may wait a while for more. Any number of clients read at once,
+position, and may wait a while for more (a hub that stops ends the wait at once,
+answering as at its end). Any number of clients read at once,
 each from its own position, so a late or returning client misses nothing.
 
 A stream outlives whoever opened it (S2) and never times out (S4). It closes
@@ -271,10 +272,12 @@ class Streams:
                     (row["guid"], position, limit)).fetchall()
             if rows or row["closed_at"] is not None or wait <= 0:
                 break
-            changed = self._changed.setdefault(row["guid"], asyncio.Event())
+            changed = asyncio.ensure_future(self._changed.setdefault(row["guid"], asyncio.Event()).wait())
             try:
-                await asyncio.wait_for(changed.wait(), wait)
-            except TimeoutError:
+                more = await self.hub.waiting(changed, wait)   # False: the wait is over, or the hub is stopping
+            finally:
+                changed.cancel()
+            if not more:
                 break
             wait = 0   # one wait per read
         if raw:
