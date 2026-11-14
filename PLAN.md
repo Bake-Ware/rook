@@ -210,3 +210,72 @@ Decided with Bake, 12 November 2026. LOCKED 12 November 2026. Amended 12 Novembe
 
 - Read the Telesthete repo and the 0.4 stream code before locking the stream frame design (intent is set; implementation is to be checked against it).
 - Inventory of 0.4 caps, pages and jobs from the rook04 site, so the baseline comes from the system rather than recall.
+
+## Proposed amendments, unsigned
+
+These lines describe what core does today with no signed plan line behind it. Each line can be struck on its own; whatever Bake strikes is removed from the code in a later pull request, and what he leaves stands as part of this plan. Each entry gives the plan section or line it belongs to, the text as the plan would read, and the pull request that built it.
+
+### 1. Bake's rulings, built, never written into the plan
+
+- **1.1** (Auth and tokens, T4) While the hub has no user, the site shows a setup page that makes the first user. Built in PR 404. Bake, 13 Nov 06:36: "First user needs a setup wizard if no user is created."
+- **1.2** (Auth and tokens, T4) The setup page asks for the password twice. Built in PR 412. Bake, 13 Nov 20:15: "Your judgements seems correct for everything."
+- **1.3** (Secrets, X4) The vault key is a file the hub makes on the first start of a vault never keyed, outside the data directory, and reads on every start; a missing or wrong key file for a vault keyed before stops the start with "locked", and no new key is made. Built in PR 404. Bake, 13 Nov 07:08: "Key file on disc."
+- **1.4** (Caps, calls and streams, C3 and S1) A call not answered within 45 seconds answers "running" with its ID and a stream; the call keeps running and its reply arrives on that stream. Built in PR 407. Bake, 13 Nov 07:11: "Take your recommendations" (ruling 6).
+- **1.5** (Caps, calls and streams, S2) A terminal cap takes `cols` and `rows` when it opens, and the hub sends the optional `stream_resize` message when a client's terminal changes size. Built in PR 409. Bake, 13 Nov 07:11: "Take your recommendations" (ruling 8).
+- **1.6** (Secrets, X4) Backups are encrypted and authenticated with a key derived from the vault key; the vault key is never in the backup. Built in PR 410. Bake, 13 Nov 07:11: "Take your recommendations" (ruling 7).
+- **1.7** (Heartbeat, H5, replacing "raw for a day, hourly for a month") The hub keeps every raw heartbeat and an hourly roll-up of them, and deletes neither. Built in PR 408. Bake, 13 Nov 07:11: "Take your recommendations" (ruling 5: "build the hourly roll-up, delete nothing").
+- **1.8** (Hubs and federation, F3) The hub's data directory and everything in it are readable by the hub's owner only: the folder 0700, files 0600, tightened at every start. Built in PR 412. Bake, 13 Nov 20:15: "Your judgements seems correct for everything."
+- **1.9** (Topology) The hub listens on port 8700 by default. Built in PR 404. Bake, 13 Nov 20:15: "Your judgements seems correct for everything." (default port stays 8700).
+- **1.10** (Explicitly out this round) A hub on Windows; the hub runs on POSIX systems only (it locks its data directory with `fcntl`). Built in PR 407. Bake, 13 Nov 20:15: "Your judgements seems correct for everything." (the hub on Windows is not in this round).
+- **1.11** (Caps, calls and streams; docs/link-design.md D4) An encoded message is at most 16,000,000 bytes in either direction, or, hub to worker, the worker's `max_message` if smaller; the hub refuses a larger call or input with `message_too_large`, and a worker whose result would be larger answers `cap_failed`. Built in PRs 413 and 414. Bake signed the link design 13 Nov 20:15: "Your judgements seems correct for everything."
+- **1.12** (Caps, calls and streams; docs/link-design.md section 4.3) One `stream_data` message carries at most 65,536 bytes of data; a worker splits larger output into several messages. Built in PRs 413 and 416. Signed with the link design, 13 Nov 20:15.
+- **1.13** (Topology; docs/link-design.md section 5) The hub closes a `/band` connection that sends nothing for 60 seconds. Built in PR 417. Signed with the link design, 13 Nov 20:15.
+- **1.14** (Topology; docs/link-design.md section 5) Each `/band` connection queues at most 256 frames to send; frames past that are dropped. Built in PR 417. Signed with the link design, 13 Nov 20:15.
+- **1.15** (Registration; docs/link-design.md section 3.2) A worker whose attempt to reach the hub fails waits 0.5 seconds, doubling to 30 seconds, each wait varied by up to 20 % either way, and tries again, without end. Built in PR 416. Signed with the link design, 13 Nov 20:15.
+- **1.16** (Caps, calls and streams, S2; docs/link-design.md D5) A worker heartbeats `open_streams`, the streams it opened and still has; the hub closes, as closed by the worker, every open stream that worker opened and did not list. Built in PR 415. Signed with the link design, 13 Nov 20:15.
+
+### 2. Faults found in review and fixed without asking Bake
+
+- **2.1** (Hubs and federation, F3) One hub serves a data directory: a second hub started on the same folder exits with "Another hub is serving" (`hub.lock`). Built in PR 407.
+- **2.2** (Registration; docs/link-design.md section 3.2) The worker's wait between attempts resets only after a session whose link delivered a `heartbeat_reply`; a session lost before that counts as a failed attempt. Built in PR 416.
+- **2.3** (Registration) The worker's knock and `/link` requests wait at most 10 seconds for the hub. Built in PR 416.
+- **2.4** (Workers, W1) A message whose JSON is nested too deep is answered `bad_message`, not a server error. Built in PR 416.
+- **2.5** (Topology; docs/link-design.md sections 2.5 and 3.3) A pending link session not used within 60 seconds of its `link_open` is removed. Built in PR 417.
+- **2.6** (Hubs and federation, F1) When the hub stops, each `/band` connection gets at most 0.25 seconds to take the frames queued for it and is then cut; a `/band` request that arrives during the stop is answered 503. Built in PR 419.
+- **2.7** (Caps, calls and streams, C3 and S2) When the hub stops, a waiting stream read answers with what it has, and a waiting call answers "running" with its stream, as at the end of their wait; a call cut by the stop is left running, and the next start ends it with `hub_restarted`. Built in PR 420.
+- **2.8** (Layering) Telesthete's Channel keeps each message in two queues; Rook's hub and worker read both. Built in PRs 417 and 418.
+- **2.9** (Hubs and federation, F3) A file in the data directory that another user owns is skipped at start with a line in the log, and the hub keeps starting. Built in PR 412.
+- **2.10** (Hubs and federation, F3) The backup file is written readable by its owner only, whatever the umask. Built in PR 412.
+
+### 3. Additions decided by the reviewer without Bake's signoff
+
+Lines 3.1 to 3.18, except 3.9, are the rows of the reviewer's "Core creep" list not already above. Lines 3.9 and 3.19 to 3.28 are in neither that list nor the plan audit; they were found in the review log and the code, and were merged in review without Bake's signoff.
+
+- **3.1** (Open items) A read-only audit of core against this plan, written 14 November 2026 (`PLAN-STATUS-2026-11-14.md`), changing no code. Brief 36, no pull request.
+- **3.2** (docs/link-design.md) The signed link design carries a "Decided after signing" list for the places where the code differs from the signed text, in place of an amendment to this plan. Built in PR 418.
+- **3.3** (Registration, R5) A worker key approved before link keys existed is refused, and the worker must be rekeyed. Built in PR 414.
+- **3.4** (Hubs and federation, F3) A backup without `hub_link.key` is refused on restore. Built in PR 414.
+- **3.5** (docs/link-design.md, build plan) The worker's `link_key` file and the knock's two new fields are built in L1, not in L3 as the design's build plan says. Built in PR 413.
+- **3.6** (Site, P1) `POST /api/call`: the site calls any cap as the signed-in user through one generic route. Built in PR 406.
+- **3.7** (Build rules) Seven old worktrees are kept, though stale worktrees are to be removed: c13-revision with its _deploy and _verify, c15-net, remote, library-folder-cache and tv-keep-pointer. No pull request.
+- **3.8** (Auth and tokens, T4) The setup page asks for no setup code: whoever reaches a hub that has no user makes the first user. Built in PR 404.
+- **3.9** (Plugins, PL3) The worker and site sections of the plugin manifest are as written in `docs/plugins.md`. Built in PRs 405 and 406.
+- **3.10** (Plugins, PL3) Plugin worker parts reach a worker by their own protocol message, `plugins`. Built in PR 405.
+- **3.11** (Plugins, PL3) The hub sends each worker the list of plugins it should have, and the worker drops the rest. Built in PR 405.
+- **3.12** (Plugins, PL1) Plugin pages call caps by the same route core pages use. Built in PR 406.
+- **3.13** (Site, P6) A pin names the plugin and the page. Built in PR 406.
+- **3.14** (Site, P4) The `worker.plugins` hub cap: an agent can opt a worker out of plugins. Built in PR 405.
+- **3.15** (Plugins, PL4) `POST /api/plugins/check` says what an install would replace, before the person confirms. Built in PR 402.
+- **3.16** (Auth and tokens, T4) A signed-in user changes their own password, without giving the current one (`Auth.change_password`, `POST /api/password`). Built in PRs 388 and 400.
+- **3.17** (Jobs and events, J7) The `job.list` and `job.unpause` hub caps. Built in PR 392.
+- **3.18** (Workers, W7) A worker's name is the name it installs with; its three-word moniker is separate. Built in PR 385.
+- **3.19** (Caps, calls and streams, C3) A call that was running when the hub stopped is ended at the next start with the error `hub_restarted`, and so is the last entry of its stream. Built in PR 407.
+- **3.20** (Journal, J8) The `token.used` event is put on the event bus but not journaled. Built in PR 392.
+- **3.21** (Records, K2) The site's Data page reads records and blob bytes from the store directly, not through plugin code. Built in PR 399.
+- **3.22** (Journal, L4) Vault values shorter than 8 characters are not scrubbed. Built in PR 394.
+- **3.23** (Workers, W3) Cap names are lowercase letters and digits only, in dot-separated segments with hyphens inside a segment. Built in PR 385.
+- **3.24** (Heartbeat, H2) The heartbeat interval is 15 seconds unless the hub sets another for a worker. Built in PR 385.
+- **3.25** (Auth and tokens, T2) Token defaults are fixed rows with no way to set them: agent tokens scope `client`, no expiry; join tokens scope `join`, 600 seconds, one use; webhook tokens scope `webhook`, no expiry; site sessions no expiry. Built in PR 386.
+- **3.26** (Caps, calls and streams, C2) A stream read waits at most 40 seconds for more. Built in PR 396.
+- **3.27** (Site, P8) A terminal reads at most 1,000 stream entries per request and reads on until it has them all. Built in PR 401.
+- **3.28** (Site, P4) The Jobs page shows the newest 50 chain runs; older ones stay in the journal. Built in PR 400.
