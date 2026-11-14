@@ -24,9 +24,13 @@ is one such `connect`; until it exists, only the tests' in-memory one does.
 
 `run` is a loop (link design 3.2): make a session, link under it and serve it until
 the link is lost, then start again with a new session. A session key is never reused,
-never written and never logged. A failed exchange is retried after 0.5 s, doubling to
-30 s, each with 20 % jitter either way. A hub that refuses the key (`unknown_key`,
-`key_revoked`) stops the worker.
+never written and never logged. A session has worked once its link has delivered a
+heartbeat_reply; one lost after that is followed by a new exchange at once. A failed
+attempt (the exchange failed, or the link was lost before any heartbeat_reply) is
+followed by a wait of 0.5 s, doubling to 30 s, each with 20 % jitter either way, as
+Telesthete's WebSocket client backs off; the wait resets only after a session that
+worked. A request to the hub waits at most HTTP_TIMEOUT seconds. A hub that refuses
+the key (`unknown_key`, `key_revoked`) stops the worker.
 """
 
 import asyncio
@@ -54,7 +58,8 @@ from rook_protocol import (MAX_MESSAGE, MAX_STREAM_DATA, PROTOCOL, ProtocolError
                            sign_link_key, sign_link_open, validate, verify_link_accept)
 
 VERSION = "0.1.0"
-RETRY_FIRST, RETRY_MOST, RETRY_JITTER = 0.5, 30.0, 0.2   # a failed exchange: 0.5 s doubling to 30 s, ±20 % (link design 3.2)
+RETRY_FIRST, RETRY_MOST, RETRY_JITTER = 0.5, 30.0, 0.2   # a failed attempt: 0.5 s doubling to 30 s, ±20 % (link design 3.2)
+HTTP_TIMEOUT = 10.0      # seconds a knock or link_open waits on the hub: Telesthete's WebSocket open timeout (Bake 13 Nov)
 
 # What a cap's handler, or a plugin part as it loads, may raise and only fail that call or
 # that part: any Exception, and SystemExit, so code that calls sys.exit() cannot stop the
@@ -184,6 +189,7 @@ class Worker:
         self._loads = 0
         self._link = None
         self._stopped = asyncio.Event()
+        self._replied = False             # this session's link has delivered a heartbeat_reply
         self._sleep = asyncio.sleep       # a test replaces it, so backoff waits are asked for, not slept
         self._changed = asyncio.Event()
         self._interval_known = asyncio.Event()
@@ -209,24 +215,34 @@ class Worker:
             (self.state_dir / "identity.json").write_text(json.dumps(self.identity))
         wait = None
         while not self._stopped.is_set():
-            session = await self._unless_stopped(self._open_session())
-            if session is None:                   # the exchange failed, or stop() was called
-                wait = RETRY_FIRST if wait is None else min(wait * 2, RETRY_MOST)
-                await self._unless_stopped(self._sleep(wait * random.uniform(1 - RETRY_JITTER, 1 + RETRY_JITTER)))
+            if await self._session():             # it worked: a new exchange at once
+                wait = None
                 continue
-            wait = None
-            self._link = await self.connect(session)
-            del session                           # the carrier has it; the worker keeps no session key
             if self._stopped.is_set():
-                self._link.close()
                 break
-            beats = asyncio.create_task(self._heartbeats())
-            try:
-                await self._serve()
-            finally:
-                beats.cancel()
-                await asyncio.gather(beats, return_exceptions=True)
-                self._link.close()
+            wait = RETRY_FIRST if wait is None else min(wait * 2, RETRY_MOST)
+            await self._unless_stopped(self._sleep(wait * random.uniform(1 - RETRY_JITTER, 1 + RETRY_JITTER)))
+
+    async def _session(self):
+        """One attempt: an exchange, then a link under its key, served until it is lost. True if the
+        session worked (its link delivered a heartbeat_reply), False if the attempt failed."""
+        session = await self._unless_stopped(self._open_session())
+        if session is None:                       # the exchange failed, or stop() was called
+            return False
+        self._link = await self.connect(session)
+        del session                               # the carrier has it; the worker keeps no session key
+        self._replied = False
+        if self._stopped.is_set():
+            self._link.close()
+            return False
+        beats = asyncio.create_task(self._heartbeats())
+        try:
+            await self._serve()
+        finally:
+            beats.cancel()
+            await asyncio.gather(beats, return_exceptions=True)
+            self._link.close()
+        return self._replied
 
     def stop(self):
         """End run(): during a session, during the exchange or while waiting to try again."""
@@ -282,7 +298,7 @@ class Worker:
         request = urllib.request.Request(self.hub_url + path, data=body, method="POST",
                                          headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(request) as response:
+            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
                 return decode(response.read())
         except urllib.error.HTTPError as e:
             return decode(e.read())
@@ -343,6 +359,7 @@ class Worker:
                 await self._send(error("bad_message", str(e), "Send messages as docs/protocol.md defines them."))
                 continue
             if message["type"] == "heartbeat_reply":
+                self._replied = True
                 self.interval = message["interval"]
                 self._interval_known.set()
             elif message["type"] == "call":
