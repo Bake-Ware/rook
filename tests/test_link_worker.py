@@ -386,3 +386,134 @@ def test_json_nested_too_deep_is_a_bad_message(tmp_path):
             await hub.stop_serving()
             hub.close()
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------- review of 416: back off unless a session worked
+
+
+def test_a_link_lost_before_any_heartbeat_reply_is_a_failed_attempt(tmp_path):
+    """A session has worked only once its link delivered a heartbeat_reply (link design 3.2, as
+    Telesthete's WebSocket client backs off). Sessions here are scripted: "dies" is a link already
+    closed; "works" answers one heartbeat, then is lost."""
+    async def go():
+        script = ["dies", "dies", "dies", "works", "dies", "works", "works", "dies", "dies"]
+        exchanges, waits, events = [], [], []
+
+        async def open_session():
+            exchanges.append(len(exchanges))
+            return Session(worker.key, "0" * 64, "ws://unused/band")
+
+        async def connect(session):
+            how = script[len(exchanges) - 1]
+            events.append(how)
+            hub_end, worker_end = link_pair(session.key)
+            if how == "dies":
+                hub_end.close()
+            else:
+                async def answer_once():
+                    assert decode(await hub_end.recv())["type"] == "heartbeat"
+                    await hub_end.send(encode({"type": "heartbeat_reply", "protocol": 1, "interval": 15}))
+                    await asyncio.sleep(0.01)
+                    hub_end.close()
+                asyncio.create_task(answer_once())
+            return worker_end
+
+        async def wait(seconds):
+            waits.append((len(exchanges), seconds))
+            if len(exchanges) == len(script):
+                worker.stop()
+
+        worker = Worker(tmp_path, "http://unused", connect, macs=[])
+        worker.identity = {"guid": "g", "moniker": "m", "signature": "s", "hub_key": "0" * 64}
+        worker._open_session, worker._sleep = open_session, wait
+        await asyncio.wait_for(worker.run(), 5)
+
+        # A wait after each session that died, growing; none after one that worked, and the wait
+        # starts again from 0.5 s after a session that worked.
+        assert events == script
+        after = [n for n, _ in waits]
+        assert after == [1, 2, 3, 5, 8, 9]
+        for (_, seconds), base in zip(waits, [0.5, 1, 2, 0.5, 0.5, 1]):
+            assert base * 0.8 <= seconds <= base * 1.2, (seconds, base)
+    asyncio.run(go())
+
+
+def test_a_link_that_always_dies_at_once_makes_few_exchanges(tmp_path):
+    """The hot loop the review found: a carrier whose link is closed at once. Against the real hub, the
+    worker now backs off instead of making a session every few milliseconds."""
+    async def go():
+        hub = Hub(tmp_path / "hub")
+        keys = hub.sessions.keys = Keys()
+        host, port = await hub.serve("127.0.0.1", 0)
+        alice = hub.auth.create_user("Alice", "a password")["guid"]
+        worker, running, connect, guid = await approved_worker(hub, tmp_path, f"http://{host}:{port}", alice)
+        waits = []
+
+        async def short_wait(seconds):
+            waits.append(seconds)
+            await asyncio.sleep(0.05)          # a fixed short wait, so the test runs fast but not hot
+
+        async def dead(session):
+            hub_end, worker_end = link_pair(session.key)
+            worker_end.close()
+            return worker_end
+        try:
+            worker._sleep, worker.connect = short_wait, dead
+            before = len(keys.added)
+            hub._links[guid].close()           # the working session is lost: one exchange at once, then backoff
+            await asyncio.sleep(0.5)
+            made = len(keys.added) - before
+            assert 3 <= made <= 12, made       # about one per 50 ms wait, not one every 2 ms
+            assert len(waits) >= made - 1 and waits[:3] == sorted(waits[:3])
+            assert waits[0] <= 0.6 and waits[2] >= 1.6
+        finally:
+            worker.stop()
+            await asyncio.wait_for(running, 2)
+            await hub.stop_serving()
+            hub.close()
+    asyncio.run(go())
+
+
+# ---------------------------------------------------------------- review of 416: HTTP_TIMEOUT
+
+
+def test_a_hub_that_never_answers_times_out(tmp_path, monkeypatch):
+    import rook_worker
+    monkeypatch.setattr(rook_worker, "HTTP_TIMEOUT", 0.2)
+
+    async def go():
+        held = []
+
+        async def accept_and_say_nothing(reader, writer):
+            held.append(writer)                # keep the connection open, answer nothing
+
+        server = await asyncio.start_server(accept_and_say_nothing, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        try:
+            # /link: a timeout is a failed attempt, like an unreachable hub, and is retried after a wait.
+            worker = Worker(tmp_path / "linking", f"http://127.0.0.1:{port}", connector(None), macs=[])
+            worker.identity = {"guid": "g", "moniker": "m", "signature": "s",
+                               "hub_key": SigningKey.generate().verify_key.encode().hex()}
+            waits = []
+
+            async def wait(seconds):
+                waits.append(seconds)
+                if len(waits) == 2:
+                    worker.stop()
+            worker._sleep = wait
+            started = time.monotonic()
+            await asyncio.wait_for(worker.run(), 5)
+            assert len(waits) == 2 and 0.4 <= time.monotonic() - started < 2
+
+            # The knock: as an unreachable hub does today, the timeout ends run with the error.
+            knocking = Worker(tmp_path / "knocking", f"http://127.0.0.1:{port}", connector(None), macs=[])
+            started = time.monotonic()
+            with pytest.raises(OSError):
+                await asyncio.wait_for(knocking.run(), 5)
+            assert time.monotonic() - started < 2
+        finally:
+            for writer in held:
+                writer.close()
+            server.close()
+            await server.wait_closed()
+    asyncio.run(go())
