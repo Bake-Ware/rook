@@ -38,9 +38,10 @@ def link_pair(key):
 
 
 def connector(hub):
-    """A worker's `connect(key)` that opens an in-memory link served by `hub`."""
-    async def connect(key):
-        hub_end, worker_end = link_pair(key)
+    """A worker's `connect(session)` that opens an in-memory link served by `hub`. It carries
+    nothing under the session's key: it stands in for the carrier (build plan L5)."""
+    async def connect(session):
+        hub_end, worker_end = link_pair(session.key)
         asyncio.get_running_loop().create_task(hub.serve_link(hub_end))
         return worker_end
     return connect

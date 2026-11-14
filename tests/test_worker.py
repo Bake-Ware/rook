@@ -12,7 +12,7 @@ from nacl.signing import SigningKey
 
 from memory_link import link_pair
 from rook_protocol import decode, encode, validate, verify_link_key
-from rook_worker import Cap, Refused, Worker
+from rook_worker import Cap, Refused, Session, Worker
 
 
 async def echo(args):
@@ -66,11 +66,15 @@ def test_worker_answers_a_cap_it_does_not_serve(tmp_path):
     async def go():
         hub_end, worker_end = link_pair("k")
 
-        async def connect(key):
+        async def connect(session):
             return worker_end
+
+        async def open_session():          # no hub here: a session as an exchange would give it
+            return Session(worker.key, "0" * 64, "ws://unused/band")
 
         worker = Worker(tmp_path, "http://unused", connect, caps={"demo.echo": Cap("Echo.", {}, echo)})
         worker.identity = {"guid": "g", "moniker": "m", "signature": "s"}
+        worker._open_session = open_session
         running = asyncio.create_task(worker.run())
         assert decode(await hub_end.recv())["type"] == "heartbeat"
         await hub_end.send(encode({"type": "call", "id": "c1", "cap": "video.capture", "args": {}}))
@@ -99,9 +103,9 @@ def test_worker_keeps_no_identity_whose_signature_does_not_verify(tmp_path):
     worker._post = lambda body: {"type": "knock_reply", "protocol": 1, "status": "approved",
                                  "guid": "g", "moniker": "a-b-c", "signature": forged, "hub_key": real_key}
 
-    async def connect(key):
+    async def open_session():
         raise ConnectionError("stop after the identity is stored")
-    worker.connect = connect
+    worker._open_session = open_session
     with pytest.raises(ConnectionError):
         asyncio.run(worker.run())
     assert json.loads((tmp_path / "identity.json").read_text())["hub_key"] == real_key

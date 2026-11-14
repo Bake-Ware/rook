@@ -11,9 +11,26 @@ drops what is gone, with no restart, and announces the caps they add like its
 own (W5). A part is a Python module defining `CAPS`, a dict of `Cap`, as below
 and in docs/plugins.md.
 
-The worker never sees a transport. `connect(key)` returns its link to the hub:
-an object with `async send(bytes)`, `async recv() -> bytes` (raises EOFError
-once closed) and `close()`.
+The worker never sees a transport. Each time it connects it first makes a key for
+that connection with the hub over HTTPS (`link_open`, docs/link-design.md 2), then
+calls `connect(session)` with the result, a `Session`: its identity key, the PSK the
+link runs under, and the hub's link URL. `connect` returns the link to the hub: an
+object with `async send(bytes)`, `async recv() -> bytes` (raises EOFError once
+closed) and `close()`. `send` must put messages on the link in the order it is
+called: the worker builds each message and hands it to `send` with no await in
+between, so a heartbeat's `open_streams` and the stream messages around it arrive in
+the order they were made (D5). The Telesthete carrier over WebSocket (build plan L5)
+is one such `connect`; until it exists, only the tests' in-memory one does.
+
+`run` is a loop (link design 3.2): make a session, link under it and serve it until
+the link is lost, then start again with a new session. A session key is never reused,
+never written and never logged. A session has worked once its link has delivered a
+heartbeat_reply; one lost after that is followed by a new exchange at once. A failed
+attempt (the exchange failed, or the link was lost before any heartbeat_reply) is
+followed by a wait of 0.5 s, doubling to 30 s, each with 20 % jitter either way, as
+Telesthete's WebSocket client backs off; the wait resets only after a session that
+worked. A request to the hub waits at most HTTP_TIMEOUT seconds. A hub that refuses
+the key (`unknown_key`, `key_revoked`) stops the worker.
 """
 
 import asyncio
@@ -22,6 +39,7 @@ import json
 import os
 import pathlib
 import platform
+import random
 import shutil
 import socket
 import sys
@@ -29,16 +47,19 @@ import types
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from nacl.public import PrivateKey
 from nacl.signing import SigningKey, VerifyKey
 
 import rook_net
-from rook_protocol import PROTOCOL, ProtocolError, decode, encode, sign_link_key, validate
+from rook_protocol import (MAX_MESSAGE, MAX_STREAM_DATA, PROTOCOL, ProtocolError, decode, encode, session_psk,
+                           sign_link_key, sign_link_open, validate, verify_link_accept)
 
 VERSION = "0.1.0"
+RETRY_FIRST, RETRY_MOST, RETRY_JITTER = 0.5, 30.0, 0.2   # a failed attempt: 0.5 s doubling to 30 s, ±20 % (link design 3.2)
+HTTP_TIMEOUT = 10.0      # seconds a knock or link_open waits on the hub: Telesthete's WebSocket open timeout (Bake 13 Nov)
 
 # What a cap's handler, or a plugin part as it loads, may raise and only fail that call or
 # that part: any Exception, and SystemExit, so code that calls sys.exit() cannot stop the
@@ -75,12 +96,16 @@ class Stream:
         self._ready = asyncio.Event()     # set once the hub has its stream_open, so no data goes first
 
     async def send(self, data):
+        """Output, in order. More than 65,536 bytes goes as several stream_data messages
+        (docs/protocol.md, "Sizes"), so no one message holds the link for long."""
         if isinstance(data, str):
             data = data.encode("utf-8")
         await self._ready.wait()
-        if self.open:
+        for start in range(0, len(data), MAX_STREAM_DATA):
+            if not self.open:
+                return
             await self.worker._send({"type": "stream_data", "stream": self.handle,
-                                     "data": base64.b64encode(data).decode("ascii")})
+                                     "data": base64.b64encode(data[start:start + MAX_STREAM_DATA]).decode("ascii")})
 
     async def read(self):
         """The next input from a client, as bytes, or None when the stream is closed."""
@@ -123,6 +148,16 @@ class Part:
     error: str | None = None
 
 
+@dataclass
+class Session:
+    """What one link exchange gives the carrier (link design 3.1): the worker's identity key,
+    the PSK the link runs under (never printed), and where the hub serves links: the hub URL
+    with scheme ws or wss and path /band (2.3). One session per connection; never reused."""
+    key: str
+    psk: str = field(repr=False)
+    band_url: str
+
+
 class Refused(Exception):
     """The hub refused this worker's key. `.message` is the hub's `error` message."""
 
@@ -153,6 +188,9 @@ class Worker:
         self.plugins = {}                 # plugin name -> Part, as the hub's last plugins message left them
         self._loads = 0
         self._link = None
+        self._stopped = asyncio.Event()
+        self._replied = False             # this session's link has delivered a heartbeat_reply
+        self._sleep = asyncio.sleep       # a test replaces it, so backoff waits are asked for, not slept
         self._changed = asyncio.Event()
         self._interval_known = asyncio.Event()
         self._cpu = None
@@ -167,13 +205,36 @@ class Worker:
         return kind(bytes.fromhex(path.read_text().strip()))
 
     async def run(self):
-        """Knock until approved (first start only), then connect, heartbeat and
-        answer calls until the link closes. Raises Refused if the hub refuses the key,
-        and BadSignatureError if the approval's signature does not verify."""
+        """Knock until approved (first start only). Then, until stop(): make a session with the
+        hub, link under it, heartbeat and answer calls until the link is lost, and start again
+        with a new session (link design 3.1, 3.2). Raises Refused if the hub refuses the key, and
+        BadSignatureError if the approval's signature does not verify."""
+        self._stopped.clear()
         if self.identity is None:
             self.identity = await self._knock_until_approved()
             (self.state_dir / "identity.json").write_text(json.dumps(self.identity))
-        self._link = await self.connect(self.key)
+        wait = None
+        while not self._stopped.is_set():
+            if await self._session():             # it worked: a new exchange at once
+                wait = None
+                continue
+            if self._stopped.is_set():
+                break
+            wait = RETRY_FIRST if wait is None else min(wait * 2, RETRY_MOST)
+            await self._unless_stopped(self._sleep(wait * random.uniform(1 - RETRY_JITTER, 1 + RETRY_JITTER)))
+
+    async def _session(self):
+        """One attempt: an exchange, then a link under its key, served until it is lost. True if the
+        session worked (its link delivered a heartbeat_reply), False if the attempt failed."""
+        session = await self._unless_stopped(self._open_session())
+        if session is None:                       # the exchange failed, or stop() was called
+            return False
+        self._link = await self.connect(session)
+        del session                               # the carrier has it; the worker keeps no session key
+        self._replied = False
+        if self._stopped.is_set():
+            self._link.close()
+            return False
         beats = asyncio.create_task(self._heartbeats())
         try:
             await self._serve()
@@ -181,10 +242,27 @@ class Worker:
             beats.cancel()
             await asyncio.gather(beats, return_exceptions=True)
             self._link.close()
+        return self._replied
 
     def stop(self):
+        """End run(): during a session, during the exchange or while waiting to try again."""
+        self._stopped.set()
         if self._link is not None:
             self._link.close()
+
+    async def _unless_stopped(self, awaitable):
+        """Await `awaitable`, unless stop() comes first: then it is cancelled and this gives None."""
+        task = asyncio.ensure_future(awaitable)
+        stopping = asyncio.ensure_future(self._stopped.wait())
+        try:
+            await asyncio.wait({task, stopping}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stopping.cancel()
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return None
+        return task.result()
 
     async def emit(self, name, payload):
         """Put an event on the hub's bus (J2), for example from inside a cap."""
@@ -216,20 +294,52 @@ class Worker:
                 return {name: reply[name] for name in ("guid", "moniker", "signature", "hub_key")}
             await asyncio.sleep(self.knock_every)
 
-    def _post(self, body):
-        request = urllib.request.Request(self.hub_url + "/knock", data=body, method="POST",
+    def _post(self, body, path="/knock"):
+        request = urllib.request.Request(self.hub_url + path, data=body, method="POST",
                                          headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(request) as response:
+            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
                 return decode(response.read())
         except urllib.error.HTTPError as e:
             return decode(e.read())
+
+    # ------------------------------------------------------------- session
+
+    async def _open_session(self):
+        """One link exchange (link design 2, 3.1): a new ephemeral key, `link_open` signed for
+        the hub key stored at approval, and the checks of 2.5 on the answer. Returns a Session,
+        or None when the attempt failed (the hub unreachable, a refusal worth retrying, or an
+        answer that fails a check: it is never used). Raises Refused on unknown_key or key_revoked."""
+        hub_key = self.identity["hub_key"]
+        ephemeral = PrivateKey.generate()
+        public = ephemeral.public_key.encode().hex()
+        body = encode({"type": "link_open", "protocol": PROTOCOL, "key": self.key, "ephemeral": public,
+                       "signature": sign_link_open(self.signing_key, hub_key, public)})
+        try:
+            reply = await asyncio.to_thread(self._post, body, "/link")
+        except (OSError, ProtocolError):
+            return None
+        if reply["type"] == "error":
+            if reply["code"] in ("unknown_key", "key_revoked"):
+                raise Refused(reply)
+            return None
+        if reply["type"] != "link_accept" or not verify_link_accept(hub_key, self.key, public, reply):
+            return None
+        try:
+            psk = session_psk("worker", self.key, public, reply["ephemeral"], ephemeral, self.link_secret,
+                              reply["hub_link_key"])
+        except ProtocolError:                     # a small-order point
+            return None
+        scheme, rest = self.hub_url.split("://", 1)
+        return Session(self.key, psk, f"{'wss' if scheme == 'https' else 'ws'}://{rest}/band")
 
     # ----------------------------------------------------------------- link
 
     async def _heartbeats(self):
         while True:
             self._changed.clear()
+            # Built and handed to the link with no await in between, so `open_streams` matches the
+            # stream messages before and after it on the one ordered link (D5; see the module docstring).
             await self._link.send(encode(self.heartbeat()))
             await self._interval_known.wait()
             try:
@@ -249,6 +359,7 @@ class Worker:
                 await self._send(error("bad_message", str(e), "Send messages as docs/protocol.md defines them."))
                 continue
             if message["type"] == "heartbeat_reply":
+                self._replied = True
                 self.interval = message["interval"]
                 self._interval_known.set()
             elif message["type"] == "call":
@@ -275,7 +386,8 @@ class Worker:
         else:
             try:
                 reply = {"type": "result", "id": call["id"], "result": await cap.handler(call["args"])}
-                encode(reply)
+                if (size := len(encode(reply))) > MAX_MESSAGE:     # docs/protocol.md, "Sizes"
+                    raise ValueError(f"its result is {size} bytes encoded, over the {MAX_MESSAGE} a message may be")
             except FAILS as e:
                 reply = error("cap_failed", f"{call['cap']} failed: {reason(e)}",
                               f"Check the arguments against the schema of {call['cap']}.", call["id"])

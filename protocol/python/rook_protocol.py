@@ -24,6 +24,7 @@ from nacl.signing import VerifyKey
 
 PROTOCOL = 1
 MAX_MESSAGE = 16_000_000    # the largest encoded message, either direction (docs/protocol.md, "Sizes")
+MAX_STREAM_DATA = 65_536     # the most bytes of data one stream_data carries (same section)
 
 
 class ProtocolError(ValueError):
@@ -324,6 +325,8 @@ def decode(data):
         message = json.loads(data.decode("utf-8"), parse_constant=_no_constants)
     except (UnicodeDecodeError, ValueError) as e:
         raise ProtocolError(f"not UTF-8 JSON: {e}") from None
+    except RecursionError:
+        raise ProtocolError("JSON nested too deep to decode") from None
     return validate(message)
 
 

@@ -144,13 +144,14 @@ async def scenario(tmp_path):
 
         # 7. The hub closes and opens again; the worker stays up and reconnects. The stream
         #    is still listed, reads from the start, and new data arrives.
+        #    The worker's own loop makes a new session once the hub answers again (link design 3.2);
+        #    its backoff waits are shortened here, not skipped.
+        worker._sleep = lambda seconds: asyncio.sleep(0.01)
         await hub.stop_serving()
         hub.close()
-        await running
         hub = Hub(tmp_path / "hub")
-        host, port = await hub.serve("127.0.0.1", 0)
         worker.connect = connector(hub)
-        running = asyncio.create_task(worker.run())
+        host, port = await hub.serve(host, port)          # the same address: the worker's hub URL
         await eventually(lambda: hub.get_worker(box)["online"])
         async with mcp_client(f"http://{host}:{port}/mcp", token_b) as b:
             async def stream(session, **args):
