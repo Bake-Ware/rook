@@ -4,7 +4,7 @@ calls and the journal.
 The hub never sees a transport. A worker's link is any object with
 `key` (the worker key the link authenticated), `async send(bytes)`,
 `async recv() -> bytes` (raises EOFError once closed) and `close()`.
-Knocks arrive over HTTP (docs/protocol.md, "Carriage").
+Knocks and the link exchange arrive over HTTP (docs/protocol.md, "Carriage"; link.py).
 """
 
 import asyncio
@@ -19,11 +19,12 @@ import threading
 import time
 import uuid
 
+from nacl.public import PrivateKey
 from nacl.signing import SigningKey
 
-from rook_protocol import PROTOCOL, ProtocolError, decode, encode
+from rook_protocol import MAX_MESSAGE, PROTOCOL, ProtocolError, decode, encode, verify_link_key
 
-from . import bands, caps, devices, history, jobs, plugins, records, scrub, site, streams, vault, web
+from . import bands, caps, devices, history, jobs, link, plugins, records, scrub, site, streams, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -54,7 +55,8 @@ CREATE TABLE IF NOT EXISTS keys (
     worker      TEXT NOT NULL REFERENCES workers(guid),
     signature   TEXT NOT NULL,
     attached_at REAL NOT NULL,
-    revoked_at  REAL
+    revoked_at  REAL,
+    link_key    TEXT                -- the worker's X25519 link key, from its knock (link design 2.3)
 );
 CREATE TABLE IF NOT EXISTS knocks (
     key      TEXT PRIMARY KEY,
@@ -63,7 +65,8 @@ CREATE TABLE IF NOT EXISTS knocks (
     caps     TEXT NOT NULL,          -- JSON list
     protocol INTEGER NOT NULL,
     first_at REAL NOT NULL,
-    last_at  REAL NOT NULL
+    last_at  REAL NOT NULL,
+    link_key TEXT                    -- checked against link_signature before the knock is kept
 );
 CREATE TABLE IF NOT EXISTS seen (
     worker   TEXT NOT NULL REFERENCES workers(guid),
@@ -167,6 +170,9 @@ class Hub:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(SCHEMA)
+        for table in ("keys", "knocks"):     # a data directory made before the link keys gains the column
+            if "link_key" not in {row["name"] for row in self._db.execute(f"PRAGMA table_info({table})")}:
+                self._db.execute(f"ALTER TABLE {table} ADD COLUMN link_key TEXT")
         self._db.executescript(bands.SCHEMA)
         self._db.executescript(records.SCHEMA)
         self._db.executescript(jobs.SCHEMA)
@@ -183,8 +189,11 @@ class Hub:
         self.vault = vault.Vault(self, vault_key)
         self.events = Events(self)
         self.auth = Auth(self)
-        self._signing_key = self._load_signing_key()
+        self._signing_key = self._load_key("hub.key", SigningKey)
         self.public_key = self._signing_key.verify_key.encode().hex()
+        self.link_secret = self._load_key("hub_link.key", PrivateKey)    # X25519, for the link (link design 2.2)
+        self.link_key = self.link_secret.public_key.encode().hex()
+        self.sessions = link.Sessions()      # in memory only: a restart forgets every session
         self._adjectives, self._nouns = _load_words()
         self._links = {}  # worker guid -> its live link
         self._calls = {}  # call id -> (worker guid, future, actor, cap)
@@ -194,13 +203,14 @@ class Hub:
         self.plugins = plugins.Plugins(self)
         self.plugins.load_all()  # every installed plugin, at start (PL3)
 
-    def _load_signing_key(self):
-        path = self.state_dir / "hub.key"
+    def _load_key(self, name, kind):
+        """A key of `kind` kept in the data directory, made on first start (owner-only)."""
+        path = self.state_dir / name
         if not path.exists():
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w") as f:
-                f.write(SigningKey.generate().encode().hex())
-        return SigningKey(bytes.fromhex(path.read_text().strip()))
+                f.write(kind.generate().encode().hex())
+        return kind(bytes.fromhex(path.read_text().strip()))
 
     def close(self):
         """Close links and the database, and let go of the data directory. Call stop_serving() first if serving."""
@@ -215,8 +225,12 @@ class Hub:
 
     def knock(self, message):
         """Answer a knock (R2, R5): pending until approved, then the identity.
-        A knock carrying a good join token is approved at once (R3)."""
+        A knock carrying a good join token is approved at once (R3). A knock whose
+        link_signature does not verify is refused, and nothing is kept (link design 2.3)."""
         key = message["key"]
+        if not verify_link_key(message):
+            return error("bad_signature", "The knock's link_signature does not verify under its key.",
+                         "Sign the link key with the identity key, as docs/protocol.md says, and knock again.")
         with self._lock, self._db:
             row = self._db.execute(
                 "SELECT k.revoked_at, w.moniker FROM keys k "
@@ -235,12 +249,12 @@ class Hub:
                     return e.message
             now = self.clock()
             self._db.execute(
-                "INSERT INTO knocks (key, name, macs, caps, protocol, first_at, last_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET name = excluded.name, "
+                "INSERT INTO knocks (key, name, macs, caps, protocol, first_at, last_at, link_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET name = excluded.name, "
                 "macs = excluded.macs, caps = excluded.caps, protocol = excluded.protocol, "
-                "last_at = excluded.last_at",
+                "last_at = excluded.last_at, link_key = excluded.link_key",
                 (key, message["name"], json.dumps([m.lower() for m in message["macs"]]),
-                 json.dumps(message["caps"]), message["protocol"], now, now))
+                 json.dumps(message["caps"]), message["protocol"], now, now, message["link_key"]))
             if actor is not None:
                 self._approve(key, actor)
                 return self._approved_reply(key)
@@ -339,7 +353,7 @@ class Hub:
             "INSERT INTO workers (guid, moniker, name, owner, approved_at, interval, protocol) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (guid, moniker, knock["name"], actor[0], now, DEFAULT_INTERVAL, knock["protocol"]))
-        self._attach_key(guid, key, now)
+        self._attach_key(guid, key, now, knock["link_key"])
         self._see(guid, "moniker", [moniker], now)
         self._see(guid, "mac", json.loads(knock["macs"]), now)
         self._db.execute("DELETE FROM knocks WHERE key = ?", (key,))
@@ -357,10 +371,12 @@ class Hub:
                 "SELECT key FROM keys WHERE worker = ? AND revoked_at IS NULL ORDER BY attached_at", (guid,))]
             self._db.execute("UPDATE keys SET revoked_at = ? WHERE worker = ? AND revoked_at IS NULL",
                              (now, guid))
-            self._attach_key(guid, key, now)
+            self._attach_key(guid, key, now, knock["link_key"])
             self._see(guid, "mac", json.loads(knock["macs"]), now)
             self._db.execute("DELETE FROM knocks WHERE key = ?", (key,))
             self._journal("auth", actor, guid, {"attached": key, "revoked": revoked})
+        for old_key in revoked:
+            self.sessions.remove(old_key)     # a revoked key's sessions go at once (link design 3.3)
         link = self._links.get(guid)
         if link is not None and link.key != key:
             link.close()  # the old key's link ends; the old key is refused from now on
@@ -390,11 +406,12 @@ class Hub:
                                  (json.dumps(error(*RESTARTED, json.loads(row["result"])["id"])), row["id"]))
         self.streams.cut_short(lambda call_id: error(*RESTARTED, call_id))
 
-    def _attach_key(self, guid, key, now):
-        # R5: approval is the hub signing the worker's key (docs/protocol.md, knock_reply).
+    def _attach_key(self, guid, key, now, link_key):
+        # R5: approval is the hub signing the worker's key (docs/protocol.md, knock_reply). The
+        # knock's link key goes with it, for the link exchange (link design 2.3).
         signature = self._signing_key.sign(b"rook-worker-key:" + bytes.fromhex(key)).signature.hex()
-        self._db.execute("INSERT INTO keys (key, worker, signature, attached_at) VALUES (?, ?, ?, ?)",
-                         (key, guid, signature, now))
+        self._db.execute("INSERT INTO keys (key, worker, signature, attached_at, link_key) VALUES (?, ?, ?, ?, ?)",
+                         (key, guid, signature, now, link_key))
 
     def _see(self, guid, kind, values, now):
         for value in values:
@@ -600,6 +617,7 @@ class Hub:
                 else:
                     request = encode({"type": "call", "id": call_id, "cap": cap,
                                       "args": self.vault.substitute(args, guid)})   # secret:<name> (X2)
+                    self.check_size(guid, request, "The call")
                     future = asyncio.get_running_loop().create_future()
                     self._calls[call_id] = (guid, future, actor, cap)
                     try:
@@ -627,6 +645,24 @@ class Hub:
                                  "AND json_extract(result, '$.type') = 'running'",
                                  (guid, json.dumps(self._kept(guid, reply)), entry))
         return reply
+
+    def largest_message(self, guid):
+        """The largest encoded message the hub may send this worker: 16,000,000 bytes, or the
+        `max_message` of its last heartbeat if that is smaller (docs/protocol.md, "Sizes"; D4)."""
+        with self._lock:
+            row = self._db.execute("SELECT json_extract(body, '$.max_message') FROM heartbeats "
+                                   "WHERE worker = ? ORDER BY at DESC, id DESC LIMIT 1", (guid,)).fetchone()
+        stated = row[0] if row else None
+        return min(MAX_MESSAGE, stated) if isinstance(stated, int) else MAX_MESSAGE
+
+    def check_size(self, guid, message, what):
+        """Refuse, before sending, an encoded message larger than the worker takes: HubError
+        `message_too_large`. `what` names it in the refusal ("The call", "The input")."""
+        limit = self.largest_message(guid)
+        if len(message) > limit:
+            raise HubError("message_too_large", f"{what} is {len(message)} bytes encoded; the worker takes "
+                                                f"at most {limit}.",
+                           "Send less at once: split it into smaller pieces, or move the data another way.")
 
     async def call_or_follow(self, worker, cap, args, why, *, user=None, token=None):
         """A call as `call` makes it, for a client that cannot wait long: the MCP door and the site

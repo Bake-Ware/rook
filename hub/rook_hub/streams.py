@@ -301,8 +301,10 @@ class Streams:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
                            "Wait for the worker to come back online, then write again.")
         data = text.encode("utf-8")
-        await link.send(encode({"type": "stream_data", "stream": row["handle"],
-                                "data": base64.b64encode(data).decode("ascii")}))
+        message = encode({"type": "stream_data", "stream": row["handle"],
+                          "data": base64.b64encode(data).decode("ascii")})
+        self.hub.check_size(row["worker"], message, "The input")     # docs/protocol.md, "Sizes"
+        await link.send(message)
         self._append(row["guid"], "in", data, actor)
         return {"written": len(data)}
 
