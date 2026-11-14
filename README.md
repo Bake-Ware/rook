@@ -10,7 +10,7 @@ The earlier code (0.4 on `master`, the 0.5 rework on `castling`) is reference on
 - `docs/protocol.md`: the Rook protocol, v1 (W1).
 - `protocol/`: the protocol library, one per language (U1). `vectors.json` is shared by every language; `python/` is the Python library.
 - `hub/`: the hub, in Python.
-- `core/python/`: the worker core written in Python (U1). Only the minimal worker so far.
+- `core/python/`: the worker core written in Python (U1), and its start command (`rook_start.py`).
 - `tests/`: the tests for all of the above.
 
 ## Tests
@@ -39,6 +39,19 @@ PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub --data ~/rook-hub --
 - Everything is served at that one address: the site, the MCP door at `/mcp`, and for workers `POST /knock`, `POST /link` and `GET /band`, the WebSocket every worker's link runs over (Telesthete; `docs/link-design.md`). The hub opens no other port, UDP included. Behind HTTPS, the proxy passes `/band` upgrades through with the rest.
 
 Open the address it prints. While the hub has no user, the site shows a setup page: choose a name and a password for the first user, typing the password twice, and you are signed in. After that the site shows the login page. The hub runs until you stop it with Ctrl-C.
+
+## Starting a worker
+
+On the machine the worker is for, from a clone, after the first two commands under Tests, with the address the hub prints when it starts:
+
+```sh
+PYTHONPATH=protocol/python:core/python .venv/bin/python -m rook_worker http://127.0.0.1:8700/
+```
+
+- The hub's address is the only input. The worker keeps its keys, and the identity the hub gives it, in `~/.rook-worker`.
+- On the first start it knocks under this machine's hostname and says it is waiting for approval. Approve it on the hub: on the Workers page, or by an agent. It then links, prints `Linked to … as <moniker>.` and serves until you stop it with Ctrl-C.
+- Started again, it links at once as the same worker: no second knock, no second approval.
+- If the hub cannot be reached, the address is not a hub, or the hub refuses the worker's key, it says so in one line and exits. Once approved, a hub that goes away is waited for: the worker says why it cannot link and links again when the hub is back.
 
 ## Backing up, restoring and moving a hub
 
