@@ -32,11 +32,17 @@ followed by a wait of 0.5 s, doubling to 30 s, each with 20 % jitter either way,
 Telesthete's WebSocket client backs off; the wait resets only after a session that
 worked. A request to the hub waits at most HTTP_TIMEOUT seconds. A hub that refuses
 the key (`unknown_key`, `key_revoked`) stops the worker.
+
+What happens is said in plain words on the `rook_worker` logger (info, and a warning while it
+cannot link): waiting for approval, approved, linked, the link lost, why linking fails. Each is
+said once, until it changes. The start command (`python -m rook_worker HUB_URL`, rook_start.py)
+prints them; nothing else configures that logger.
 """
 
 import asyncio
 import base64
 import json
+import logging
 import os
 import pathlib
 import platform
@@ -62,6 +68,7 @@ from rook_protocol import (MAX_MESSAGE, MAX_STREAM_DATA, PROTOCOL, ProtocolError
 VERSION = "0.1.0"
 RETRY_FIRST, RETRY_MOST, RETRY_JITTER = 0.5, 30.0, 0.2   # a failed attempt: 0.5 s doubling to 30 s, ±20 % (link design 3.2)
 HTTP_TIMEOUT = 10.0      # seconds a knock or link_open waits on the hub: Telesthete's WebSocket open timeout (Bake 13 Nov)
+log = logging.getLogger("rook_worker")      # what happens, in plain words (rook_start.py prints it)
 
 # What a cap's handler, or a plugin part as it loads, may raise and only fail that call or
 # that part: any Exception, and SystemExit, so code that calls sys.exit() cannot stop the
@@ -192,6 +199,7 @@ class Worker:
         self._link = None
         self._stopped = asyncio.Event()
         self._replied = False             # this session's link has delivered a heartbeat_reply
+        self._told = None                 # the last thing said on `log` about linking
         self._sleep = asyncio.sleep       # a test replaces it, so backoff waits are asked for, not slept
         self._changed = asyncio.Event()
         self._interval_known = asyncio.Event()
@@ -213,12 +221,18 @@ class Worker:
         BadSignatureError if the approval's signature does not verify."""
         self._stopped.clear()
         if self.identity is None:
-            self.identity = await self._knock_until_approved()
+            identity = await self._unless_stopped(self._knock_until_approved())
+            if identity is None:                  # stop() came while knocking
+                return
+            self.identity = identity
             (self.state_dir / "identity.json").write_text(json.dumps(self.identity))
+            log.info("Approved as %s.", self.identity["moniker"])
         wait = None
         while not self._stopped.is_set():
             if await self._session():             # it worked: a new exchange at once
                 wait = None
+                if not self._stopped.is_set():
+                    self._tell("lost", log.warning, "The link to the hub was lost; linking again.")
                 continue
             if self._stopped.is_set():
                 break
@@ -231,6 +245,7 @@ class Worker:
         session = await self._unless_stopped(self._open_session())
         if session is None:                       # the exchange failed, or stop() was called
             return False
+        band_url = session.band_url
         link = await self._unless_stopped(self.connect(session))
         del session                               # the carrier has it; the worker keeps no session key
         if link is None:                          # stop() came while the carrier was connecting
@@ -248,10 +263,12 @@ class Worker:
         finally:
             link.close()
             await link.wait_closed()              # nothing of this session outlives it
+        if not self._replied and not self._stopped.is_set():
+            self._cannot_link(f"no answer on {band_url}")
         return self._replied
 
     def stop(self):
-        """End run(): during a session, during the exchange or while waiting to try again."""
+        """End run(): while knocking, during a session, during the exchange or while waiting to try again."""
         self._stopped.set()
         if self._link is not None:
             self._link.close()
@@ -278,6 +295,15 @@ class Worker:
         """Something in the worker's state changed: heartbeat now (H1)."""
         self._changed.set()
 
+    def _tell(self, what, say, text, *args):
+        """Say `text` on `log` unless `what` is what was said last."""
+        if what != self._told:
+            self._told = what
+            say(text, *args)
+
+    def _cannot_link(self, why):
+        self._tell(why, log.warning, "Cannot link to the hub: %s. Trying again.", why)
+
     # ---------------------------------------------------------------- knock
 
     async def _knock_until_approved(self):
@@ -292,6 +318,8 @@ class Worker:
             reply = await asyncio.to_thread(self._post, knock)
             if reply["type"] == "error":
                 raise Refused(reply)
+            self._tell("pending", log.info, "Waiting for approval: on the hub, approve the pending worker named %s.",
+                       self.name)
             if reply["status"] == "approved":
                 # R5: check the hub signed our key before keeping the identity.
                 # Raises nacl.exceptions.BadSignatureError if it did not.
@@ -323,19 +351,21 @@ class Worker:
                        "signature": sign_link_open(self.signing_key, hub_key, public)})
         try:
             reply = await asyncio.to_thread(self._post, body, "/link")
-        except (OSError, ProtocolError):
-            return None
+        except OSError as e:
+            return self._cannot_link(f"cannot reach {self.hub_url} ({unreachable(e)})")
+        except ProtocolError:
+            return self._cannot_link(f"{self.hub_url} did not answer as a Rook hub")
         if reply["type"] == "error":
             if reply["code"] in ("unknown_key", "key_revoked"):
                 raise Refused(reply)
-            return None
+            return self._cannot_link(f"the hub answered {reply['code']}: {reply['message']}")
         if reply["type"] != "link_accept" or not verify_link_accept(hub_key, self.key, public, reply):
-            return None
+            return self._cannot_link("the hub's link_accept did not pass the checks of link design 2.5")
         try:
             psk = session_psk("worker", self.key, public, reply["ephemeral"], ephemeral, self.link_secret,
                               reply["hub_link_key"])
         except ProtocolError:                     # a small-order point
-            return None
+            return self._cannot_link("the hub's link_accept did not pass the checks of link design 2.5")
         scheme, rest = self.hub_url.split("://", 1)
         return Session(self.key, psk, f"{'wss' if scheme == 'https' else 'ws'}://{rest}/band")
 
@@ -365,6 +395,8 @@ class Worker:
                 await self._send(error("bad_message", str(e), "Send messages as docs/protocol.md defines them."))
                 continue
             if message["type"] == "heartbeat_reply":
+                if not self._replied:
+                    self._tell("linked", log.info, "Linked to %s as %s.", self.hub_url, self.identity["moniker"])
                 self._replied = True
                 self.interval = message["interval"]
                 self._interval_known.set()
@@ -541,6 +573,12 @@ def primitives():
             for name, (function, description, schema) in rook_net.CAPS.items()}
 
 
+def unreachable(e):
+    """Why the hub could not be reached, in a few words, from what urllib raised."""
+    e = getattr(e, "reason", e)
+    return getattr(e, "strerror", None) or str(e) or type(e).__name__
+
+
 def reason(e):
     """Why a handler failed, in a few words."""
     return f"it called sys.exit({e.code!r})" if isinstance(e, SystemExit) else str(e)
@@ -580,3 +618,10 @@ def gateway_mac():
     except (OSError, IndexError, ValueError):
         pass
     return None
+
+
+if __name__ == "__main__":
+    # The start command (R1): `python -m rook_worker HUB_URL`. It runs from the module named rook_worker,
+    # the one plugin parts import Cap from (docs/plugins.md), not from this copy named __main__.
+    import rook_start
+    sys.exit(rook_start.main())
