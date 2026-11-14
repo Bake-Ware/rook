@@ -23,6 +23,7 @@ from nacl.exceptions import RuntimeError as NaclRuntimeError
 from nacl.signing import VerifyKey
 
 PROTOCOL = 1
+MAX_MESSAGE = 16_000_000    # the largest encoded message, either direction (docs/protocol.md, "Sizes")
 
 
 class ProtocolError(ValueError):

@@ -1,9 +1,9 @@
 """Backup and restore of a hub's data directory (F3, X4; Bake 13 Nov).
 
 A backup is one file holding everything a hub needs to come back as itself: a
-consistent copy of the database, the hub's own key (`hub.key`, R5), the token
-secret (`token.secret`), the installed plugins' folders and the blob bytes. It
-is taken while the hub serves the directory and writes to it: the database is
+consistent copy of the database, the hub's own key (`hub.key`, R5), its link key
+(`hub_link.key`, docs/link-design.md 2.2), the token secret (`token.secret`), the
+installed plugins' folders and the blob bytes. It is taken while the hub serves the directory and writes to it: the database is
 copied through SQLite's backup API on a read-only connection, which sees one
 consistent moment and needs neither the hub nor its lock. That plain working
 copy is kept in the data directory itself (`.backup.db`), beside the database
@@ -51,7 +51,7 @@ CHUNK = 1 << 16                         # plaintext bytes per sealed chunk
 SEALED = CHUNK + sodium.crypto_secretstream_xchacha20poly1305_ABYTES
 HEADER = sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES
 FINAL = sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL
-FILES = ("hub.key", "token.secret")     # beside the database; hub.lock and the WAL are not data
+FILES = ("hub.key", "token.secret", "hub_link.key")   # beside the database; hub.lock and the WAL are not data
 COPY = ".backup.db"                     # the plain working copy of the database: in the data directory only
 
 
