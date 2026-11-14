@@ -11,7 +11,7 @@ import aiohttp
 import yarl
 from nacl.signing import SigningKey
 
-from helpers import Clock, eventually
+from helpers import Clock, eventually, link_fields
 from memory_link import link_pair
 from rook_hub import Hub, bands, journal
 from rook_protocol import decode, encode
@@ -30,8 +30,10 @@ class Box:
 
     def __init__(self, hub, name, owner):
         self.hub, self.name = hub, name
-        self.key = SigningKey.generate().verify_key.encode().hex()
-        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": self.key, "macs": [], "caps": []})
+        signing_key = SigningKey.generate()
+        self.key = signing_key.verify_key.encode().hex()
+        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": self.key, "macs": [], "caps": [],
+                   **link_fields(signing_key)})
         record = hub.approve(self.key, user=owner)
         self.guid, self.moniker = record["guid"], record["moniker"]
 
@@ -101,10 +103,11 @@ async def scenario(tmp_path):
     for name, gateway in (("desk", HOME), ("nas", HOME), ("shop", OFFICE), ("phone", None), ("laptop", CAFE),
                           ("tablet", HOTEL)):
         await boxes[name].connect(gateway)        # "spare" never connects: offline, and roaming
-    knock_key = SigningKey.generate().verify_key.encode().hex()
+    knock_signer = SigningKey.generate()
+    knock_key = knock_signer.verify_key.encode().hex()
     hub.knock({"type": "knock", "protocol": 1, "name": "porch-light", "key": knock_key, "macs": ["24:6f:28:aa:bb:cc"],
                "caps": [{"name": "gpio.write", "description": "Set a pin high or low.", "schema": {},
-                         "returns": "result"}]})
+                         "returns": "result"}], **link_fields(knock_signer)})
     opened = await hub.call(boxes["desk"].guid, "shell.open", {}, "follow the build", user=alice["guid"])
     assert opened["type"] == "stream_open"
     try:

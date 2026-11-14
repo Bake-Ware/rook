@@ -8,7 +8,7 @@ import asyncio
 import pytest
 from nacl.signing import SigningKey
 
-from helpers import Clock
+from helpers import Clock, link_fields
 from memory_link import link_pair
 from rook_hub import Hub, bands, journal
 from rook_hub.errors import HubError
@@ -23,8 +23,10 @@ class Box:
 
     def __init__(self, hub, name, owner):
         self.hub, self.name = hub, name
-        self.key = SigningKey.generate().verify_key.encode().hex()
-        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": self.key, "macs": [], "caps": []})
+        signing_key = SigningKey.generate()
+        self.key = signing_key.verify_key.encode().hex()
+        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": self.key, "macs": [], "caps": [],
+                   **link_fields(signing_key)})
         self.guid = hub.approve(self.key, user=owner)["guid"]
         hub_end, self.link = link_pair(self.key)
         self.serving = asyncio.create_task(hub.serve_link(hub_end))

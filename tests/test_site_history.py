@@ -13,7 +13,7 @@ import pathlib
 
 from nacl.signing import SigningKey
 
-from helpers import Clock
+from helpers import Clock, link_fields
 from memory_link import link_pair
 from rook_hub import Hub, bands
 from rook_hub.journal import iso
@@ -39,8 +39,10 @@ class Beater:
 
     def __init__(self, hub, name, owner, gateway):
         self.hub, self.name, self.gateway = hub, name, gateway
-        self.key = SigningKey.generate().verify_key.encode().hex()
-        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": self.key, "macs": [], "caps": []})
+        signing_key = SigningKey.generate()
+        self.key = signing_key.verify_key.encode().hex()
+        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": self.key, "macs": [], "caps": [],
+                   **link_fields(signing_key)})
         self.moniker = hub.approve(self.key, user=owner)["moniker"]
 
     async def beat(self, health):

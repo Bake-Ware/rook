@@ -10,7 +10,7 @@ import shutil
 
 from nacl.signing import SigningKey
 
-from helpers import eventually
+from helpers import eventually, link_fields
 from memory_link import connector, link_pair
 from rook_hub import Hub
 from rook_protocol import decode, encode
@@ -66,8 +66,10 @@ class Esp32:
     """An approved worker of form esp32 on an in-memory link, sending heartbeats by hand."""
 
     def __init__(self, hub, owner):
-        self.hub, self.key = hub, SigningKey.generate().verify_key.encode().hex()
-        hub.knock({"type": "knock", "protocol": 1, "name": "porch", "key": self.key, "macs": [], "caps": []})
+        signing_key = SigningKey.generate()
+        self.hub, self.key = hub, signing_key.verify_key.encode().hex()
+        hub.knock({"type": "knock", "protocol": 1, "name": "porch", "key": self.key, "macs": [], "caps": [],
+                   **link_fields(signing_key)})
         self.moniker = hub.approve(self.key, user=owner)["moniker"]
         hub_end, self.link = link_pair(self.key)
         self.serving = asyncio.create_task(hub.serve_link(hub_end))

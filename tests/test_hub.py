@@ -8,7 +8,7 @@ import urllib.request
 import pytest
 from nacl.signing import SigningKey
 
-from helpers import Clock
+from helpers import Clock, link_fields
 from memory_link import link_pair
 from rook_hub import Hub, HubError
 from rook_protocol import decode, encode
@@ -17,12 +17,19 @@ ECHO = {"name": "demo.echo", "description": "Echo.", "schema": {"type": "object"
 SHELL = {"name": "shell.open", "description": "Terminal.", "schema": {"type": "object"}, "returns": "stream"}
 
 
+SIGNERS = {}    # public key -> its SigningKey, so knock() can sign the link key
+
+
 def new_key():
-    return SigningKey.generate().verify_key.encode().hex()
+    signing_key = SigningKey.generate()
+    key = signing_key.verify_key.encode().hex()
+    SIGNERS[key] = signing_key
+    return key
 
 
 def knock(key, name="box", macs=(), caps=(ECHO,)):
-    return {"type": "knock", "protocol": 1, "name": name, "key": key, "macs": list(macs), "caps": list(caps)}
+    return {"type": "knock", "protocol": 1, "name": name, "key": key, "macs": list(macs), "caps": list(caps),
+            **link_fields(SIGNERS[key])}
 
 
 def heartbeat(key, name="box", caps=(ECHO,), hostname="box", **extra):

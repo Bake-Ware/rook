@@ -8,7 +8,7 @@ import json
 
 from nacl.signing import SigningKey
 
-from helpers import Clock
+from helpers import Clock, link_fields
 from rook_hub import Hub, history
 
 HOUR = 3600
@@ -21,8 +21,10 @@ class Box:
 
     def __init__(self, hub, owner, name):
         self.hub, self.name = hub, name
-        self.key = SigningKey.generate().verify_key.encode().hex()
-        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": self.key, "macs": [], "caps": []})
+        signing_key = SigningKey.generate()
+        self.key = signing_key.verify_key.encode().hex()
+        hub.knock({"type": "knock", "protocol": 1, "name": name, "key": self.key, "macs": [], "caps": [],
+                   **link_fields(signing_key)})
         self.guid = hub.approve(self.key, user=owner)["guid"]
 
     def beat(self, health):

@@ -11,8 +11,8 @@ from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey
 
 from memory_link import link_pair
-from rook_protocol import decode, encode, validate
-from rook_worker import Cap, Worker
+from rook_protocol import decode, encode, validate, verify_link_key
+from rook_worker import Cap, Refused, Worker
 
 
 async def echo(args):
@@ -40,6 +40,25 @@ def test_heartbeat_from_this_machine_is_valid(tmp_path):
 def test_key_is_private_to_the_worker(tmp_path):
     Worker(tmp_path, "http://unused", no_connect)
     assert stat.S_IMODE(os.stat(tmp_path / "key").st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(tmp_path / "link_key").st_mode) == 0o600
+
+
+def test_knock_carries_the_link_key_signed_by_the_identity_key(tmp_path):
+    # docs/link-design.md 2.3: the knock's link_key, signed by the identity key; kept across restarts (R5, W7).
+    sent = []
+
+    def post(body):
+        sent.append(decode(body))
+        return {"type": "error", "code": "unknown_key", "message": "stop here", "next": "nothing"}
+
+    for _ in range(2):                                    # a second start reuses the same keys
+        worker = Worker(tmp_path, "http://unused", no_connect)
+        worker._post = post
+        with pytest.raises(Refused):
+            asyncio.run(worker.run())
+    first, second = sent
+    assert first["link_key"] == worker.link_secret.public_key.encode().hex() and verify_link_key(first)
+    assert (second["key"], second["link_key"]) == (first["key"], first["link_key"])
 
 
 def test_worker_answers_a_cap_it_does_not_serve(tmp_path):

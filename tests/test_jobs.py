@@ -7,7 +7,7 @@ import time
 import httpx2
 import pytest
 
-from helpers import Clock, eventually
+from helpers import Clock, eventually, link_fields
 from memory_link import connector
 from rook_hub import Hub
 from rook_hub.jobs import schedule_due
@@ -68,7 +68,8 @@ async def scenario(tmp_path):
     y_moniker = hub.approve(y.key, user=alice["guid"])["moniker"]
     await eventually(lambda: hub.get_worker(y_moniker)["online"])
     x = worker("x", "box-x", {"demo.ring": Cap("Ring the doorbell.", {}, ring)})
-    hub.knock({"type": "knock", "protocol": 1, "name": "box-x", "key": x.key, "macs": [], "caps": []})
+    hub.knock({"type": "knock", "protocol": 1, "name": "box-x", "key": x.key, "macs": [], "caps": [],
+               **link_fields(x.signing_key)})
     x_moniker = hub.approve(x.key, user=alice["guid"])["moniker"]           # approved, not yet connected
 
     try:

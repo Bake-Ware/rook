@@ -17,7 +17,7 @@ import sys
 
 from nacl.signing import VerifyKey
 
-from helpers import eventually
+from helpers import eventually, link_fields
 from memory_link import connector
 from rook_hub import Hub, backup
 from rook_protocol import decode, encode
@@ -259,7 +259,8 @@ async def scenario(tmp_path):
             # The approved worker's identity is still accepted: its knock is answered as approved, signed by
             # the same hub key (R5, W7).
             async with client.post(f"{new}/knock", data=encode({
-                    "type": "knock", "protocol": 1, "name": "builder", "key": worker.key, "macs": [], "caps": []}),
+                    "type": "knock", "protocol": 1, "name": "builder", "key": worker.key, "macs": [], "caps": [],
+                    **link_fields(worker.signing_key)}),
                     headers={"Content-Type": "application/json"}) as response:
                 answer = decode(await response.read())
             assert answer["status"] == "approved" and (answer["guid"], answer["moniker"]) == (

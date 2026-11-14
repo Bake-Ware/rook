@@ -7,7 +7,7 @@ import json
 import pytest
 from nacl.signing import SigningKey
 
-from helpers import Clock, eventually
+from helpers import Clock, eventually, link_fields
 from memory_link import connector
 from rook_hub import Hub, HubError
 from rook_worker import Cap, Refused, Worker
@@ -180,8 +180,10 @@ def hub(tmp_path):
 
 
 def knock(token):
-    key = SigningKey.generate().verify_key.encode().hex()
-    return {"type": "knock", "protocol": 1, "name": "box", "key": key, "macs": [], "caps": [], "token": token}
+    signing_key = SigningKey.generate()
+    key = signing_key.verify_key.encode().hex()
+    return {"type": "knock", "protocol": 1, "name": "box", "key": key, "macs": [], "caps": [], "token": token,
+            **link_fields(signing_key)}
 
 
 def test_scopes_keep_tokens_to_their_mechanism(hub):
