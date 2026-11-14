@@ -1,8 +1,8 @@
 # Plugins
 
-A plugin is how anything above core reaches Rook: tasks, knowledge, device drivers, and later shell and files too (PL7, K5). It is one folder with a manifest that says what runs at the hub, what runs on workers and what it adds to the site (PL3). Plugins add, never replace (PL1), and none hooks into routing, auth or the journal (PL2).
+A plugin is how anything above core reaches Rook: tasks, knowledge, device drivers, and core's own caps too (PL7, K5). It is one folder with a manifest that says what runs at the hub, what runs on workers and what it adds to the site (PL3). Plugins add, never replace (PL1), and none hooks into routing, auth or the journal (PL2).
 
-What is built so far: the manifest, installing from a folder, hot loading, the library a plugin's hub code uses, the worker part for Python workers, pushed to them and hot loaded there, and the site section: pages, settings sections and Vue components.
+What is built so far: the manifest, installing from a folder, hot loading, the library a plugin's hub code uses, the worker part for Python workers, pushed to them and hot loaded there, the site section (pages, settings sections and Vue components), and core's own caps as plugins installed by default.
 
 ## The folder
 
@@ -238,6 +238,26 @@ export default {
 
 `/site/shell.js` also gives a page `api` (any of the site's requests), `toast`, `viewHref` and `showView` (a view kept in the address, P6). A pin on a plugin's page names the plugin and the page, so it survives a reinstall and never leads to another plugin's page. If a new version no longer has the page, the pin says it is gone, and so does the page area when it is opened. A page that fails to load says which plugin's page failed, and the rest of the site works. A plugin's page runs in the site as core's pages do: there is no sandbox, and a plugin hooks into nothing in routing, auth or the journal (PL2).
 
+## Core's own caps: plugins installed by default (PL7)
+
+Core's own caps ship as plugins in the one format above, in `hub/rook_hub/defaults/`. Both have a worker part for Python workers and nothing at the hub or on the site.
+
+| Plugin | Caps | From |
+|---|---|---|
+| `net` | `net.http`, `net.tcp`, `net.udp`: the network primitives every worker serves as a jump box for devices (D3). The functions are `rook_net`'s, which the hub also runs for a device on a direct route (D4). | D3 |
+| `shell` | `shell.exec` (run a command and wait for it: `argv`, or `cmd` in `sh`, `bash` or `powershell`; gives `ok`, `code`, `stdout`, `stderr`, and `shell` when it was not `sh`), `shell.which` (a program's path on PATH, or null), `shell.open` (a command, a login shell unless given, as a stream: on a terminal of `cols` by `rows`, resized by `stream_resize`, or on pipes with `pty` false; it closes when the command ends, and closing it ends the command). | docs/inventory.md CAP-01, CAP-03, WRK4-070 |
+
+None of these caps has a timeout, a size cap or a list of what may run (Build rules). A call with an argument the cap does not take is refused, saying which it takes. The shell caps are built for Linux and macOS (the same POSIX calls; only Linux has been run); on Windows each answers that it is not built there yet (W5).
+
+What a hub does at start:
+
+- **A data directory it has just made** (no `hub.db` before this start): it installs `net` and then `shell`, as any plugin is installed. They are not journaled: no person or agent installed them. From then on they are installed plugins like any other.
+- **The default plugins present**: it loads them as it loads every installed plugin, and installs nothing.
+- **Replaced by a person** (an install of a plugin named `net` or `shell`): the person's plugin is what is installed, and a start leaves it.
+- **A data directory the hub did not just make** (one made before this slice, or one whose default plugins are gone): it installs nothing. Rook has no uninstall, so a default plugin is gone only if someone removed it from the data directory by hand; the hub logs that it could not load it and carries on.
+
+Workers get the worker parts as they get any plugin's, so a worker opted out of plugins (P4) serves none of these caps, and a worker's knock offers only its own caps: the default plugins arrive after approval.
+
 ### `skill` (kept, not served)
 
 `skill` names a file in the folder (PL5). The hub keeps it and `plugin.list` reports it. How it reaches an agent is not decided yet.
@@ -249,5 +269,5 @@ export default {
 - A plugin's hub code calling caps on workers (other than a driver's three network steps).
 - Serving a plugin's skill to agents (PL5).
 - Pushing worker parts to forms other than `python`, such as `esp32` (PL3).
-- Core's own caps (shell, files, delegate primitives, health) as plugins installed by default (PL7).
+- The files and health families of PL7, and the shell caps 0.4 and 0.5 do not agree on: see the pull request for brief 39.
 - The registry (PL4: LATER).
