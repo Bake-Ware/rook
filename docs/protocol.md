@@ -7,7 +7,10 @@ Test vectors: [`protocol/vectors.json`](../protocol/vectors.json). Python librar
 ## Carriage
 
 - **Knock** (`knock`, and its reply `knock_reply`, or an `error`) travels as one HTTPS `POST` to `<hub URL>/knock`: the request body is the knock, the response body is the reply. A worker that has not been approved shares no key with the hub, so it cannot reach the hub over Telesthete yet ([telesthete-surface.md](telesthete-surface.md), answer c). The hub URL is the only input the worker needs (R1, U2).
-- **Every other message** travels over the worker's link to its hub, one message per link message. On Telesthete that is one Channel message (SPEC §6, §6.6), which already preserves message boundaries, so Rook adds no length prefix. How the link is keyed per worker is open ([telesthete-surface.md](telesthete-surface.md), "Where PLAN.md and Telesthete disagree", point 1). The messages do not depend on it.
+- **Every other message** travels over the worker's link to its hub, one message per Telesthete Channel message (channel type `0x02`, channel id 0, opened by the worker; SPEC §6, §6.6). Telesthete's fragmentation keeps message boundaries, so Rook adds no length prefix. The link is a Telesthete band under a key made for this connection only, by `link_open` and `link_accept` over HTTPS (below). It runs over WebSocket at the hub URL with scheme `wss` (or `ws`) and path `/band`.
+- **The link exchange** (`link_open`, and its reply `link_accept` or an `error`) travels as one HTTPS `POST` to `<hub URL>/link`, each time the worker connects.
+
+Why the link is keyed this way, and what each side does with it: [link-design.md](link-design.md).
 
 ## Encoding
 
@@ -22,13 +25,13 @@ A message is a JSON object (RFC 8259) encoded as UTF-8, with a string field `typ
 
 ## Versions (U8)
 
-- `knock`, `knock_reply`, `heartbeat` and `heartbeat_reply` carry `protocol`, an integer. This document is version **1**.
+- `knock`, `knock_reply`, `link_open`, `link_accept`, `heartbeat` and `heartbeat_reply` carry `protocol`, an integer. This document is version **1**.
 - A receiver ignores fields it does not know, on every message and in every block. Adding an optional field therefore needs no new version. Removing a field, changing its meaning, or adding a message type that a worker must answer does.
 - The hub records the version each worker announces and sends that worker only the messages and fields of that version. A hub keeps speaking every older version, so a worker that lags behind its hub still connects.
 
 ## Minimum worker (W2)
 
-A worker must implement `knock`, `knock_reply`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, heartbeat and answer calls. The `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them, and `stream_resize` may be ignored by any worker. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`).
+A worker must implement `knock`, `knock_reply`, `link_open`, `link_accept`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, make its link, heartbeat and answer calls. The `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them, and `stream_resize` may be ignored by any worker. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`).
 
 ## Shared blocks
 
@@ -69,7 +72,11 @@ Every field is optional; a device fills what it can. Sizes are objects `{"total"
 | `key` | string | yes | The public half of the keypair the worker generated: an Ed25519 public key, 64 lowercase hex characters (R5). |
 | `macs` | list of string | yes | The worker's own MAC addresses, used to recognise a known identity (W7). May be empty. |
 | `caps` | list of cap | yes | The caps it offers, shown read-only before approval (R4). |
+| `link_key` | string | yes | The worker's X25519 public key for making its link's keys, 64 lowercase hex characters. The worker keeps the secret half with its identity key. |
+| `link_signature` | string | yes | Ed25519 signature by the identity key (`key`) over the link key, 128 lowercase hex characters. |
 | `token` | string | no | A join token (a JWT the hub minted with the `join` scope). A good one approves the knock at once, with no pending step, and the worker's owner is the user the token belongs to (R3, W6). Added in v1 as an optional field (U8). |
+
+The bytes `link_signature` signs are the ASCII text `rook-link-key-v1:` followed by the 32 raw bytes of `link_key`. It shows that the holder of the identity key chose this link key. The hub refuses a knock whose `link_signature` does not verify, with `bad_signature`, and keeps nothing.
 
 A worker that has not been approved repeats the same knock, with the same key, until the reply says `approved`. A join token is spent by its first use; the repeats that follow are answered from the approved key, not the token.
 
@@ -88,6 +95,51 @@ The signed bytes are the ASCII text `rook-worker-key:` followed by the 32 raw ke
 
 A knock with a revoked key, one that is not valid, or one whose token is refused gets an `error` instead, and nothing is approved or left pending.
 
+### `link_open`: worker to hub, over HTTPS, each time it connects (R5, W7)
+
+The body of `POST <hub URL>/link`. It makes the key this connection's link runs under ([link-design.md](link-design.md), section 2). Only an approved key may send it.
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `protocol` | integer | yes | Version (U8). |
+| `key` | string | yes | The worker's identity key, as approved, 64 lowercase hex characters. |
+| `ephemeral` | string | yes | A new X25519 public key, made for this exchange only, 64 lowercase hex characters. |
+| `signature` | string | yes | Ed25519 signature by the identity key, 128 lowercase hex characters. |
+
+The bytes `signature` signs are the ASCII text `rook-link-open-v1:` followed by, raw, the hub key (32 bytes, as the worker stored it at approval), `key` (32) and `ephemeral` (32). A request signed for one hub is worthless at another.
+
+The hub checks, in order: the message is valid (else `bad_message`); `key` is approved and not revoked (else `unknown_key` or `key_revoked`); `signature` verifies under `key` (else `bad_signature`); neither X25519 result below is all zero (else `bad_message`). On any refusal it keeps nothing. Then it computes the PSK, holds it as a pending session of this worker, kept per worker ephemeral, and answers `link_accept`. The first pending session the worker uses becomes its live session and clears the others; the live session is left alone until a newer one is used.
+
+### `link_accept`: hub to worker, the HTTPS response to `link_open`
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `protocol` | integer | yes | The hub's version (U8). |
+| `ephemeral` | string | yes | The hub's new X25519 public key for this exchange, 64 lowercase hex characters. |
+| `hub_link_key` | string | yes | The hub's X25519 public key, 64 lowercase hex characters. |
+| `signature` | string | yes | Ed25519 signature by the hub key, 128 lowercase hex characters. |
+
+The bytes `signature` signs are the ASCII text `rook-link-accept-v1:` followed by, raw, the worker's `key` (32 bytes), the worker's `ephemeral` (32), this `ephemeral` (32) and `hub_link_key` (32). It covers the worker's own ephemeral, so an old `link_accept` never answers a new request.
+
+The worker checks: the message is valid; `signature` verifies under the hub key it stored at approval, for the ephemeral it just sent; neither X25519 result below is all zero. If any check fails it never uses the key, and tries again later.
+
+**The derivation.** Both sides compute, the worker as shown and the hub with the secrets swapped for its own:
+
+```
+ee  = X25519(worker ephemeral secret, hub ephemeral public)       32 bytes
+ss  = X25519(worker link secret,      hub link public)            32 bytes
+      refuse if either is all zero
+okm = HKDF-SHA256(salt = "rook-link-v1",
+                  ikm  = ee || ss                                  64 bytes
+                  info = key || worker ephemeral || hub ephemeral  96 bytes, raw public keys
+                  L    = 32)
+psk = lowercase hexadecimal of okm                                 64 ASCII characters
+```
+
+X25519 is RFC 7748, Ed25519 RFC 8032, HKDF-SHA256 RFC 5869. Telesthete takes `psk` as an ordinary PSK: its `band_id` is `SHA256(psk)[:16]`. The vectors give every step for fixed keys.
+
+**Neither side stores a session key or an ephemeral secret.** Both ephemeral secrets are erased as soon as the PSK is computed, and a worker that loses its link makes a new `link_open`.
+
 ### `heartbeat`: worker to hub (H1, H4, S4)
 
 Connecting is the first heartbeat. The worker sends one at the interval the hub gave it, and immediately whenever its state changes (H1).
@@ -102,6 +154,8 @@ Connecting is the first heartbeat. The worker sends one at the interval the hub 
 | `health` | health | yes | See above. May be `{}`. |
 | `streams` | integer | no | Number of open streams (S4). Workers without streams leave it out. |
 | `plugins` | list of object | no | The plugin worker parts it holds (PL3), each `{name, version}` as the `plugins` message gave them, with `error` (string) for one that failed to load. Workers that take no plugin parts leave it out. Added in v1 as an optional field (U8). |
+| `max_message` | integer | no | The largest encoded message, in bytes, this worker can receive. The hub sends it no call or input above it and refuses such a call or input with `message_too_large`. Left out, or above 16,000,000, the limit is 16,000,000. Small workers set it; others leave it out. Added in v1 as an optional field (U8). |
+| `open_streams` | list of string | no | The handles of every stream this worker opened and still has open (S2). When it is present, the hub closes, as closed by the worker, every open stream this worker opened that is not listed: a worker that restarted has lost them. Left out, the hub closes nothing. Added in v1 as an optional field (U8). |
 
 ### `heartbeat_reply`: hub to worker (H2)
 
@@ -147,9 +201,11 @@ The hub hands the same message back to whoever made the call. Codes in use:
 | `unknown_worker` | hub | No worker has that GUID or moniker. |
 | `worker_offline` | hub | The worker is not connected. |
 | `worker_disconnected` | hub | The worker's link closed before it answered. |
-| `unknown_key` | hub | The key was never approved or attached. |
-| `key_revoked` | hub | The key was revoked, for example by a rekey (W7). |
+| `unknown_key` | hub | The key was never approved or attached, on a knock or a `link_open`. |
+| `key_revoked` | hub | The key was revoked, for example by a rekey (W7), on a knock or a `link_open`. |
 | `bad_message` | either | The message could not be decoded or validated. |
+| `bad_signature` | hub | A knock's `link_signature` or a `link_open`'s `signature` does not verify. |
+| `message_too_large` | hub | A message would exceed the size limit (see "Sizes"). |
 | `token_invalid` | hub | The knock's token is not one this hub minted. |
 | `token_expired` | hub | The knock's token is past its lifetime. |
 | `token_spent` | hub | The knock's join token was already used. |
@@ -157,6 +213,10 @@ The hub hands the same message back to whoever made the call. Codes in use:
 | `token_scope` | hub | The knock's token is not a join token. |
 
 New codes may be added without a version change; receivers treat an unknown code like any other error.
+
+## Sizes
+
+An encoded message is at most 16,000,000 bytes, in either direction, or, hub to worker, the worker's `max_message` if that is smaller. The hub refuses a call or input that would be larger, with `message_too_large`. A worker whose result would be larger answers `cap_failed`. `stream_data` carries at most 65,536 bytes of data; a sender splits larger output.
 
 ### `stream_open`: worker to hub, answers a call on a stream cap (S1, S3)
 
@@ -221,11 +281,14 @@ worker                                   hub
   | POST /knock  knock{key K}              |
   |<-- knock_reply{approved, guid, moniker, signature, hub_key}
   |    worker verifies signature with hub_key, then stores its identity
-  | link (keyed by K)                      |
-  |--- heartbeat ------------------------->|   connect = first heartbeat
+  | POST /link  link_open{key, ephemeral, signature}
+  |<-- link_accept{ephemeral, hub_link_key, signature}
+  |    both derive psk; the hub holds it as a pending session of the worker
+  | WebSocket to /band; Telesthete band under psk: HELLO / HELLO_ACK, then Channel 0 SYN
+  |--- heartbeat ------------------------->|   this session is now live; connect = first heartbeat
   |<-- heartbeat_reply{interval} ----------|
   |<-- call{id, cap, args} ----------------|
   |--- result{id, result} ---------------->|
 ```
 
-A restart reuses the stored key and identity and goes straight to the link (R5).
+A restart reuses the stored key and identity, makes a new `link_open`, and goes straight to the link (R5). A worker that loses its link makes a new `link_open`; it never reuses a session key.
