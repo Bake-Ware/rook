@@ -384,6 +384,9 @@ class Worker:
             "band": {"gateway_mac": gateway_mac()},
             "health": self.health(),
             "streams": len(self.streams),
+            # D5: the handles of every stream this worker opened and still has open, built here, as the
+            # heartbeat goes on the link, from the same `streams` that stream_open and stream_close change.
+            "open_streams": sorted(self.streams),
             "plugins": [dict(name=name, version=part.version, **({"error": part.error} if part.error else {}))
                         for name, part in sorted(self.plugins.items())],
         }
