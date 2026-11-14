@@ -12,7 +12,7 @@ import sys
 
 from helpers import eventually
 from memory_link import connector
-from rook_hub import Hub, history
+from rook_hub import Hub, backup, history
 from rook_worker import Worker
 from test_backup import KEEP
 from test_first_run import ROOT, Started
@@ -136,6 +136,7 @@ async def owner_only_throughout(tmp_path):
         saved = tmp_path / "hub.rookbackup"
         await run("backup", "--data", data, "--vault-key", key, "--to", saved)
         owner_only(data)
+        assert stat.S_IMODE(saved.stat().st_mode) == 0o600      # the backup file too, under umask 000
     restored = tmp_path / "moved" / "data"
     await run("restore", "--from", saved, "--data", restored, "--vault-key", key)
     owner_only(restored)
@@ -173,3 +174,87 @@ async def tightened_at_start(tmp_path):
     async with Started(data, key, umask=OPEN) as hub:
         assert not tightened(hub.lines)
         owner_only(data)
+
+
+# What another user owns, in the data directory, a restored one or a plugin's folder, cannot be
+# changed by the hub's user. Without root, os.chmod is made to refuse tightening one path (a mode with
+# nothing for group and others) as the system refuses it for a file another user owns; copying a
+# plugin, which sets the source's modes on the hub's own new files, still works.
+REFUSE = """
+import os, sys
+real = os.chmod
+def chmod(path, mode, *args, **kwargs):
+    if str(path).endswith({suffix!r}) and not mode & 0o077:
+        raise PermissionError(1, "Operation not permitted", str(path))
+    return real(path, mode, *args, **kwargs)
+os.chmod = chmod
+from rook_hub.__main__ import main
+main(sys.argv[1:])
+"""
+
+
+def refusing(monkeypatch, suffix):
+    real = os.chmod
+
+    def chmod(path, mode, *args, **kwargs):
+        if str(path).endswith(suffix) and not mode & 0o077:
+            raise PermissionError(1, "Operation not permitted", str(path))
+        return real(path, mode, *args, **kwargs)
+    monkeypatch.setattr(os, "chmod", chmod)
+
+
+def test_what_another_user_owns_is_left_as_it_is(tmp_path, monkeypatch):
+    asyncio.run(another_users(tmp_path, monkeypatch))
+
+
+async def another_users(tmp_path, monkeypatch):
+    data, key = tmp_path / "data", tmp_path / "vault.key"
+    Hub(data, vault_key_file=key).close()
+    (data / "theirs.txt").write_text("not the hub's")
+    (data / "theirs.txt").chmod(0o644)
+    (data / "notes").mkdir(mode=0o755)
+    (data / "notes").chmod(0o755)
+
+    # 1. The start command: it tightens what it may, says in one line what it could not, and serves.
+    started = Started(data, key)
+    started.args = [sys.executable, "-c", REFUSE.format(suffix="theirs.txt"), *started.args[3:]]
+    async with started as hub, browser() as client:
+        assert tightened(hub.lines) == ["  tightened: 1 files and folders in the data directory were open to "
+                                        "other users; now only this hub's owner can read them"]
+        assert f"  could not tighten 1 files and folders in the data directory that another user owns, " \
+               f"first: {data / 'theirs.txt'}" in hub.lines
+        assert not any("Traceback" in line for line in hub.lines)
+        assert (await ask(client, "POST", hub.base + "/api/setup", {"name": NAME, "password": PASSWORD}))[0] == 200
+    assert stat.S_IMODE((data / "notes").stat().st_mode) == 0o700
+    assert stat.S_IMODE((data / "theirs.txt").stat().st_mode) == 0o644
+    (data / "theirs.txt").unlink()
+
+    # 2. A plugin whose hub module this user may not change installs and loads as usual.
+    plugin = pathlib.Path(write_plugin(tmp_path / "keep", {"name": "keep", "version": "1.0.0",
+                                                           "hub": {"module": "hub.py"}}, KEEP))
+    (plugin / "hub.py").chmod(0o644)
+    hub = Hub(data, vault_key_file=key)
+    try:
+        [user] = hub._db.execute("SELECT guid FROM users").fetchall()
+        refusing(monkeypatch, "hub.py")
+        assert hub.plugins.install(plugin, {"user": user["guid"], "token": None})["name"] == "keep"
+        assert "keep.put" in hub.plugins.caps
+        monkeypatch.undo()
+        [folder] = (data / "plugins").iterdir()
+        assert stat.S_IMODE((folder / "hub.py").stat().st_mode) == 0o644      # left as it was
+    finally:
+        hub.close()
+
+    # 3. A restore whose folder this user may not change is restored as usual.
+    saved = tmp_path / "hub.rookbackup"
+    backup.backup(data, key, saved)
+    refusing(monkeypatch, "/plugins")
+    restored = tmp_path / "moved" / "data"
+    before = os.umask(0o022)               # so the restore's pass meets plugins/ open (0755), and is refused
+    try:
+        backup.restore(saved, restored, key)
+    finally:
+        os.umask(before)
+    monkeypatch.undo()
+    assert (restored / "hub.db").is_file() and stat.S_IMODE((restored / "plugins").stat().st_mode) & 0o077
+    assert stat.S_IMODE(restored.stat().st_mode) == 0o700 and stat.S_IMODE((restored / "hub.db").stat().st_mode) == 0o600

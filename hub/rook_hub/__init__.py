@@ -117,16 +117,20 @@ def _load_words():
 
 def owner_only(top):
     """Take every permission of group and others off `top` and everything under it (not following
-    links). Returns how many files and folders had any."""
-    paths, changed = [top], 0
+    links). Returns (how many files and folders had any, the paths this user may not change: those
+    another user owns), and is never stopped by one of those."""
+    paths, changed, refused = [top], 0, []
     for folder, folders, files in os.walk(top):
         paths += [os.path.join(folder, name) for name in folders + files]
     for path in paths:
-        mode = os.lstat(path).st_mode
-        if mode & 0o077 and not stat.S_ISLNK(mode):
-            os.chmod(path, stat.S_IMODE(mode) & 0o700)
-            changed += 1
-    return changed
+        try:
+            mode = os.lstat(path).st_mode
+            if mode & 0o077 and not stat.S_ISLNK(mode):
+                os.chmod(path, stat.S_IMODE(mode) & 0o700)
+                changed += 1
+        except PermissionError:
+            refused.append(str(path))
+    return changed, refused
 
 
 class Hub:
@@ -145,9 +149,10 @@ class Hub:
         self.vault_key_file = vault_key_file
         # The hub's data is its owner's only (X4, X2, L1; Bake 13 Nov): the directory is 0700 and
         # every file the hub writes in it 0600, whatever the umask. What an older start left open
-        # to other users is tightened here, once; the start command says so (`tightened`).
+        # to other users is tightened here, once; the start command says so (`tightened`). What another
+        # user owns cannot be changed: it is left as it is, the start says that too, and the hub serves.
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.tightened = owner_only(self.state_dir)
+        self.tightened, self.not_tightened = owner_only(self.state_dir)
         self.clock = clock
         self._lock = threading.Lock()  # every entry point takes it before touching the database
         # hub.db is made 0600 before SQLite opens it. SQLite gives the -wal and -shm files it makes

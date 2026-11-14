@@ -177,7 +177,7 @@ def backup(data, vault_key_file, to):
         finally:
             source.close()
             target.close()
-        with open(to, "xb") as out:
+        with open(os.open(to, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:    # owner-only, whatever the umask
             try:
                 sealing = _Sealing(out, _key(key))
                 with tarfile.open(fileobj=sealing, mode="w|", format=tarfile.PAX_FORMAT) as tar:

@@ -43,6 +43,9 @@ async def run(hub, host, port):
     if hub.tightened:
         print(f"  tightened: {hub.tightened} files and folders in the data directory were open to other users; "
               "now only this hub's owner can read them", flush=True)
+    if hub.not_tightened:
+        print(f"  could not tighten {len(hub.not_tightened)} files and folders in the data directory that another "
+              f"user owns, first: {hub.not_tightened[0]}", flush=True)
     print(f"  vault key: {hub.vault_key_file}", flush=True)
     print(f"  vault:     {_VAULT[hub.vault.state]}", flush=True)
     await stop.wait()
