@@ -103,18 +103,20 @@ async def scenario(tmp_path):
             [knock] = await until(knocking)
             assert knock["name"] == "lab-box" and knock["caps"][0] == {
                 "name": "demo.echo", "description": "Return the arguments unchanged."}
-            assert [c["name"] for c in knock["caps"]] == ["demo.echo", "net.http", "net.tcp", "net.udp"]   # and the primitives (D3)
+            assert [c["name"] for c in knock["caps"]] == ["demo.echo"]   # its own; the default plugins come after approval (PL7)
             failed, approved = await tool(session, "call", worker="hub", cap="worker.approve",
                                           args={"key": knock["key"]}, why="approve the new lab box")
             assert not failed and approved["owner"] == alice["moniker"]
             moniker = approved["approved"]["moniker"]
             await eventually(lambda: first.identity)
             await eventually(lambda: hub.get_worker(moniker)["online"])
+            ALL = ["demo.echo", "net.http", "net.tcp", "net.udp", "shell.exec", "shell.open", "shell.which"]
+            await eventually(lambda: [c["name"] for c in hub.get_worker(moniker)["caps"]] == ALL)   # PL7
             failed, listing = await tool(session, "workers")
             [w] = listing["workers"]
             assert listing["knocking"] == []
             assert (w["moniker"], w["online"], w["owner"]["moniker"], w["caps"]) == (
-                moniker, True, alice["moniker"], ["demo.echo", "net.http", "net.tcp", "net.udp"])
+                moniker, True, alice["moniker"], ALL)
             assert w["facts"]["form"] == "python" and "disk" in w["health"] and "gateway_mac" in w
 
             # 4. The worker's caps, with description and schema.

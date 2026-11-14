@@ -138,7 +138,7 @@ async def scenario(tmp_path):
             failed, at_hub = await call("hub", "greet.hub", "the hub part", name="Ann")
             assert at_hub == {"greeting": "Hello from the hub, Ann."}
             failed, listed = await call("hub", "plugin.list", "see the plugins")
-            [greeter] = listed["plugins"]
+            [greeter] = [p for p in listed["plugins"] if p["name"] == "greeter"]     # beside the defaults (PL7)
             assert sorted(p["worker"] for p in greeter["loaded_on"]) == sorted([a, b])
             assert all(p["version"] == "1.0.0" for p in greeter["loaded_on"]) and greeter["failed_on"] == []
             assert alpha.plugins["greeter"].version == "1.0.0" and not alpha.plugins["greeter"].error
@@ -241,7 +241,7 @@ async def scenario(tmp_path):
             assert broken == {"plugin": "broken", "version": "0.1.0",
                               "error": "RuntimeError: this part needs a GPU"}
             grabby = next(e["result"] for e in entries if e["result"]["plugin"] == "grabby")
-            assert grabby["error"] == "ValueError: net.http is already served by this worker"
+            assert grabby["error"] == "ValueError: net.http is already served by plugin net"   # the default plugin (PL7)
             failed, listed = await call("hub", "plugin.list", "see the failures")
             by_name = {p["name"]: p for p in listed["plugins"]}
             assert sorted(f["worker"] for f in by_name["broken"]["failed_on"]) == sorted([a, g])
@@ -276,7 +276,7 @@ async def scenario(tmp_path):
             await eventually(lambda: "greet.hello" in announced(b))
             assert await greets(b)
             await eventually(lambda: {p["name"]: "error" in p for p in hub.get_worker(b)["plugins"]} == {
-                "greeter": False, "broken": True, "exiter": True, "grabby": True, "quitter": False})
+                "net": False, "shell": False, "greeter": False, "broken": True, "exiter": True, "grabby": True, "quitter": False})
             assert await porch.nothing_more()
 
             # 8. The opt-out from the site: refused without a session, journaled under the person (P4, T4).
@@ -293,7 +293,7 @@ async def scenario(tmp_path):
                 rows = {w["moniker"]: w for group in view["groups"] for w in group["workers"]}
                 assert (rows[a]["receives_plugins"], rows[b]["receives_plugins"]) == (False, True)
                 assert rows[a]["plugins"] == [] and {p["name"] for p in rows[b]["plugins"]} == {
-                    "greeter", "broken", "exiter", "grabby", "quitter"}
+                    "net", "shell", "greeter", "broken", "exiter", "grabby", "quitter"}
             failed, read = await tool(door, "journal", kind="auth", worker=a)
             assert read["entries"][0]["result"] == {"receives_plugins": False}
             assert read["entries"][0]["user"] == alice["moniker"]
@@ -337,7 +337,7 @@ def test_install_checks_the_worker_section(tmp_path):
                 assert e.message["next"].startswith("Fix ")
             else:
                 raise AssertionError(f"{module!r} was accepted")
-        assert hub.plugins.list() == []
+        assert [p["name"] for p in hub.plugins.list()] == ["net", "shell"]     # only the defaults (PL7)
         folder = write_plugin(tmp_path / "esp-only", {"name": "esp-only", "version": "1",
                                                       "worker": {"esp32": {"image": "anything"}}})
         assert hub.plugins.install(folder, actor)["worker"] is True

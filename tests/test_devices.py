@@ -26,16 +26,22 @@ KEYS = {"device": "desk-lamp-key-123", "band": "band-lamp-key-456", "hub": "hub-
 
 class Box(Worker):
     """A real rook_worker worker that reports the gateway it is given, and whose
-    net.http primitive adds a header naming it (test instrumentation only)."""
+    net.http primitive adds a header naming it (test instrumentation only). The
+    primitive comes with the default plugin `net` (PL7), so it is tagged as it loads."""
 
     def __init__(self, *args, gateway, **kwargs):
         super().__init__(*args, **kwargs)
         self.gateway = gateway
-        real = self.caps["net.http"]
 
-        async def tagged(args):
-            return await real.handler(dict(args, headers={**args.get("headers", {}), "x-came-through": self.name}))
-        self.caps["net.http"] = Cap(real.description, real.schema, tagged)
+    def _load(self, part):
+        loaded = super()._load(part)
+        real = self.caps.get("net.http")
+        if real is not None and not getattr(real.handler, "tagged", False):
+            async def tagged(args):
+                return await real.handler(dict(args, headers={**args.get("headers", {}), "x-came-through": self.name}))
+            tagged.tagged = True
+            self.caps["net.http"] = Cap(real.description, real.schema, tagged)
+        return loaded
 
     def heartbeat(self):
         return dict(super().heartbeat(), band={"gateway_mac": self.gateway})
