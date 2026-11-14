@@ -1,6 +1,6 @@
 # Rook Core Plan
 
-Decided with Bake, 12 November 2026. LOCKED 12 November 2026. Amended 12 November 2026 by Bake: Telesthete is updated additively to accommodate this design, the Rook hub implements the Telesthete relay as its base, and user login is by password for now. Core only. Agents and Workbench are separate plans built on top once core is tested. Claude (the voice session that wrote this) reviews every PR against this document; coding agents build, they do not decide.
+Decided with Bake, 12 November 2026. LOCKED 12 November 2026. Amended 12 November 2026 by Bake: Telesthete is updated additively to accommodate this design, the Rook hub implements the Telesthete relay as its base, and user login is by password for now. Amended 13 November 2026 by Bake: the Rook hub is its own Telesthete terminating endpoint, one process with no relay (Topology; docs/link-design.md, D8). Core only. Agents and Workbench are separate plans built on top once core is tested. Claude (the voice session that wrote this) reviews every PR against this document; coding agents build, they do not decide.
 
 ## Build rules
 
@@ -19,7 +19,7 @@ Decided with Bake, 12 November 2026. LOCKED 12 November 2026. Amended 12 Novembe
 
 ## Topology
 
-- Hub and spoke only. Every worker holds one connection to its hub; calls route through the hub. The Rook hub implements the Telesthete relay as its base.
+- Hub and spoke only. Every worker holds one connection to its hub; calls route through the hub. The Rook hub is its own Telesthete terminating endpoint: one process, no relay.
 - Uptime is the host's problem. A free Oracle VM is the recommended path in the setup docs.
 - Peer to peer is a Telesthete capability, not Rook architecture. Rook may use it later for heavy streams with the hub as introducer.
 - Hubs have names. The whole system is "the hub".
