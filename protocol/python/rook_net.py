@@ -1,7 +1,7 @@
 """The dumb network primitives (D3): one HTTP request, one TCP send, one UDP send.
 
 They know nothing of any device. Every worker serves them as the caps net.http,
-net.tcp and net.udp (rook_worker.py), and the hub runs the same functions itself
+net.tcp and net.udp (the default plugin `net`, PL7), and the hub runs the same functions itself
 for a device on a direct route (D4), so both answer alike. Standard library only.
 Each function blocks; callers run it in a thread.
 

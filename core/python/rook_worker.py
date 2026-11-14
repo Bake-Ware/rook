@@ -55,7 +55,6 @@ from nacl.public import PrivateKey
 from nacl.signing import SigningKey, VerifyKey
 
 import rook_link
-import rook_net
 from rook_protocol import (MAX_MESSAGE, MAX_STREAM_DATA, PROTOCOL, ProtocolError, decode, encode, session_psk,
                            sign_link_key, sign_link_open, validate, verify_link_accept)
 
@@ -176,7 +175,7 @@ class Worker:
         self.hub_url = hub_url.rstrip("/")
         self.connect = connect or rook_link.connect     # the Telesthete carrier unless one is given
         self.name = name or socket.gethostname()
-        self.caps = {**primitives(), **dict(caps or {})}   # every worker serves the network primitives (D3)
+        self.caps = dict(caps or {})     # the network primitives (D3) come as the default plugin `net` (PL7)
         self.macs = own_macs() if macs is None else macs
         self.knock_every = knock_every
         self.token = token  # a join token: approved at once, no pending step (R3)
@@ -527,18 +526,6 @@ class Worker:
         except (OSError, KeyError, ValueError, IndexError):
             pass
         return health
-
-
-def primitives():
-    """The dumb network primitives every worker serves, so it can be a jump box for
-    devices on its band (D3): net.http, net.tcp and net.udp (rook_net.py). Built in;
-    shipping them as a plugin installed by default is PL7, not yet done."""
-    def serve(function):
-        async def handler(args):
-            return await asyncio.to_thread(function, args)
-        return handler
-    return {name: Cap(description, schema, serve(function))
-            for name, (function, description, schema) in rook_net.CAPS.items()}
 
 
 def reason(e):
