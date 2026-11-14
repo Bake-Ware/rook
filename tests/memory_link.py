@@ -30,6 +30,9 @@ class MemoryLink:
             self._inbox.put_nowait(None)
             self._outbox.put_nowait(None)
 
+    async def wait_closed(self):
+        """Nothing to wait for: an in-memory link has no tasks of its own."""
+
 
 def link_pair(key):
     """(hub end, worker end) of one link."""
