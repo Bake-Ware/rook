@@ -202,6 +202,7 @@ class Hub:
         self._running = {}  # call id -> {actor, worker, entry, reply}, while Hub.call runs it
         self._runner = None  # the HTTP server, while serving
         self._serving_dir = None  # the open hub.lock while this hub holds its data directory (serve)
+        self._stopping = None     # while serving: an event set when stop_serving begins
         self.plugins = plugins.Plugins(self)
         self.plugins.load_all()  # every installed plugin, at start (PL3)
 
@@ -276,6 +277,7 @@ class Hub:
         takes it over first, or raises HubError `data_in_use` and changes nothing. Having taken
         it over, it ends the calls a previous run of the hub left running."""
         self._take_over()
+        self._stopping = asyncio.Event()
         await self.carrier.start()
         self._runner, address = await web.serve(self, host, port)
         self._calls_cut_short()
@@ -297,14 +299,40 @@ class Hub:
         self._serving_dir = held
 
     async def stop_serving(self):
-        """Stop serving. The carrier stops before the HTTP server, because the server's clean-up
-        waits for open handlers, and a /band connection stays open for as long as its client keeps
-        it: the carrier cuts every one, so the stop takes about FLUSH seconds whatever is connected."""
+        """Stop serving, promptly, whoever is waiting on the hub. The server's clean-up waits for open
+        handlers, so before it: requests waiting on the hub are woken (`waiting`) and answer as at the
+        end of their wait, a stream read with what it has and a call with "running" and its stream;
+        then the carrier cuts every /band connection, which stays open for as long as its client keeps
+        it. A call still running is left running, for the next start to end with hub_restarted (C3)."""
+        if self._stopping is not None:
+            self._stopping.set()
         await self.events.stop()
         await self.carrier.stop()
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
+
+    async def waiting(self, future, seconds):
+        """Wait up to `seconds` for `future`, but no longer than until the hub begins to stop: a
+        request waiting on the hub then answers at once, as at the end of its wait. Returns whether
+        `future` is done; it is never cancelled here."""
+        waits = {future}
+        if self._stopping is not None:
+            stop = asyncio.ensure_future(self._stopping.wait())
+            waits.add(stop)
+        try:
+            await asyncio.wait(waits, timeout=seconds, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            if self._stopping is not None:
+                stop.cancel()
+        return future.done()
+
+    def _left_running(self, cancelled, reply):
+        """A call that ends because the hub is stopping: cancelled, or its link closed by the stop. Its
+        journal entry and stream are left as running, and the next start ends them with
+        hub_restarted (C3), as for a hub that stopped any other way."""
+        return self._stopping is not None and self._stopping.is_set() and (
+            cancelled or (reply or {}).get("code") == "worker_disconnected")
 
     def list_pending(self):
         """Pending knocks with name and offered caps, read-only (R4), each flagged
@@ -643,14 +671,17 @@ class Hub:
             what = "run" if job else "call"
             reply = error(f"{what}_failed", f"The {what} stopped inside the hub: {type(e).__name__}: {e}",
                           "Read the hub's log for the details, then call again if it is still needed.", call_id)
+            running["left"] = self._left_running(isinstance(e, asyncio.CancelledError), None)
             raise
         finally:
             running["reply"] = reply
+            running["left"] = running.get("left") or self._left_running(False, reply)
             self._running.pop(call_id, None)
-            with self._lock, self._db:
-                self._db.execute("UPDATE journal SET worker = ?, result = ? WHERE id = ? "
-                                 "AND json_extract(result, '$.type') = 'running'",
-                                 (guid, json.dumps(self._kept(guid, reply)), entry))
+            if not running["left"]:
+                with self._lock, self._db:
+                    self._db.execute("UPDATE journal SET worker = ?, result = ? WHERE id = ? "
+                                     "AND json_extract(result, '$.type') = 'running'",
+                                     (guid, json.dumps(self._kept(guid, reply)), entry))
         return reply
 
     def largest_message(self, guid):
@@ -678,16 +709,18 @@ class Hub:
         its reply, as the journal keeps it, is the stream's last entry and the hub closes the stream."""
         call_id = uuid.uuid4().hex
         task = asyncio.ensure_future(self.call(worker, cap, args, why, user=user, token=token, call_id=call_id))
-        done, _ = await asyncio.wait({task}, timeout=CALL_WAIT)
-        if done:
+        if await self.waiting(task, CALL_WAIT):     # answered in time
             return task.result()
-        running = self._running[call_id]      # there until the call ends, and it has not
+        # Still running after CALL_WAIT, or the hub has begun to stop (stop_serving): answer "running".
+        running = self._running.get(call_id)  # there until the call ends
+        if running is None:                   # it ended in the moment since
+            return task.result()
         stream = self.streams.for_call(call_id, running["worker"], cap, why, running["actor"])
         with self._lock, self._db:
             self._db.execute("UPDATE journal SET worker = ?, result = ? WHERE id = ? "
                              "AND json_extract(result, '$.type') = 'running'",
                              (running["worker"], json.dumps({"type": "running", "id": call_id, "stream": stream["moniker"]}),
                               running["entry"]))
-        task.add_done_callback(
-            lambda _: self.streams.call_ended(stream["guid"], self._kept(running["worker"], running["reply"])))
+        task.add_done_callback(lambda _: running.get("left") or self.streams.call_ended(
+            stream["guid"], self._kept(running["worker"], running["reply"])))   # left running: the next start ends it
         return {"type": "running", "id": call_id, "worker": stream["worker"], "stream": stream["moniker"]}
