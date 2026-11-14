@@ -266,4 +266,4 @@ def test_users_and_tokens_have_monikers_unique_hub_wide(hub):
     hub.auth.revoke_token(token["moniker"], user=alice["guid"])   # either ID is accepted
     assert refused(hub, agent) == "token_revoked"
     rows = hub._db.execute("SELECT moniker, guid FROM monikers").fetchall()
-    assert {r[1] for r in rows} == {alice["guid"], token["guid"]}
+    assert {r[1] for r in rows} == {alice["guid"], token["guid"], *(p["guid"] for p in hub.plugins.list())}   # PL7

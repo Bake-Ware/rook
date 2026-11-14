@@ -161,6 +161,7 @@ class Hub:
         self._lock = threading.Lock()  # every entry point takes it before touching the database
         # hub.db is made 0600 before SQLite opens it. SQLite gives the -wal and -shm files it makes
         # beside a database the database's own mode, so they come out 0600 too, on every start.
+        new = not (self.state_dir / "hub.db").exists()     # a new data directory: the default plugins go in (PL7)
         os.close(os.open(self.state_dir / "hub.db", os.O_WRONLY | os.O_CREAT, 0o600))
         self._db = sqlite3.connect(self.state_dir / "hub.db", check_same_thread=False)
         self._db.row_factory = sqlite3.Row
@@ -205,6 +206,8 @@ class Hub:
         self._stopping = None     # while serving: an event set when stop_serving begins
         self.plugins = plugins.Plugins(self)
         self.plugins.load_all()  # every installed plugin, at start (PL3)
+        if new:
+            self.plugins.install_defaults()     # core's own caps, as plugins installed by default (PL7)
 
     def _load_key(self, name, kind):
         """A key of `kind` kept in the data directory, made on first start (owner-only)."""

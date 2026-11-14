@@ -7,6 +7,13 @@ its `setup(plugin)` (library.py). Installing loads it at once, with no restart,
 and installing a plugin whose name is already installed replaces its code at
 once. When the hub starts it loads every installed plugin (PL3).
 
+Core's own caps ship as plugins installed by default (PL7): the folders under
+`defaults/` (`net`: the network primitives, D3; `shell`: commands and terminals).
+A hub installs them when it makes a new data directory, as any plugin is installed,
+and from then on they are installed plugins like any other: loaded at every start,
+replaced by an install of the same name, pushed to workers and withdrawn by the
+opt-out. A hub that starts on a data directory it did not just make installs nothing.
+
 A plugin adds, never replaces (PL1): a cap name or a record type that the hub or
 another plugin already has is refused, and then nothing of that plugin is kept.
 An install is all or nothing. A plugin is a hub object with a GUID and a moniker
@@ -46,6 +53,7 @@ from .journal import iso
 log = logging.getLogger(__name__)  # rook_hub.plugins: where a plugin that fails to load at start is reported
 
 MANIFEST = "plugin.json"
+DEFAULTS = pathlib.Path(__file__).parent / "defaults"   # core's own caps as plugins (PL7)
 PUSHED = "python"   # the worker form the hub pushes worker parts to (PL3); others are kept, not pushed
 _NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*\Z")
 
@@ -211,12 +219,14 @@ class Plugins:
     # ----------------------------------------------------------- install
 
     def install(self, source, actor):
-        """Install, or replace, the plugin in folder `source` (PL4). All or nothing."""
+        """Install, or replace, the plugin in folder `source` (PL4). All or nothing. `actor`
+        is who installs it; None only for the hub's own default plugins (install_defaults)."""
         source = pathlib.Path(source).expanduser().resolve()
         manifest = read_manifest(source)
         name = manifest["name"]
-        with self.hub._lock, self.hub._db:
-            self.hub.auth.actor(**actor)
+        if actor is not None:
+            with self.hub._lock, self.hub._db:
+                self.hub.auth.actor(**actor)
         self.root.mkdir(exist_ok=True, mode=0o700)
         folder = self.root / f"{name}.{uuid.uuid4().hex[:8]}"
         module_name = None
@@ -252,10 +262,16 @@ class Plugins:
         self.push()
         return self.get(name)
 
+    def install_defaults(self):
+        """Install core's own plugins (PL7), in name order, on a new data directory."""
+        for folder in sorted(DEFAULTS.iterdir()):
+            if (folder / MANIFEST).is_file():
+                self.install(folder, None)
+
     def load_all(self):
         """Load every installed plugin, as the hub starts. One that fails is logged and skipped."""
         with self.hub._lock:
-            rows = self.hub._db.execute("SELECT * FROM plugins ORDER BY installed_at").fetchall()
+            rows = self.hub._db.execute("SELECT * FROM plugins ORDER BY installed_at, rowid").fetchall()
         for row in rows:
             try:
                 declared, module_name = self._load(row["name"], self.root / row["folder"], json.loads(row["manifest"]))
@@ -292,7 +308,7 @@ class Plugins:
 
     def list(self):
         with self.hub._lock:
-            names = [r[0] for r in self.hub._db.execute("SELECT name FROM plugins ORDER BY installed_at")]
+            names = [r[0] for r in self.hub._db.execute("SELECT name FROM plugins ORDER BY installed_at, rowid")]
         return [self.get(name) for name in names]
 
     # ------------------------------------------------------------ serving
@@ -306,7 +322,7 @@ class Plugins:
             if self.hub._db.execute("SELECT 1 FROM plugin_optouts WHERE worker = ?", (guid,)).fetchone():
                 return []
             rows = self.hub._db.execute("SELECT name, version, folder, manifest FROM plugins "
-                                        "ORDER BY installed_at").fetchall()
+                                        "ORDER BY installed_at, rowid").fetchall()
         parts = []
         for row in rows:
             part = json.loads(row["manifest"]).get("worker", {}).get(PUSHED)
@@ -504,7 +520,7 @@ def site_file(folder, file):
 def site_parts(hub):
     """Every installed plugin's site section, in install order: [(plugin name, installed folder, site)]."""
     with hub._lock:
-        rows = hub._db.execute("SELECT name, folder, manifest FROM plugins ORDER BY installed_at").fetchall()
+        rows = hub._db.execute("SELECT name, folder, manifest FROM plugins ORDER BY installed_at, rowid").fetchall()
     return [(row["name"], hub.plugins.root / row["folder"], json.loads(row["manifest"]).get("site") or {})
             for row in rows]
 
