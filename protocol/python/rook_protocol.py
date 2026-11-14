@@ -3,12 +3,24 @@
 The messages are specified in docs/protocol.md (W1). This module holds no hub
 or worker logic: it turns a message (a dict) into bytes and back, and checks
 that a message has the fields its type requires.
+
+It also holds what both sides of the link exchange compute alike
+(docs/link-design.md, section 2): the signed texts of the knock's link key,
+`link_open` and `link_accept`, and `session_psk`, the key a connection's link
+runs under.
 """
 
 import base64
 import binascii
+import hashlib
+import hmac
 import json
 import re
+
+from nacl.bindings import crypto_scalarmult
+from nacl.exceptions import BadSignatureError
+from nacl.exceptions import RuntimeError as NaclRuntimeError
+from nacl.signing import VerifyKey
 
 PROTOCOL = 1
 
@@ -57,6 +69,21 @@ def _key(value, path):
     _string(value, path)
     if not _KEY.match(value):
         raise ProtocolError(f"{path} must be 64 lowercase hex characters (an Ed25519 public key)")
+
+
+def _link_key(value, path):
+    _string(value, path)
+    if not _KEY.match(value):
+        raise ProtocolError(f"{path} must be 64 lowercase hex characters (an X25519 public key)")
+
+
+_SIGNATURE = re.compile(r"[0-9a-f]{128}\Z")
+
+
+def _signature(value, path):
+    _string(value, path)
+    if not _SIGNATURE.match(value):
+        raise ProtocolError(f"{path} must be 128 lowercase hex characters (an Ed25519 signature)")
 
 
 # W3: dot-separated segments; a hyphen only inside a segment.
@@ -146,6 +173,8 @@ MESSAGES = {
         "key": (_key, REQ),
         "macs": (_list_of(_string), REQ),
         "caps": (_list_of(CAP), REQ),
+        "link_key": (_link_key, REQ),             # the worker's X25519 key, signed by `key`
+        "link_signature": (_signature, REQ),
         "token": (_string, OPT),
     },
     # Hub -> worker, the HTTPS reply to a knock (R2, R5, W7).
@@ -178,11 +207,27 @@ MESSAGES = {
             "version": (_string, REQ),
             "error": (_string, OPT),
         })), OPT),
+        "max_message": (_positive, OPT),          # D4: the largest message it can receive
+        "open_streams": (_list_of(_string), OPT),  # D5: the streams it opened and still has
     },
     # Hub -> worker (H2).
     "heartbeat_reply": {
         "protocol": (_positive, REQ),
         "interval": (_positive, REQ),
+    },
+    # Worker -> hub, the body of POST /link: make this connection's key (docs/link-design.md 2).
+    "link_open": {
+        "protocol": (_positive, REQ),
+        "key": (_key, REQ),
+        "ephemeral": (_link_key, REQ),
+        "signature": (_signature, REQ),
+    },
+    # Hub -> worker, the HTTPS response to link_open.
+    "link_accept": {
+        "protocol": (_positive, REQ),
+        "ephemeral": (_link_key, REQ),
+        "hub_link_key": (_link_key, REQ),
+        "signature": (_signature, REQ),
     },
     # Hub -> worker (C3, W5).
     "call": {
@@ -279,3 +324,96 @@ def decode(data):
     except (UnicodeDecodeError, ValueError) as e:
         raise ProtocolError(f"not UTF-8 JSON: {e}") from None
     return validate(message)
+
+
+# The link exchange (docs/link-design.md, section 2). Public keys and signatures are
+# lowercase hex, as in the messages; signing keys are nacl SigningKey objects and X25519
+# secrets nacl PrivateKey objects. A failed check names the check, never the bytes.
+
+LINK_KEY_TEXT = b"rook-link-key-v1:"
+LINK_OPEN_TEXT = b"rook-link-open-v1:"
+LINK_ACCEPT_TEXT = b"rook-link-accept-v1:"
+LINK_SALT = b"rook-link-v1"
+
+
+def _signed(text, *keys):
+    return text + b"".join(bytes.fromhex(k) for k in keys)
+
+
+def _verifies(key, signed, signature):
+    try:
+        VerifyKey(bytes.fromhex(key)).verify(signed, bytes.fromhex(signature))
+        return True
+    except (BadSignatureError, ValueError):
+        return False
+
+
+def sign_link_key(signing_key, link_key):
+    """knock.link_signature: the identity key vouches for the worker's X25519 link key."""
+    return signing_key.sign(_signed(LINK_KEY_TEXT, link_key)).signature.hex()
+
+
+def verify_link_key(knock):
+    """True if knock.link_signature verifies under knock.key."""
+    return _verifies(knock["key"], _signed(LINK_KEY_TEXT, knock["link_key"]), knock["link_signature"])
+
+
+def sign_link_open(signing_key, hub_key, ephemeral):
+    """link_open.signature, by the worker's identity key, for one hub and one ephemeral."""
+    key = signing_key.verify_key.encode().hex()
+    return signing_key.sign(_signed(LINK_OPEN_TEXT, hub_key, key, ephemeral)).signature.hex()
+
+
+def verify_link_open(hub_key, link_open):
+    """True if link_open.signature verifies under link_open.key, for this hub's key."""
+    signed = _signed(LINK_OPEN_TEXT, hub_key, link_open["key"], link_open["ephemeral"])
+    return _verifies(link_open["key"], signed, link_open["signature"])
+
+
+def sign_link_accept(hub_signing_key, key, worker_ephemeral, ephemeral, hub_link_key):
+    """link_accept.signature, by the hub key, answering one worker's one ephemeral."""
+    signed = _signed(LINK_ACCEPT_TEXT, key, worker_ephemeral, ephemeral, hub_link_key)
+    return hub_signing_key.sign(signed).signature.hex()
+
+
+def verify_link_accept(hub_key, key, worker_ephemeral, link_accept):
+    """True if link_accept.signature verifies under the hub key the worker stored, and
+    answers this worker's key and the ephemeral it just sent."""
+    signed = _signed(LINK_ACCEPT_TEXT, key, worker_ephemeral, link_accept["ephemeral"],
+                     link_accept["hub_link_key"])
+    return _verifies(hub_key, signed, link_accept["signature"])
+
+
+def hkdf_sha256(salt, ikm, info, length):
+    """HKDF with SHA-256 (RFC 5869): extract, then expand to `length` bytes."""
+    prk = hmac.new(salt, ikm, hashlib.sha256).digest()
+    okm, block, counter = b"", b"", 1
+    while len(okm) < length:
+        block = hmac.new(prk, block + info + bytes([counter]), hashlib.sha256).digest()
+        okm += block
+        counter += 1
+    return okm[:length]
+
+
+def _x25519(secret, public, name):
+    try:
+        shared = crypto_scalarmult(secret.encode(), bytes.fromhex(public))
+    except NaclRuntimeError:          # libsodium refuses an all-zero result
+        shared = bytes(32)
+    if shared == bytes(32):
+        raise ProtocolError(f"{name} is all zero: the other side's key is a small-order point")
+    return shared
+
+
+def session_psk(side, key, worker_ephemeral, hub_ephemeral, ephemeral_secret, link_secret, peer_link_key):
+    """The PSK one connection's link runs under (docs/link-design.md 2.4), as 64 lowercase
+    hex characters. `side` is "worker" or "hub"; `ephemeral_secret` and `link_secret` are that
+    side's, `peer_link_key` the other side's link key. `key` is the worker's identity key.
+    Both sides get the same PSK. Raises ProtocolError if either X25519 result is all zero."""
+    if side not in ("worker", "hub"):
+        raise ValueError("side must be worker or hub")
+    peer_ephemeral = hub_ephemeral if side == "worker" else worker_ephemeral
+    ee = _x25519(ephemeral_secret, peer_ephemeral, "ee")
+    ss = _x25519(link_secret, peer_link_key, "ss")
+    info = bytes.fromhex(key) + bytes.fromhex(worker_ephemeral) + bytes.fromhex(hub_ephemeral)
+    return hkdf_sha256(LINK_SALT, ee + ss, info, 32).hex()
