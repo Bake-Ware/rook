@@ -1,5 +1,9 @@
 PyNaCl>=1.5
 aiohttp>=3.9
+# The link (docs/link-design.md, section 8): Telesthete pinned to a commit until it releases.
+telesthete @ git+https://github.com/Bake-Ware/telesthete.git@92bcae050b5c1754ca262b0599726b7dc3bfaf08
 # For the tests only: a real MCP client, and pytest.
 mcp>=2.3
 pytest>=7
+# Telesthete's ws extra: the WebSocket client the tests' worker uses. The hub needs none.
+websockets>=13.0

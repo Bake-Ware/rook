@@ -6,6 +6,8 @@ File and line references are to Telesthete at the pinned commit.
 
 ## Pin
 
+Rook's code now depends on Telesthete at **`92bcae050b5c1754ca262b0599726b7dc3bfaf08`**, pinned in `requirements.txt` (link design section 8: the commit with the Python link lifecycle, `WebSocketTransport` and `Endpoint`). This survey was made at the earlier pin below, and its references are to that commit.
+
 **`8538e7c4d0ff201851723b556f3880e3cbb7a8fa`** (`main` as of 9 November 2026, "Stream messages carry their datagram's receive time (#16)").
 
 - `v0.3.0` is `f3fc597` (14 October 2026). Head is two commits past it: #15 gates the Rust AF_UNIX transport on `cfg(unix)` so the Rust crate builds on Windows, and #16 adds a receive time to Rust Stream messages. Neither touches the Python package, the tests or SPEC.md (`git diff --stat v0.3.0 8538e7c` lists only five files under `rust/`). For Python the two are identical; both report version `0.3.0`.
