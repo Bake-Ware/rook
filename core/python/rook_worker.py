@@ -16,11 +16,12 @@ that connection with the hub over HTTPS (`link_open`, docs/link-design.md 2), th
 calls `connect(session)` with the result, a `Session`: its identity key, the PSK the
 link runs under, and the hub's link URL. `connect` returns the link to the hub: an
 object with `async send(bytes)`, `async recv() -> bytes` (raises EOFError once
-closed) and `close()`. `send` must put messages on the link in the order it is
-called: the worker builds each message and hands it to `send` with no await in
-between, so a heartbeat's `open_streams` and the stream messages around it arrive in
-the order they were made (D5). The Telesthete carrier over WebSocket (build plan L5)
-is one such `connect`; until it exists, only the tests' in-memory one does.
+closed), `close()` and `async wait_closed()` (returns once everything of that link has
+stopped). `send` must put messages on the link in the order it is called: the worker
+builds each message and hands it to `send` with no await in between, so a heartbeat's
+`open_streams` and the stream messages around it arrive in the order they were made
+(D5). Without a `connect` of its own, a worker uses the Telesthete carrier over
+WebSocket (rook_link.py, build plan L5); the tests pass an in-memory one.
 
 `run` is a loop (link design 3.2): make a session, link under it and serve it until
 the link is lost, then start again with a new session. A session key is never reused,
@@ -53,6 +54,7 @@ from typing import Any, Awaitable, Callable
 from nacl.public import PrivateKey
 from nacl.signing import SigningKey, VerifyKey
 
+import rook_link
 import rook_net
 from rook_protocol import (MAX_MESSAGE, MAX_STREAM_DATA, PROTOCOL, ProtocolError, decode, encode, session_psk,
                            sign_link_key, sign_link_open, validate, verify_link_accept)
@@ -167,12 +169,12 @@ class Refused(Exception):
 
 
 class Worker:
-    def __init__(self, state_dir, hub_url, connect, name=None, caps=None, macs=None, knock_every=5.0,
+    def __init__(self, state_dir, hub_url, connect=None, name=None, caps=None, macs=None, knock_every=5.0,
                  token=None):
         self.state_dir = pathlib.Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.hub_url = hub_url.rstrip("/")
-        self.connect = connect
+        self.connect = connect or rook_link.connect     # the Telesthete carrier unless one is given
         self.name = name or socket.gethostname()
         self.caps = {**primitives(), **dict(caps or {})}   # every worker serves the network primitives (D3)
         self.macs = own_macs() if macs is None else macs
@@ -229,19 +231,23 @@ class Worker:
         session = await self._unless_stopped(self._open_session())
         if session is None:                       # the exchange failed, or stop() was called
             return False
-        self._link = await self.connect(session)
+        link = await self._unless_stopped(self.connect(session))
         del session                               # the carrier has it; the worker keeps no session key
-        self._replied = False
-        if self._stopped.is_set():
-            self._link.close()
+        if link is None:                          # stop() came while the carrier was connecting
             return False
-        beats = asyncio.create_task(self._heartbeats())
+        self._link, self._replied = link, False
         try:
-            await self._serve()
+            if self._stopped.is_set():
+                return False
+            beats = asyncio.create_task(self._heartbeats())
+            try:
+                await self._serve()
+            finally:
+                beats.cancel()
+                await asyncio.gather(beats, return_exceptions=True)
         finally:
-            beats.cancel()
-            await asyncio.gather(beats, return_exceptions=True)
-            self._link.close()
+            link.close()
+            await link.wait_closed()              # nothing of this session outlives it
         return self._replied
 
     def stop(self):
