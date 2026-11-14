@@ -627,3 +627,13 @@ Taken by Bake on 13 November 2026, 20:15 CT, through the reviewer's list, which 
 - the throughput of a Python terminating endpoint (not measured by the Telesthete design either).
 
 **Not reviewed by a cryptographer:** the exchange (section 2). It is a signed ephemeral Diffie-Hellman with a static-static term mixed in. That is a common shape (close to SIGMA-style and Noise-style patterns), but I have not proved it and did not model it formally. The checks in section 2.5 are the ones the hand-over and RFC 7748 call for.
+
+---
+
+## Decided after signing
+
+The code differs from the signed text above in these places. The signed sections are left as they were; these decisions stand where they differ.
+
+- **13 November 2026, built in L4:** a pending session not used within 60 seconds of its `link_open` is removed (sections 2.5 and 3.3 say pending sessions are cleared only by use or revoke).
+- **13 November 2026, built in L3:** a knock or `link_open` request waits at most 10 seconds for the hub, the open timeout of Telesthete's WebSocket client.
+- **13 November 2026, built in L3:** the worker's wait between attempts resets only after a session whose link delivered a `heartbeat_reply`; a session lost before that counts as a failed attempt (section 3.2 backs off only when the exchange itself fails).
