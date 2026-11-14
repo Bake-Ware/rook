@@ -297,11 +297,14 @@ class Hub:
         self._serving_dir = held
 
     async def stop_serving(self):
+        """Stop serving. The carrier stops before the HTTP server, because the server's clean-up
+        waits for open handlers, and a /band connection stays open for as long as its client keeps
+        it: the carrier cuts every one, so the stop takes about FLUSH seconds whatever is connected."""
         await self.events.stop()
+        await self.carrier.stop()
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
-        await self.carrier.stop()
 
     def list_pending(self):
         """Pending knocks with name and offered caps, read-only (R4), each flagged
