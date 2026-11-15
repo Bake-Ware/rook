@@ -152,7 +152,8 @@ def _direct(u: urllib.parse.SplitResult, headers: dict, data: bytes) -> str:
 AWAY = r'''
 import json, ssl, struct, sys, urllib.request
 src, url, token = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""
-with urllib.request.urlopen(src, timeout=15) as r:
+# (a name of its own: a front door may turn Python's default user agent away)
+with urllib.request.urlopen(urllib.request.Request(src, headers={"User-Agent": "rook-remote-voice"}), timeout=15) as r:
     raw = r.read()
 S = (7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,
      230,253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,2272,2499,
