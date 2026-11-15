@@ -30,7 +30,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.8.0"
+#define FW_VERSION "0.8.1"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -324,6 +324,11 @@ static void on_button(const ButtonEvent& ev) {
         if (!bt::voice_ready()) ui::flash("no\nmic");
         else if (!bt::voice_open()) bt::voice_start();
         else if (millis() - voice_started > 700) bt::voice_stop();
+        return;
+    }
+    // While it listens, any key says "that's it" (some remotes don't report the Assistant key again).
+    if (bt::voice_open() && e.index < 0) {
+        if (!strcmp(e.action, "press") && millis() - voice_started > 400) bt::voice_stop();
         return;
     }
     if (swallow || mode == GAME) return;       // the game reads the held buttons itself (loop)
@@ -1119,7 +1124,7 @@ void loop() {
         voice_seq = voice_bytes = 0;
         voice_started = ms;
         voice_hold = false;
-        ui::text("Listening...\n\npress again\nwhen done", 32);
+        ui::text("Listening...\n\nany key when done", 20);
     }
     if (voice_open) {
         std::string held = bt_name_of(bt::held());

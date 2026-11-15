@@ -31,7 +31,7 @@ NimBLERemoteCharacteristic* v_tx = nullptr;
 volatile bool v_ready = false, v_open = false, v_want_open = false, v_want_close = false, v_done = false;
 volatile uint8_t v_codec = 1;
 uint32_t v_opened = 0;
-std::string v_buf, v_caps, v_ctl, services_text;
+std::string v_buf, v_caps, v_ctl, v_hist, services_text;
 
 // The remote never says the key was let go, so the end of an utterance is
 // heard: each 134-byte frame (sequence 2, id 1, predictor 2 big-endian, step
@@ -42,7 +42,7 @@ std::string v_buf, v_caps, v_ctl, services_text;
 // takes V_SPOKEN loud frames to call it speech.
 // Loud is measured against the room: three times the quietest it has been
 // (v_floor, which creeps up so one dead frame doesn't pin it), plus a little.
-const int V_FRAME = 134, V_QUIET = 40, V_WAIT = 156;      // 32 ms a frame at 8 kHz
+const int V_FRAME = 134, V_QUIET = 62, V_WAIT = 250;      // 32 ms a frame at 8 kHz
 const int V_SKIP = 10, V_SPOKEN = 3;
 int v_floor = 0, v_max = 0, v_run = 0, v_louds = 0;
 uint8_t v_frame[V_FRAME];
@@ -103,7 +103,9 @@ void on_audio(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
         if (v_run >= V_SPOKEN) v_speech = true;         // a few loud frames in a row: someone is talking
         if (v_run >= 2) v_quiet = 0;                    // one loud frame alone is a knock, not more talking
         else v_quiet++;
-        // (Measured for remote.bt only: the person ends the utterance, with the key.)
+        // A key ends the utterance; when none does, two seconds of quiet after speech
+        // do, or eight seconds with no speech at all.
+        if ((v_speech && v_quiet >= V_QUIET) || (!v_speech && v_frames >= V_WAIT)) v_want_close = true;
     }
 }
 
@@ -118,6 +120,10 @@ void on_ctl(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
     xSemaphoreTake(mu, portMAX_DELAY);
     v_ctl = hex;
     if (len && d[0] == 0x0B) v_caps = hex;
+    char stamp[24];
+    snprintf(stamp, sizeof stamp, " %s@%lus", hex, (unsigned long)(millis() / 1000));
+    v_hist += stamp;
+    if (v_hist.size() > 120) v_hist.erase(0, v_hist.size() - 120);
     xSemaphoreGive(mu);
     if (!len) return;
     if (d[0] == 0x08) {                      // START_SEARCH: its Assistant key (again: that's enough)
@@ -541,7 +547,7 @@ std::string voice_info() {
     std::string s = "caps " + (v_caps.empty() ? std::string("-") : v_caps) + ", last " + (v_ctl.empty() ? std::string("-") : v_ctl) +
                     "; last utterance: frames " + std::to_string(v_frames) + ", loudest " + std::to_string(v_max) +
                     ", floor " + std::to_string(v_floor) + ", loud frames " + std::to_string(v_louds) +
-                    (v_speech ? ", speech" : ", no speech");
+                    (v_speech ? ", speech" : ", no speech") + "; control:" + v_hist;
     xSemaphoreGive(mu);
     return s;
 }
