@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.9.6
+version: 0.9.7
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -94,6 +94,7 @@ caps:
       names: { type: list, items: { type: str } }
       targets: { type: list, items: { type: str } }
       screen_off: { type: int, min: 0, max: 86400, doc: "Seconds left alone before the screen goes dark (30; 0: never)." }
+      tz: { type: str, max: 64, doc: "The remote's time zone for its clock, as POSIX TZ (CST6CDT,M3.2.0,M11.1.0 for US Central); blank: UTC." }
       sleep: { type: int, min: 0, max: 86400, doc: "Seconds left alone before the remote sleeps: Wi-Fi off, so the hub cannot reach it until a key wakes it (300; 0: never)." }
     result: { type: map }
 

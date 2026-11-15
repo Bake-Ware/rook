@@ -3,6 +3,7 @@
 #include <Adafruit_SSD1306.h>
 #include <Wire.h>
 #include <algorithm>
+#include <time.h>
 #include "tetris.h"
 
 namespace {
@@ -311,7 +312,19 @@ void home_draw(uint32_t ms, bool noted) {
         oled.print(k.c_str());
         oled.setTextColor(SSD1306_WHITE);
     }
-    if (key.size() <= 8) {
+    // The time, once the clock is set, where the menu hint was.
+    time_t now = time(nullptr);
+    if (now > 1700000000) {
+        struct tm t;
+        localtime_r(&now, &t);
+        char hm[8];
+        int h = t.tm_hour % 12;
+        snprintf(hm, sizeof hm, "%d:%02d", h ? h : 12, t.tm_min);
+        int w = (int)strlen(hm) * 6;
+        oled.setCursor(W - w - 2, 53);
+        oled.print(hm);
+        anim = true;                 // the minute turns over on its own
+    } else if (key.size() <= 8) {
         for (int i = 0; i < 3; i++) oled.drawFastHLine(W - 38, 54 + i * 2, 6, SSD1306_WHITE);     // the input key opens it
         oled.setCursor(W - 29, 53);
         oled.print("menu");

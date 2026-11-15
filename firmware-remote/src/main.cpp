@@ -31,7 +31,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.9.6"
+#define FW_VERSION "0.9.7"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -782,6 +782,13 @@ static bool cap_map(JsonObjectConst a, JsonObject r, std::string&) {
     }
     if (!a["screen_off"].isNull()) settings::set_kv("scr_off", std::to_string((int)(a["screen_off"] | 30)));
     if (!a["sleep"].isNull()) settings::set_kv("sleep", std::to_string((int)(a["sleep"] | 300)));
+    if (!a["tz"].isNull()) {
+        settings::set_kv("tz", a["tz"] | "");
+        std::string tz = settings::kv("tz");
+        setenv("TZ", tz.empty() ? "UTC0" : tz.c_str(), 1);
+        tzset();
+    }
+    r["tz"] = settings::kv("tz");
     load_sleep();
     r["screen_off"] = screen_off_s;
     r["sleep"] = sleep_s;
@@ -1160,6 +1167,11 @@ void setup() {
     WiFi.setHostname(settings::name().c_str());
     for (auto& n : settings::wifi()) wifi.addAP(n.first.c_str(), n.second.c_str());
     configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
+    {
+        std::string tz = settings::kv("tz");       // POSIX, e.g. CST6CDT,M3.2.0,M11.1.0; blank: UTC
+        setenv("TZ", tz.empty() ? "UTC0" : tz.c_str(), 1);
+        tzset();
+    }
 
     chat::begin();
     load_sleep();
