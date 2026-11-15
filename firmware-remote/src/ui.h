@@ -17,6 +17,7 @@ void set_rotation(int rotation);
 void tick();                                          // redraw when something changed
 void redraw();                                        // something drawn from outside (the game) changed
 
+void network(const std::string& ssid);                 // the Wi-Fi network in use, for the status screen
 void status_line(int line, const std::string& text);  // lines 0..3 of the status screen
 void text(const std::string& t, uint32_t seconds);    // agent text; 0 s = until replaced
 // Move a text too long for the screen by delta lines. False: nothing on screen scrolls.

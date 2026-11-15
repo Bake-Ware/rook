@@ -17,6 +17,7 @@ bool anim = false;             // the last frame had a scrolling line: keep redr
 uint32_t last_draw = 0, scroll_t0 = 0;
 SemaphoreHandle_t mu;
 std::string status[4];
+std::string net_name;          // the Wi-Fi network in use
 std::string agent_text;
 uint32_t agent_until = 0;      // 0 = until replaced; set when agent_text is shown
 int agent_top = 0;             // the first line of agent_text on screen (it scrolls when long)
@@ -188,39 +189,62 @@ void menu_draw(uint32_t ms) {
     }
 }
 
-// The screen at rest (the wide one): a bar with the remote's name and what it
-// is joined to (the band, Wi-Fi, a Bluetooth remote), the device it controls
-// large in a frame, and the last key pressed in a pill.
-void home_draw(uint32_t ms) {
+const uint8_t IC_ROOK[] PROGMEM = {0xDB, 0xFF, 0x7E, 0x3C, 0x3C, 0x3C, 0x7E, 0xFF};
+
+// The wide screen at rest: a bar with the Wi-Fi network and what else the
+// remote is joined to (a rook: the band; Wi-Fi; a Bluetooth remote), the
+// device it controls large in a frame, and the last key pressed in a pill.
+// A note (a key just pressed, something that happened) takes the frame for
+// its moment, and the device moves to the bottom row.
+void home_draw(uint32_t ms, bool noted) {
     const std::string &link = status[0], &target = status[2], &key = status[3];
     bool bt = status[1].size() > 4, band = link == "band", wifi = band || link == "hub?" || link == "clock";
     oled.fillRect(0, 0, W, 11, SSD1306_WHITE);
     for (int cx : {0, W - 1})
         for (int cy : {0, 10}) oled.drawPixel(cx, cy, SSD1306_BLACK);
-    oled.setTextColor(SSD1306_BLACK);
-    oled.setCursor(3, 2);
-    oled.print(band ? "ROOK" : link.substr(0, 8).c_str());
     int x = W - 11;
     if (bt) { oled.drawBitmap(x, 1, IC_BT, 8, 8, SSD1306_BLACK); x -= 11; }
-    if (wifi) { oled.drawBitmap(x, 1, IC_WIFI, 8, 8, SSD1306_BLACK); x -= 10; }
-    if (band) oled.fillCircle(x + 4, 5, 2, SSD1306_BLACK);
-    else if ((ms / 500) & 1) oled.drawCircle(x + 4, 5, 2, SSD1306_BLACK);     // not on the band: it blinks
+    if (wifi) { oled.drawBitmap(x, 1, IC_WIFI, 8, 8, SSD1306_BLACK); x -= 11; }
+    if (band) { oled.drawBitmap(x, 1, IC_ROOK, 8, 8, SSD1306_BLACK); x -= 11; }
+    else if (wifi && ((ms / 500) & 1)) { oled.drawBitmap(x, 1, IC_ROOK, 8, 8, SSD1306_BLACK); x -= 11; }   // no hub yet: it blinks
+    else if (wifi) x -= 11;
     if (!band) anim = true;
+    std::string name = wifi && !net_name.empty() ? net_name : link == "wifi-" ? "no Wi-Fi" : link == "wifi?" ? "set up Wi-Fi" : link;
+    int room = (x + 8 - 3) / 6;
+    if ((int)name.size() > room) name = name.substr(0, std::max(0, room - 1)) + "~";
+    oled.setTextColor(SSD1306_BLACK);
+    oled.setCursor(3, 2);
+    oled.print(name.c_str());
     oled.setTextColor(SSD1306_WHITE);
     oled.drawRoundRect(0, 15, W, 30, 5, SSD1306_WHITE);
-    int n = (int)target.size();
-    if (n && n * 12 <= W - 8) {
-        oled.setTextSize(2);
-        oled.setCursor((W - n * 12) / 2 + 1, 23);
-        oled.print(target.c_str());
-        oled.setTextSize(1);
-    } else if (n * 6 <= W - 8) {
-        oled.setCursor((W - n * 6) / 2, 26);
-        oled.print(n ? target.c_str() : "no device");
-    } else {
-        oled.setCursor(5, 26);
-        oled.print((target.substr(0, (W - 16) / 6 - 1) + "~").c_str());
+    auto big = [&](const std::string& t) {
+        int n = (int)t.size();
+        if (n && n * 12 <= W - 8) {
+            oled.setTextSize(2);
+            oled.setCursor((W - n * 12) / 2 + 1, 23);
+            oled.print(t.c_str());
+            oled.setTextSize(1);
+            return;
+        }
+        auto ls = wrap(t, 3);
+        int y = 30 - (int)ls.size() * 4 - (ls.size() > 1 ? 1 : 0);
+        for (auto& l : ls) {
+            oled.setCursor(std::max(4, (W - (int)l.size() * 6) / 2), y);
+            oled.print(l.substr(0, COLS - 1).c_str());
+            y += 9;
+        }
+    };
+    if (noted) {
+        std::string t = note;
+        if (t.find('\n') != std::string::npos && t.size() <= 10)      // "BT\ngone": short enough for one large line
+            std::replace(t.begin(), t.end(), '\n', ' ');
+        big(t);
+        oled.drawBitmap(1, 52, IC_TV, 8, 8, SSD1306_WHITE);
+        oled.setCursor(13, 53);
+        oled.print(target.substr(0, COLS - 3).c_str());
+        return;
     }
+    big(target.empty() ? std::string("no device") : target);
     if (!key.empty()) {
         std::string k = key.substr(0, 10);
         int w = (int)k.size() * 6 + 9;
@@ -254,6 +278,8 @@ void draw() {
         tetris::draw(oled);
     } else if (menu_on) {
         menu_draw(ms);
+    } else if (W >= 100 && note_until && (int32_t)(note_until - ms) > 0) {
+        home_draw(ms, true);
     } else if (note_until && (int32_t)(note_until - ms) > 0) {
         oled.setCursor(1, 0);
         oled.print(status[0].substr(0, COLS).c_str());
@@ -272,7 +298,7 @@ void draw() {
             oled.drawFastVLine(W - 1, (H - h) * top / (n - ROWS), h, 1);
         }
     } else if (W >= 100) {
-        home_draw(ms);
+        home_draw(ms, false);
     } else {
         static const int Y[4] = {0, 14, 24, 44};
         for (int i = 0; i < 4; i++) {
@@ -319,6 +345,12 @@ void tick() {
 }
 
 void redraw() { dirty = true; }
+
+void network(const std::string& ssid) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    if (net_name != ssid) { net_name = ssid; dirty = true; }
+    xSemaphoreGive(mu);
+}
 
 void status_line(int line, const std::string& t) {
     if (line < 0 || line >= 4) return;

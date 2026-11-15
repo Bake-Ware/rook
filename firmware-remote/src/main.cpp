@@ -31,7 +31,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.9.3"
+#define FW_VERSION "0.9.4"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -1424,6 +1424,7 @@ void loop() {
         else if (!worker.clock_ok()) s0 = "clock";
         else s0 = worker.hub_ok() ? "band" : "hub?";
         ui::status_line(0, s0);
+        ui::network(up ? std::string(WiFi.SSID().c_str()) : std::string());
         ui::status_line(1, bt::state() == "connected" ? "TV: B" : "TV:");
         ui::status_line(2, local_id.empty() ? settings::target_name() : local_name);
         ota::tick(worker_on && worker.hub_ok());
