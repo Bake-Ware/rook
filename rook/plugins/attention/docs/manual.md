@@ -4,8 +4,11 @@ Your house agent reads what is trying to get your attention (phone
 notifications, texts, mail, chat) so you don't have to, keeps what matters
 in one place, and tells you when something can't wait.
 
-- **Every 15 minutes** a ready-made job (`attention`, on Jobs) wakes the
-  house agent for an attention pass. Change how often by editing the job.
+- **Every 15 minutes, if you say yes:** a ready-made job (`attention`,
+  under Ready-made on Jobs) wakes the house agent for an attention pass, as
+  the house agent. It is off on a new hub: guided setup asks whether to turn
+  it on, and later you can install it on the Jobs page or ask the house
+  agent. Change how often by editing the job.
 - **What's waiting:** ask the house agent, or `attention.list`. Each item is
   a line or two saying what it is and what to do, where it came from and,
   if it has one, its date. Handled items are archived.

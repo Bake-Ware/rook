@@ -1,4 +1,4 @@
-"""rook.kit.records: storage, migration, search, history, privacy, refs, generated caps."""
+"""rook.kit.records: storage, additive changes, search, history, privacy, refs, generated caps."""
 
 import pytest
 
@@ -94,7 +94,7 @@ def test_history_and_optimistic_concurrency(store, events):
     with pytest.raises(KitError, match="Record changed") as e:
         items.update(BAKE, a["id"], revision=1, title="stale")
     assert e.value.retry
-    hist = items.get(BAKE, a["id"], history=True)["history"]
+    hist = items.history(BAKE, a["id"])
     assert [(h["revision"], h["op"], h["data"]["title"]) for h in hist] == [(1, "create", "v1"), (2, "update", "v2")]
     assert events[-1][0] == "homework.item.updated"
     with pytest.raises(KitError, match="required"):
@@ -127,8 +127,6 @@ def test_search(store):
     assert items.search(BAKE, "split") == []              # archived are out of search
     with pytest.raises(KitError, match="query"):
         items.search(BAKE, "  ")
-    with pytest.raises(KitError, match="semantic"):
-        items.search(BAKE, "x", semantic=True)
 
 
 def test_archive_restore_delete(store, events):
@@ -163,29 +161,13 @@ def test_private(store, events):
     assert "record" not in events[-1][1]                  # private data stays out of events
 
 
-def test_refs_and_backlinks(store):
-    subjects, items, notes = (store.type(f"homework.{t}") for t in ("subject", "item", "note"))
+def test_refs(store):
+    subjects, items = store.type("homework.subject"), store.type("homework.item")
     math = subjects.create(BAKE, name="Math")
     with pytest.raises(KitError, match="no homework.subject"):
         items.create(BAKE, title="x", subject="r_missing")
     a = items.create(BAKE, title="Fractions", subject=math["id"])
-    got = subjects.get(BAKE, math["id"], backlinks=True)
-    assert got["backlinks"] == [{"type": "homework.item", "id": a["id"], "field": "subject"}]
-    items.update(BAKE, a["id"], revision=1, subject=None)
-    assert store.backlinks(BAKE, "homework.subject", math["id"]) == []
-
-
-def test_cross_plugin_refs_and_private_backlinks():
-    s = RecordStore()
-    s.register({"plugin": "workbench", "records": {"project": {"fields": {"title": {}}}}})
-    s.register({"plugin": "diary", "records": {"entry": {
-        "fields": {"text": {}, "project": {"type": "ref", "to": "workbench.project"}}, "private": True}}})
-    p = s.type("workbench.project").create(BAKE, title="Castling")
-    e = s.type("diary.entry").create(BAKE, text="hi", project=p["id"])
-    assert s.backlinks(BAKE, "workbench.project", p["id"]) == [{"type": "diary.entry", "id": e["id"], "field": "project"}]
-    assert s.backlinks(KID, "workbench.project", p["id"]) == []   # private source hidden
-    assert len(s.backlinks(Caller(person="bake", band="b1"), "workbench.project", p["id"])) == 1
-    assert len(s.backlinks(OWNER, "workbench.project", p["id"])) == 1
+    assert items.update(BAKE, a["id"], revision=1, subject=None)["subject"] is None
 
 
 def test_retain_prune(events):
@@ -233,9 +215,6 @@ def test_additive_migration(tmp_path):
     s = RecordStore(db)
     with pytest.raises(KitError, match="not additive"):
         s.register(v3)
-    ran = []
-    s.register(v3, migrate=lambda db, rdef, old: ran.append(old["a"]["type"]))
-    assert ran == ["str"]
     s.close()
 
 
@@ -268,31 +247,6 @@ def test_bad_definitions():
             RecordDef.parse("p", "t", block)
     with pytest.raises(KitError):
         RecordDef.parse("p", "Bad-Name", {"fields": {"a": {}}})
-
-
-class FakeSemantic:
-    def __init__(self):
-        self.docs = {}
-
-    def index(self, rtype, rid, text):
-        self.docs[rid] = text
-
-    def forget(self, rtype, rid):
-        self.docs.pop(rid, None)
-
-    def search(self, rtype, query, limit):
-        return [rid for rid, text in self.docs.items() if query in text][:limit]
-
-
-def test_semantic_hook():
-    sem = FakeSemantic()
-    s = RecordStore(semantic=sem)
-    s.register({"plugin": "kb", "records": {"page": {"fields": {"body": {}}, "semantic": ["body"]}}})
-    pages = s.type("kb.page")
-    p = pages.create(BAKE, body="the cat sat")
-    assert [r["id"] for r in pages.search(BAKE, "cat", semantic=True)] == [p["id"]]
-    pages.delete(BAKE, p["id"])
-    assert sem.docs == {}
 
 
 def test_ctx_records_binding(store):
@@ -403,23 +357,3 @@ def test_update_args_carry_no_defaults(store):
 def test_unknown_field_type_fails_at_load():
     with pytest.raises(KitError, match="unknown type"):
         RecordDef.parse("p", "t", {"fields": {"a": {"type": "oauth"}}})
-
-
-def test_migrations_script(tmp_path):
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "migrate.py").write_text(
-        "def migrate(db, rdef, old):\n"
-        "    # SQLite can't retype a column: move it aside and refill a new one.\n"
-        "    db.execute('ALTER TABLE \"r:p.t\" RENAME COLUMN a TO a_old')\n"
-        "    db.execute('ALTER TABLE \"r:p.t\" ADD COLUMN a INTEGER')\n"
-        "    db.execute('UPDATE \"r:p.t\" SET a = CAST(a_old AS INTEGER)')\n")
-    db = str(tmp_path / "r.db")
-    s = RecordStore(db)
-    s.register({"plugin": "p", "records": {"t": {"fields": {"a": {}}}}})
-    r = s.type("p.t").create(BAKE, a="7")
-    s.close()
-    s = RecordStore(db)
-    s.register({"plugin": "p", "records": {"t": {"fields": {"a": {"type": "int"}},
-                                                 "migrations": "scripts/migrate.py"}}},
-               plugin_dir=tmp_path)
-    assert s.type("p.t").get(BAKE, r["id"])["a"] == 7

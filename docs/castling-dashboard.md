@@ -9,14 +9,15 @@ castling-attention. Code: `rook/core2/hub/doors/web/`.
 
 | Installed | The site |
 |---|---|
-| core | Workers and Approvals in the sidebar; Journal and Settings under More. Every page opens by its address (`#/plugin/name`). |
+| core | Workers, Tokens, Jobs, Journal, Vault and Settings in the sidebar. Every page opens by its address (`#/plugin/name`). |
 | + agents | The house agent's chat dock beside every page (the `page.dock` setting names the agent; blank turns it off). On your first visit it asks how you want to use the site. It builds pages for you and can set your start page. |
 | + workbench | Tasks, Projects and Knowledge pages; the `task/list` component; every page an agent makes is built under a task linked to the page. |
 | both | All of the above. |
 
-The sidebar shows pages whose manifest entry has `nav:` and every page an
-agent made; the rest are under More. The site opens on your start page
-(`page.start`), else the hub's own, else Workers.
+The sidebar shows every page, in its plugin's `segment:` (an agent-made page:
+the segment it was made with, else Pages); see the page plugin's manual.
+The site opens on your start page (`page.start`), else the hub's own, else
+Workers.
 
 ## Sign in
 
@@ -39,7 +40,7 @@ which the hub injects ahead of the page's own code:
 const r = await rook.call("hub.workers");                    // the cap's result, or throws
 await rook.call("board.note.create", {text: "milk"}, {why: "Added on the board page."});
 rook.on("worker.*", (payload, event) => reload());          // events the page declared
-rook.open("approval/approvals");                              // go to another page
+rook.open("journal/journal");                                 // go to another page
 rook.page;                                                    // {page, title, caps, events}
 rook.esc(text); rook.ago(ts); rook.time(ts);                  // small helpers
 ```
@@ -56,11 +57,11 @@ rights allow them. The base style (`static/page.css`) gives tables, buttons,
 
 ```yaml
 pages:
-  board: { title: Board, file: pages/board.html, caps: ["board.*"], events: ["board.*"], nav: { section: Home } }
+  board: { title: Board, file: pages/board.html, caps: ["board.*"], events: ["board.*"] }
 ```
 
 The core pages are builtin plugins in `rook/core2/hub/doors/web/builtin/`:
-Workers (`hub.workers`), Approvals (`approval.list`, `approval.decide`),
+Workers (`hub.workers`),
 Journal (`journal.search`) and Settings (`hub.status`, `setting.list`,
 `setting.set`).
 
@@ -86,15 +87,15 @@ rook.component(async (el, props) => {
 `page.components` lists them. A layout page may call what its components
 declare (as they are now) plus its own `caps`. Core ships `page/text`,
 `page/value` (any cap's result: put that cap in the page's `caps`),
-`hub/workers`, `approval/holds` and `journal/recent`.
+`hub/workers` and `journal/recent`.
 
 ## Pages an agent makes
 
 ```
-page.create {name, title, note, html | layout, caps?, events?, section?, task?}
-page.update {page, change, title?, html? | layout?, note?, caps?, events?, section?}
+page.create {name, title, note, html | layout, caps?, events?, segment?, task?}
+page.update {page, change, title?, html? | layout?, note?, caps?, events?, segment?}
 page.archive {page, reason?}    page.restore {page}    page.get {page}    page.list {archived?}
-page.components    page.site    page.start {page?}
+page.components    page.site    page.start {page?}    page.arrange {page, pinned} | {segment, open}
 ```
 
 `layout` is `[{component, props?, title?, wide?}, ...]`, checked against each

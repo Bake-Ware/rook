@@ -1,4 +1,4 @@
-"""The hub's appliance registry: ``<data>/appliances.json`` (spec 5.7).
+"""The hub's appliance registry: ``<data>/appliances.json`` (spec 10.8).
 
 Bake (castling-workers-appliances): "The agent only targets a name ... the
 hub looks up the appliance's profile, which records its proxy (delegate)

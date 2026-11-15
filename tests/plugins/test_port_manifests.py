@@ -10,12 +10,12 @@ from rook.kit.manifest import check, load, trust_class
 # The device ports; other packages' plugins (agents, ...) and the phone app's
 # (platforms: [android], test_port_phone.py) have their own tests.
 PORTS = sorted(p.parent.name for p in PLUGINS.glob("*/plugin.yaml")
-               if "\npackage: devices\n" in p.read_text() and "\nplatforms: [android]\n" not in p.read_text())
+               if (d := check(p)[0]).get("package") == "devices" and d.get("platforms") != ["android"])
 
 
 def test_the_ports_are_there():
-    assert PORTS == ["adb", "battery", "browser", "camera", "cec", "dongle", "file", "hid-desktop", "kvm",
-                     "notification-desktop", "screen-desktop", "shell", "torrent", "tv", "tv-roku"]
+    assert PORTS == ["adb", "battery", "browser", "camera", "cec", "dongle", "dongle-s3", "file", "hid-desktop",
+                     "kvm", "notification-desktop", "screen-desktop", "shell", "torrent", "tv", "tv-roku"]
 
 
 @pytest.mark.parametrize("name", PORTS)
@@ -32,10 +32,11 @@ def test_manifest_is_clean(name):
 def test_every_cap_says_risk_scope_and_doc(name):
     m = load(PLUGINS / name, CONTRACTS)
     for cap, spec in m.caps.items():
-        # The browser's page actions reach the internet: external.
+        # The browser's page actions reach the internet, appliance.test a device on the network: external.
         assert spec["doc"] and spec["risk"] and spec["scope"] in (
-            ("local", "external") if name == "browser" else ("local",)), cap
-        assert ("action" in spec) != ("run" in spec), cap
+            ("local", "external") if name in ("browser", "appliance") else ("local",)), cap
+        # A builtin manifest's caps are served by the device itself (firmware): no run.
+        assert ("run" in spec) == (not m.data["builtin"]) and "action" not in spec, cap
         if spec["risk"] == "read":
             assert "physical" not in spec.get("effects", ()), cap
         # Can lose unsaved work. A TV switched off loses nothing (tv.power.off).
@@ -43,13 +44,11 @@ def test_every_cap_says_risk_scope_and_doc(name):
             assert "destructive" in spec["effects"], cap
 
 
-CONFIG_ONLY = {"battery", "cec", "notification-desktop", "screen-desktop", "torrent"}
-
-
-def test_only_config_plugins_are_data():
-    # Config-only plugins are data; a plugin with scripts is code (review, signing).
+def test_every_port_is_code_except_firmware():
+    # A cap that is a run: script makes its port code (review, signing); the
+    # firmware's builtin manifest is only data.
     classes = {name: trust_class(PLUGINS / name) for name in PORTS}
-    assert classes == {name: "config" if name in CONFIG_ONLY else "code" for name in PORTS}
+    assert classes == {name: "config" if name == "dongle-s3" else "code" for name in PORTS}
 
 
 def test_scripts_start_processes_only_through_launch():
@@ -60,7 +59,9 @@ def test_scripts_start_processes_only_through_launch():
         assert not banned.search(script.read_text()), script
 
 
-@pytest.mark.parametrize("name", PORTS)
+# A plugin that runs on the hub binds nothing on a worker, nor does firmware's builtin manifest.
+@pytest.mark.parametrize("name", [n for n in PORTS if check(PLUGINS / n)[0].get("runs_on") != "hub"
+                                  and not check(PLUGINS / n)[0].get("builtin")])
 def test_binds_in_the_worker_host(name):
     async def body():
         host = Host(os_name="linux", hardware={"display", "battery"})

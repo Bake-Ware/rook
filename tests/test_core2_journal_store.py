@@ -67,10 +67,6 @@ def test_chain_names_and_stamp():
 def test_expiry_is_one_age():
     # castling-journal: "pruned by age (~30-90 days)"; one number, no tiers.
     assert 30 <= journal.RETENTION_DAYS <= 90
-    days = journal.RETENTION_DAYS
-    assert not journal.expired(0, days * DAY - 1)
-    assert journal.expired(0, days * DAY)
-    assert journal.expired(0, 7 * DAY, 7)
 
 
 def test_first_break_takes_a_head_and_any_iterable():
@@ -371,26 +367,7 @@ def test_general_chain_never_gaps_when_the_clock_steps_back(store):
     assert [e["id"] for e in store.entries("general")] == [kept["id"], late["id"]]
 
 
-def test_closed_project_chain_goes_whole(store):
-    clock = store.clock
-    days = journal.RETENTION_DAYS
-    a = [store.append(call(risk="exec"), S_CASTLING) for _ in range(3)]
-    closed = {"castling": T0 + DAY}
-    clock.t = T0 + DAY + days * DAY - 1
-    assert store.prune(closed=closed) == []
-    clock.t = T0 + DAY + days * DAY
-    [p] = store.prune(closed=closed)
-    assert (p["pruned"], p["reason"], p["count"], p["through"]) == ("project:castling", "project closed", 3,
-                                                                     a[-1]["id"])
-    assert list(store.entries("project:castling")) == []
-    assert store.check() == []
-    assert store.prune(closed=closed) == []  # nothing left to prune
-    # A late entry on the closed project links after the checkpoint.
-    late = store.append(call(), S_CASTLING)
-    assert late["prev"] == a[-1]["hash"] and store.check() == []
-
-
-def test_unclosed_projects_and_custom_retention(tmp_path):
+def test_custom_retention_prunes_only_the_general_chain(tmp_path):
     clock = Clock()
     s = JournalStore(str(tmp_path / "j.sqlite3"), clock=clock, retention_days=1)
     s.append(call(risk="admin"), S_NONE)
@@ -398,7 +375,7 @@ def test_unclosed_projects_and_custom_retention(tmp_path):
     clock.t += 3 * DAY
     [p] = s.prune()
     assert p["pruned"] == "general"
-    assert len(list(s.entries("project:castling"))) == 1  # never pruned while open
+    assert len(list(s.entries("project:castling"))) == 1
     s.close()
 
 

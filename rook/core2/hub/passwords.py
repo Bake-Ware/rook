@@ -11,6 +11,10 @@ CLI: also the way back in if a password is lost), ``web`` (the person, on
 their Account page) or ``migrate`` (0.4's dashboard password, carried over).
 
 The file is read on every check, so ``passwd`` works while the hub runs.
+
+``<data>/unclaimed``: ``init --no-password`` writes it; while it is there the
+site signs every visitor in as the owner (a new hub is open until it is
+claimed). Setting any password removes it, and nothing brings it back.
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ import time
 from pathlib import Path
 
 FILE = "passwords.json"
+UNCLAIMED = "unclaimed"
 GENERATED = "generated"
 N, R, P = 2 ** 14, 8, 1
 _DUMMY = None       # a hash to check against for unknown names, so they take as long
@@ -79,6 +84,12 @@ def set_password(data, name: str, password: str, by: str) -> None:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(json.dumps(entries, indent=1))
     os.replace(tmp, path)
+    (Path(data) / UNCLAIMED).unlink(missing_ok=True)
+
+
+def unclaimed(data) -> bool:
+    """A new hub nobody has set a password on yet (``init --no-password``)."""
+    return (Path(data) / UNCLAIMED).exists()
 
 
 def set_by(data, name: str) -> str | None:

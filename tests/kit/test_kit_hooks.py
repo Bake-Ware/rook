@@ -111,13 +111,14 @@ async def test_errors_dont_stop_the_timer(plugin, caplog):
     s = Scheduler()
     n = {"runs": 0}
 
-    def flaky():
+    def flaky(ctx):
         n["runs"] += 1
         raise RuntimeError("nope")
 
-    s.every("core", 0.01, flaky)
+    await s.start({"plugin": "tv", "hooks": {"every": [{"interval": 0.01, "run": "tv.py:flaky"}]}},
+                  resolve=lambda ref: flaky)
     await until(lambda: n["runs"] >= 3)
-    await s.stop("core")
+    await s.stop("tv")
     assert "nope" in caplog.text
 
 
@@ -181,32 +182,6 @@ async def test_records_events_reach_on_hooks_from_a_thread():
                   resolve=lambda ref: (lambda ctx, event, payload: got.append(event)))
     await asyncio.to_thread(store.type("hw.item").create, Caller(person="bake"), t="x")
     await until(lambda: got == ["hw.item.created"])
-    await s.close()
-
-
-async def test_core_every_with_async_fn():
-    s = Scheduler()
-    hits = []
-
-    async def prune():
-        hits.append(1)
-
-    s.every("records", "10ms", prune)
-    await until(lambda: len(hits) >= 2)
-    await s.close()
-    assert s.plugins == []
-
-
-async def test_may_receive_filters_events():
-    got = []
-    s = Scheduler(may_receive=lambda plugin, event: not event.startswith("secret."))
-    await s.start({"plugin": "w", "hooks": {"on": [{"event": "*", "run": "w.py:f"}]}},
-                  resolve=lambda ref: (lambda ctx, event, payload: got.append(event)))
-    s.publish("secret.item.created", {"record": {"x": 1}})
-    s.publish("worker.online")
-    await until(lambda: got == ["worker.online"])
-    await asyncio.sleep(0.03)
-    assert got == ["worker.online"]
     await s.close()
 
 

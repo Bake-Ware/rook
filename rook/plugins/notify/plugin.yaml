@@ -12,6 +12,7 @@ version: 0.5.1
 title: Notify
 doc: Get a message to a person on the channel that reaches them (phone, or any channel plugin such as Telegram or Discord).
 package: core
+segment: Hub
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook

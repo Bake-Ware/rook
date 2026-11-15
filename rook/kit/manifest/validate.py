@@ -17,15 +17,9 @@ from pathlib import Path, PurePosixPath
 from .types import TypeSpecError, compile_fields, compile_type, setting_spec, type_key
 
 RISKS = ("read", "write", "exec", "admin")
-EFFECTS = ("destructive", "sensitive", "personal", "physical", "sends_as", "spends",
-           "persists", "taints")
+EFFECTS = ("destructive", "sensitive", "physical", "sends_as")
 # Effects a read cap shouldn't have: they change something.
-_CHANGING = {"destructive", "physical", "sends_as", "spends", "persists"}
-ACTION_TYPES = ("exec", "http", "tcp", "ws", "file")
-# Keys beside the action type in an action block.
-ACTION_KEYS = ("parse", "returns", "fail_if")
-# Per-OS exec overrides: worker.os values. termux is Termux; android is the app.
-OSES = ("linux", "windows", "macos", "android", "termux")
+_CHANGING = {"destructive", "physical", "sends_as"}
 RECORD_VERBS = ("list", "get", "search", "create", "update", "archive", "delete", "history")
 # delete erases for good, so a record type opts into it. search needs search
 # fields; history needs history: true.
@@ -42,11 +36,7 @@ CORE_PRESETS = {
 }
 _SECRET_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _TEMPLATE = re.compile(r"\{\{(.*?)\}\}")
-_ARG_TEMPLATE = re.compile(r"\{\{\s*args\.")
-_ARG_REF = re.compile(r"\{\{\s*args\.([A-Za-z0-9_-]+)[^{}]*\}\}")
 _LONE_TEMPLATE = re.compile(r"\{\{[^{}]*\}\}")
-# Arg types whose text can't carry shell or option syntax.
-_NUMERIC = {"int", "float", "bool", "duration"}
 
 
 @dataclass(frozen=True, order=True)
@@ -122,12 +112,7 @@ def _schema_issues(data) -> list[Issue]:
     for e in strict.iter_errors(data):
         _unknown_keys(e, unknown)
     for path in unknown:
-        if len(path) == 4 and path[0] == "caps" and path[2] == "action":
-            out.append(Issue(pointer(path), "unknown-action", "warning",
-                             f"unknown action type {path[3]!r}: this cap is unavailable"))
-        else:
-            out.append(Issue(pointer(path), "unknown-key", "warning",
-                             f"unknown key {path[-1]!r} (ignored)"))
+        out.append(Issue(pointer(path), "unknown-key", "warning", f"unknown key {path[-1]!r} (ignored)"))
     return out
 
 
@@ -181,32 +166,6 @@ def record_caps(data: dict) -> dict:
     return out
 
 
-def _rendered(spec: dict) -> tuple[dict, list | None]:
-    """What lands in argv for an arg: a list's items, and the values it can
-    take when it has an enum (after map)."""
-    if spec.get("type") == "list":
-        spec = spec.get("items") or {}
-    if "enum" not in spec:
-        return spec, None
-    m = spec.get("map") or {}
-    return spec, [m.get(str(v), v) for v in spec["enum"]]
-
-
-def _guarded(spec: dict) -> bool:
-    spec, values = _rendered(spec)
-    return values is not None or "pattern" in spec or spec.get("type", "str") in _NUMERIC
-
-
-def _could_dash(spec: dict) -> bool:
-    spec, values = _rendered(spec)
-    if values is not None:
-        return any(str(v).startswith("-") for v in values)
-    t = spec.get("type", "str")
-    if t in ("int", "float"):
-        return spec.get("min", -1) < 0
-    return "pattern" not in spec and t not in ("bool", "duration")
-
-
 def hold_effects(cap: dict) -> set:
     """Effects for holds: an effect we don't know counts as destructive."""
     effects = set(cap.get("effects", ()))
@@ -222,8 +181,6 @@ class _Checker:
         self.core = data.get("package") == "core"
         self.issues: list[Issue] = []
         self.settings = set(data.get("settings") or {})
-        app = data.get("appliance")
-        self.appliance = None if app is None else {"host", "port", "name"} | set(app.get("settings") or {})
         self.caps = {cap_name(self.plugin, k): v for k, v in (data.get("caps") or {}).items()}
         self.own = set(self.caps) | set(record_caps(data))
 
@@ -275,42 +232,31 @@ class _Checker:
         if cap not in self.own:
             self.add(level, path, "unknown-cap", f"{cap} is not a cap of this plugin")
 
-    def templates(self, node, path, args=None, bare=()):
+    def templates(self, node, path, bare=()):
         if isinstance(node, dict):
             for k, v in node.items():
-                self.templates(v, path + (k,), args, bare)
+                self.templates(v, path + (k,), bare)
         elif isinstance(node, list):
             for i, v in enumerate(node):
-                self.templates(v, path + (i,), args, bare)
+                self.templates(v, path + (i,), bare)
         elif isinstance(node, str):
             for m in _TEMPLATE.finditer(node):
-                problem = self.template(m.group(1).split("|", 1)[0].strip(), args, bare)
+                problem = self.template(m.group(1).split("|", 1)[0].strip(), bare)
                 if problem:
                     self.error(path, *problem)
             if "{{" in _TEMPLATE.sub("", node) or "}}" in _TEMPLATE.sub("", node):
                 self.error(path, "template-syntax", f"unbalanced braces in {node!r}")
 
-    def template(self, expr, args, bare):
+    def template(self, expr, bare):
         if expr.startswith("secret:"):
             if not _SECRET_NAME.match(expr[7:]):
                 return "template-syntax", f"bad secret name in {{{{{expr}}}}}"
             return None
         parts = expr.split(".")
-        head, rest = parts[0], parts[1:]
-        if head == "args" and args is not None and rest:
-            if rest[0] not in args:
-                return "template-unknown-arg", f"{{{{{expr}}}}}: no arg {rest[0]!r} is declared"
-        elif head == "settings" and rest:
-            if rest[0] not in self.settings:
-                return "template-unknown-setting", f"{{{{{expr}}}}}: no setting {rest[0]!r} is declared"
-        elif head == "appliance" and rest and args is not None:
-            if self.appliance is None:
-                return "template-unknown-appliance", f"{{{{{expr}}}}}: this plugin has no appliance block"
-            if rest[0] not in self.appliance:
-                return "template-unknown-appliance", f"{{{{{expr}}}}}: no appliance setting {rest[0]!r}"
-        elif not (expr in bare or (args is not None and (
-                expr == "tmp" or expr in ("worker.os", "worker.arch", "worker.name",
-                                          "plugin.dir", "plugin.data")))):
+        if parts[0] == "settings" and parts[1:]:
+            if parts[1] not in self.settings:
+                return "template-unknown-setting", f"{{{{{expr}}}}}: no setting {parts[1]!r} is declared"
+        elif expr not in bare:
             return "template-unknown", f"{{{{{expr}}}}} is not a template variable here"
         return None
 
@@ -337,31 +283,14 @@ class _Checker:
         self.aliases()
         for name, spec in (d.get("settings") or {}).items():
             self.setting(spec, ("settings", name))
-        self.requires(d.get("requires"), ("requires",))
+        for i, name in enumerate((d.get("requires") or {}).get("settings") or ()):
+            if name not in self.settings:
+                self.error(("requires", "settings", i), "unknown-setting", f"no setting {name!r} is declared")
         for rel, cap in (d.get("caps") or {}).items():
             self.cap(rel, cap, ("caps", rel))
         self.records()
         self.events()
         self.hooks()
-        for name, route in (d.get("routes") or {}).items():
-            path = ("routes", name)
-            self.run(route["run"], path + ("run",))
-            auth = route.get("auth")
-            if auth == "none":  # omitted = user
-                self.warn(path + ("auth",), "route-auth-none", "this route takes requests from anyone")
-            elif auth in ("hmac", "token"):
-                self.warn(path + ("auth",), "route-auth-secret",
-                          f"name the secret ({{{auth}: \"{{{{settings.x}}}}\"}}): this route is not served")
-            elif isinstance(auth, dict):
-                secret = auth.get("hmac", auth.get("token", ""))
-                if not _LONE_TEMPLATE.fullmatch(secret.strip()):
-                    self.warn(path + ("auth",), "route-auth-literal",
-                              "a secret written in the manifest is public: use {{settings.x}} or {{secret:NAME}}")
-            self.templates(auth, path + ("auth",))
-        if "gate" in d:
-            self.run(d["gate"]["run"], ("gate", "run"))
-            if "result" in d["gate"]:
-                self.run(d["gate"]["result"], ("gate", "result"))
         for name, c in (d.get("contracts") or {}).items():
             self.type_(c.get("args", {}), ("contracts", name, "args"), fields=True)
             if "result" in c:
@@ -374,38 +303,19 @@ class _Checker:
         self.presets()
         return self.issues
 
-    def requires(self, req, path):
-        from .diff import satisfies   # diff imports this module
-        for i, name in enumerate((req or {}).get("settings") or ()):
-            if name not in self.settings:
-                self.error(path + ("settings", i), "unknown-setting", f"no setting {name!r} is declared")
-        ranges = [(("rook",), (req or {})["rook"])] if "rook" in (req or {}) else []
-        ranges += [(("plugins", n), r) for n, r in ((req or {}).get("plugins") or {}).items()]
-        for sub, rng in ranges:
-            try:
-                satisfies("0.0.0", rng)
-            except ValueError:
-                self.warn(path + sub, "bad-range", f"{rng!r} is not a version range (>=1.2,<2): not checked")
-
     def setting(self, spec, path):
-        if spec.get("type") == "oauth":
-            self.error(path + ("type",), "oauth-unsupported",
-                       "oauth settings are reserved and not supported in manifest v1")
-            return
         self.type_(setting_spec(spec), path)
 
     def cap(self, rel, cap, path):
         if rel.startswith(self.plugin + "."):
             self.warn(path, "cap-key-prefixed",
                       f"cap keys are relative: this cap is {self.plugin}.{rel}")
-        has_action, has_run = "action" in cap, "run" in cap
+        has_run = "run" in cap
         if self.data.get("builtin"):
-            if has_action or has_run:
-                self.error(path, "builtin-has-action", "a builtin plugin's caps have no action or run")
-        elif has_action and has_run:
-            self.error(path, "action-and-run", "a cap has an action or a run, not both")
-        elif not (has_action or has_run):
-            self.error(path, "no-action", "a cap needs an action or a run")
+            if has_run:
+                self.error(path, "builtin-has-run", "a builtin plugin's caps have no run")
+        elif not has_run:
+            self.error(path, "no-run", "a cap needs a run")
         if has_run:
             self.run(cap["run"], path + ("run",))
         args = cap.get("args") or {}
@@ -415,7 +325,6 @@ class _Checker:
             elif name in args:
                 self.error(path + ("bind", name), "bind-shadows-arg",
                            f"{name} is both a declared arg and bound")
-        self.requires(cap.get("requires"), path + ("requires",))
         compiled = self.type_(args, path + ("args",), fields=True)
         if compiled is not None:
             for i, ex in enumerate(cap.get("examples") or ()):
@@ -431,73 +340,6 @@ class _Checker:
                 self.warn(epath, "effect-risk-mismatch", f"a read cap shouldn't be {eff}")
         if "undo" in cap and not self.callable_(cap["undo"]):
             self.own_cap(cap["undo"], path + ("undo",), level="warning")
-        if has_action:
-            self.action(cap, path + ("action",), args)
-
-    def action(self, cap, path, args):
-        action = cap["action"]
-        kinds = [k for k in ACTION_TYPES if k in action]
-        if len(kinds) > 1:
-            self.error(path, "multiple-actions", f"one action type per cap, found {', '.join(kinds)}")
-        elif not kinds and not set(action) - set(ACTION_KEYS):
-            self.error(path, "no-action", "the action names no action type")
-        self.templates(action, path, args=args)
-        exec_ = action.get("exec") or {}
-        regexes = [(("fail_if",), action.get("fail_if")), (("parse",), action.get("parse"))]
-        regexes += [(("exec", os, "parse"), exec_[os].get("parse")) for os in OSES if os in exec_]
-        for sub, block in regexes:
-            if isinstance(block, dict):
-                try:
-                    re.compile(block["regex"])
-                except re.error as e:
-                    self.error(path + sub + ("regex",), "bad-regex", f"invalid regex: {e}")
-        for kind in ("http", "tcp"):
-            verify = (action.get(kind) or {}).get("tls")
-            verify = verify.get("verify") if isinstance(verify, dict) else None
-            if isinstance(verify, str) and not re.fullmatch(
-                    r"\{\{\s*(settings|appliance)\.[A-Za-z0-9_-]+\s*\}\}", verify):
-                self.error(path + (kind, "tls", "verify"), "tls-verify-template",
-                           "tls.verify is true, false or one {{settings.x}} / {{appliance.x}}")
-        steps = [((), exec_)] if "argv" in exec_ else []
-        steps += [((os,), exec_[os]) for os in OSES if "argv" in exec_.get(os, {})]
-        steps += [(("try", i), s) for i, s in enumerate(exec_.get("try", ()))]
-        steps += [((os, "try", i), s) for os in OSES
-                  for i, s in enumerate(exec_.get(os, {}).get("try", ()))]
-        for sub, step in steps:
-            first = step["argv"][0]
-            if any(_ARG_TEMPLATE.search(s) for s in ([first] if isinstance(first, str) else first)) \
-                    and cap["risk"] not in ("exec", "admin"):
-                self.error(path + ("exec",) + sub + ("argv", 0), "argv-binary-from-arg",
-                           "the program to run comes from an arg: the cap must be risk exec")
-            self.argv(step["argv"], args, path + ("exec",) + sub + ("argv",))
-
-    def argv(self, argv, args, path):
-        """Warn where an arg's text could break out of its slot: inside a
-        larger argument a tool may re-split (A8), or alone where it could
-        start with - and read as an option (A9)."""
-        items = [((i,), a) for i, a in enumerate(argv) if isinstance(a, str)]
-        items += [((i, j), a) for i, g in enumerate(argv) if isinstance(g, list) for j, a in enumerate(g)]
-        options_end = False
-        for sub, item in sorted(items):
-            if item == "--":
-                options_end = True
-                continue
-            if sub[0] == 0:
-                continue  # the program; argv-binary-from-arg covers it
-            names = _ARG_REF.findall(item)
-            lone = len(names) == 1 and _LONE_TEMPLATE.fullmatch(item.strip()) is not None
-            for name in names:
-                spec = args.get(name)
-                if spec is None:
-                    continue  # template-unknown-arg already
-                if not lone and not _guarded(spec):
-                    self.warn(path + sub, "argv-arg-unguarded",
-                              f"{{{{args.{name}}}}} is inside a larger argument: give {name} a pattern "
-                              "or enum so a tool that re-splits it can't be fed extra syntax")
-                elif lone and not options_end and _could_dash(spec):
-                    self.warn(path + sub, "argv-option-injection",
-                              f"{{{{args.{name}}}}} could start with - and read as an option: "
-                              "put \"--\" before it or give it a pattern")
 
     def records(self):
         generated = record_caps(self.data)
@@ -510,7 +352,7 @@ class _Checker:
             fields = spec["fields"]
             for fname, f in fields.items():
                 self.type_(f, path + ("fields", fname))
-            for key in ("index", "search", "semantic"):
+            for key in ("index", "search"):
                 for i, fname in enumerate(spec.get(key) or ()):
                     if fname not in fields:
                         self.error(path + (key, i), "unknown-field", f"no field {fname!r} in {rec}")
@@ -519,8 +361,6 @@ class _Checker:
                     self.error(path + ("caps", i), "record-verb", "search needs search fields")
                 elif verb == "history" and not spec.get("history"):
                     self.error(path + ("caps", i), "record-verb", "history needs history: true")
-            if "migrations" in spec:
-                self.file(spec["migrations"], path + ("migrations",))
 
     def events(self):
         for name, ev in (self.data.get("emits") or {}).items():
@@ -578,7 +418,7 @@ class _Checker:
         for section in ("skills", "docs"):
             for name, rel in (d.get(section) or {}).items():
                 self.file(rel, (section, name))
-        for section in ("pages", "components"):
+        for section in ("pages", "components", "shell"):
             for name, item in (d.get(section) or {}).items():
                 self.file(item["file"], (section, name, "file"))
                 if "props" in item:
@@ -586,12 +426,7 @@ class _Checker:
         for name, job in (d.get("jobs") or {}).items():
             path = ("jobs", name)
             if len(set(job["trigger"]) - {"filter"}) != 1:
-                self.error(path + ("trigger",), "job-trigger",
-                           "a trigger is exactly one of cron, every, on, manual, webhook")
-            if sum(k in job for k in ("agent", "run", "call")) != 1:
-                self.error(path, "job-action", "a job has exactly one of agent, run, call")
-            if "run" in job:
-                self.run(job["run"], path + ("run",))
+                self.error(path + ("trigger",), "job-trigger", "a trigger is exactly one of cron, every, on, manual")
 
     def presets(self):
         if self.core:

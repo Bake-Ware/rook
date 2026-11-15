@@ -26,14 +26,25 @@ def importer():
     return mod
 
 
+# 0.4's whiteboard table (its knowledge migration 004_whiteboard.sql).
+WHITEBOARD_04 = """
+CREATE TABLE IF NOT EXISTS whiteboard(
+    seq INTEGER PRIMARY KEY, band TEXT NOT NULL, task TEXT NOT NULL REFERENCES records(id),
+    claim TEXT NOT NULL, actor TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL,
+    worker TEXT, cap TEXT, ref TEXT, ok INTEGER, n INTEGER NOT NULL DEFAULT 1,
+    first REAL NOT NULL, ts REAL NOT NULL, closed REAL);
+CREATE INDEX IF NOT EXISTS whiteboard_claim ON whiteboard(claim, seq);
+CREATE INDEX IF NOT EXISTS whiteboard_task ON whiteboard(task, seq);
+"""
+
+
 def _source_copy(tmp_path) -> Path:
     """The fixture plus 0.4 whiteboard lines for one task, and a sessions db
     holding that task's handoff."""
     src = tmp_path / "knowledge.db"
     shutil.copy(FIXTURE, src)
     db = sqlite3.connect(src)
-    db.executescript((REPO / "rook" / "hub" / "plugins" / "knowledge" /
-                      "migrations" / "004_whiteboard.sql").read_text())
+    db.executescript(WHITEBOARD_04)
     task = "t_2f8df454186f408f905df45a8d6897de"
     for seq, (kind, text, closed) in enumerate([("goal", "Service answers", None), ("open", "check logs", None),
                                                 ("open", "old item", 1.0), ("call", "shell.exec ok", None),

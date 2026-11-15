@@ -8,19 +8,19 @@
     announce = {**base, **await host.announce(ceiling)}
 
 A request from a band goes through :meth:`Host.handle`: the worker gate
-(security.py) checks its ticket (spec 6.3) and runs it, elevating when the
+(security.py) checks its ticket (spec 10.1) and runs it, elevating when the
 cap asks; the host checks args against the manifest, merges ``bind``, takes
-the cap's ``exclusive`` lock, runs the action or ``run:`` function under the
+the cap's ``exclusive`` lock, runs the ``run:`` function under the
 cap's timeout, and turns every failure into an error reply: a plugin never
 takes the worker down. The gate's cap table follows every load and unload.
 
-What the hub carries beside the args (spec 5.7, bound by the ticket's
+What the hub carries beside the args (spec 10.8, bound by the ticket's
 ``carry_hash``) is used for that one call and never stored: ``settings``,
 the plugin's hub-kept settings with secret values already read from the
 hub's vault (castling-enrollment: "Secrets: referenced only by vault name;
 the hub sends the value with each call; never written to worker disk"), and
 ``instance``, an appliance's name, address and instance settings, which
-become ``{{appliance.*}}`` in actions and ``ctx.appliance`` in Python.
+become ``ctx.appliance``.
 
 Replacing a plugin stops the old version's hooks, binds the new one from its
 folder and starts its hooks; if that fails the old one comes back. The
@@ -36,31 +36,30 @@ import hashlib
 import inspect
 import json
 import logging
-import re
-import tempfile
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from rook.core2 import rights, wire
-from rook.kit.actions import ActionError, Secret, appliance_values, run_action
-from rook.kit.actions.parse import file_result
-from rook.kit.ctx import Caller, Ctx, FileResult, KitError, invoke
+from rook.kit.ctx import Caller, Ctx, FileResult, KitError, file_result, invoke
 from rook.kit.hooks import Scheduler
 
 from .loader import LoadError, Plugin, load_builtin, load_folder, local_os, merge_settings
-from .security import Call, NeedsElevation, WorkerGate, launch, reply
+from .security import Call, NeedsElevation, WorkerGate, reply
 
 __all__ = ["CallError", "Host", "LoadError"]
 
 log = logging.getLogger("rook.worker.host")
 
-_SETTING_REF = re.compile(r"\{\{\s*settings\.([A-Za-z0-9_-]+)")
-_TMP_REF = re.compile(r"\{\{\s*tmp\s*\}\}")
+
+
+class Secret(str):
+    """A secret value the hub sent with a call: read as a plain string, kept
+    out of the call's error text."""
 
 
 class CallError(Exception):
-    """A failed call; ``message`` is the reply's ``error`` (spec 6.4)."""
+    """A failed call; ``message`` is the reply's ``error`` (spec 5.2)."""
 
     def __init__(self, message: str, retry: bool = False):
         super().__init__(message)
@@ -82,8 +81,7 @@ class Host:
                  dispatch: Callable | None = None, resolve_secret: Callable[[str], Any] | None = None,
                  store_setting: Callable | None = None, emit: Callable | None = None,
                  data_root: str | Path | None = None, streams: Any = None,
-                 contracts: dict | None = None, may_receive: Callable | None = None,
-                 hook_timeout: float = 30.0, gate: WorkerGate | None = None):
+                 contracts: dict | None = None, hook_timeout: float = 30.0, gate: WorkerGate | None = None):
         self.os_name = os_name or local_os()
         self.hardware = set(hardware)
         self.dispatch = dispatch
@@ -93,7 +91,7 @@ class Host:
         self.data_root = Path(data_root) if data_root else None
         self.streams = streams
         self.contracts = contracts
-        self.scheduler = Scheduler(dispatch=dispatch, timeout=hook_timeout, may_receive=may_receive)
+        self.scheduler = Scheduler(dispatch=dispatch, timeout=hook_timeout)
         self.plugins: dict[str, Plugin] = {}
         self.previous: dict[str, Plugin] = {}    # one kept version per plugin, for rollback
         self._local: dict[str, dict] = {}         # worker-local setting values per plugin
@@ -243,7 +241,7 @@ class Host:
 
     def caps(self) -> dict[str, dict]:
         """``{cap: {"risk", "effects", "elevation", "contracts"}}`` for every cap served
-        now (aliases included): what the worker gate checks (spec 6.3, 7)."""
+        now (aliases included): what the worker gate checks (spec 10.1, 10.9)."""
         return {name: {"risk": c.spec["risk"], "effects": list(c.spec.get("effects", ())),
                        "elevation": c.spec.get("elevation", "never"),
                        **({"contracts": list(c.spec["contracts"])} if c.spec.get("contracts") else {})}
@@ -331,9 +329,9 @@ class Host:
             # Held until the work really ends: a timed-out sync function keeps
             # its thread, and the device it holds stays locked until it returns.
             work.add_done_callback(lambda _: lock.release())
-        # Async work (actions included) is cancelled on timeout; a sync
+        # Async work is cancelled on timeout; a sync
         # function's thread can't be stopped, so its task is left to finish.
-        stoppable = c.func is None or inspect.iscoroutinefunction(c.func)
+        stoppable = inspect.iscoroutinefunction(c.func)
         try:
             done, _ = await asyncio.wait(
                 {work}, timeout=None if deadline is None else max(0.0, deadline - loop.time()))
@@ -349,7 +347,7 @@ class Host:
             return _jsonable(work.result())
         except (CallError, NeedsElevation, PermissionError):
             raise
-        except (KitError, ActionError) as e:
+        except KitError as e:
             msg = _redact(getattr(e, "message", None) or str(e), shown)
             raise CallError(msg, retry=e.retry) from None
         except asyncio.CancelledError:   # the plugin cancelled itself
@@ -376,28 +374,13 @@ class Host:
                     lease: dict | None = None, settings: dict | None = None,
                     instance: dict | None = None) -> Any:
         settings = self._call_settings(p) if settings is None else settings
-        if c.action is None:
-            ctx = self._ctx(p, caller, shown, cap=c.name, settings=settings)
-            # TODO(castling:wiring): the call context (6.6: hub, call id, risk,
-            # lease) belongs on Caller; until then the lease rides on ctx so
-            # plugin code can pass it to security.launch.
-            ctx.lease = lease
-            ctx.appliance = instance
-            return await invoke(c.func, ctx, args)
-        text = json.dumps(c.action)
-        settings = self._action_settings(p, settings, set(_SETTING_REF.findall(text)))
-        tmp = tempfile.TemporaryDirectory(prefix=f"rook-{p.name}-") if _TMP_REF.search(text) else None
-        try:
-            # cap=: arg join/map and result coercion (manifest 1.1).
-            return await run_action(
-                c.action, args, settings=settings, appliance=instance, worker={"os": self.os_name},
-                secrets=self.resolve_secret, tmp=tmp.name if tmp else None,
-                plugin_dir=str(p.folder) if p.folder else None,
-                plugin_data=str(self._data_dir(p)) if self.data_root else None,
-                timeout=c.timeout, cap=c.spec, launch=partial(launch, lease=lease))
-        finally:
-            if tmp is not None:
-                tmp.cleanup()
+        ctx = self._ctx(p, caller, shown, cap=c.name, settings=settings)
+        # TODO(castling:wiring): the call context (6.6: hub, call id, risk,
+        # lease) belongs on Caller; until then the lease rides on ctx so
+        # plugin code can pass it to security.launch.
+        ctx.lease = lease
+        ctx.appliance = instance
+        return await invoke(c.func, ctx, args)
 
     def _call_settings(self, p: Plugin) -> dict:
         """The plugin's settings for one call with nothing carried: a secret
@@ -410,9 +393,8 @@ class Host:
                  shown: list[str]) -> tuple[dict, dict | None]:
         """(settings, appliance instance) for one call: the plugin's own
         settings with what the hub carried on top, secret ones marked so
-        errors never show them; the instance built as
-        ``appliance_values`` does (host, port and name, its settings over
-        their defaults on top)."""
+        errors never show them; the instance: host, port and name, then its
+        settings over their defaults on top (a port setting wins)."""
         decls = p.manifest.get("settings") or {}
         settings = self._call_settings(p)
         got = (carry or {}).get("settings")
@@ -441,19 +423,7 @@ class Host:
                 shown.append(str(value))
             values[key] = value
         base = {"name": appliance, **{k: inst[k] for k in ("host", "port") if inst.get(k) is not None}}
-        return settings, appliance_values(base, values)
-
-    def _action_settings(self, p: Plugin, settings: Mapping, used: set[str]) -> dict:
-        """Setting values for an action: defaults filled in; a secret one it
-        names must have come from the hub with this call."""
-        out = {}
-        for key, decl in (p.manifest.get("settings") or {}).items():
-            value = settings.get(key, None if _secret(decl) else decl.get("default"))
-            if _secret(decl) and key in used and value is None:
-                raise CallError(f"setting {key} is a secret and the hub sent none: set it on the hub (setting.set)")
-            if value is not None:
-                out[key] = value
-        return out
+        return settings, {**base, **{k: v for k, v in values.items() if v is not None}}
 
     def _ctx(self, p: Plugin, caller: Caller, shown: list[str] | None = None,
              cap: str | None = None, settings: Mapping | None = None) -> Ctx:
@@ -479,7 +449,7 @@ class Host:
     # -- announce ---------------------------------------------------------------
 
     def _visible(self, ceiling: Mapping | None) -> list[Plugin]:
-        """Filtered view (spec 9.4): plugins with a cap or an event the band's
+        """Filtered view (spec 10.10): plugins with a cap or an event the band's
         ceiling grants name."""
         out = []
         for p in self.plugins.values():
@@ -494,7 +464,7 @@ class Host:
 
     def sends(self, plugin: str, event: str, ceiling: Mapping | None, target: str = "") -> bool:
         """Whether ``plugin``'s ``event`` goes to the hub whose ceiling this
-        is: the plugin declares it in ``emits`` and a grant names it (spec 13,
+        is: the plugin declares it in ``emits`` and a grant names it (spec 10.4,
         ``core.event``; ``target`` is this worker's name, for ``@`` grants)."""
         p = self.plugins.get(plugin)
         if p is None or event not in (p.manifest.get("emits") or {}):
@@ -502,7 +472,7 @@ class Host:
         return ceiling is None or any(rights.matches(g, event, target) for g in ceiling.get("grants") or ())
 
     def manifests(self, plugins=None, ceiling: Mapping | None = None) -> dict:
-        """``core.manifests`` (spec 13): the parsed manifests of the band's view."""
+        """``core.manifests`` (spec 9): the parsed manifests of the band's view."""
         return {"manifests": [p.raw for p in self._visible(ceiling)
                               if plugins is None or p.name in plugins]}
 
@@ -513,7 +483,7 @@ class Host:
         return {p.name: s for p, s in zip(visible, got, strict=True) if s is not None}
 
     async def announce(self, ceiling: Mapping | None = None) -> dict:
-        """The plugin part of the worker announce (spec 5.3): ``manifests``,
+        """The plugin part of the worker announce (spec 4.2): ``manifests``,
         ``manifests_hash``, ``unavailable`` and ``status`` for one band's view.
         Core adds the rest (worker_id, name, core, facts, role, ceiling...)."""
         visible = self._visible(ceiling)
@@ -575,8 +545,7 @@ def _handled_by_host(ctx, **args):
 
 
 def _required_settings(manifest: Mapping) -> set:
-    reqs = [manifest.get("requires") or {}, *((c.get("requires") or {}) for c in manifest["caps"].values())]
-    return {s for r in reqs for s in r.get("settings") or ()}
+    return set((manifest.get("requires") or {}).get("settings") or ())
 
 
 def _redact(text: str, secrets: list[str]) -> str:

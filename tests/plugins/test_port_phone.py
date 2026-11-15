@@ -81,12 +81,6 @@ def test_effects_say_what_the_caps_do():
     caps = {c: s for n in PHONE for c, s in load(PLUGINS / n, CONTRACTS).caps.items()}
     for cap in ("sms.send", "call.dial", "notification-android.notification.act"):
         assert "sends_as" in caps[cap]["effects"] and caps[cap]["scope"] == "external", cap
-    for cap in ("sms.list", "contact.search", "call.list", "location.get", "calendar.list",
-                "notification-android.notification.list"):
-        assert "personal" in caps[cap]["effects"], cap
-    for cap in ("sms.list", "notification-android.notification.list", "notification-android.notification.get",
-                "ui-android.ui.screen", "screen-android.screen.capture", "voice-android.voice.ask"):
-        assert "taints" in caps[cap]["effects"], cap
     assert "destructive" in caps["calendar.delete"]["effects"]
     assert caps["phone.unlock"]["args"]["pin"]["type"] == "secret"
     sms, notes = load(PLUGINS / "sms", CONTRACTS), load(PLUGINS / "notification-android", CONTRACTS)
@@ -312,15 +306,6 @@ def test_phone_find_vibrate_torch(phone, java):
     java.cls("android.hardware.camera2.CameraCharacteristics").FLASH_INFO_AVAILABLE = "flash"
     assert phone.call("phone.torch", on=False) == {"on": False}
     cm.setTorchMode.assert_called_with("1", False)
-
-
-def test_phone_switch_asks_the_app_to_run_0_4(phone, java, tmp_path):
-    files = tmp_path / "files"
-    java.ctx.getFilesDir.return_value.getAbsolutePath.return_value = str(files)
-    assert phone.call("phone.switch", to="0.4") == {"to": "0.4", "asked": True}
-    assert json.loads((files / "rook05" / "switch.json").read_text()) == {"to": "0.4"}
-    assert "0.4 or" not in phone.err("phone.switch", to="0.5")    # only 0.4 today: the manifest refuses the rest
-    assert load(PLUGINS / "phone", CONTRACTS).caps["phone.switch"]["risk"] == "admin"
 
 
 def _screen(java, w=1000, h=2000):

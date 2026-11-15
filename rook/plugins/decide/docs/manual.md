@@ -36,7 +36,7 @@ it reports the calls it would make.
 
 It ends when the goal is reached, the model asks to stop, a budget runs out,
 or an input fails. **halt** (the kill switch) stops new drives; a running one
-ends at its `max_seconds`, and each input it sends goes through the gate like
+ends at its `max_seconds`, and each input it sends goes through dispatch like
 any call. Two ends need you:
 
 - `needs_confirmation`: its gates flagged the next action (blind, low

@@ -33,10 +33,11 @@ From the top of the checkout (this makes `hub/` and `worker/` folders there):
 ```sh
 pip install -e '.[manifest]'          # the hub validates plugin manifests with jsonschema
 
-# 1. A relay. The small one from the tests listens on 127.0.0.1 only, so it
-#    serves this machine's workers; for other machines run Telesthete's
-#    relay, telesthete-hub (prebuilt binaries: the Telesthete README).
-python tests/e2e/relay.py 7474 &
+# 1. A relay. Rook's small one listens on 127.0.0.1 unless you give it a
+#    host (`python -m rook.core2.relay 7474 0.0.0.0`), and takes a web socket
+#    port after that ([Web socket fallback](#web-socket-fallback)); Telesthete's relay,
+#    telesthete-hub, also works (prebuilt binaries: the Telesthete README).
+python -m rook.core2.relay 7474 &
 
 # 2. The hub: init writes hub/hub.yaml (with a new band key), makes the
 #    hub's keys, asks for your sign-in password, and prints an API token
@@ -50,9 +51,46 @@ python -m rook.core2.worker --config worker/worker.yaml enroll http://127.0.0.1:
 python -m rook.core2.worker --config worker/worker.yaml &
 ```
 
-`enroll` shows a short code; approve it as the owner (see
-[Adding machines](enrollment.md)). Then open `http://127.0.0.1:8740/` and
-paste the token `init` printed ([The hub site](dashboard.md)).
+`enroll` waits until someone lets it in: open `http://127.0.0.1:8740/`,
+paste the token `init` printed ([The hub site](dashboard.md)) and tap
+**Join** for `laptop` on the Workers page ([Adding machines](enrollment.md)).
+
+## Another machine
+
+`deploy/castling-worker/install.sh` installs a worker as a service that
+starts at boot and restarts when it exits, and joins it to your hub:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/castling/deploy/castling-worker/install.sh \
+  | bash -s -- --hub https://rook.example --name kaiju        # waits for a Join tap; --code <one-time code> for none
+```
+
+That installs the Python worker (it needs Python 3.11+ or `uv`, and git).
+Where a release provides the one-file worker, `--binary
+<path or URL of rook-worker-linux-x86_64>` installs that instead, with no
+Python; `install.sh --upgrade --binary …` turns a Python install into it,
+keeping its data and identity. Either way it lives in `~/.rook05`
+(`/opt/rook05` as root) under the systemd unit `rook05-worker`. Without the
+installer: `rook-worker --config worker.yaml enroll <hub>`, then
+`rook-worker --config worker.yaml` under any service manager that restarts
+it. Windows has no installer yet.
+
+### Where nothing can be installed
+
+`worker/rook_worker.py` is a worker in one file: Python 3.8 or newer,
+standard library only, no installer and no rights needed. Copy it over,
+then:
+
+```sh
+python3 rook_worker.py enroll https://rook.example [--code <one-time code>] [--name kaiju]
+python3 rook_worker.py
+```
+
+It keeps its files in `~/.rook-worker` and serves commands
+(`shell.exec`, `shell.which`, `shell.env`), files (`file.*`) and `worker.*`;
+no terminals or streams, and it sends small results only (at most 256 KiB
+a reply). Start it again yourself if it stops; replace the file to update
+it.
 
 `init` options: `--owner` (your user name, lowercase), `--relay host:port`
 or `--ws-url` (the band's relay), `--url https://...` (where other devices
@@ -62,16 +100,17 @@ reach this hub, for enrollment) and `--bind` (the HTTP door, default
 ## What to install on the hub
 
 The hub loads every plugin folder in its **library** (`library:` in
-`hub.yaml`) at start. Point it at the plugins you want, for example
+`hub.yaml`) at start; `hub.load` loads one added later. Point it at the plugins you want, for example
 symlinks into `rook/plugins/`:
 
-- `agents` and `agents-claude-code` or `agents-codex`: the house agent and the
+- `agents` and `agents-claude-code`, `agents-codex` or `agents-opencode`
+  (set its `worker` to the machine its CLI runs on): the house agent and the
   other ready-made agents ([Agents](agents.md)); `attention`: the house
-  agent's attention pass over what tries to reach you (needs `jobs`).
+  agent's attention pass over what tries to reach you (needs `jobs`; off
+  until you say yes when guided setup asks).
 - `tasks`, `projects`, `knowledge`, `concepts`, `whiteboard`: the workbench
   ([The workbench](workbench.md)).
 - `notify`, `telegram`, `discord`: reaching people.
-- `security`, `security-ml`: the gates ([Security plugins](security.md)).
 
 The library also holds worker plugins: the hub pushes them, signed, to the
 workers you choose ([Plugins](plugins.md)).
@@ -83,6 +122,67 @@ cross the network in the clear, so put TLS in front (a reverse proxy) before
 enrolling another machine or opening the port; `enroll` refuses a plain
 `http://` hub off this machine unless you pass `--insecure`. Behind TLS,
 set `doors: {http: {web: {secure_cookie: true}}}`.
+
+## Web socket fallback
+
+Some networks drop UDP (offices, hotels, some phone carriers), and a worker
+there can't reach the relay. Every worker joins over UDP first; when nothing
+comes back from the band within 5 seconds it switches to a web socket at the
+hub's own address, `wss://<your hub>/band`, for the rest of that run. That
+rides the same TLS proxy or tunnel as the site: no new name, no new port.
+
+Both installers (`deploy/install` and the sidecar) set this up on a new hub:
+the relay's web socket on 127.0.0.1, one port above its UDP port, and the
+hub's `band:` line. A hub installed before this: add the two lines below
+(an upgrade leaves the relay and `hub.yaml` as they were).
+
+1. The relay, with a plain web socket on localhost (TLS stays at your
+   proxy). Rook's relay takes the web socket's port after its host
+   (`python -m rook.core2.relay 7474 0.0.0.0 7475`). Telesthete's relay
+   (`telesthete-hub`) takes it from its environment, for its systemd unit in
+   `/etc/telesthete-hub.env`:
+
+   ```sh
+   HUB_WS_BIND=127.0.0.1:7475
+   HUB_WS_TLS=false
+   ```
+
+2. The hub: one line in `hub.yaml`, then restart the hub. A web socket
+   opened on `/band` is passed straight through to the relay:
+
+   ```yaml
+   doors:
+     http:
+       band: ws://127.0.0.1:7475/band
+   ```
+
+3. Workers: nothing. Python workers, the phone app, `rook-worker` and
+   `rook_worker.py` take the address from the hub address they enrolled with,
+   so machines already enrolled get it at their next start. That address is
+   the `url` in the worker's `<data>/enrollment.json`: a worker enrolled
+   against a LAN or localhost address tries that address, not your public
+   one. To give it another, add `"ws_url": "wss://rook.example/band"` to its
+   band in `<data>/bands.json` and restart it.
+
+Check it from anywhere (the first line should be `HTTP/1.1 101 Switching
+Protocols`):
+
+```sh
+curl -si -N --max-time 3 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: cm9vay1iYW5kLWNoZWNrIQ==' \
+  https://rook.example/band | head -1
+```
+
+A worker that fell back says so in its log: `nothing heard over UDP in 5s;
+trying wss://rook.example/band`. A worker that starts while its hub is down
+can end up on the web socket once the hub is back, and stays there until it
+restarts: it works, but its traffic goes through the hub's door.
+
+To turn it off, take the `band:` line out of `hub.yaml` (and the web socket
+out of the relay: its port argument, or `HUB_WS_BIND`) and restart both; the
+check then answers `401`. Workers whose UDP works never notice; one already
+on the web socket keeps retrying it until it restarts, then tries UDP first
+again.
 
 ## Backups
 

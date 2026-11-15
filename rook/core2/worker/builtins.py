@@ -120,7 +120,7 @@ def handlers(worker: Any, streams: Streams, ran: RanLog, *, restart: Callable[[]
         return {"pong": True, "at": time.time()}
 
     async def status(ctx) -> dict:
-        """The calling band's view only (spec 9.4): its plugins, its streams,
+        """The calling band's view only (spec 10.10): its plugins, its streams,
         its own connection; other bands this worker is on aren't named."""
         from .runtime import _facts, _version
         from .. import CORE_VERSION
@@ -159,6 +159,8 @@ def handlers(worker: Any, streams: Streams, ran: RanLog, *, restart: Callable[[]
 
     async def write(ctx, stream, body, type="input") -> dict:
         _get(stream, ctx.caller)
+        if isinstance(body, dict) and "bytes" in body:
+            raise KitError("bytes input is not on this worker (the Rust worker takes it); send text")
         try:
             ev = streams.append(stream, type, body, by=ctx.caller.actor)
         except StreamError as e:

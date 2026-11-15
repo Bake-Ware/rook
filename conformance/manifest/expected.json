@@ -1,56 +1,5 @@
 {
-  "invalid/action-and-run.yaml": [
-    {
-      "level": "error",
-      "path": "/caps/both",
-      "code": "action-and-run"
-    },
-    {
-      "level": "error",
-      "path": "/caps/neither",
-      "code": "no-action"
-    },
-    {
-      "level": "error",
-      "path": "/caps/parse-only/action",
-      "code": "no-action"
-    },
-    {
-      "level": "error",
-      "path": "/caps/two/action",
-      "code": "multiple-actions"
-    }
-  ],
-  "invalid/actions.yaml": [
-    {
-      "level": "error",
-      "path": "/caps/pick/action/returns",
-      "code": "schema-anyOf"
-    },
-    {
-      "level": "error",
-      "path": "/caps/post/action/http",
-      "code": "schema-not"
-    }
-  ],
-  "invalid/argv-binary-from-arg.yaml": [
-    {
-      "level": "error",
-      "path": "/caps/launch/action/exec/argv/0",
-      "code": "argv-binary-from-arg"
-    },
-    {
-      "level": "error",
-      "path": "/caps/launch/action/exec/try/0/argv/0",
-      "code": "argv-binary-from-arg"
-    }
-  ],
   "invalid/bad-example.yaml": [
-    {
-      "level": "warning",
-      "path": "/caps/find/action/exec/argv/1",
-      "code": "argv-option-injection"
-    },
     {
       "level": "error",
       "path": "/caps/find/examples/0/args",
@@ -96,11 +45,11 @@
       "code": "schema-enum"
     }
   ],
-  "invalid/builtin-with-action.yaml": [
+  "invalid/builtin-with-run.yaml": [
     {
       "level": "error",
       "path": "/caps/ping",
-      "code": "builtin-has-action"
+      "code": "builtin-has-run"
     }
   ],
   "invalid/cap-missing-risk.yaml": [
@@ -248,11 +197,6 @@
     },
     {
       "level": "error",
-      "path": "/jobs/j",
-      "code": "job-action"
-    },
-    {
-      "level": "error",
       "path": "/jobs/j/trigger",
       "code": "job-trigger"
     },
@@ -265,28 +209,23 @@
   "invalid/templates.yaml": [
     {
       "level": "error",
-      "path": "/caps/get/action/http/body",
-      "code": "template-syntax"
+      "path": "/appliance/discover/0/http/url",
+      "code": "template-unknown-setting"
     },
     {
       "level": "error",
-      "path": "/caps/get/action/http/headers/X-Dev",
-      "code": "template-unknown-appliance"
-    },
-    {
-      "level": "error",
-      "path": "/caps/get/action/http/headers/X-Worker",
+      "path": "/appliance/discover/1/http/url",
       "code": "template-unknown"
     },
     {
       "level": "error",
-      "path": "/caps/get/action/http/url",
-      "code": "template-unknown-arg"
+      "path": "/appliance/discover/2/http/url",
+      "code": "template-syntax"
     },
     {
       "level": "error",
-      "path": "/caps/get/action/http/url",
-      "code": "template-unknown-setting"
+      "path": "/appliance/discover/3/http/url",
+      "code": "template-syntax"
     }
   ],
   "invalid/type-modifiers.yaml": [
@@ -304,11 +243,6 @@
       "level": "error",
       "path": "/caps/find/args/owner",
       "code": "bad-type"
-    },
-    {
-      "level": "error",
-      "path": "/settings/login/type",
-      "code": "oauth-unsupported"
     },
     {
       "level": "error",
@@ -346,6 +280,11 @@
   "invalid/v1-1.yaml": [
     {
       "level": "error",
+      "path": "/caps/a",
+      "code": "no-run"
+    },
+    {
+      "level": "error",
       "path": "/caps/a/bind/op",
       "code": "bind-without-run"
     },
@@ -353,26 +292,6 @@
       "level": "error",
       "path": "/caps/b/bind/op",
       "code": "bind-shadows-arg"
-    },
-    {
-      "level": "error",
-      "path": "/caps/b/requires/settings/0",
-      "code": "unknown-setting"
-    },
-    {
-      "level": "error",
-      "path": "/caps/c/action/fail_if/regex",
-      "code": "bad-regex"
-    },
-    {
-      "level": "error",
-      "path": "/caps/c/action/http/tls/verify",
-      "code": "tls-verify-template"
-    },
-    {
-      "level": "error",
-      "path": "/caps/c/args/x/join",
-      "code": "bad-type"
     },
     {
       "level": "error",
@@ -415,16 +334,6 @@
       "level": "error",
       "path": "/records/item/aliases/list",
       "code": "schema-type"
-    },
-    {
-      "level": "error",
-      "path": "/routes/both/auth",
-      "code": "schema-anyOf"
-    },
-    {
-      "level": "error",
-      "path": "/routes/header-only/auth",
-      "code": "schema-anyOf"
     }
   ],
   "invalid/v1-2.yaml": [
@@ -447,16 +356,6 @@
       "level": "error",
       "path": "/records/item/aliases/list/0",
       "code": "cap-collision"
-    },
-    {
-      "level": "warning",
-      "path": "/routes/bare/auth",
-      "code": "route-auth-secret"
-    },
-    {
-      "level": "warning",
-      "path": "/routes/literal/auth",
-      "code": "route-auth-literal"
     }
   ],
   "invalid/yaml-alias.yaml": [
@@ -480,25 +379,7 @@
       "code": "yaml"
     }
   ],
-  "valid/argv-lint.yaml": [
-    {
-      "level": "warning",
-      "path": "/caps/remove/action/exec/argv/1",
-      "code": "argv-arg-unguarded"
-    },
-    {
-      "level": "warning",
-      "path": "/caps/remove/action/exec/argv/3",
-      "code": "argv-option-injection"
-    },
-    {
-      "level": "warning",
-      "path": "/caps/remove/action/exec/argv/4",
-      "code": "argv-option-injection"
-    }
-  ],
   "valid/core.yaml": [],
-  "valid/deluge.yaml": [],
   "valid/everything.yaml": [],
   "valid/homework.yaml": [],
   "valid/pikvm.yaml": [],
@@ -513,19 +394,9 @@
       "level": "warning",
       "path": "/provides/1",
       "code": "unknown-contract"
-    },
-    {
-      "level": "warning",
-      "path": "/requires/plugins/notify",
-      "code": "bad-range"
     }
   ],
   "valid/warnings.yaml": [
-    {
-      "level": "warning",
-      "path": "/caps/serial.send/action/serial",
-      "code": "unknown-action"
-    },
     {
       "level": "warning",
       "path": "/caps/zap/color",
@@ -555,11 +426,6 @@
       "level": "warning",
       "path": "/presets/teen",
       "code": "unknown-preset"
-    },
-    {
-      "level": "warning",
-      "path": "/routes/open/auth",
-      "code": "route-auth-none"
     }
   ],
   "valid/windows-only.yaml": []

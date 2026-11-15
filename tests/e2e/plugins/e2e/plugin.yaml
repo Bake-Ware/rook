@@ -9,7 +9,7 @@ caps:
     doc: Answer with who asked and the worker's process id.
     risk: read
     scope: self
-    args: { text: { type: str } }
+    args: { text: { type: str }, event: { type: map, doc: "The event, when a job fires on one." } }
     run: scripts/e2e.py:ping
   admin:
     doc: An administrative change (it changes nothing).

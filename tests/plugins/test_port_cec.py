@@ -1,22 +1,15 @@
-"""cec (Pico-CEC) against a local fake bridge: a TCP server answering one
-line per connection, like the firmware.
+"""cec (Pico-CEC) on the hub, through a delegate that serves net.open and the
+stream caps, against a local fake bridge: a TCP server answering one line per
+connection, like the firmware."""
 
-TODO(castling:worker-host): appliance caps can't go through Host.call yet
-(N3), so ``call`` runs the bound action with the instance's appliance values,
-as test_port_kvm does.
-"""
-
-import copy
 import socket
 import threading
 
 import pytest
 
-from port_helpers import PLUGINS, go
-from rook.core2.worker.loader import load_folder
-from rook.kit.actions import ActionError, appliance_values, run_action
-
-PLUGIN = load_folder(PLUGINS / "cec", os_name="linux")
+from port_helpers import PLUGINS, on_worker
+from rook.kit.ctx import KitError
+from rook.kit.manifest import load
 
 
 class FakePico:
@@ -71,20 +64,10 @@ def pico():
     p.close()
 
 
-def call(pico, cap, args=None, **instance):
-    c = PLUGIN.caps[cap]
-    args = dict(args or {})
-    errors = list(c.validator.iter_errors(args))
-    if errors:
-        raise ValueError(f"bad args: {errors[0].message}")
-    for key, spec in c.spec.get("args", {}).items():
-        if key not in args and "default" in spec:
-            args[key] = copy.deepcopy(spec["default"])
-    settings = {"port": instance.pop("port", pico.sock.getsockname()[1])}
-    inst = {"name": "living-room-cec", "host": "127.0.0.1", **instance}
-    appliance = appliance_values(inst, settings)
-    return go(lambda: run_action(c.action, args, appliance=appliance, worker={"os": "linux"},
-                                 timeout=c.timeout, cap=c.spec))
+def call(pico, cap, args=None, **settings):
+    inst = {"name": "living-room-cec", "host": "127.0.0.1",
+            "settings": {"port": pico.sock.getsockname()[1], **settings}}
+    return on_worker("cec", cap, args, appliance=inst)[0]
 
 
 def test_send_frames(pico):
@@ -96,13 +79,13 @@ def test_send_frames(pico):
 
 def test_status(pico):
     assert call(pico, "cec.status") == "pong 4 1.0.0.0"
-    assert "cec.ping" not in PLUGIN.caps                 # no 0.4 names
+    assert "cec.ping" not in load(PLUGINS / "cec").caps                 # no 0.4 names
     assert pico.seen == ["ping\n"]
 
 
 def test_firmware_error_is_an_error(pico):
     pico.reply = "ERR bus busy"
-    with pytest.raises(ActionError, match="ERR bus busy"):
+    with pytest.raises(KitError, match="ERR bus busy"):
         call(pico, "cec.send", {"addr": "0", "opcode": "04"})
 
 
@@ -113,7 +96,7 @@ def test_firmware_error_is_an_error(pico):
     {"addr": "0", "opcode": "36", "raw": "send 0 36"},   # cec.raw is gone
 ])
 def test_args_are_checked(pico, args):
-    with pytest.raises(ValueError, match="bad args"):
+    with pytest.raises(KitError, match="bad args"):
         call(pico, "cec.send", args)
     assert pico.seen == []
 
@@ -122,16 +105,17 @@ def test_unreachable_and_silent_bridges_fail_cleanly(pico):
     dead = socket.create_server(("127.0.0.1", 0))
     port = dead.getsockname()[1]
     dead.close()
-    with pytest.raises(ActionError):
+    with pytest.raises(KitError):
         call(pico, "cec.status", port=port)
     pico.silent = True       # the bridge hangs up without a reply
-    with pytest.raises(ActionError, match="failed"):
+    with pytest.raises(KitError, match="failed"):
         call(pico, "cec.status")
     pico.silent, pico.reply = False, "garbage"
-    with pytest.raises(ActionError, match="failed: garbage"):
+    with pytest.raises(KitError, match="failed: garbage"):
         call(pico, "cec.send", {"addr": "0", "opcode": "36"})
 
 
-def test_no_instance_settings_leak_into_the_plugin():
-    assert not PLUGIN.manifest.get("settings")
-    assert PLUGIN.manifest["appliance"]["settings"]["port"]["default"] == 9526
+def test_the_port_setting_defaults_to_the_firmwares():
+    m = load(PLUGINS / "cec").data
+    assert not m.get("settings") and m["appliance"]["settings"]["port"]["default"] == 9526
+    assert m["runs_on"] == "hub" and {c["on"] for c in m["caps"].values()} == {"worker"}

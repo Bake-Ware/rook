@@ -1,0 +1,8 @@
+{
+  "name": "rookcore2",
+  "version": "0.1.0",
+  "description": "Rook core v2 worker for microcontrollers: band transport, canonical JSON, Ed25519 tickets, announces, events.",
+  "license": "Apache-2.0",
+  "build": { "srcDir": "src" },
+  "dependencies": { "bblanchon/ArduinoJson": "^7.0.0" }
+}

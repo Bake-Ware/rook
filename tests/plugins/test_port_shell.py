@@ -78,11 +78,16 @@ def test_exec_bad_args():
         run("exec", {"argv": ["true"], "timeout": 0})
 
 
-def test_exec_timeout_kills_the_whole_process_group(tmp_path):
+@pytest.mark.parametrize("cmd", [
+    "sleep 30 & echo $! > {pid}; wait",
+    "sleep 30 & echo $! > {pid}",                                  # the shell is gone before the timeout
+    "(trap '' TERM; exec sleep 30) & echo $! > {pid}; wait",       # the shell dies on TERM, its child doesn't
+])
+def test_exec_timeout_kills_the_whole_process_group(tmp_path, cmd):
     pidfile = tmp_path / "pid"
     started = time.monotonic()
     with pytest.raises(CallError, match="timed out after 0.5s and was killed"):
-        run("exec", {"cmd": f"sleep 30 & echo $! > {pidfile}; wait", "timeout": 0.5})
+        run("exec", {"cmd": cmd.format(pid=pidfile), "timeout": 0.5})
     assert time.monotonic() - started < 10
     pid = int(pidfile.read_text())
     for _ in range(50):
@@ -232,6 +237,19 @@ def test_open_pipes_is_a_process_stream_and_takes_signals():
             await _until(streams, sid, b"echoed\n")
             streams.append(sid, "input", {"signal": "TERM"})
             assert (await _closed(streams, sid))["exit"] == -15
+        finally:
+            await host.close()
+    go(body)
+
+
+def test_open_pipes_feeds_stdin_then_ends_it():
+    async def body():
+        host, streams, sid = await _open({"argv": ["sh", "-c", "wc -c; echo err >&2"], "stdin": "hello\n",
+                                          "pty": False})
+        try:
+            out = await _until(streams, sid, b"err")
+            assert out.split() == [b"6", b"err"]
+            assert (await _closed(streams, sid))["exit"] == 0
         finally:
             await host.close()
     go(body)

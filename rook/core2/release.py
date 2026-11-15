@@ -8,14 +8,15 @@ copy.
 
 A release is ``rook-core-<version>.tar.gz`` holding ``release.sig`` and the
 files of the ``rook/`` package (no caches, no symlinks). ``release.sig`` is a
-``rook-release`` signed object (spec 13): ``hub``, ``version``, ``core`` (the
+``rook-release`` signed object (spec 10.7): ``hub``, ``version``, ``core`` (the
 protocol version the code speaks), ``files`` (posix path -> hex SHA-256 of
 every file but ``release.sig``), ``requires`` (the PEP 508 requirements from
 the source's pyproject, which a worker installs before it switches) and
 ``iat``. Unlike ``plugin.sig`` it names no worker: one release, signed once,
 goes to every worker; a worker accepts it only under an operational key of a
 hub that may approve code there (role ``home`` or ``co-owner``), exactly as
-for plugins.
+for plugins. A folder of built files (a one-file worker's, one per
+platform) is released the same way, each file under its own name.
 """
 from __future__ import annotations
 
@@ -79,8 +80,7 @@ def _pyproject(source: Path) -> dict:
 def layout(source: Path) -> list[tuple[str, str]]:
     """(source path, path in the release) pairs: ``rook`` itself plus the
     wheel's ``force-include`` entries that land inside it (the manifest
-    schema, the manual, the skill...), so a release holds what an installed
-    wheel does."""
+    schema), so a release holds what an installed wheel does."""
     extra = (((_pyproject(source).get("tool") or {}).get("hatch") or {}).get("build") or {})
     extra = ((extra.get("targets") or {}).get("wheel") or {}).get("force-include") or {}
     pairs = [(PACKAGE, PACKAGE)]
@@ -121,7 +121,13 @@ def source_files(source: Path) -> dict[str, Path]:
     """Release path -> source file, for every file that goes into a release."""
     source = Path(source).resolve()
     if not (source / PACKAGE / "__init__.py").is_file():
-        raise ReleaseError(f"{source} has no {PACKAGE}/ package")
+        # A folder of built files, one per platform: each is an artifact, named
+        # as the file a worker runs (its announce's facts.artifact).
+        built = {p.name: p for p in sorted(source.iterdir()) if p.is_file() and not p.is_symlink()
+                 and p.name != SIG_FILE} if source.is_dir() else {}
+        if not built:
+            raise ReleaseError(f"{source} has no {PACKAGE}/ package and no built files")
+        return built
     out: dict[str, Path] = {}
     for src, dst in layout(source):
         for rel in _listed(source, src):

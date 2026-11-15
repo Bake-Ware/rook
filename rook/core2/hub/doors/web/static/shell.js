@@ -1,14 +1,17 @@
 // The hub site's shell: lists pages, opens one at a time in a sandboxed
 // frame, and carries that frame's calls and events (see bridge.js). The
-// shell's own calls are page.* only (plus the dock agent's chat); a page's
-// calls go with its token. With the agents package, the house agent's chat
-// dock sits beside every page.
+// shell's own calls are page.* only (plus the caps plugins' shell parts
+// declare); a page's calls go with its token. Plugins' shell parts (manifest
+// shell:) load after this file and hook in through shellHooks.
 "use strict";
 
 const $ = (sel) => document.querySelector(sel);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let csrf = "";
 let current = null;        // {page, token, frame, listening}
+// opening: run before a page opens. starting: run once the pages are listed,
+// before the start page opens; one that answers true keeps it closed.
+const shellHooks = { opening: [], starting: [] };
 
 async function api(path, body) {
   const opts = { credentials: "same-origin" };
@@ -37,64 +40,234 @@ function el(tag, attrs, text) {
   return e;
 }
 
-function message(text, bad) {
+function message(text, bad, home) {
   const m = $("#msg");
   m.textContent = text;
   m.className = bad ? "bad" : "";
+  if (home) {
+    const a = el("a", { href: "#/" }, "Go to the start page");
+    a.onclick = (e) => {
+      e.preventDefault();
+      history.replaceState(null, "", location.pathname);
+      openPage(wanted());
+    };
+    m.append(" ", a);
+  }
   m.hidden = false;
 }
 
 // -- the page list ---------------------------------------------------------
 
-let pages = [];
-let site = { start: null, dock: null };
+let pages = [];              // every live page, from page.list: the sidebar's and the hidden ones
+let site = { start: null };
 
+// A page in the sidebar: its link and a ... menu with what can be done to it
+// (Bake, Nov 9: "archive should be a function on the sidebar per page. Like an
+// ellipse. in that ellipse I want a way to make a given page publicly accessible").
 function link(p) {
+  const row = el("div", { className: "nav-row" + (p.public ? " public" : "") });
   const a = el("a", { href: "#/" + p.page }, p.title);
   a.dataset.page = p.page;
-  return a;
+  const more = el("button", { type: "button", className: "page-menu-btn", title: "More for " + p.title }, "\u22ef");
+  more.setAttribute("aria-label", "More for " + p.title);
+  more.setAttribute("aria-haspopup", "menu");
+  more.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    pageMenu(more, p);
+  };
+  row.append(a, more);
+  return row;
+}
+
+// The ... menu: Pin, Make public (with the public link to copy), Hide, and Archive
+// on a page an agent made ("it never deletes a plugin's page, only hides it").
+const menuBox = el("div", { id: "page-menu", className: "page-menu" });
+menuBox.setAttribute("role", "menu");
+menuBox.hidden = true;
+document.body.append(menuBox);
+function hideMenu() {
+  menuBox.hidden = true;
+  for (const b of document.querySelectorAll(".page-menu-btn[aria-expanded]")) b.removeAttribute("aria-expanded");
+}
+document.addEventListener("click", (e) => {
+  if (!menuBox.hidden && !menuBox.contains(e.target)) hideMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideMenu();
+});
+
+function publicUrl(pid) {
+  return location.origin + "/public/" + pid;
+}
+
+function pageMenu(trigger, p) {
+  const again = !menuBox.hidden && menuBox.dataset.page === p.page;
+  hideMenu();
+  if (again) return;
+  menuBox.dataset.page = p.page;
+  menuBox.replaceChildren();
+  const item = (label, run, cls) => {
+    const b = el("button", { type: "button", className: cls || "" }, label);
+    b.setAttribute("role", "menuitem");
+    b.onclick = run;
+    menuBox.append(b);
+    return b;
+  };
+  item(p.pinned ? "Unpin" : "Pin", async () => {
+    hideMenu();
+    try {
+      await call("page.arrange", { page: p.page, pinned: !p.pinned }, p.pinned ?
+        "The person unpinned a page from the sidebar." : "The person pinned a page to the sidebar.");
+    } catch (x) {
+      return message(x.message, true);
+    }
+    await loadNav();
+  }).dataset.target = "page.arrange";
+  const pub = item(p.public ? "\u2713 Public" : "Make public", async () => {
+    try {
+      await call("page.public", { page: p.page, public: !p.public }, p.public ?
+        "The person made a page private again." : "The person made a page public from the sidebar.");
+    } catch (x) {
+      return message(x.message, true);
+    }
+    p.public = !p.public;
+    await loadNav();
+    const row = [...document.querySelectorAll("#nav .nav-row")].find((r) => r.firstChild.dataset.page === p.page);
+    hideMenu();
+    if (row) pageMenu(row.querySelector(".page-menu-btn"), p);      // open again, with the link
+  });
+  pub.setAttribute("role", "menuitemcheckbox");
+  pub.setAttribute("aria-checked", String(!!p.public));
+  pub.dataset.target = "page.public";
+  if (p.public) {
+    const url = publicUrl(p.page);
+    const box = el("div", { className: "public-link" });
+    const field = el("input", { type: "text", readOnly: true, value: url });
+    field.onclick = () => field.select();
+    const copy = el("button", { type: "button" }, "Copy link");
+    copy.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch (x) {                    // no clipboard (plain http): select it for a manual copy
+        field.select();
+        document.execCommand && document.execCommand("copy");
+      }
+      copy.textContent = "Copied";
+      setTimeout(() => (copy.textContent = "Copy link"), 1500);
+    };
+    box.append(el("div", { className: "muted" }, "Anyone with this link can view it, no sign-in."), field, copy);
+    menuBox.append(box);
+  }
+  item("Hide", async () => {
+    hideMenu();
+    try {
+      await call("page.arrange", { page: p.page, hidden: true }, "The person hid a page from their sidebar.");
+    } catch (x) {
+      return message(x.message, true);
+    }
+    await loadNav();
+  }).dataset.target = "page.arrange";
+  if (p.made) {
+    item("Archive", async () => {
+      hideMenu();
+      try {
+        await call("page.archive", { page: p.page }, "The person archived a page from the sidebar.");
+      } catch (x) {
+        return message(x.message, true);
+      }
+      await loadNav();
+      if (current && current.page === p.page) {
+        history.replaceState(null, "", location.pathname);
+        openPage(wanted());
+      }
+    }, "danger");
+  }
+  menuBox.hidden = false;
+  trigger.setAttribute("aria-expanded", "true");
+  const r = trigger.getBoundingClientRect();
+  menuBox.style.left = Math.max(8, Math.min(innerWidth - menuBox.offsetWidth - 8, r.left)) + "px";
+  menuBox.style.top = Math.max(8, Math.min(innerHeight - menuBox.offsetHeight - 8, r.bottom + 4)) + "px";
+}
+
+// A segment: its heading opens or folds it (kept through page.arrange); folded,
+// its pages are one quiet line of links, so what exists still shows.
+function segment(s) {
+  const head = el("button", { type: "button", className: "section seg-head" }, s.segment);
+  head.setAttribute("aria-expanded", String(s.open));
+  head.dataset.target = "page.arrange";
+  head.onclick = async () => {
+    try {
+      await call("page.arrange", { segment: s.segment, open: !s.open }, s.open ?
+        "The person folded a sidebar segment." : "The person opened a sidebar segment.");
+    } catch (x) {
+      return message(x.message, true);
+    }
+    await loadNav();
+  };
+  const box = el("div", { className: "segment" + (s.open ? "" : " folded") });
+  box.append(head);
+  if (s.open) {
+    for (const p of s.pages) box.append(link(p));
+  } else {
+    const line = el("div", { className: "folded-pages" });
+    s.pages.forEach((p, i) => {
+      const a = el("a", { href: "#/" + p.page }, p.title);
+      a.dataset.page = p.page;
+      line.append(...(i ? [" \u00b7 ", a] : [a]));
+    });
+    box.append(line);
+  }
+  return box;
+}
+
+// A fold at the bottom of the sidebar (Archived, Hidden): one row per page with
+// the button that brings it back.
+function fold(id, list, label, back) {
+  const ul = $("#" + id + " ul");
+  ul.replaceChildren();
+  for (const p of list) {
+    const li = el("li");
+    const b = el("button", { className: "link" }, label);
+    b.onclick = async () => {
+      try {
+        await back(p);
+      } catch (x) {
+        return message(x.message, true);
+      }
+      await loadNav();
+      location.hash = "#/" + p.page;
+    };
+    li.append(el("span", {}, p.title), b);
+    ul.append(li);
+  }
+  $("#" + id).hidden = list.length === 0;
 }
 
 async function loadNav() {
   const [live, gone] = await Promise.all([call("page.list"), call("page.list", { archived: true })]);
-  pages = live.pages;
-  const box = $("#pages"), more = $("#more div");
+  pages = live.segments.flatMap((s) => s.pages).concat(live.hidden);
+  const box = $("#pages");
   box.replaceChildren();
-  more.replaceChildren();
-  let section = null;
-  for (const p of pages) {
-    if (!p.nav) {                   // off the sidebar; its address still opens it
-      more.append(link(p));
-      continue;
-    }
-    if (p.section !== section) {
-      section = p.section;
-      box.append(el("div", { className: "section" }, section));
-    }
-    box.append(link(p));
+  if (live.pinned.length) {
+    const pinned = el("div", { className: "segment pinned" });
+    pinned.append(el("div", { className: "section" }, "Pinned"), ...live.pinned.map(link));
+    box.append(pinned);
   }
-  $("#more").hidden = more.children.length === 0;
-  const list = $("#archived ul");
-  list.replaceChildren();
-  for (const p of gone.pages) {
-    const li = el("li");
-    const restore = el("button", { className: "link" }, "Restore");
-    restore.onclick = async () => {
-      await call("page.restore", { page: p.page });
-      await loadNav();
-      location.hash = "#/" + p.page;
-    };
-    li.append(el("span", {}, p.title), restore);
-    list.append(li);
-  }
-  $("#archived").hidden = gone.pages.length === 0;
+  box.append(...live.segments.map(segment));
+  fold("hidden", live.hidden, "Show", (p) =>
+    call("page.arrange", { page: p.page, hidden: false }, "The person put a hidden page back in their sidebar."));
+  fold("archived", gone.pages, "Restore", (p) => call("page.restore", { page: p.page }));
   mark();
 }
 
+// The open page's link lit, and its title bar under the name the person gave it.
 function mark() {
   for (const a of document.querySelectorAll("#nav a")) {
     a.classList.toggle("on", !!current && a.dataset.page === current.page);
   }
+  const row = current && pages.find((p) => p.page === current.page);
+  if (row) $("#title").textContent = row.title;
 }
 
 function wanted() {
@@ -102,7 +275,7 @@ function wanted() {
   if (h) return h;
   const has = (pid) => pid && pages.some((p) => p.page === pid);
   if (has(site.start)) return site.start;
-  const first = pages.find((p) => p.page === "hub/workers") || pages.find((p) => p.nav) || pages[0];
+  const first = pages.find((p) => p.page === "hub/workers") || pages[0];
   return first ? first.page : "";
 }
 
@@ -110,14 +283,17 @@ function wanted() {
 
 let opening = 0;
 
-async function open(pid) {
+async function openPage(pid) {
   const n = ++opening;
   document.body.classList.remove("nav-open");
   closePage();
+  for (const f of shellHooks.opening) f();
   if (!pid) return message("No pages yet.");
+  // an address that names no page (Bake's review, Nov 9): say so, with the way home
+  if (pages.length && !pages.some((p) => p.page === pid)) return message(`No such page: ${pid}.`, true, true);
   const r = await api("/web/api/open", { page: pid });
   if (n !== opening) return;      // another page was asked for meanwhile
-  if (!r.ok) return message(r.error || "This page can't be opened.", true);
+  if (!r.ok) return message(typeof r.error === "string" && r.error ? r.error : "This page can't be opened.", true, true);
   $("#msg").hidden = true;
   const frame = el("iframe", { title: r.page.title });
   frame.setAttribute("sandbox", "allow-scripts");
@@ -135,7 +311,7 @@ async function open(pid) {
   $("#stage").prepend(frame);
   current = cur;
   $("#title").textContent = r.page.title;
-  $("#note-btn").hidden = $("#archive-btn").hidden = false;
+  $("#note-btn").hidden = false;
   mark();
 }
 
@@ -144,7 +320,7 @@ function closePage() {
   current = null;
   mark();
   $("#title").textContent = "";
-  $("#note").hidden = $("#note-btn").hidden = $("#archive-btn").hidden = true;
+  $("#note").hidden = $("#note-btn").hidden = true;
 }
 
 function toFrame(cur, msg) {
@@ -171,8 +347,31 @@ window.addEventListener("message", async (e) => {
     listen(cur);
   } else if (m.kind === "open" && /^[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_-]*$/.test(String(m.page))) {
     location.hash = "#/" + m.page;
+  } else if (m.kind === "located" && locating[m.id]) {
+    locating[m.id](m.box);
   }
 });
+
+// Where the control the open page marks data-target="<name>" is: the page
+// scrolls it into view and marks it (bridge.js); its box here, in the shell's
+// own coordinates, or null when the page has none (or doesn't answer).
+const locating = {};
+let locates = 0;
+function locate(target) {
+  const cur = current;
+  if (!cur) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const id = ++locates;
+    locating[id] = (box) => {
+      delete locating[id];
+      if (!box || cur !== current) return resolve(null);
+      const f = cur.frame.getBoundingClientRect();
+      resolve(new DOMRect(f.left + box.left, f.top + box.top, box.width, box.height));
+    };
+    toFrame(cur, { kind: "locate", id, target: String(target) });
+    setTimeout(() => locating[id] && locating[id](null), 2000);
+  });
+}
 
 async function listen(cur) {
   let since = "";
@@ -215,25 +414,12 @@ $("#note-btn").onclick = async () => {
   box.hidden = false;
 };
 
-$("#archive-btn").onclick = async () => {
-  const pid = current && current.page;
-  if (!pid) return;
-  try {
-    await call("page.archive", { page: pid });
-  } catch (x) {
-    return message(x.message, true);
-  }
-  history.replaceState(null, "", location.pathname);
-  await loadNav();
-  open(wanted());
-};
-
 $("#menu").onclick = () => document.body.classList.toggle("nav-open");
 $("#nav").onclick = (e) => {
   const a = e.target.closest("a");
   if (!a) return;
   document.body.classList.remove("nav-open");
-  if (!current && location.hash === a.getAttribute("href")) open(a.dataset.page);   // reopen a closed page
+  if (!current && location.hash === a.getAttribute("href")) openPage(a.dataset.page);   // reopen a closed page
 };
 
 $("#signout").onclick = async () => {
@@ -241,135 +427,17 @@ $("#signout").onclick = async () => {
   location.href = "/login";
 };
 
-// -- the dock: the house agent beside every page ----------------------------------
+window.addEventListener("hashchange", () => openPage(wanted()));
 
-const SITE = "[site]";      // a line the site adds for the agent: where the person is
-const dock = { agent: null, next: 0, shown: 0 };
-
-function dockOpen(open) {
-  document.body.classList.toggle("dock-open", open);
-  try { localStorage.setItem("rook.dock", open ? "1" : "0"); } catch (x) { /* private mode */ }
-  if (open) $("#dock-text").focus();
-}
-
-function bubble(cls, text) {
-  const log = $("#dock-log");
-  log.append(el("div", { className: "said " + cls }, text));
-  while (log.children.length > 200) log.firstChild.remove();
-  log.scrollTop = log.scrollHeight;
-}
-
-function thinking(on) {
-  $("#dock").classList.toggle("thinking", on);
-}
-
-function show(ev) {
-  const d = ev.data || {};
-  if (ev.type === "input" && typeof d.text === "string") {
-    let text = d.text;
-    if (text.startsWith(SITE)) {
-      const nl = text.indexOf("\n");
-      const rest = nl < 0 ? "" : text.slice(nl + 1).trim();
-      if (!rest) return bubble("aside", text.slice(SITE.length).trim().split(".")[0]);
-      text = rest;
-    }
-    bubble("me", text);
-  } else if (ev.type === "turn" && d.role === "reply") {
-    bubble("them", d.text);
-    thinking(false);
-  } else if (ev.type === "status" && d.state === "error") {
-    bubble("bad", d.error || "Something went wrong.");
-    thinking(false);
-  }
-}
-
-async function refresh() {
-  try {
-    site = await call("page.site");
-    await loadNav();
-    if (current && !pages.some((p) => p.page === current.page)) {      // archived meanwhile
-      history.replaceState(null, "", location.pathname);
-      open(wanted());
-    }
-  } catch (x) { /* next time */ }
-}
-
-async function read(wait) {
-  const r = await call("agent.chat.read", { agent: dock.agent, after: dock.next, limit: 500, wait },
-    "Reading the conversation in the site's dock.");
-  for (const ev of r.events) show(ev);
-  if (wait && r.events.some((ev) => ev.type === "turn")) refresh();   // it may have made, archived or started a page
-  dock.shown += r.events.length;
-  dock.next = r.next;
-  return r.events.length;
-}
-
-async function say(text, quiet) {
-  const where = current ? ` on the page ${current.page} (${$("#title").textContent})` : "";
-  const body = quiet ? `${SITE} ${text}` : `${SITE} The person is${where || " on the hub site"}.\n${text}`;
-  thinking(true);
-  try {
-    await call("agent.chat.send", { agent: dock.agent, text: body, wait: false }, "Talking with the agent in the site's dock.");
-  } catch (x) {
-    thinking(false);
-    bubble("bad", x.message);
-  }
-}
-
-async function startDock(agent) {
-  dock.agent = agent;
-  $("#dock-name").textContent = agent === "house" ? "House agent" : agent;
-  $("#dock").hidden = $("#dock-btn").hidden = false;
-  let open = true;
-  try { open = localStorage.getItem("rook.dock") !== "0" && innerWidth > 720; } catch (x) { /* private mode */ }
-  try {
-    while ((await read(0)) >= 500) { /* catch up on a long conversation */ }
-  } catch (x) {                     // not someone who may talk to it: no dock
-    $("#dock").hidden = $("#dock-btn").hidden = true;
-    return;
-  }
-  if (dock.shown === 0) {           // first run: the agent asks how the person wants to use the site
-    open = true;
-    await say("First visit to the hub site. Welcome the person, ask how they want to use the site, " +
-      "and offer to make pages for what they want to keep an eye on (page.components, page.create) " +
-      "and to set their start page (page.start).", true);
-  }
-  dockOpen(open);
-  for (;;) {
-    try {
-      await read(55);
-    } catch (x) {
-      await sleep(5000);
-    }
-  }
-}
-
-$("#dock-form").onsubmit = (e) => {
-  e.preventDefault();
-  const text = $("#dock-text").value.trim();
-  if (!text) return;
-  $("#dock-text").value = "";
-  say(text, false);
-};
-$("#dock-text").onkeydown = (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    $("#dock-form").requestSubmit();
-  }
-};
-$("#dock-btn").onclick = () => dockOpen(!document.body.classList.contains("dock-open"));
-$("#dock-close").onclick = () => dockOpen(false);
-
-window.addEventListener("hashchange", () => open(wanted()));
-
-(async function start() {
+// After every plugin's shell part has run (they load after this file).
+document.addEventListener("DOMContentLoaded", async function start() {
   try {
     csrf = (await api("/web/api/me")).csrf;
     site = await call("page.site");
     await loadNav();
-    open(wanted());
-    if (site.dock) startDock(site.dock).catch((x) => bubble("bad", x.message));
+    const kept = await Promise.all(shellHooks.starting.map((f) => f().catch(() => false)));
+    if (!kept.some(Boolean)) openPage(wanted());
   } catch (x) {
     message(String((x && x.message) || x), true);
   }
-})();
+});

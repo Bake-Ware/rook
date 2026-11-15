@@ -39,7 +39,7 @@ async def task_in(rig, level=None, concepts=None):
                               **({"concepts": concepts} if concepts else {}))
         pid = p["id"]
         if level:
-            await rig.bake.ok("project.trust.create", project=pid, level=level)
+            await rig.bake.ok("trust.level.create", project=pid, level=level)
     t = await rig.coder.ok("task.create", title="Land the thing", **({"project": pid} if pid else {}))
     return t["id"]
 
@@ -243,7 +243,7 @@ def test_a_sacred_repo_holds_in_any_project(tmp_path, gh):
 
     async def body(rig):
         careful = await rig.bake.ok("project.create", title="Careful", slug="careful")
-        await rig.bake.ok("project.trust.create", project=careful["id"], level="sacred")
+        await rig.bake.ok("trust.level.create", project=careful["id"], level="sacred")
         cfg.settings["github"]["repos"] = {REPO.lower(): careful["id"]}
         rig.hub.plugins.settings["github"] = cfg.settings["github"]
         tid = await task_in(rig, "ship-it")                         # a ship-it task, a sacred repo

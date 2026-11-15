@@ -40,11 +40,6 @@ class RookNotificationListener : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
         remember(sbn)
-        // 0.4 attention: classify on the phone (AttentionStore); only urgent/family summaries leave it.
-        // 0.5 has no attention logic on the phone (castling-attention): the notification-android
-        // plugin hands notifications to the hub, where the house agent's attention pass reads them.
-        if (Castling.on(applicationContext)) return
-        try { AttentionStore.observe(applicationContext, sbn) } catch (_: Throwable) {}
     }
 
     private fun remember(sbn: StatusBarNotification) {

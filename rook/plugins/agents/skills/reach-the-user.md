@@ -25,8 +25,7 @@ directly. Your job is to pick the channel, the device and the moment.
 5. **Follow through.** Note what you sent and when; if the decision comes
    back, relay it to the agent that asked with the person's own words. A
    question that came as `approval.ask` (a `q_...` id) is answered with
-   `approval.decide {hold, answer}`; the person can also answer it on the
-   Approvals page themselves.
+   `approval.decide {hold, answer}`.
 6. **An agent needs a decision from the person?** It asks with
    `approval.ask`, and the question reaches you; never answer one yourself.
 

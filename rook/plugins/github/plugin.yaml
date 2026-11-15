@@ -10,12 +10,13 @@ version: 0.5.0
 title: GitHub
 doc: Read pull requests, checks and diffs on GitHub, and merge one once its task is signed off and its gates pass.
 package: workbench
+segment: Work
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 # merge reads the task, its sign-off, its project's trust level and its
 # concepts' sign-off norm as the caller; review records the caller's sign-off.
-uses: ["task.get", "task.link", "task.signoff", "task.signoff.list", "project.get", "project.trust.list", "concept.pool"]
+uses: ["task.get", "task.link", "task.signoff", "task.signoff.list", "project.get", "trust.level.list", "concept.pool"]
 
 settings:
   token:
@@ -124,7 +125,7 @@ caps:
       commit to the task.
     risk: write
     scope: external
-    effects: [persists]
+    effects: []
     timeout: 90s
     run: scripts/github.py:merge
     args:

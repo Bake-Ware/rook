@@ -38,7 +38,7 @@ def test_spec_refuses_bad_blocks(block):
 
 
 def test_kind_defaults_follow_the_durability_decision():
-    for k in ("room", "huddle", "session"):
+    for k in ("room", "session", "voice"):
         assert KINDS[k].durable
     for k in ("terminal", "process"):
         assert not KINDS[k].durable and KINDS[k].input
@@ -181,7 +181,7 @@ def test_metadata_and_list(hub):
 
 
 def test_close_keeps_history_and_refuses_writes(hub):
-    m = hub.open("huddle")
+    m = hub.open("room")
     hub.append(m.id, "text", {"text": "ship it?"})
     hub.close(m.id, by="human:bake", reason="archived")
     hub.close(m.id)                                 # idempotent

@@ -26,8 +26,9 @@ for _ in $(seq 45); do      # a fresh relay hears of the worker at its first kee
 done
 check "worker $WORKER_NAME online" "$online" "$w"
 caps=$(get "/caps?worker=$WORKER_NAME")
-check "worker serves shell.exec, file.read, agents-claude-code.turn" \
-    "{'shell.exec','file.read','agents-claude-code.turn'} <= set(j['workers']['$WORKER_NAME']['caps']) - set(j['workers']['$WORKER_NAME'].get('unavailable') or {})" "$caps"
+check "worker serves shell.exec, shell.open, file.read" \
+    "{'shell.exec','shell.open','file.read'} <= set(j['workers']['$WORKER_NAME']['caps']) - set(j['workers']['$WORKER_NAME'].get('unavailable') or {})" "$caps"
+check "the hub serves agents-claude-code.turn" "'agents-claude-code.turn' in json.dumps(j)" "$(get /caps?worker=rook)"
 r=$(post /call "{\"worker\":\"$WORKER_NAME\",\"cap\":\"shell.exec\",\"args\":{\"argv\":[\"uname\",\"-n\"]},\"why\":\"Sidecar check: a shell call through the 0.5 hub.\"}")
 check "shell.exec uname -n" "j.get('ok') and '$(uname -n)' in json.dumps(j['result'])" "$r"
 r=$(post /call "{\"worker\":\"$WORKER_NAME\",\"cap\":\"file.read\",\"args\":{\"path\":\"$SRC/.castling-sha\"},\"why\":\"Sidecar check: read the installed commit.\"}")

@@ -18,7 +18,7 @@ once the change has settled, so a click straight after an app opens doesn't
 land on the old screen and needs no extra read.
 
 Everything read from the screen is someone else's content (a web page, a
-message), so these caps mark the session tainted. Password fields are never
+message): data, not instructions. Password fields are never
 read. `hid.*` taps and swipes at pixels; `screen.capture` takes a picture.
 
 The accessibility service must be on: Rook > Settings > Permissions.

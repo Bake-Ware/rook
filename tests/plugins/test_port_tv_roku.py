@@ -1,19 +1,15 @@
-"""roku (ECP) against a fake Roku on 127.0.0.1: XML queries, keypresses,
+"""roku (ECP) on the hub, through a delegate that serves net.open and the
+stream caps, against a fake Roku on 127.0.0.1: XML queries, keypresses,
 launches; the instance's port setting points the caps at it."""
 
-import copy
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 
-from port_helpers import ME, PLUGINS, go
-from rook.core2.worker.loader import load_folder
-from rook.kit.actions import appliance_values, run_action
-from rook.kit.ctx import Ctx, KitError, invoke
-
-PLUGIN = load_folder(PLUGINS / "tv-roku", os_name="linux")
+from port_helpers import on_worker
+from rook.kit.ctx import KitError
 
 APPS = ('<apps><app id="12" type="appl" version="5.1">Netflix</app>'
         '<app id="837" type="appl" version="2.0">YouTube</app>'
@@ -79,26 +75,9 @@ def roku():
 
 
 def call(roku, cap, args=None, *, up=True):
-    c = PLUGIN.caps[cap]
-    args = dict(args or {})
-    errors = list(c.validator.iter_errors(args))
-    if errors:
-        raise ValueError(f"bad args: {errors[0].message}")
-    for k, spec in c.spec.get("args", {}).items():
-        if k not in args and "default" in spec:
-            args[k] = copy.deepcopy(spec["default"])
-    args.update(c.bind)
     port = roku.server_address[1] if up else 9   # discard: nothing answers
-    appliance = appliance_values({"name": "den-roku", "host": "127.0.0.1", "port": 8060}, {"port": port})
-
-    async def body():
-        if c.action is not None:
-            return await run_action(c.action, args, appliance=appliance, worker={"os": "linux"},
-                                    timeout=c.timeout, cap=c.spec)
-        ctx = Ctx(PLUGIN.manifest, ME, cap=cap)
-        ctx.appliance = appliance
-        return await invoke(c.func, ctx, args)
-    return go(body)
+    inst = {"name": "den-roku", "host": "127.0.0.1", "port": 8060, "settings": {"port": port}}
+    return on_worker("tv-roku", cap, args, appliance=inst)[0]
 
 
 def test_status(roku):
@@ -132,7 +111,7 @@ def test_keys_and_inputs(roku):
     call(roku, "tv-roku.set_input", {"input": "hdmi2"})
     assert roku.keys == ["Select", "Back", "FindRemote", "InputHDMI2"]
     for bad in ({"key": "Lit_a"}, {"key": "../launch/12"}, {"key": "home", "mods": ["ctrl"]}):
-        with pytest.raises(ValueError, match="bad args"):
+        with pytest.raises(KitError, match="bad args"):
             call(roku, "tv-roku.hid.key", bad)
 
 
@@ -174,6 +153,5 @@ def test_power(roku):
 
 
 def test_no_instance():
-    ctx = Ctx(PLUGIN.manifest, ME, cap="tv-roku.status")
     with pytest.raises(KitError, match="no appliance instance"):
-        go(lambda: invoke(PLUGIN.caps["tv-roku.status"].func, ctx, {}))
+        on_worker("tv-roku", "tv-roku.status")

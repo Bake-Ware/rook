@@ -1,14 +1,14 @@
 """The llm.complete providers against fakes: llm-openai and llm-anthropic
-against local HTTP servers (fake_services), llm-cli against fake ``claude``
-and ``codex`` programs on PATH. Each runs its plugin function with a kit Ctx,
-under a hard timeout."""
+against local HTTP servers (fake_services), each plugin function with a kit
+Ctx under a hard timeout; llm-cli on the hub, against fake ``claude`` and
+``codex`` programs on the PATH of a worker with only the primitives."""
 
 import json
 
 import pytest
 
 from fake_services import FakeClaude, FakeOpenAI, serve
-from port_helpers import CONTRACTS, ME, PLUGINS, go
+from port_helpers import CONTRACTS, ME, PLUGINS, go, on_worker
 from rook.kit.ctx import Ctx, KitError, invoke, load_run
 from rook.kit.manifest import check, load
 
@@ -141,45 +141,64 @@ with open(out, "w") as f:
 """
 
 
-def test_cli_claude(tmp_path, bins):
+def cli(cap, settings, args, tmp_env):
+    out, seen = on_worker("llm-cli", f"llm-cli.{cap}", args, settings={"worker": "w1", **settings})
+    assert list(tmp_env.iterdir()) == []        # its folder on the worker is gone
+    return out, seen
+
+
+@pytest.fixture
+def tmp_env(tmp_path, monkeypatch):
+    folder = tmp_path / "tmp"
+    folder.mkdir()
+    monkeypatch.setenv("TMPDIR", str(folder))
+    monkeypatch.delenv("OS", raising=False)
+    return folder
+
+
+def test_cli_claude(tmp_env, bins):
     bins.add("claude", CLAUDE)
-    out = run("llm-cli", "complete", {}, {"messages": MSGS, "stop": ["STOP"], "max_tokens": 5}, tmp_path)
+    out, seen = cli("complete", {}, {"messages": MSGS, "stop": ["STOP"], "max_tokens": 5}, tmp_env)
     assert out == {"text": "Fine, thanks. ", "model": "opus", "stop_reason": "stop",
                    "usage": {"input": 9, "output": 5}}
     (call,) = bins.calls("claude")
     assert call["argv"] == ["-p", "--output-format", "json", "--tools", "", "--strict-mcp-config",
                             "--setting-sources", "project,local", "--no-session-persistence",
                             "--model", "opus", "--system-prompt", "Be brief."]
+    run_ = next(a for c, a in seen if c == "shell.exec" and a["argv"][0] == "claude")
+    assert run_["cwd"].startswith(f"{tmp_env}/rook-llm-")      # a fresh folder, not the worker's own
     prompt = (bins.dir / "claude.stdin").read_text()
     assert "User: hi\n\nAssistant: hello\n\nUser: how are you?" in prompt and "Be brief" not in prompt
-    run("llm-cli", "complete", {"model_one": "sonnet"}, {"messages": MSGS[1:2], "model": "one"}, tmp_path)
+    cli("complete", {"model_one": "sonnet"}, {"messages": MSGS[1:2], "model": "one"}, tmp_env)
     assert bins.calls("claude")[1]["argv"][-2:] == ["--model", "sonnet"]
     assert (bins.dir / "claude.stdin").read_text().endswith("---\nhi\n---\n")     # one message goes in as is
-    out = run("llm-cli", "models", {}, {}, tmp_path)
+    out, _ = cli("models", {}, {}, tmp_env)
     assert out == {"tool": "claude", "version": "2.1.314 (Claude Code)", "models": ["haiku", "opus"],
                    "systems": {"one": "haiku", "two": "opus", "three": "haiku"}}
 
 
-def test_cli_codex(tmp_path, bins):
+def test_cli_codex(tmp_env, bins):
     bins.add("codex", CODEX)
-    out = run("llm-cli", "complete", {"tool": "codex"}, {"messages": MSGS}, tmp_path)
+    out, _ = cli("complete", {"tool": "codex"}, {"messages": MSGS}, tmp_env)
     assert out == {"text": "codex says hi", "model": "", "stop_reason": "end"}
     (call,) = bins.calls("codex")
     assert call["argv"][:6] == ["exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-o"]
+    assert call["argv"][6].startswith(f"{tmp_env}/rook-llm-") and call["argv"][6].endswith("/reply.txt")
     assert call["argv"][-1] == "-" and "-m" not in call["argv"]
     assert (bins.dir / "codex.stdin").read_text().startswith("Be brief.\n\nContinue this conversation")
-    run("llm-cli", "complete", {"tool": "codex", "model_two": "sol"}, {"messages": MSGS[1:2]}, tmp_path)
+    cli("complete", {"tool": "codex", "model_two": "sol"}, {"messages": MSGS[1:2]}, tmp_env)
     assert bins.calls("codex")[1]["argv"][-3:] == ["-m", "sol", "-"]
 
 
-def test_cli_failures(tmp_path, bins, monkeypatch):
+def test_cli_failures(tmp_env, bins, monkeypatch):
     bins.add("claude", CLAUDE)
     monkeypatch.setenv("FAKE_CLI", "crash")
     with pytest.raises(KitError, match=r"claude failed \(exit 1\): not logged in"):
-        run("llm-cli", "complete", {}, {"messages": MSGS}, tmp_path)
-    with pytest.raises(KitError, match="not found"):
-        run("llm-cli", "complete", {"program": str(tmp_path / "nope")}, {"messages": MSGS}, tmp_path)
-    assert json.loads(json.dumps(bins.calls("claude")))      # the fake ran
+        cli("complete", {}, {"messages": MSGS}, tmp_env)
+    with pytest.raises(KitError, match="not found: install it or set llm-cli.program"):
+        cli("complete", {"program": str(tmp_env / "nope")}, {"messages": MSGS}, tmp_env)
+    with pytest.raises(KitError, match="set llm-cli.worker"):
+        on_worker("llm-cli", "llm-cli.complete", {"messages": MSGS})
 
 
 def test_a_redirect_never_carries_the_key_to_another_host(tmp_path):

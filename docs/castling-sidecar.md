@@ -11,7 +11,7 @@ stopped or changed, and the install never restarts cachyrig's 0.4 worker.
 
 | Piece | Unit | Address |
 |---|---|---|
-| Band relay (UDP, the e2e relay) | `rook-castling-relay` | `127.0.0.1:7475` |
+| Band relay (UDP, the e2e relay) | `rook-castling-relay` | `127.0.0.1:7475`; its web socket `127.0.0.1:7476`, reached through the site's `/band` (a sidecar installed before the fallback: only if its `hub.yaml` has the door's `band:` line) |
 | Hub: HTTP door + dashboard | `rook-castling-hub` | `0.0.0.0:8750`: http://127.0.0.1:8750/ here, http://192.168.1.185:8750/ on the LAN once ufw allows it (below) |
 | Hub: MCP door | (same) | `http://127.0.0.1:8751/mcp`, this machine only |
 | Worker `cachyrig` | `rook-castling-worker` | dials the relay |
@@ -47,7 +47,7 @@ deploy/castling-sidecar/install.sh --upgrade <ref>    # any commit or branch
 The first install runs `init` (owner: your login name, or `ROOK_CASTLING_OWNER`; a new band key, the hub's keys),
 puts the owner token and recovery key in `secrets/` without printing them,
 starts the relay and hub, enrolls the worker with a one-time code from
-`POST /enroll/code` (the QR path of spec 12), mints the MCP token and starts
+`POST /enroll/code` (the QR path of spec 8), mints the MCP token and starts
 the worker. It needs `uv`, `git` and `curl`; the venv's Python comes from uv.
 
 Upgrading a sidecar enrolled before worker keys re-keys its worker by
@@ -71,8 +71,10 @@ $S/uninstall.sh --purge   # ... and delete it instead
 
 Logs: `journalctl --user -u rook-castling-hub -f` (and `-worker`, `-relay`).
 Agent turns also leave Claude Code transcripts under
-`~/.claude/projects/-home-bake--rook-castling-worker-data-plugin-data-agents-claude-code-work/`
-(Claude Code's own folder; uninstall leaves it, delete it by hand).
+`~/.claude/projects/-home-bake--rook-plugins-agents-claude-code-work/`
+(Claude Code's own folder, for the engine's work folder
+`~/.rook-plugins/agents-claude-code/work`; uninstall leaves both, delete them
+by hand).
 
 Settings by environment, read by every script: `ROOK_CASTLING_HOME`,
 `ROOK_CASTLING_OWNER`, `ROOK_CASTLING_WORKER`, `ROOK_CASTLING_RELAY_PORT`,
@@ -135,7 +137,7 @@ Worker `cachyrig` (from `src/rook/plugins`, listed in `worker.yaml`):
 | `file` (`read`, `write`, `list`, `search`, `stat`) | works |
 | `screen-desktop` (`screen.capture`) | works (the worker reports `hardware: [display]`) |
 | `notification-desktop` (`notification.post`) | works |
-| `agents-claude-code` (`turn`, the `agent.backend` provider) | works: `claude -p` under the signed-in subscription, isolated from your own Claude Code settings, hooks and MCP servers |
+| `agents-claude-code` (`turn`, the `agent.backend` provider; runs on the hub, `claude` on this worker) | works: `claude -p` under the signed-in subscription, isolated from your own Claude Code settings, hooks and MCP servers |
 | `llm-cli` (`complete`, the `llm.complete` provider) | works through Claude Code (System One = haiku) |
 | `torrent` | loads, but deluged runs as user `deluge` and bake's `deluge-console` can't authenticate to it: calls fail with "Could not connect to daemon". Needs a deluge auth entry for bake (your call) |
 
@@ -180,9 +182,9 @@ curl -s -H "$H" '127.0.0.1:8750/journal?limit=5'
   the hub at its next keepalive (every 5 s on UDP); a call sent meanwhile is
   resent and goes through then. `check.sh` waits for it.
 - Each agent turn reaches the band as that agent, with a token the hub
-  makes for the turn. The sidecar's MCP door is on 8751, not the default
-  8741: set `agents-claude-code.door_url: http://127.0.0.1:8751/mcp` in
-  `worker.yaml` (`settings:`). No shared token to set up.
+  makes for the turn. The installer sets the engines' `door_url` to the
+  sidecar's MCP door (8751, not the default 8741) and their `worker` to this
+  machine, in `hub.yaml` (`settings:`). No shared token to set up.
 - The worker warns "anchor is writable by the worker": it runs as bake and
   owns its own folder. Harmless here.
 

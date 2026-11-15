@@ -67,8 +67,6 @@ def test_a_release_rolls_out_restarts_the_worker_into_it_and_rolls_back_by_hand(
     assert band.owner.call("e2e.ping", {"text": "on the release"})["ok"]
     entries = band.owner.get("/journal?cap=worker.update&limit=5")["entries"]
     assert entries and entries[0]["person"].endswith("bake") and entries[0]["ok"]
-    change = call(band, "change.get", {"id": ro["change"]}, worker="rook")       # one record for the rollout
-    assert change["category"] == "update" and change["outcome"] == "done: updated e2e-worker"
     history = [e["event"] for e in call(band, "update.history", worker="rook")["entries"]]
     assert history[:3] == ["rollout.done", "worker.updated", "rollout.started"]
     # by hand: back to the installed core
@@ -103,6 +101,9 @@ def test_a_release_that_does_not_come_up_is_rolled_back_by_the_worker(fresh, mon
     w = ro["workers"][0]
     assert ro["status"] == "failed" and w["state"] == "failed", ro
     assert "rolled back on the worker" in w["reason"] and reason in w["reason"]
-    rel = release_of(b)
+    # the rollout can learn of the rollback before the worker has restarted out of it
+    rel = until(lambda: (r := b.owner.call("worker.status", {})).get("ok") and
+                r["result"]["release"]["running"] is None and r["result"]["release"],
+                60, "the worker back on its installed core")
     assert rel["running"] is None and rel["current"] is None and rel["failed"]["version"] == "0.5.1-broken.1"
     assert b.owner.call("e2e.ping", {"text": "back on the installed core"})["ok"]

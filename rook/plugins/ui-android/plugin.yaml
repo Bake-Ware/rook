@@ -15,7 +15,7 @@ caps:
     doc: "The screen, compactly: app and package; items to act on, each with text, kind (button, field, toggle, list), detail, id, checked, a field's value and hint, and its centre x, y for hid.click; the other text top to bottom; focus; locked; rev (for ui.wait changed_from). Popups and dialogs above the app are included; passwords never are."
     risk: read
     scope: local
-    effects: [sensitive, taints]
+    effects: [sensitive]
     idempotent: true
     timeout: 15s
     args:
@@ -36,7 +36,7 @@ caps:
     doc: "Click what matches text, desc (its description) or id (view id, with or without the package: prefix); every given field must match, exactly and ignoring case unless contains. text also matches the description of a node without text. index picks among matches (0 is the top one). Clicks the nearest clickable parent, else taps the centre; long long-presses. wait first waits up to that many seconds for it to appear. Not found: an error naming near matches. screen returns the screen once the click has settled."
     risk: exec
     scope: local
-    effects: [taints]
+    effects: []
     timeout: 30s
     args:
       text: { type: str, default: "" }
@@ -52,7 +52,7 @@ caps:
     doc: "Scroll one page down or up: the scrollable holding the text or id match, else the outermost one on screen (an open dropdown's list first). scrolled false: already at the end. screen returns the screen once it has settled."
     risk: exec
     scope: local
-    effects: [taints]
+    effects: []
     timeout: 30s
     args:
       direction: { type: str, enum: [down, up], default: down }
@@ -65,7 +65,7 @@ caps:
     doc: "Type text into a field without clicking it first. label names the field (its hint, description, label, or the caption above or left of it; never what is in it); id its view id; neither: the focused field, else the only field. Several matches: an error listing them, unless index picks one (0 is the top one). Replaces the field's text unless append; submit then presses the keyboard's enter (Android 11+). wait first waits for the field; screen returns the screen once it has settled. The reply never repeats the text."
     risk: exec
     scope: local
-    effects: [taints]
+    effects: []
     timeout: 30s
     args:
       text: { type: str, required: true, max: 10000 }
@@ -82,7 +82,7 @@ caps:
     doc: "Wait up to timeout seconds until the screen is how you want it, then return it (screen false leaves it out). Every given condition must hold: something matching text, desc or id (ui.click's rules) shows, or with gone none does; package is in front (package or app name); rev differs from changed_from (from ui.screen). settle_ms then also waits until nothing changed for that long; with no other condition it is 600 ms. Timed out: an error, with the screen as it is."
     risk: read
     scope: local
-    effects: [sensitive, taints]
+    effects: [sensitive]
     timeout: 70s
     args:
       text: { type: str, default: "" }

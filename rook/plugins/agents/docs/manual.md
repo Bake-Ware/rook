@@ -13,7 +13,6 @@ Installing the agents package makes these, each with its skills:
 | Agent | Role | Always on |
 |---|---|---|
 | `house` | Your personal assistant and guardian of the house; knows how and when to reach you | yes |
-| `security` | Triages security events, proposes safer ways | yes |
 
 Any plugin's manifest can ship personas and skills (`personas:`,
 `skills:`). The runtime reads every installed plugin's (`hub.manifests`, at
@@ -25,6 +24,7 @@ the first by plugin name wins (this plugin's own come first).
 
 `agent.skill {name}` reads a skill from the manifest that ships it, else
 the knowledge page of kind `skill` with that slug (with the workbench).
+Its `plugins` skill teaches any agent to write a Rook plugin.
 
 Every agent knows the others (a roster in its prompt) and is told that
 pulling in another agent is expected, not overstepping. Agents that need you
@@ -36,6 +36,8 @@ go through the house agent.
   (`wait: false` answers at once). It wakes the agent if it sleeps.
 - `agent.chat.read {agent, after}` reads your session with it; pass `next`
   back as `after`.
+- Children and guests may use both: this plugin adds `agent.chat.*` to the
+  `child` and `guest` presets.
 - A direct message to the band's Telegram or Discord bot, once you linked
   your account (`telegram.link`, `discord.link`), goes to the `chat_agent`
   (the house agent by default) in your session with it, as you; the reply
@@ -50,7 +52,7 @@ agent works for you it can do only what both of you may.
 ## Awake and asleep
 
 An agent wakes when addressed and stays warm for `warm` (10 minutes) after
-its last message, then sleeps. Always-on agents (`house`, `security`) never
+its last message, then sleeps. Always-on agents (`house`) never
 sleep on idle. `agent.wake` and `agent.sleep` do it by hand.
 
 ## Notepad, memory and dreams
@@ -81,12 +83,93 @@ playbooks; `agent.skill {name}` reads one.
 ## Backends
 
 Turns go only through the `agent.backend` contract. An agent with backend
-`default` uses the hub's chosen provider; naming one provider's cap
+`default` uses the `backend` setting's provider (the installer sets it;
+blank: the first installed); naming one provider's cap
 (`agents-claude-code.turn`, `agents-codex.turn`, or any plugin that provides
 the contract) pins it there. Each backend has its own System Two and System
 Three models (its `model` and `model_three` settings); an agent's
-`model: {two, three}` overrides them. Settings: `warm`, `turn_timeout`,
+`model: {two, three}` overrides them. Settings: `backend`, `warm`, `turn_timeout`,
 `dream_every`, `chat_agent`.
+
+`agent.engines` lists the engines (the contract's providers, by the cap an
+agent's backend names, with their titles), which one is the default and
+whether each can run a turn now (`why` when it can't: no worker set for it,
+or its worker offline). `agent.models {engine?}` asks one engine's own
+`models` cap for the models it offers and its default (blank: the default
+engine). Changing an agent's model is `agent.update {id, revision, model:
+{two, three}}`; its engine, `agent.update {backend}`; the default engine,
+`setting.set {plugin: agent, key: backend, value}`. A model the engine
+doesn't list is still passed on as given.
+
+## Agents page
+
+Agents > Agents on the hub site (`pages/agents.html`) shows each agent, the
+house agent first: its name and title, awake or asleep, always on. Its
+engine is a dropdown ("Default (...)" or one engine), its model a dropdown of
+that engine's models with "Engine's default" first and "Another model id..."
+last (a box for any id). A change saves at once, with "Saved" or the error
+beside it; changing the engine puts back the engine's default model when the
+new engine doesn't offer the old one. An engine that can't run turns now
+says why on its agents' rows. The persona shows as text: changing it would
+only change the label, not the prompt, skills and grants it filled in. Above
+the agents, the default engine and a link to the Engines page; below them, the attention pass on or off
+(installing the ready-made `attention/attention` job, or switching it), only
+when the jobs plugin offers that job.
+
+## Engines page
+
+Agents > Engines (`pages/engines.html`) shows one card per engine from
+`agent.engines`, the default first and marked so: its title, its plugin's
+one-line doc, and whether it can run a turn now (when it can't, why, in
+bold). Below that, for the keys that engine's settings have
+(`setting.list {plugin}`): its Worker (a dropdown of the band's workers but
+the hub, online ones marked, "Not set" first), its Model and its Light
+model (dream cycles), each a dropdown of `agent.models {engine}` with the
+blank choice first, saying what blank means for that engine (its setting's
+doc), and "Another model id..." last. A change saves at once with
+`setting.set`, "Saved" or the error beside it, and the card asks
+`agent.engines` again so the ready line is true. "More settings for ..."
+opens Settings, where the rest of the engine's settings are. A link at the
+top goes back to the Agents page.
+
+## On the hub site
+
+The agents package adds the house agent to the hub site itself (`shell:` in
+its manifest, files in `shell/`): the chat dock beside every page with
+Rookie, its avatar, the work pane and the guided first run, and the look
+pickers on Your account. `agent.site` is what the dock needs: the agent in
+it (the `dock` setting, `house`; blank: no dock), whether it can answer yet
+(a worker serving `agent.backend` is online, or for a hub-run backend
+with a `worker` setting, that worker), your look and feel and
+whether first-run setup is done. `agent.setup {done?}` reads or sets that
+(kept in the plugin's data as `setup.json`, which the installer writes
+with `done: false`; none: done), with `install`, the facts the installer
+left there. A hub made by hand with `init` has no guided first run unless
+someone calls `agent.setup {done: false}`. Guided setup does not keep the site
+open: once the owner sets a password, a new browser gets the sign-in page
+even while setup carries on.
+`agent.look {sound?, rookie?, theme?, name?, side?}` sets the look and feel: sound,
+Rookie's style and theme are yours (the per-person settings `sound`,
+`rookie`, `rookie_theme`), the name is the house agent's (`house_name`;
+blank: Rookie). Blank ones haven't been chosen: first-run setup asks them.
+`side` is which side of the page your chat is on (`chat_side`: left or
+right, right until set); the arrows in the chat's head flip it, and the
+agent flips it when you ask. At phone width the chat lies over the page
+and the side does nothing.
+
+The chat pane: the open page (or a setup view) on one side, the chat on
+the other. When the agent writes `[[open: page agent/agents]]` and
+`[[point: agents.house.model | Pick the model here]]`, the page opens and
+Rookie walks over to that control and back; a target is a `data-target`
+in the shell itself first, else one in the open page (the site asks the
+page where it is). The arrow in the chat's head opens the chat in its own
+browser window (`/?chat`): the same conversation, read from the same
+stream; the main window's pane closes and Rookie leaves it for the chat
+window. Pages the agent opens and controls it points at stay in the main
+window, and Rookie leaves the chat window to point there and comes back.
+Closing the chat window puts the pane back, Rookie with it; the two
+windows find each other with a BroadcastChannel, so reloading either one
+keeps one chat.
 
 ## Identity
 
@@ -95,7 +178,9 @@ Each agent is `agent:<name>` on the hub, with its own grants plus
 whose message it answers, so it gets only what both may; with no person
 behind the message (a persona job, another agent acting alone) it acts
 alone, with its own grants. The backend gets a token for that same pair,
-good for that turn only (the `door` arg), so every Rook call the agent makes
-from its harness is journaled as the agent and checked the same way. Dreams
+good for that turn only (the `door` arg, passed as `{{secret:turn-...}}`:
+the hub puts the token in on the way to the worker, so the journal keeps
+only the name), so every Rook call the agent makes from its harness is
+journaled as the agent and checked the same way. Dreams
 run as the agent alone, without a token. Archiving an agent takes its
 identity off the hub; a name hub.yaml already uses is refused.

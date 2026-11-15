@@ -13,9 +13,8 @@ What goes in:
   with SQLite's online backup, so it is consistent while the hub runs (one
   database at a time: two databases are not one snapshot). ``vault.db`` is
   copied as it is: its values are sealed already. Left out: ``-wal``/``-shm``
-  files (the copies are whole), ``assets/`` (a download cache), ``releases/``
-  (core release tarballs: ``update.rollout`` makes them again) and the work
-  folder ``.backup/``.
+  files (the copies are whole), ``releases/`` (core release tarballs:
+  ``update.rollout`` makes them again) and the work folder ``.backup/``.
 - ``library/``: the trusted plugin folders, following links (a plugin
   linked from a checkout is backed up as its files), wherever the library is.
 - ``rook-backup.json`` (last): format, hub id, time, whether there is a
@@ -69,7 +68,7 @@ PERSON = b"rook-backup-1"
 SUFFIX = ".rookbak"
 NAME = re.compile(r"rook-hub-([0-9a-f]{8,64})-(\d{8}T\d{6}Z)\.rookbak")
 WORK = ".backup"                     # <data>/.backup: private scratch, never in a backup
-SKIP_TOP = {WORK, "assets", "releases"}   # releases: core release tarballs, rebuilt by update.rollout
+SKIP_TOP = {WORK, "releases"}   # releases: core release tarballs, rebuilt by update.rollout
 SKIP_SUFFIX = ("-wal", "-shm", "-journal", ".tmp")
 SQLITE = b"SQLite format 3\x00"
 MANIFEST = "rook-backup.json"
@@ -226,7 +225,7 @@ def _work(data: Path) -> Path:
 
 def _files(root: Path, top: bool, skip: Path | None = None) -> Iterator[Path]:
     """Regular files under ``root``, sorted. The data folder (``top``) skips
-    its cache and work folders and never follows links; the library follows
+    its release and work folders and never follows links; the library follows
     them, so plugin folders linked from a checkout are backed up as files."""
     for dirpath, dirs, files in os.walk(root, followlinks=not top):
         rel = Path(dirpath).relative_to(root)

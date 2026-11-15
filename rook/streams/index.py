@@ -13,7 +13,7 @@ importers and the dashboard can find a stream without asking every host.
   only ever changes its own rows.
 
 On a worker the reporter's rows travel to the hub as ``stream.*`` events
-(builtin/stream.yaml ``emits``, spec 13 ``core.event``); the hub's own
+(builtin/stream.yaml ``emits``, spec 10.4 ``core.event``); the hub's own
 store (``ctx.streams``, every hub plugin's) reports straight to the index.
 Who may see a row is :func:`visible`'s rule, the same as a worker's for
 reading the stream: owners see every stream; a person the ones they take

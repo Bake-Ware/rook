@@ -1,4 +1,4 @@
-"""knowledge.get/create/update/link: the wiki verbs that need more than the
+"""knowledge.get/create/update/link/review: the wiki verbs that need more than the
 records kit gives (slugs, [[links]] both ways, sources with who and when)."""
 
 import re
@@ -140,3 +140,12 @@ def link(ctx, id, kind, ref=None, key=None, quote=None, note=None, remove=False)
         except ctx.Error as e:
             if not e.retry or attempt == TRIES - 1:
                 raise
+
+
+def review(ctx, id, verdict, note=None, revision=None):
+    """A person's verdict on a page (the 0.4 Knowledge page's Verify / Dispute
+    / Unverify): who and when are kept with it."""
+    p = _need(ctx, id)
+    return ctx.records.knowledge.update(
+        p["id"], revision=revision or p["revision"], verification=verdict,
+        review_note=note or "", reviewed_by=ctx.caller.person or ctx.caller.actor, reviewed_at=time.time())

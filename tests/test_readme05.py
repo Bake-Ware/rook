@@ -35,6 +35,6 @@ def test_the_setup_skill_is_a_skill():
 
 
 def test_every_relative_link_resolves():
-    missing = [f"{p.relative_to(ROOT)}: {t}" for p in (README, SKILL, ROOT / "docs" / "README-0.4.md")
+    missing = [f"{p.relative_to(ROOT)}: {t}" for p in (README, SKILL)
                for t in _links(p) if not (p.parent / t).exists()]
     assert missing == []

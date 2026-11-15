@@ -5,9 +5,9 @@ name: desktop
 on:
   push:
     branches: [master, next]
-    paths: ["desktop/**", "scripts/install-hub.sh", "android/app/src/main/assets/wakeword/**", ".github/workflows/desktop.yml"]
+    paths: ["desktop/**", "worker/**", "android/app/src/main/assets/wakeword/**", ".github/workflows/desktop.yml"]
   pull_request:
-    paths: ["desktop/**", "scripts/install-hub.sh", "android/app/src/main/assets/wakeword/**", ".github/workflows/desktop.yml"]
+    paths: ["desktop/**", "worker/**", "android/app/src/main/assets/wakeword/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 
 permissions:

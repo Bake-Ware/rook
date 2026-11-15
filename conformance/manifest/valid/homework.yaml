@@ -24,7 +24,5 @@ pages:
     file: pages/bulletin.html
     caps: ["homework.item.*"]
     events: ["homework.*"]
-    sizes: [widget, page]
-    nav: { section: home }
 presets:
   child: { grants: [homework.item.list] }

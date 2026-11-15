@@ -4,7 +4,7 @@
 # and close it. Implemented in rook/core2/worker/builtins.py on the worker's
 # own Streams (bounded, in memory: terminals and processes). A stream is for
 # the people and agents it was opened for (its participants) and the owners
-# of its band's hub (the ticket's `owner`, spec 6.2).
+# of its band's hub (the ticket's `owner`, spec 10.1).
 manifest: 1
 plugin: stream
 version: 0.5.0
@@ -34,8 +34,9 @@ caps:
   write:
     doc: >-
       Send input to a live stream: body {text} (keystrokes; "\r" is Enter on a terminal),
-      {signal: INT|TERM|KILL|HUP} or {resize: [cols, rows]}. Typing into a shell runs what you
-      type, so this is exec.
+      {bytes} (base64, raw bytes; the Rust worker only), {signal: INT|TERM|KILL|HUP} or
+      {resize: [cols, rows]}. A UDP stream (net.udp) also takes `to` (host:port) beside text
+      or bytes. Typing into a shell runs what you type, so this is exec.
     risk: exec
     scope: local
     args:

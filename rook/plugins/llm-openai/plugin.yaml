@@ -10,6 +10,7 @@ version: 0.5.0
 title: OpenAI-compatible models
 doc: Completions from an OpenAI-compatible endpoint (a local model server, llmanifold, a hosted API).
 package: core
+segment: Agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook

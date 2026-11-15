@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "panel",
-  "description": "The Rook panel: what waits on you, work, knowledge and sessions (read-only lists; items open in the dashboard window).",
+  "description": "The Rook panel: the hub's pages and what waits on you (items open in the dashboard window).",
   "windows": ["panel"],
   "permissions": [
     "core:default",

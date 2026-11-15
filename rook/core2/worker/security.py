@@ -35,10 +35,10 @@ from typing import Any, Awaitable, Callable
 
 from .. import CORE_VERSION, rights, wire
 
-HUB_LOST = 90            # seconds without hub contact before the hub is lost (5.4)
-ANNOUNCE_SKEW = 90       # |now - ts| allowed on a hub announce (5.4)
-ELEVATE_TIMEOUT = 10     # seconds to wait for core.elevate (7.2)
-COLD_START = 150         # refuse every ticket this long when the replay cache was lost (6.3)
+HUB_LOST = 90            # seconds without hub contact before the hub is lost (10.3)
+ANNOUNCE_SKEW = 90       # |now - ts| allowed on a hub announce (10.3)
+ELEVATE_TIMEOUT = 10     # seconds to wait for core.elevate (10.9)
+COLD_START = 150         # refuse every ticket this long when the replay cache was lost (10.1)
 REPLAY_MAX = 200_000     # nonces held at most (~18 MB); see ReplayStore
 REPLAY_FLOOR = 600       # a nonce is kept at least this long, full or not
 BUCKET = 10              # seconds of expiry per replay-cache set
@@ -62,7 +62,7 @@ def _write_atomic(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-# -- replay cache (6.3) ------------------------------------------------------
+# -- replay cache (10.1) ------------------------------------------------------
 
 class ReplayStore:
     """Accepted nonces, each kept until about ``max(exp + SKEW, now +
@@ -75,7 +75,7 @@ class ReplayStore:
     Bounded by ``max_entries``, not by load: when full, whole buckets whose
     nonces are all at least REPLAY_FLOOR (10 minutes) old go, oldest first.
     The 15 minutes are kept while there is room, 10 always (castling-protocol:
-    "remembers used ticket nonces for 10-20 minutes"), well past spec 6.3's
+    "remembers used ticket nonces for 10-20 minutes"), well past spec 10.1's
     MUST of ``exp + 30``. Refused only beyond ``max_entries`` nonces younger
     than 10 minutes: ~330 calls/s sustained for 10 minutes at 200,000.
 
@@ -161,7 +161,7 @@ class ReplayStore:
         self._lines = self.size
 
 
-# -- trust store (9.2, 9.3) --------------------------------------------------
+# -- trust store (10.10) --------------------------------------------------
 
 @dataclass(frozen=True)
 class Member:
@@ -187,7 +187,7 @@ class TrustStore:
     can forge or widen one. The worker writes that file itself, so its own
     account could delete entries (a narrowed home ceiling, a removal); that
     account can already do whatever its calls can, and only the anchor
-    needs protecting from it (spec 15).
+    needs protecting from it (spec 12).
     """
 
     def __init__(self, anchor_path: str | Path, memberships_path: str | Path | None, worker_id: str):
@@ -314,7 +314,7 @@ hub can't be reached."""
 
 @dataclass(frozen=True)
 class Call:
-    """A request that passed every worker check (6.3)."""
+    """A request that passed every worker check (10.1)."""
 
     request: dict
     ticket: dict
@@ -323,7 +323,7 @@ class Call:
     meta: dict          # the cap's manifest data: risk, effects, elevation
 
     def context(self, lease: str | None = None) -> dict:
-        """The verified call context handed to the cap (6.6). ``owner`` counts
+        """The verified call context handed to the cap (10.1). ``owner`` counts
         only from a hub that manages this worker (home or co-owner), not a guest."""
         t = self.ticket
         owner = t.get("owner") is True and self.member.role in ("home", "co-owner")
@@ -362,7 +362,7 @@ class WorkerGate:
         self.leases: dict[str, dict] = {}
         self._lock = threading.Lock()
 
-    # hub keys and contact (5.2, 5.4)
+    # hub keys and contact (10.3)
 
     def add_hubkey(self, band: str, grant: Any, now: int | None = None) -> bool:
         """Learn an operational key from a ``rook-hubkey`` grant that arrived
@@ -388,7 +388,7 @@ class WorkerGate:
         return {kid: v[0] for kid, v in ring.items()}
 
     def hub_announce(self, band: str, msg: Any, now: int | None = None) -> bool:
-        """Accept a signed hub announce (5.4): hub contact, plus the hub's
+        """Accept a signed hub announce (10.3): hub contact, plus the hub's
         core version for this band. Returns whether it was accepted."""
         now = _now(now)
         with self._lock:
@@ -414,7 +414,7 @@ class WorkerGate:
     def lost(self, hub: str, band: str, now: int | None = None) -> bool:
         return _now(now) - self.contact.get((hub, band), -10**12) > HUB_LOST
 
-    # the ticket check (6.3)
+    # the ticket check (10.1)
 
     def check(self, request: Any, band: str, now: int | None = None) -> Call | dict | None:
         """Decide on a request that arrived on ``band``. Returns a
@@ -438,7 +438,7 @@ class WorkerGate:
             try:
                 ok, reason = wire.verify_ticket(ticket, request, state, now, self.replay)
             except (OSError, OverflowError):
-                ok, reason = False, "replay"     # couldn't record the nonce: refuse (6.3)
+                ok, reason = False, "replay"     # couldn't record the nonce: refuse (10.1)
             if not ok:
                 err = (f"unknown capability: {request.get('cap')}" if reason == "unknown_cap"
                        else f"denied by worker: {reason}")
@@ -463,7 +463,7 @@ class WorkerGate:
                     del self.leases[lid]
             return ok, reason
 
-    # leases (7.3, 7.4)
+    # leases (10.9)
 
     def _prune(self, now: int) -> None:
         for lid, lease in list(self.leases.items()):
@@ -500,7 +500,7 @@ class WorkerGate:
                 del self.leases[lid]
         return {"dropped": len(gone)}
 
-    # elevation (7.2)
+    # elevation (10.9)
 
     def needs_upfront(self, call: Call) -> bool:
         el = call.meta.get("elevation", "never")
@@ -560,7 +560,7 @@ class WorkerGate:
         return reply(rid, self.worker_id, result=result, elevated=lease["id"] if lease else None)
 
 
-# -- process launch (7.1) ----------------------------------------------------
+# -- process launch (10.9) ----------------------------------------------------
 
 RUN_AS: str | None = None
 """worker.yaml ``run_as``: the account a root worker runs normal calls as
@@ -582,7 +582,7 @@ DENIED_MARKERS = ("permission denied", "operation not permitted", "access is den
 
 
 def looks_denied(code: int | None, stderr: str | bytes = "") -> bool:
-    """Best-effort access-denied detection for a finished process (7.2):
+    """Best-effort access-denied detection for a finished process (10.9):
     exit 126 (couldn't execute) or a well-known message on stderr. Only for
     ``elevation: may`` caps, where a false positive costs one re-run."""
     if isinstance(stderr, bytes):
@@ -612,9 +612,8 @@ def launch_plan(argv: list[str], lease: dict | None, *, platform: str = sys.plat
     starts normal calls with the signed-in user's filtered (non-admin) token
     via CreateProcessAsUser; elevated calls use the linked full token. A
     per-user worker without a service can't elevate without a UAC prompt,
-    so it reports ``elevation: unsupported``. macOS would match Linux
-    (``sudo -n``) but is untested, so it is stubbed too. Until then a
-    non-Linux worker running as an administrator refuses normal launches.
+    so it reports ``elevation: unsupported``. Until then a non-Linux worker
+    running as an administrator refuses normal launches.
     """
     if not argv or not all(isinstance(a, str) for a in argv):
         raise ValueError("argv must be a non-empty list of strings")
@@ -642,7 +641,7 @@ def launch_plan(argv: list[str], lease: dict | None, *, platform: str = sys.plat
 
 async def launch(argv: list[str], lease: dict | None = None, *, run_as: str | None = None,
                  **kwargs: Any) -> asyncio.subprocess.Process:
-    """Start a process the way every plugin must (7.1): as the normal user,
+    """Start a process the way every plugin must (10.9): as the normal user,
     or elevated when ``lease`` is the call's lease. ``kwargs`` go to
     ``asyncio.create_subprocess_exec`` (cwd, env, stdin, stdout, ...)."""
     try:

@@ -1,11 +1,11 @@
-"""hid-desktop through the worker host, with fake xdotool / wtype / ydotool
-on PATH (each records its argv and stdin)."""
+"""hid-desktop on the hub, for a worker with only the primitives, with fake
+xdotool / wtype / ydotool / powershell on its PATH (each records its argv and
+stdin)."""
 
 import pytest
 
-from port_helpers import ME, PLUGINS, go
-from rook.core2.worker import security
-from rook.core2.worker.host import CallError, Host
+from port_helpers import on_worker
+from rook.kit.ctx import KitError
 
 # A fake input tool: logs stdin to <name>.stdin; exits $FAIL_<NAME> if set.
 TOOL = """
@@ -20,15 +20,8 @@ sys.exit(code)
 """
 
 
-def run(cap, args=None, hardware=("display",)):
-    async def body():
-        host = Host(os_name="linux", hardware=hardware)
-        await host.load(PLUGINS / "hid-desktop")
-        try:
-            return await host.call(f"hid-desktop.{cap}", args or {}, ME)
-        finally:
-            await host.close()
-    return go(body)
+def run(cap, args=None, os_name="linux"):
+    return on_worker("hid-desktop", f"hid-desktop.{cap}", args, os_name=os_name)[0]
 
 
 def tools(bins, *names):
@@ -64,7 +57,7 @@ def test_type_falls_through_a_failing_tool(bins, monkeypatch):
 
 def test_type_without_any_tool_is_a_clean_error(bins):
     bins.only_these()
-    with pytest.raises(CallError, match="not installed on this worker: xdotool, wtype, ydotool"):
+    with pytest.raises(KitError, match="not installed on this worker: xdotool, wtype, ydotool"):
         run("hid.type", {"text": "hi"})
 
 
@@ -72,7 +65,7 @@ def test_move(bins):
     tools(bins, "ydotool")
     run("hid.move", {"x": 10, "y": 20})
     assert argvs(bins, "ydotool") == [["mousemove", "--absolute", "-x", "10", "-y", "20"]]
-    with pytest.raises(CallError, match="bad args"):
+    with pytest.raises(KitError, match="bad args"):
         run("hid.move", {"x": -1, "y": 0})
 
 
@@ -96,15 +89,15 @@ def test_key_ydotool_uses_input_codes(bins):
     run("hid.key", {"key": "c", "mods": ["ctrl"]})
     run("hid.key", {"key": "0"})
     assert argvs(bins, "ydotool") == [["key", "29:1", "46:1", "46:0", "29:0"], ["key", "11:1", "11:0"]]
-    with pytest.raises(CallError, match="ydotool: unknown key Print"):
+    with pytest.raises(KitError, match="ydotool: unknown key Print"):
         run("hid.key", {"key": "Print"})
 
 
 def test_key_refuses_syntax(bins):
     tools(bins, "xdotool")
-    with pytest.raises(CallError, match="bad args"):
+    with pytest.raises(KitError, match="bad args"):
         run("hid.key", {"key": "a+ctrl"})
-    with pytest.raises(CallError, match="bad args"):
+    with pytest.raises(KitError, match="bad args"):
         run("hid.key", {"key": "a", "mods": ["hyper"]})
     assert argvs(bins, "xdotool") == []
 
@@ -114,7 +107,7 @@ def test_click(bins):
     run("hid.click", {})
     run("hid.click", {"x": 5, "y": 6, "button": "right"})
     assert argvs(bins, "xdotool") == [["click", "1"], ["mousemove", "5", "6", "click", "3"]]
-    with pytest.raises(CallError, match="x and y together"):
+    with pytest.raises(KitError, match="x and y together"):
         run("hid.click", {"x": 5})
 
 
@@ -138,19 +131,6 @@ def test_drag_ydotool_always_releases(bins, monkeypatch):
                                       ["mousemove", "--absolute", "-x", "3", "-y", "4"], ["click", "0x81"]]
 
 
-def test_tools_start_through_core_launch(bins, monkeypatch):
-    tools(bins, "xdotool")
-    seen = []
-    real = security.launch
-
-    async def spy(argv, lease=None, **kw):
-        seen.append((argv, lease))
-        return await real(argv, lease, **kw)
-    monkeypatch.setattr(security, "launch", spy)   # bound when the script loads
-    run("hid.click", {})
-    assert seen == [(["xdotool", "click", "1"], None)]
-
-
 def test_status(bins):
     tools(bins, "wtype", "ydotool")
     assert run("hid.status") == {"backend": "wtype", "pointer": "ydotool", "platform": "linux"}
@@ -162,14 +142,28 @@ def test_status_without_tools(bins):
     assert out["backend"] is None and out["pointer"] is None
 
 
-def test_needs_a_display():
-    async def body():
-        host = Host(os_name="linux", hardware=())
-        p = await host.load(PLUGINS / "hid-desktop")
-        try:
-            assert set(p.unavailable) == set(p.manifest["caps"])
-            with pytest.raises(CallError, match="unavailable"):
-                await host.call("hid-desktop.hid.type", {"text": "x"}, ME)
-        finally:
-            await host.close()
-    go(body)
+def ps_seq(bins):
+    return [c["env"]["ROOK_SEQ"] for c in bins.calls("powershell")]
+
+
+def test_windows_keys_clicks_and_drags_are_one_powershell_sequence(bins):
+    tools(bins, "powershell")
+    assert run("hid.key", {"key": "a", "mods": ["ctrl", "shift"]}, "windows") == {"key": "a", "mods": ["ctrl", "shift"]}
+    run("hid.click", {"x": 5, "y": 6, "button": "right"}, "windows")
+    run("hid.click", {}, "windows")
+    run("hid.drag", {"x1": 1, "y1": 2, "x2": 3, "y2": 4, "duration": "50ms"}, "windows")
+    assert ps_seq(bins) == ["k:17:1 k:16:1 k:65:1 k:65:0 k:16:0 k:17:0", "p:5:6 m:8 m:16", "m:2 m:4",
+                            "p:1:2 m:2 s:50 p:3:4 m:4"]
+    assert "keybd_event" in bins.calls("powershell")[0]["argv"][-1]
+    with pytest.raises(KitError, match="unknown key: Print"):
+        run("hid.key", {"key": "Print"}, "windows")
+    assert run("hid.status", None, "windows") == {"backend": "sendinput", "pointer": "sendinput", "platform": "win32"}
+
+
+def test_windows_type_and_move(bins):
+    tools(bins, "powershell")
+    run("hid.type", {"text": "a+b", "enter": True}, "windows")
+    run("hid.move", {"x": 7, "y": 8}, "windows")
+    type_, move = bins.calls("powershell")
+    assert "SendKeys" in type_["argv"][-1] and stdin(bins, "powershell") == "a+b\n"
+    assert (move["env"]["ROOK_X"], move["env"]["ROOK_Y"]) == ("7", "8")

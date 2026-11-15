@@ -8,6 +8,7 @@ version: 0.5.0
 title: Backup
 doc: Sealed backups of this hub, which only the owner's recovery key opens.
 package: core
+segment: Hub
 builtin: true
 runs_on: hub
 license: Apache-2.0
@@ -33,7 +34,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     timeout: 60m
     result: { type: map }
   list:

@@ -1,11 +1,11 @@
-"""torrent (Deluge) through the worker host, with a fake deluge-console on
-PATH. The fake answers like deluge-console 2.2 (outputs copied from a real
+"""torrent (Deluge) on the hub, for a worker with only shell.exec and a fake
+deluge-console on its PATH. The fake answers like deluge-console 2.2 (outputs copied from a real
 one and from deluge/ui/console/cmdline/commands/status.py)."""
 
 import pytest
 
-from port_helpers import ME, PLUGINS, go
-from rook.core2.worker.host import CallError, Host
+from port_helpers import on_worker
+from rook.kit.ctx import KitError
 
 H1, H2 = "a" * 40, "0123456789abcdef0123456789abcdef01234567"
 
@@ -39,16 +39,7 @@ def deluge(bins):
 
 
 def run(cap, args=None, *, settings=None):
-    async def body():
-        host = Host(os_name="linux")
-        await host.load(PLUGINS / "torrent")
-        if settings:
-            await host.set_settings("torrent", local=settings)
-        try:
-            return await host.call(cap, args or {}, ME)
-        finally:
-            await host.close()
-    return go(body)
+    return on_worker("torrent", cap, args, settings=settings)[0]
 
 
 def sent(bins):
@@ -78,7 +69,7 @@ def test_daemon_down_is_an_error_not_an_empty_list(deluge, monkeypatch):
     monkeypatch.setenv("FAKE_DOWN", "1")
     for cap, args in [("torrent.list", {}), ("torrent.status", {}), ("torrent.pause", {}),
                       ("torrent.get", {"torrent_id": H1})]:
-        with pytest.raises(CallError, match="Could not connect to daemon"):
+        with pytest.raises(KitError, match="Could not connect to daemon"):
             run(cap, args)
 
 
@@ -108,14 +99,14 @@ def test_commands_sent(deluge):
     ("torrent.get", "-v"),
 ])
 def test_identifiers_cant_smuggle_commands(deluge, cap, arg):
-    with pytest.raises(CallError, match="^bad args: torrent_id: .* does not match"):
+    with pytest.raises(KitError, match="^bad args: torrent_id: .* does not match"):
         run(cap, {"torrent_id": arg})
     assert sent(deluge) == []
 
 
 @pytest.mark.parametrize("value", ["magnet:?x; rm *", "-x", "has space.torrent", "C:\\x.torrent"])
 def test_add_refuses_what_deluge_would_reparse(deluge, value):
-    with pytest.raises(CallError, match="^bad args: torrent: "):
+    with pytest.raises(KitError, match="^bad args: torrent: "):
         run("torrent.add", {"torrent": value})
     assert sent(deluge) == []
 
@@ -127,14 +118,7 @@ def test_console_setting(bins, tmp_path):
     assert bins.calls("deluge-console") == []
 
 
-def test_unavailable_without_deluge_console(bins):
+def test_no_deluge_console_is_said_plainly(bins):
     bins.only_these()
-
-    async def body():
-        host = Host(os_name="linux")
-        p = await host.load(PLUGINS / "torrent")
-        assert p.unavailable["torrent.list"] == "missing bin: deluge-console"
-        with pytest.raises(CallError, match="^unavailable: torrent.list: missing bin"):
-            await host.call("torrent.list", {}, ME)
-        await host.close()
-    go(body)
+    with pytest.raises(KitError, match="^not found: deluge-console$"):
+        run("torrent.list")

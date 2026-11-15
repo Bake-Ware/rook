@@ -1,17 +1,18 @@
 # Android phones and tablets cabled to a worker, driven over adb. Each device
-# is an appliance instance (spec 5.7) and the worker it is plugged into is its
-# delegate; nothing is installed on the device. Every cap is scripts/adb.py:
-# each call checks the device is attached and authorized first, and adb runs
-# through the worker's launch path (normal user, never elevated).
+# is an appliance instance (spec 10.8) and the worker it is plugged into is its
+# delegate; nothing is installed on the device or the worker. Every cap is
+# scripts/adb.py, run on the hub: each call checks the device is attached and
+# authorized first, and adb runs on the delegate through shell.exec.
 manifest: 1
 plugin: adb
-version: 0.5.0
+version: 0.6.0
 title: Android over adb
 doc: Drive Android phones and tablets cabled to this worker (shell, screen, touch, keys) over adb.
 package: devices
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-requires: { bins: [adb] }
+runs_on: hub
+uses: [shell.exec]
 appliance:
   discover:
     - adb: true
@@ -22,6 +23,7 @@ appliance:
       doc: The device's adb serial (adb.scan lists them). Blank uses the instance name as the serial.
 caps:
   scan:
+    on: worker
     doc: "Every device adb sees on this worker (attached or emulated), to onboard: {items: [{serial, state, model}]}. Includes phones that are only charging here; it never authorizes or changes a device."
     risk: read
     scope: local
@@ -35,7 +37,8 @@ caps:
           items: { type: map, fields: { serial: { type: str }, state: { type: str }, model: { type: str } } }
     run: scripts/adb.py:scan
   shell.exec:
-    doc: "Run a command on the device as Android's shell user (it can change settings and read or delete shared storage). argv is quoted for you; cmd is a line for the device's sh (pipes, redirection). Returns {code, stdout, stderr}; output past 1 MiB per stream stops the command (truncated: true)."
+    on: worker
+    doc: "Run a command on the device as Android's shell user (it can change settings and read or delete shared storage). argv is quoted for you; cmd is a line for the device's sh (pipes, redirection). Returns {code, stdout, stderr}; output past 1 MiB per stream is cut (truncated: true)."
     risk: exec
     scope: local
     timeout: 610s
@@ -51,6 +54,7 @@ caps:
       fields: { code: { type: int }, stdout: { type: str }, stderr: { type: str }, truncated: { type: bool } }
     run: scripts/adb.py:shell_exec
   battery.status:
+    on: worker
     doc: "The device's battery: {percent, charging, plugged (ac, usb, wireless or null), status, temp_c}."
     risk: read
     scope: local
@@ -66,7 +70,8 @@ caps:
         temp_c: { type: float }
     run: scripts/adb.py:battery_status
   screen.capture:
-    doc: The device's screen (works with a dead display), as a JPEG when ImageMagick is on this worker, else a PNG. Its pixels are what hid.click's x and y mean.
+    on: worker
+    doc: The device's screen (works with a dead display), as a JPEG. Its pixels are what hid.click's x and y mean.
     risk: read
     scope: local
     effects: [sensitive]
@@ -74,9 +79,10 @@ caps:
     timeout: 60s
     args:
       quality: { type: int, min: 1, max: 100, doc: "JPEG quality; blank: 85." }
-    result: { type: file, doc: A JPEG or PNG. }
+    result: { type: file, doc: A JPEG. }
     run: scripts/adb.py:screen_capture
   ui.screen:
+    on: worker
     doc: What is on the screen as text, top to bottom, with the centre of each element to tap (hid.click x, y) and the app in front.
     risk: read
     scope: local
@@ -96,6 +102,7 @@ caps:
             fields: { text: { type: str }, x: { type: int }, y: { type: int }, clickable: { type: bool } }
     run: scripts/adb.py:ui_screen
   hid.type:
+    on: worker
     doc: Type text into whatever has focus on the device. ASCII only (an Android limit); a newline presses Enter, and enter=true presses it after the text.
     risk: exec
     scope: local
@@ -106,6 +113,7 @@ caps:
       enter: { type: bool, default: false, doc: Press Enter after the text. }
     run: scripts/adb.py:hid_type
   hid.key:
+    on: worker
     doc: "Press a key with modifiers held: home, back, recents, power, wake, enter, escape, tab, backspace, delete, space, up, down, left, right, volume_up, volume_down, mute, notifications, search, menu, a letter or digit, or any KEYCODE_* name."
     risk: exec
     scope: local
@@ -116,6 +124,7 @@ caps:
       mods: { type: list, items: { type: str, enum: [ctrl, shift, alt, meta] }, default: [] }
     run: scripts/adb.py:hid_key
   hid.click:
+    on: worker
     doc: Tap the screen at pixel (x, y), top-left origin (ui.screen gives element centres). A touch screen needs x and y and has only the left button.
     risk: exec
     scope: local
@@ -127,6 +136,7 @@ caps:
       button: { type: str, enum: [left, right, middle], default: left }
     run: scripts/adb.py:hid_click
   hid.drag:
+    on: worker
     doc: Swipe from (x1, y1) to (x2, y2) over duration (50ms to 10s).
     risk: exec
     scope: local

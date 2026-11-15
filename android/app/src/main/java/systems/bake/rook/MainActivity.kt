@@ -12,7 +12,6 @@ import android.view.inputmethod.EditorInfo
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
-import androidx.lifecycle.lifecycleScope
 import systems.bake.rook.databinding.ActivityMainBinding
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -64,7 +63,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         b.chatList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this).apply { stackFromEnd = true }
         b.chatList.adapter = chat
         attention = AttentionPanel(this, b, { askNotifications() }) { askMicForReminders() }
-        panels = ConversationPanels(this, b, lifecycleScope, attention)
+        panels = ConversationPanels(this, b, attention)
         attention.onChanged = { panels.attentionChanged() }
         b.attentionSetup.setOnClickListener { panels.selectAttention() }
         b.versionLabel.text = "APK ${BuildConfig.VERSION_NAME} · ${BuildConfig.VERSION_CODE}"
@@ -90,12 +89,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         b.btnCamera.setOnClickListener { takePhoto() }
 
         if (hasMic() && prefs.getBoolean("wake_enabled", true) && VoiceBus.state == "idle") voiceOn()
-        if (prefs.getBoolean("autostart", false)) {
-            WorkerService.start(this,
-                prefs.getString("hub", BuildConfig.DEFAULT_HUB) ?: BuildConfig.DEFAULT_HUB,
-                prefs.getString("psk", BuildConfig.DEFAULT_PSK) ?: BuildConfig.DEFAULT_PSK,
-                prefs.getString("name", Build.MODEL ?: "android") ?: "android")
-        }
+        if (prefs.getBoolean("autostart", false)) WorkerService.start(this)
     }
 
     // ---- input ----------------------------------------------------------

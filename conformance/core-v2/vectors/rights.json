@@ -17,17 +17,12 @@
  "effects": [
   "destructive",
   "sensitive",
-  "personal",
   "physical",
-  "sends_as",
-  "spends",
-  "persists",
-  "taints"
+  "sends_as"
  ],
  "hard_stop_effects": [
   "destructive",
-  "sends_as",
-  "spends"
+  "sends_as"
  ],
  "cases": [
   {
@@ -46,7 +41,7 @@
     "cap": "shell.exec",
     "risk": "exec",
     "effects": [
-     "persists"
+     "destructive"
     ],
     "target": "kaiju"
    },
@@ -284,10 +279,10 @@
     ]
    ],
    "call": {
-    "cap": "bank.pay",
+    "cap": "mail.send",
     "risk": "write",
     "effects": [
-     "spends"
+     "sends_as"
     ],
     "target": "kaiju"
    },
@@ -342,7 +337,7 @@
     "risk": "write",
     "effects": [
      "physical",
-     "persists"
+     "destructive"
     ],
     "target": "kaiju"
    },

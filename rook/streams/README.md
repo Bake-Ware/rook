@@ -1,14 +1,14 @@
 # Streams
 
 One append-only, typed event log for every live thing: chat rooms, huddles,
-terminals, processes, agent sessions, inboxes and voice. Design: knowledge
+terminals, processes, agent sessions and voice. Design: knowledge
 page `castling-streams` (Bake, Oct 28 2026). This package is the store and
 the API; the `stream.*` caps and the hub relay sit on top of it.
 
 ## Model
 
 A **stream** has an id (`s_…`), a **kind** (`terminal`, `process`, `room`,
-`huddle`, `session`, `voice`, `inbox`, or any other a plugin names), a
+`huddle`, `session`, `voice`, or any other a plugin names), a
 **host** (the worker that owns its producer, or `hub`), participants, free
 `attrs` (cwd, pid, exit code, …) and a **spec**, the same three fields a cap
 declares in `plugin.yaml`:
@@ -24,7 +24,7 @@ stream: { types: [bytes, status], input: true, durable: false }
 | Type | Body | Used by |
 |---|---|---|
 | `bytes` | raw bytes | PTY and process output |
-| `text` | `{text, …}` (mentions, reply_to) | rooms, huddles, inboxes |
+| `text` | `{text, …}` (mentions, reply_to) | rooms, huddles |
 | `turn` | `{role: prompt\|reply\|tool, …}` | agent sessions, voice |
 | `status` | any object | lifecycle (`closed`, exit code), huddle status |
 | `input` | exactly one of `{text}`, `{signal}`, `{resize: [cols, rows]}` | keystrokes, messages into an agent, Ctrl-C, window size |
@@ -67,7 +67,7 @@ counts as taken when the producer asks for the next one.
 | `term_hub` (browser replay) | the hub relay below. |
 | Hub chat rooms (`band_mcp/chat_rooms.py`, `chat.*` on `rook`) | kind `room`, `text` events `{text, mentions}`. Per-reader read positions (unread counts) stay with the rooms plugin as cursors; presence and avatars aren't streams. |
 | Huddles | kind `huddle`; the huddle plugin follows the stream and runs rounds on top. Agent status → `status` events (or the whiteboard), questions → `approval.ask` cards. |
-| Worker `chat` (JSONL) and `msg` | a `room` with the local human, or a person's `inbox` stream. No JSONL files. |
+| Worker `chat` (JSONL) and `msg` | a `room` with the local human. No JSONL files. |
 | `session_messages`, the house agent's inbox | `input` events into the agent's `session` stream. |
 | `sessions` catalog, `claude_history`, `codex_history`, `session_mirror` | importers that write `turn` events into `session` streams; `sessions.list` → `list(kind="session")`. |
 | `agenthost` turns, persistent lanes, `role.session_*` | the harness is the producer of a `session` stream; a turn is an `input`, the reply `turn` events; cancel is `input {signal: INT}`. |
@@ -114,7 +114,7 @@ where the ticket's `owner: true` lets owners in.
 
 - `status` is always allowed (core writes `closed`); other types must be in the spec.
 - `input` bodies carry text, not raw bytes; binary input can come later as a minor.
-- `voice` and `inbox` default to durable, like sessions and rooms.
+- `voice` defaults to durable, like sessions and rooms.
 - One producer per stream at a time.
 - Closed bounded streams are kept for late readers, the newest 32.
 - One event is at most 1 MiB; producers split bigger output.

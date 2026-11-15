@@ -15,15 +15,15 @@
 <section>
   <h2>New token</h2>
   <div class="new">
-    <input id="agent" type="text" placeholder="agent name, e.g. claude-web" autocomplete="off">
-    <input id="label" type="text" placeholder="what it's for (optional)" autocomplete="off">
-    <button class="primary" id="mint">Create</button>
+    <input id="agent" data-target="tokens.agent" type="text" placeholder="agent name, e.g. claude-web" autocomplete="off">
+    <input id="label" data-target="tokens.label" type="text" placeholder="what it's for (optional)" autocomplete="off">
+    <button class="primary" id="mint" data-target="tokens.create">Create</button>
   </div>
   <div id="made"></div>
 </section>
 <section>
   <h2>Tokens</h2>
-  <div class="scroll"><table>
+  <div class="scroll" data-target="tokens.list"><table>
     <thead><tr><th>Agent</th><th>For</th><th>Label</th><th>Created</th><th></th></tr></thead>
     <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
   </table></div>

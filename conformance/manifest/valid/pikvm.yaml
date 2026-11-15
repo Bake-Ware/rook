@@ -1,4 +1,4 @@
-# The whole-plugin example from the castling-manifest page, verbatim.
+# An appliance plugin: discovery, instance settings, caps whose scripts get the instance.
 manifest: 1
 plugin: pikvm
 version: 1.0.0
@@ -13,19 +13,11 @@ caps:
     scope: local
     effects: [physical]
     args: { action: { type: str, enum: [on, off, off_hard, reset_hard], required: true } }
-    action:
-      http:
-        method: POST
-        url: "https://{{appliance.host}}/api/atx/power"
-        query: { action: "{{args.action}}" }
-        auth: { basic: [admin, "{{appliance.password}}"] }
-        tls: { verify: false }
+    run: scripts/pikvm.py:power
   screen.get:
     doc: Current screen as JPEG.
     risk: read
     scope: local
     effects: [sensitive]
-    action:
-      http: { url: "https://{{appliance.host}}/api/streamer/snapshot", auth: { basic: [admin, "{{appliance.password}}"] }, tls: { verify: false } }
-      parse: bytes
+    run: scripts/pikvm.py:screen
 check: [pikvm.screen.get]

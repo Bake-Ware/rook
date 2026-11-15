@@ -1,8 +1,8 @@
 # Jobs
 
-A **job** does one thing when something happens: calls a cap, asks an
-agent, or runs a short Python script. Put the `jobs` plugin in the hub's
-library to use them.
+A **job** is a time or an event that fires one call. Put the `jobs` plugin
+in the hub's library to use them. Logic goes in a hub plugin script cap that
+the job calls ([Writing a plugin](authoring.md)); a job holds no steps.
 
 ## Triggers
 
@@ -12,7 +12,6 @@ library to use them.
 | `{every: 5m}` | every interval |
 | `{on: worker.online, filter: {name: kaiju}}` | on an event; `filter` matches the event's payload |
 | `{manual: true}` | only when started by hand (`job.run`); any job can be |
-| `{webhook: true}` | on a signed POST to the hub (`job.webhook` gives the address and key) |
 
 ## Making one
 
@@ -24,43 +23,22 @@ call worker=rook cap=job.create args={
 } why="Check kaiju's disk every morning."
 ```
 
-Exactly one of `call` (with `worker` and `args`), `agent` (`{persona?,
-prompt}`: ask an agent) or `script` (Python, owners only). Options:
-`retries` (a failed run runs again, waiting longer each time), `notify`
-(`failure`, the default, tells you when a run fails for good; `always`;
-`never`), `timeout` (default 10 minutes), `catch_up` (run once at start if
-a scheduled slot was missed while the hub was down).
+A job fired by an event passes it on: if the cap takes an `event` arg, the
+call gets `event: {name, payload}`. Options: `timeout` (default 10
+minutes), `catch_up` (run once at start if a scheduled slot was missed while
+the hub was down).
 
-`job.list`, `job.get`, `job.update` (with the current revision),
-`job.run`, `job.cancel` and `job.run.list` manage them.
+`job.list`, `job.get`, `job.update` (with the current revision), `job.run`
+and `job.run.list` manage them.
 
 ## Who a job runs as
 
-Every call a job makes goes through dispatch like any other (why, rights,
-gates, holds, journal). By default it runs as **its creator**, with their
-rights as they are at each run, so taking a right away from someone also
-stops their jobs from using it. Owners can run a job as a **persona**
-(`as: persona, persona: archivist`): the agent's own, narrower grants.
-Script jobs, `on` jobs and persona jobs are for owners. Jobs and their runs
-are private to their person and the owners.
-
-A job that hits a hold waits for the person like any call.
-
-## Scripts
-
-```python
-def main(job):
-    files = job.call("file.list", {"path": "/srv/backups"}, on="nas", why="See last night's backups.")
-    if not files["entries"]:
-        job.notify("Last night's backup is missing.")
-    return {"files": len(files["entries"])}
-```
-
-`job.call`, `job.notify`, `job.ask` (a question for the person),
-`job.wait`, `job.retry`, `job.parallel`, `job.log`. A script runs in its own
-Python process on the hub, as the hub's normal account, with the standard
-library only. Write jobs that are safe to run twice: a run cut off by a hub
-restart is marked failed and retried.
+A job's call goes through dispatch like any other (why, rights,
+holds, journal). By default it runs as **its creator**, with their rights as
+they are at each run. Owners can run a job as a **persona** (`as: persona,
+persona: archivist`): the agent's own, narrower grants. `on` jobs and
+persona jobs are for owners. Jobs and their runs are private to their
+person and the owners.
 
 ## Ready-made jobs
 
@@ -76,14 +54,15 @@ jobs:
   weekly-sweep:
     doc: The archivist sweeps the wiki every Sunday night.
     trigger: { cron: "0 4 * * 0" }
-    agent: { persona: archivist, prompt: Sweep the wiki for stale and duplicate pages. }
+    call: agent.chat.send
+    args: { agent: archivist, text: Sweep the wiki for stale and duplicate pages. }
 ```
 
-The jobs plugin ships `security-scan`, which tells the owners when refused
-and held calls pile up.
+The site's **Jobs** page (Hub) lists your jobs with their last run, runs one
+now, turns one on or off, shows a job's recent runs and installs ready-made
+jobs.
 
-Everything else (webhook signing, `job.*` in full, run records): [the jobs
-plugin's manual](../../rook/plugins/jobs/docs/manual.md).
+More: [the jobs plugin's manual](../../rook/plugins/jobs/docs/manual.md).
 
 ## Timers inside a plugin
 

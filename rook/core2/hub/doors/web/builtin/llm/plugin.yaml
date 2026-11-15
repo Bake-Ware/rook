@@ -1,6 +1,6 @@
 # The llm.complete contract's providers on this hub (llm-anthropic,
 # llm-openai, llm-cli, ...): which ones are installed, which is chosen, the
-# models each offers and whether it answers. llm.complete itself is the
+# models each offers and whether it answers, and choosing one. llm.complete itself is the
 # contract's service cap (core.yaml). Implemented by the hub
 # (rook.core2.hub.doors.web.caps); each provider plugin has a `models` cap.
 manifest: 1
@@ -9,10 +9,12 @@ version: 0.5.0
 title: Models
 doc: The language model providers this hub can use.
 package: core
+segment: Agents
 builtin: true
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
+uses: ["*.models"]
 
 caps:
   providers:
@@ -21,6 +23,15 @@ caps:
     risk: read
     scope: self
     idempotent: true
+    result: { type: map }
+  choose:
+    doc: "Send llm.complete to this provider from the next call on; kept in hub.yaml's contracts."
+    on: hub
+    risk: admin
+    scope: multi-user
+    effects: []
+    args:
+      provider: { type: str, required: true, doc: "A provider plugin (llm-openai, llm-anthropic, ...)." }
     result: { type: map }
   models:
     doc: The models one provider offers, with its System One/Two/Three defaults.
@@ -42,5 +53,8 @@ caps:
     args:
       provider: { type: str, doc: "A provider plugin; blank: every one." }
     result: { type: map }
+
+pages:
+  models: { title: Model providers, file: pages/models.html, caps: [llm.providers, llm.status, llm.models, llm.choose, setting.list, setting.set, secret.list, hub.workers] }
 
 docs: { manual: docs/manual.md }

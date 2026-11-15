@@ -1,5 +1,5 @@
 # Commands, the environment, and live terminals. All code (scripts/shell.py):
-# every process starts through core's launch path (spec 7.1), which an exec
+# every process starts through core's launch path (spec 10.9), which an exec
 # action can't promise yet. shell.open is the producer of terminal and
 # process streams; proc.* merged into it (castling-streams).
 manifest: 1
@@ -37,7 +37,7 @@ caps:
         stdout: { type: str }
         stderr: { type: str }
         truncated: { type: bool, doc: "Output past 8 MiB per stream was dropped (the process ran on)." }
-        shell: { type: str, doc: The shell that ran cmd (left out for sh on Linux and macOS). }
+        shell: { type: str, doc: The shell that ran cmd (left out for sh on Linux). }
         denied: { type: bool }
     examples:
       - args: { argv: [uname, -a] }
@@ -83,6 +83,7 @@ caps:
       cols: { type: int, default: 120, min: 1, max: 1000 }
       rows: { type: int, default: 32, min: 1, max: 1000 }
       title: { type: str, doc: "The stream's title; blank: the command." }
+      stdin: { type: str, doc: "Text fed to the process's input first; with pty=false its input then ends (end of file)." }
     run: scripts/shell.py:open_
 hooks:
   stop: scripts/shell.py:stop

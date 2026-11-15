@@ -1,4 +1,4 @@
-# A builtin manifest (core describes itself): caps carry no action or run,
+# A builtin manifest (core describes itself): caps carry no run,
 # core events need no namespace, core presets set ceilings.
 manifest: 1
 plugin: core

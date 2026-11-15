@@ -1,24 +1,13 @@
 package systems.bake.rook
 
-import java.net.URI
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import org.json.JSONObject
 
 /**
- * SharedPreferences key: the saved "hub" came from the Rook server (pairing code,
- * Google sign-in), so the worker dials it over the WebSocket bridge whatever the
- * port. Read by the Python worker runtime (rook_android/worker_runtime.py).
- */
-const val PREF_HUB_WS = "hub_ws"
-
-/**
- * Which servers the app may reach over plain HTTP / ws://, and how a band's hub
- * address is dialed. Pure JVM (no Android types) so it is unit tested.
+ * Which servers the app may reach over plain HTTP / ws://. Pure JVM (no
+ * Android types) so it is unit tested.
  *
- * Plain HTTP is allowed only to a host on the local network, the same rule the
- * desktop worker's enrollment uses (rook/worker/enroll.py): a LAN hub from the
- * one-command installer serves http://<lan-ip>:7005, and its pairing code is
- * fetched over that same connection. Everything else stays HTTPS-only.
+ * Plain HTTP is allowed only to a host on the local network. Everything else
+ * stays HTTPS-only.
  *
  * Android's network security config can't list IP ranges, so the manifest
  * permits cleartext and every HTTP client in the app checks its own URL here
@@ -96,23 +85,6 @@ object HubAddress {
     }
 
     /**
-     * The origin of a Rook server the user typed (no trailing slash). HTTPS, or
-     * http:// to a local-network host; no userinfo, path, query or fragment.
-     */
-    fun serverOrigin(server: String): String {
-        val text = server.trim()
-        val uri = try { URI(text) } catch (_: Exception) { null }
-        val scheme = uri?.scheme?.lowercase()
-        val shapeOk = uri != null && !uri.host.isNullOrBlank() && uri.userInfo == null &&
-            uri.query == null && uri.fragment == null && (uri.path.isNullOrEmpty() || uri.path == "/")
-        require(shapeOk && (scheme == "https" || scheme == "http")) { "Enter the address of your Rook server, like https://rook.example.com." }
-        require(scheme == "https" || isLocalHost(uri!!.host) && text.toHttpUrlOrNull() != null && cleartextAllowed(text)) {
-            "Use https:// for this server. Plain http:// works only for a server on your local network."
-        }
-        return text.trimEnd('/')
-    }
-
-    /**
      * False when [url] is cleartext (http:// or ws://) to a host off the local
      * network. Parsed the way OkHttp dials it, so the check sees the host the
      * request really goes to; a URL OkHttp can't parse is left for it to reject.
@@ -127,12 +99,4 @@ object HubAddress {
         val parsed = mapped.toHttpUrlOrNull() ?: return true
         return parsed.scheme == "https" || isLocalHost(parsed.host)
     }
-
-    /**
-     * Whether a band from the Rook server (pairing code or Google sign-in) is
-     * dialed over the hub's WebSocket bridge. The server's band "hub" is the
-     * address of its /band bridge (the desktop installer joins it with --ws),
-     * whatever the port, so yes unless the server says "transport": "udp".
-     */
-    fun bandUsesWebSocket(band: JSONObject): Boolean = band.optString("transport", "ws") != "udp"
 }

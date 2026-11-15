@@ -21,7 +21,7 @@ the bot into `telegram.message` events the house agent and jobs can act on.
 |---|---|---|
 | `telegram.send {to, text, title?}` | a direct message from the bot to a linked person (what notify uses) | - |
 | `telegram.post {chat, text, reply_to?}` | a message to any chat or group the bot is in, which can reach people outside the band | `sends_as` (a hard stop: the person approves) |
-| `telegram.link` | a one-time code to link your account | `persists` |
+| `telegram.link` | a one-time code to link your account | - |
 | `telegram.unlink {to?}` | forget a link (yours; owners: anyone's) | - |
 | `telegram.status {to?}` | connected, bot name, last error, whether a person is linked | - |
 
@@ -30,8 +30,8 @@ the bot into `telegram.message` events the house agent and jobs can act on.
 Every message to the bot (or in a group it is in, when its privacy mode lets
 it see them) becomes a `telegram.message` event: `text`, `chat` (answer with
 `telegram.post`), `private`, `from`, `from_id`, `message` and, when the sender
-linked their account, `person`. The event is marked `taints`: a session that
-receives it is tainted, since the text comes from outside. `/link` messages are
+linked their account, `person`. The event is marked `taints` (outside
+content): on a page, one that names nobody shows to owners only. `/link` messages are
 handled by the plugin and are not events.
 
 A linked person's direct message is also answered: the agents package hands

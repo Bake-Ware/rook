@@ -67,8 +67,6 @@ def make_hub(root: Path, library: bool = True) -> Path:
     sqlite3.connect(data / "plugins" / "agents" / "agents.db").execute("CREATE TABLE a (x)").connection.close()
     (data / "plugins" / "agents" / "notes.json").write_text('{"n": 1}')
     (data / "tokens.json").write_text("{}")
-    (data / "assets").mkdir()
-    (data / "assets" / "big.bin").write_bytes(b"cache" * 100)
     (data / "workers.json.tmp").write_text("half written")
     if library:
         lib = root / "library"
@@ -165,8 +163,8 @@ def test_full_round_trip_restores_a_working_hub(tmp_path):
     summary = bk.restore(usb / name, recovery_key(old), new)
     assert summary["hub"] == bk.hub_id_of(new.parent / "data") == bk.hub_id_of(old)
     restored, original = tree(new.parent / "data"), tree(old)
-    # every file came back; the cache, temp files and work folder didn't
-    assert set(restored) == set(original) - {"assets/big.bin", "workers.json.tmp"}
+    # every file came back; temp files and the work folder didn't
+    assert set(restored) == set(original) - {"workers.json.tmp"}
     for name_ in ("keys/root.key", "keys/recovery.key", "plugins/agents/notes.json", "tokens.json"):
         assert restored[name_] == original[name_]
     # databases are whole copies, the WAL folded in

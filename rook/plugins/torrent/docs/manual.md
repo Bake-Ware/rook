@@ -1,14 +1,16 @@
 # Torrents (Deluge)
 
 Drives a Deluge daemon through `deluge-console`, which must be installed on
-the worker. The plugin doesn't bundle or start Deluge; the daemon has to be
+the worker. The plugin runs on the hub and runs `deluge-console` on the worker
+through `shell.exec` (Linux and Windows workers; one without it answers
+`not found: deluge-console`). The plugin doesn't bundle or start Deluge; the daemon has to be
 running for every cap but `torrent.version`, and a cap fails with Deluge's
 own message (`Could not connect to daemon ...`, `Password does not match`)
 when it can't reach it.
 
 | Cap | What it does |
 |---|---|
-| `torrent.version` | deluge-console and libtorrent versions; needs no daemon (the post-install check). |
+| `torrent.version` | deluge-console and libtorrent versions; needs no daemon. |
 | `torrent.status` | Session summary: rates, DHT nodes, torrents per state. |
 | `torrent.list` | Every torrent: state letter, progress, name, 40-hex id. |
 | `torrent.get` | One torrent in detail (save path, files). Pull the files with `file.read`. |
@@ -30,4 +32,4 @@ an option. Use the hash for a torrent whose name has spaces.
 
 ## Settings
 
-- `console` (worker): the deluge-console program, default `deluge-console` on PATH.
+- `console` (hub, the same for every worker): the deluge-console program, default `deluge-console` on PATH.

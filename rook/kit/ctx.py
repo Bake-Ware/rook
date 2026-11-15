@@ -23,11 +23,13 @@ fakes and the kit never imports the hub.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextvars
 import fnmatch
 import functools
 import inspect
 import logging
+import mimetypes
 import shutil
 import sys
 import tempfile
@@ -40,7 +42,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from rook.streams import Producer, StreamError, cap_stream
 
-__all__ = ["Caller", "Ctx", "FileResult", "KitError", "allowed", "invoke", "load_run"]
+__all__ = ["Caller", "Ctx", "FileResult", "KitError", "allowed", "file_result", "invoke", "load_run"]
 
 
 class KitError(Exception):
@@ -56,9 +58,7 @@ class KitError(Exception):
 @dataclass(frozen=True)
 class Caller:
     """Who a call runs for. ``plugin`` is set when a plugin acts on its own
-    (hooks, ``ctx.call``); ``owner`` lets records show private rows.
-    ``tainted``: it acts on outside content (an event with ``taints``), so
-    the hub runs its calls in a tainted session (spec 8.4)."""
+    (hooks, ``ctx.call``); ``owner`` lets records show private rows."""
 
     person: str | None = None
     agent: str | None = None
@@ -67,7 +67,6 @@ class Caller:
     why: str = ""
     owner: bool = False
     plugin: str | None = None
-    tainted: bool = False
 
     @property
     def actor(self) -> str:
@@ -83,6 +82,14 @@ class FileResult:
     data: bytes | None = None
     name: str | None = None
     mime: str | None = None
+
+
+def file_result(data: bytes, name: str | None = None, mime: str | None = None) -> dict:
+    """A returned file as a cap's result: {name, mime, bytes, data (base64)}."""
+    if not mime and name:
+        mime = mimetypes.guess_type(name)[0]
+    return {"name": name or "output", "mime": mime or "application/octet-stream",
+            "bytes": len(data), "data": base64.b64encode(data).decode("ascii")}
 
 
 def allowed(plugin: str, uses: Iterable[str], cap: str) -> bool:
@@ -178,6 +185,9 @@ class Ctx:
         self._streams = streams
         self._loop = loop
         self._tmp: Path | None = None
+        # The worker and appliance instance a hub-run ``on: worker`` cap was called on.
+        self.worker: dict | None = None
+        self.appliance: dict | None = None
         self.log = logging.getLogger(f"rook.plugin.{self.plugin}")
 
     person = property(lambda self: self.caller.person)
@@ -205,7 +215,7 @@ class Ctx:
     @property
     def security_off(self) -> bool:
         """Hub only: the hub has security off (its ``hub.security`` setting), so
-        nothing waits on a person, e.g. no owner sign-off on a sacred project."""
+        nothing waits on a person."""
         check = getattr(self._people, "security_off", None)
         return bool(check and check())
 
@@ -236,17 +246,18 @@ class Ctx:
         self._people.run_agent(self.plugin, name, None if grants is None else list(grants))
 
     def turn_token(self, agent: str, seconds: float) -> str:
-        """Hub only: a door token for one turn of ``agent`` (one this plugin
-        runs), acting for this call's person, or alone when it has none;
-        tainted when this call is. It dies after ``seconds``; end it sooner
-        with :meth:`end_turn_token`."""
+        """Hub only: the NAME of a door token for one turn of ``agent`` (one
+        this plugin runs), acting for this call's person, or alone when it
+        has none. Pass ``"{{secret:<name>}}"`` in a call to a worker and the
+        hub puts the token there; the plugin never holds it. It dies after
+        ``seconds``; end it sooner with :meth:`end_turn_token`."""
         if self._people is None or not hasattr(self._people, "turn_token"):
             raise KitError("no turn tokens here: the hub mints them")
-        return self._people.turn_token(self.plugin, self.caller.person, agent, seconds, self.caller.tainted)
+        return self._people.turn_token(self.plugin, self.caller.person, agent, seconds)
 
-    def end_turn_token(self, token: str) -> None:
+    def end_turn_token(self, name: str) -> None:
         if self._people is not None and hasattr(self._people, "end_turn_token"):
-            self._people.end_turn_token(token)
+            self._people.end_turn_token(name)
 
     # -- calls ----------------------------------------------------------------
 
@@ -267,7 +278,7 @@ class Ctx:
         """Call a cap as ``caller`` rather than this call's caller, on
         ``target`` (a worker; None: wherever the host finds it). For hub
         plugins that act for someone else: a job runs as its creator, its
-        persona or the plugin that ships it; an agent as itself (spec 8.1,
+        persona or the plugin that ships it; an agent as itself (spec 6.2,
         10.1). Still held to this plugin's ``uses``; dispatch checks
         ``caller``'s own rights. ``provider``: ``cap`` is a contract and the
         call goes to this one of its providers (a cap), not the hub's choice

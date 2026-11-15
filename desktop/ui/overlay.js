@@ -22,12 +22,10 @@ function show(phase, text, question) {
 }
 
 async function askTyped(text) {
-  $('#open-chat').hidden = true;
   show('thinking', '', text);
   try {
     const a = await invoke('ask', { question: text });
     show('answer', a.text || '(No answer.)', text);
-    $('#open-chat').hidden = a.via !== 'chat';
     q.value = '';
   } catch (e) {
     show('error', String(e), text);
@@ -40,7 +38,6 @@ $('#f').addEventListener('submit', e => {
   if (text && !busy) askTyped(text);
 });
 $('#mic').addEventListener('click', () => invoke('ptt_toggle').catch(e => show('error', String(e))));
-$('#open-chat').addEventListener('click', () => invoke('open_dashboard_cmd', { path: '/#chat' }));
 $('#settings').addEventListener('click', () => invoke('open_settings', { section: 'ask' }));
 $('#panel').addEventListener('click', () => { invoke('overlay_hide'); invoke('show_window', { name: 'panel' }); });
 $('#ask-page').addEventListener('click', () => invoke('ask_on_page_cmd').catch(e => show('error', String(e))));
@@ -59,7 +56,6 @@ window.addEventListener('focus', () => { hadFocus = true; });
 window.addEventListener('blur', () => { if (hadFocus && !busy) invoke('overlay_hide'); });
 
 listen('overlay-state', p => {
-  if (p.phase === 'answer' || p.phase === 'error') $('#open-chat').hidden = true;
   show(p.phase, p.text, p.question);
 });
 listen('overlay-show', () => { q.focus(); q.select(); });

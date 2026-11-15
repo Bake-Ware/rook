@@ -5,7 +5,7 @@ A stream is an append-only log of typed events. Five event types:
 * ``bytes``: raw output (a PTY, a process). The body is ``bytes``.
 * ``text``: a chat message. Body ``{"text": str, ...}``.
 * ``turn``: one step of an agent session. Body ``{"role": prompt|reply|tool, ...}``.
-* ``status``: lifecycle and state (started, exited, closed, a huddle status).
+* ``status``: lifecycle and state (started, exited, closed, a plugin's own state).
   Body: any JSON object.
 * ``input``: something sent *to* the producer: keystrokes or a message
   (``{"text": str}``), a signal (``{"signal": "INT"}``) or a terminal size
@@ -67,7 +67,7 @@ class StreamSpec:
 
 # The decided defaults per kind (castling-streams, "Durability"): rooms,
 # huddles and agent sessions keep everything; terminals and processes keep a
-# bounded buffer. voice and inbox follow sessions and rooms. Any other kind is
+# bounded buffer. voice follows sessions and rooms. Any other kind is
 # allowed but must say what it carries.
 KINDS: dict[str, StreamSpec] = {
     "terminal": StreamSpec(("bytes",), input=True, durable=False),
@@ -76,7 +76,6 @@ KINDS: dict[str, StreamSpec] = {
     "huddle": StreamSpec(("text",), durable=True),
     "session": StreamSpec(("turn", "text"), input=True, durable=True),
     "voice": StreamSpec(("turn",), input=True, durable=True),
-    "inbox": StreamSpec(("text",), durable=True),
 }
 
 
@@ -163,7 +162,7 @@ class Meta:
     spec: StreamSpec
     title: str = ""
     host: str = ""                    # who owns the producer/log: a worker name, or "hub"
-    producer: str = ""                # what writes output: pty, process, claude, codex, voice, ...
+    producer: str = ""                # what writes output: pty, process, an agent harness, voice, ...
     participants: list[str] = field(default_factory=list)
     attrs: dict = field(default_factory=dict)       # kind-specific: cwd, pid, exit_code, ...
     created: float = 0.0

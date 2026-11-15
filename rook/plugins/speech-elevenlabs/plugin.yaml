@@ -10,6 +10,7 @@ version: 0.5.1
 title: ElevenLabs voices
 doc: Spoken replies in ElevenLabs voices, with an API key.
 package: agents
+segment: Agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook

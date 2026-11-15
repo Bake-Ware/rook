@@ -24,7 +24,7 @@ caps:
     doc: "Open an app by its package (com.android.settings) or its launcher name (Maps). An unclear name: an error listing the candidates. screen returns the screen once the app is up."
     risk: write
     scope: local
-    effects: [taints]
+    effects: []
     timeout: 20s
     args:
       app: { type: str, required: true, min: 1, max: 200 }
@@ -35,7 +35,7 @@ caps:
     doc: "Open a link or URI in the app that takes it: https:, tel: (the dialer, no call), mailto: and smsto: (drafts, nothing sent), geo:, market:, an app's deep link. screen returns the screen once it is up."
     risk: write
     scope: local
-    effects: [taints]
+    effects: []
     timeout: 20s
     args:
       url: { type: str, required: true, min: 1, max: 4000 }

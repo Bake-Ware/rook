@@ -9,6 +9,7 @@ version: 0.5.0
 title: Tokens
 doc: Door tokens for agents (MCP, HTTP), acting for a person.
 package: core
+segment: Hub
 builtin: true
 runs_on: hub
 license: Apache-2.0
@@ -20,7 +21,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       agent: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "The agent's name, e.g. claude-web." }
       label: { type: str, doc: "What it's for (shown on the Tokens page)." }
@@ -37,22 +38,12 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       id: { type: str, required: true, pattern: "^[0-9a-f]{12}$" }
     result: { type: map }
 
-  approve:
-    doc: "Approve the code a connector's sign-in page shows (claude.ai adding Rook): it goes through as you, an owner. Codes last 10 minutes and work once; journaled."
-    on: hub
-    risk: admin
-    scope: multi-user
-    effects: [persists]
-    args:
-      code: { type: str, required: true, pattern: "^[A-Za-z0-9-]{8,9}$", doc: "As shown, e.g. BCDF-2345." }
-    result: { type: map }
-
 pages:
-  tokens: { title: Tokens, file: pages/tokens.html, caps: ["token.*"], nav: { section: Hub } }
+  tokens: { title: Tokens, file: pages/tokens.html, caps: ["token.*"] }
 
 docs: { manual: docs/manual.md }

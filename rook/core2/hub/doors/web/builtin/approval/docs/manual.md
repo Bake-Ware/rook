@@ -2,8 +2,8 @@
 
 Calls the hub held for a person's answer, and the answer. A call is held
 when it hits a hard stop (erasing data for good, revealing a secret,
-sending as someone, spending money, a change on a sacred machine), when a
-child uses a cap for the first time, or when a security gate flags it.
+sending as someone, a change on a sacred machine), when a
+child uses a cap for the first time.
 
 | Cap | What it does |
 |---|---|
@@ -14,22 +14,17 @@ child uses a cap for the first time, or when a security gate flags it.
 
 Only a person answers. An agent acting for a person answers as the agent,
 so it can never release a hard stop. A hard stop is answered only where
-the person is there: this page (the site answers it for them, not through
-the cap) or `POST /holds/<hold>` with their own token. The
+the person is there: `POST /holds/<hold>` with their own token. The
 `approval.decide` cap never answers one, so a job or hub plugin acting as
 the person can't. Holds don't expire.
-
-The **Approvals** page (in the sidebar) lists them with Approve and Refuse
-buttons and updates as holds come and go. The `approval/holds` component
-("Waiting for you") puts the same list on any page.
 
 ## Questions
 
 Any agent, an external one over MCP too, asks the person through the same
-path: `approval.ask {question, options?, wait?}`. The question waits on the
-Approvals page beside the held calls (`q_...` ids), and with the agents
-package the house agent hears about it (`approval.asked`) and gets it to the
-person the way that fits, then gives their answer back. Nothing runs on an
+path: `approval.ask {question, options?, wait?}`. The question waits beside
+the held calls in `approval.list` (`q_...` ids), and the event
+`approval.asked` lets a plugin get it to the person the way that fits and
+give their answer back. Nothing runs on an
 answer: it goes to the asker, at once if it is still waiting, else
 `approval.get {hold}`. A question is asked of the person the asker acts
 for (an agent acting for them may relay their words, and is recorded as

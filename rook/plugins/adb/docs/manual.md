@@ -8,7 +8,9 @@ still makes a headless playground.
 Each device is an **appliance**: it runs no Rook worker. Plug it into a worker
 that has `adb` (Android platform-tools), run `adb.scan` there to see its
 serial, and onboard it with that serial; the worker it is plugged into is its
-delegate. Name the device in the call; the caps don't take a serial.
+delegate. Name the device in the call; the caps don't take a serial. The
+plugin runs on the hub: the delegate only runs `adb` through `shell.exec`, so
+nothing is installed on it.
 
 Rook never authorizes itself: a device that hasn't allowed USB debugging from
 that computer answers "has not allowed USB debugging"; a person taps **Allow**
@@ -19,9 +21,9 @@ just to charge stays off the band. Nothing here runs `adb root`, `tcpip`,
 | Cap | What it does |
 |---|---|
 | `adb.scan` | Every device adb sees on this worker: serial, state (`device`, `unauthorized`, `offline`), model. On the worker, not a device. |
-| `adb.shell.exec` | Runs a command on the device as Android's `shell` user: `argv` (quoted for you) or `cmd` (a line for the device's `sh`), with `stdin`, `cwd`, `env` and `timeout` (seconds, up to 600). Returns `{code, stdout, stderr}`. Output past 1 MiB stops the command (`truncated`). The shell user can change settings, uninstall apps for the user and read or delete shared storage (photos, downloads). |
+| `adb.shell.exec` | Runs a command on the device as Android's `shell` user: `argv` (quoted for you) or `cmd` (a line for the device's `sh`), with `stdin`, `cwd`, `env` and `timeout` (seconds, up to 600). Returns `{code, stdout, stderr}`. Output past 1 MiB per stream is cut (`truncated`). The shell user can change settings, uninstall apps for the user and read or delete shared storage (photos, downloads). |
 | `adb.battery.status` | Percent, charging, what it is plugged into, status, temperature. |
-| `adb.screen.capture` | The screen, even with a dead display: a JPEG when ImageMagick is on the worker, else a PNG. Its pixels are `hid.click`'s `x`/`y`. |
+| `adb.screen.capture` | The screen, even with a dead display: a JPEG. Its pixels are `hid.click`'s `x`/`y`. |
 | `adb.ui.screen` | The text on screen top to bottom, each with the centre to tap, and the app in front. `limit` keeps the first few. |
 | `adb.hid.type` | Types ASCII text into whatever has focus (a newline presses Enter; `enter=true` presses it after). Other text: `adb.shell.exec`. |
 | `adb.hid.key` | One key with modifiers held: `key=home`, `key=a, mods=[ctrl]`, or any `KEYCODE_*` name. |

@@ -17,8 +17,9 @@ from nacl.signing import SigningKey  # noqa: E402
 
 from rook.core2 import CORE_VERSION, wire  # noqa: E402
 from rook.core2.transport import (FEATURES, LoopbackRelay, TelestheteLink, Transport,  # noqa: E402
-                                  TransportError, band_of, from_config)
+                                  TransportError, band_door, band_of, from_config)
 from rook.core2.transport import conn as conn_mod  # noqa: E402
+from test_core2_minimal_worker import Relay  # noqa: E402
 
 PSK, PSK2 = "test-band-psk-one", "test-band-psk-two"
 BAND, BAND2 = band_of(PSK), band_of(PSK2)
@@ -117,12 +118,12 @@ def test_every_message_kind_round_trips_on_loopback():
     async def main():
         relay, hub, worker = await pair(beat=lambda b: heartbeat(), every=0.05)
 
-        # announces both ways (5.3, 5.4); the signed hub announce still verifies
+        # announces both ways (4.2, 10.3); the signed hub announce still verifies
         got = hub.kinds("announce")[0]
         assert got == worker_announce()
         assert worker.t.peers(BAND)[HUB].name == "rook"
         assert wire.verify_sig(wire.pub_text(OP), worker.kinds("announce")[0])
-        # heartbeats (5.5)
+        # heartbeats (4.3)
         await until(lambda: len(hub.kinds("heartbeat")) >= 2)
         assert hub.kinds("heartbeat")[0] == heartbeat()
 
@@ -136,7 +137,7 @@ def test_every_message_kind_round_trips_on_loopback():
             return {"id": msg["id"], "from": WORKER, "ok": False, "error": f"unknown capability: {msg['cap']}"}
         worker.serve = serve
 
-        # a call with its ticket, and its result (6.1, 6.2, 6.4)
+        # a call with its ticket, and its result (5.1, 10.1, 5.2)
         call = request("shell.exec", {"argv": ["uptime"]})
         await hub.t.send(BAND, call)
         await until(lambda: hub.reply(call["id"]))
@@ -163,7 +164,7 @@ def test_every_message_kind_round_trips_on_loopback():
         pushed = next(m for _, m in worker.got if m.get("id") == push["id"])
         assert wire.verify_sig(wire.pub_text(OP), pushed["args"]["membership"])
 
-        # elevation: the worker asks the hub inside the call, the hub answers with a lease (7.2, 13)
+        # elevation: the worker asks the hub inside the call, the hub answers with a lease (10.9, 9)
         lease = wire.sign(OP, {"typ": "rook-lease", "v": 2, "id": "ee" * 16, "hub": "ab" * 8, "band": BAND,
                                "worker": WORKER, "agent": "agent:test", "session": "s_1",
                                "iat": NOW, "exp": NOW + 900})
@@ -209,7 +210,7 @@ def test_requests_are_addressed_and_replies_go_to_rr():
 
 
 def wire_route(name):
-    from rook.worker.wire.codec import route_id_for
+    from rook.core2.transport.codec import route_id_for
     return route_id_for(name)
 
 
@@ -251,7 +252,7 @@ def test_requests_to_an_incompatible_peer_are_refused():
         with pytest.raises(TransportError, match="incompatible"):
             await hub.t.send(BAND, request("shell.exec", {}, target=OTHER))
         await hub.t.send(BAND, request("shell.exec", {}, target=WORKER))
-        # an unknown node is not refused (5.6: stored status is only a hint)
+        # an unknown node is not refused (4.3: stored status is only a hint)
         await hub.t.send(BAND, request("shell.exec", {}, target="dd" * 16))
         for n in (hub, old, newer):
             await n.t.close()
@@ -623,7 +624,7 @@ def test_a_pull_keeps_several_windows_in_flight_and_asks_again_for_gaps():
     missing below the frontier is asked again in one REQUEST."""
     from telesthete.protocol.framing import unpack_packet
     from rook.core2.transport.drop import WindowedPull
-    from rook.worker.ota_drop import OtaDropSender
+    from rook.core2.transport.drop import OtaDropSender
 
     async def main():
         band_id = bytes.fromhex(BAND)
@@ -679,29 +680,57 @@ def test_from_config_builds_one_link_per_band(monkeypatch):
         from_config({"node_id": WORKER, "bands": [{"psk": PSK, "relay": "a:1"}, {"psk": PSK, "relay": "b:1"}]})
 
 
+def test_band_door_is_the_hubs_own_address():
+    assert band_door("https://hub.example") == "wss://hub.example/band"
+    assert band_door("http://192.168.1.5:8750/") == "ws://192.168.1.5:8750/band"
+
+
+def test_a_worker_falls_back_to_its_hubs_address_unless_its_band_names_another(tmp_path):
+    """The home band's web socket: the enrollment address's /band, or the
+    band's own ws_url in <data>/bands.json when one is written there."""
+    from types import SimpleNamespace
+    from rook.core2.worker.runtime import Worker
+    me = SimpleNamespace(data=tmp_path, trust=SimpleNamespace(home=SimpleNamespace(band=BAND)))
+    (tmp_path / "enrollment.json").write_text(json.dumps({"url": "http://192.168.1.5:8750"}))
+    (tmp_path / "bands.json").write_text(json.dumps({BAND: {"psk": PSK, "relay": "r:1"}}))
+    assert Worker._joined(me, with_door=True)[BAND]["ws_url"] == "ws://192.168.1.5:8750/band"
+    assert "ws_url" not in Worker._joined(me)[BAND]
+    (tmp_path / "bands.json").write_text(json.dumps({BAND: {"psk": PSK, "relay": "r:1",
+                                                            "ws_url": "wss://rook.example/band"}}))
+    assert Worker._joined(me, with_door=True)[BAND]["ws_url"] == "wss://rook.example/band"
+
+
+def test_a_link_whose_udp_and_web_socket_both_fail_goes_back_to_its_caller(monkeypatch):
+    """UDP that hears nothing gives way to the web socket; a web socket that
+    never comes up raises, so the band's retry tries UDP first again."""
+    from rook.core2.transport import links
+    monkeypatch.setattr(links, "FALLBACK_SECS", 0.3)
+    monkeypatch.setattr(links, "WS_CONNECT_TIMEOUT", 0.5)
+
+    async def main():
+        hole = await asyncio.get_running_loop().create_datagram_endpoint(
+            asyncio.DatagramProtocol, local_addr=("127.0.0.1", 0))
+        port = hole[0].get_extra_info("socket").getsockname()[1]
+        link = TelestheteLink(PSK, relay=f"127.0.0.1:{port}", ws_url="ws://127.0.0.1:9/band")
+        joined = []
+
+        async def on_connect():
+            joined.append(link.ws)
+        try:
+            with pytest.raises(OSError, match="neither UDP"):
+                await link.start(lambda _p: asyncio.sleep(0), on_connect)
+            assert joined == [False] and link.ws and not link.connected
+        finally:
+            hole[0].close()
+    arun(main())
+
+
 # -- a real Telesthete round trip ------------------------------------------------------
-
-class _Relay(asyncio.DatagramProtocol):
-    """Minimal telesthitium: forward each datagram to the band's other peers."""
-
-    def __init__(self):
-        self.peers: dict[bytes, set] = {}
-
-    def connection_made(self, transport):
-        self.transport = transport
-
-    def datagram_received(self, data, addr):
-        band = data[:16]
-        self.peers.setdefault(band, set()).add(addr)
-        for peer in self.peers[band]:
-            if peer != addr:
-                self.transport.sendto(data, peer)
-
 
 def test_telesthete_round_trip_on_localhost():
     async def main():
         loop = asyncio.get_running_loop()
-        relay_t, _ = await loop.create_datagram_endpoint(_Relay, local_addr=("127.0.0.1", 0))
+        relay_t, _ = await loop.create_datagram_endpoint(Relay, local_addr=("127.0.0.1", 0))
         port = relay_t.get_extra_info("socket").getsockname()[1]
         relay = f"127.0.0.1:{port}"
         hub = Node(HUB, [TelestheteLink(PSK, relay=relay)], hello=lambda b: hub_announce(b))

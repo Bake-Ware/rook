@@ -3,55 +3,719 @@
 <head>
 <meta charset="utf-8">
 <title>Knowledge</title>
+<!-- The 0.4 Knowledge view (rook/web/knowledge.js + knowledge.css), on 0.5
+     caps (Bake, Nov 9: "Let's bring over the trust map and knowledge pages
+     too"). A folder tree of pages, search, review, a page with its
+     breadcrumbs, links both ways, sources and history; edit, new, move,
+     archive. Stored text is rendered as text nodes, never as HTML. -->
 <style>
-  #page { margin-top: 12px; }
-  #page .body { white-space: pre-wrap; }
-  a.wiki { color: var(--accent); cursor: pointer; }
+body{padding:16px 24px 40px}
+.kn-layout{display:grid;grid-template-columns:260px minmax(0,1fr);min-height:calc(100vh - 56px);border:1px solid var(--line);background:var(--overlay);position:relative}
+.kn-layout:before{content:'';position:absolute;top:-1px;left:-1px;width:5px;height:5px;border-top:1px solid var(--corner);border-left:1px solid var(--corner);pointer-events:none}
+.kn-side{border-right:1px solid var(--line);padding:16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.kn-side h3{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:14px 0 2px;font-weight:400}
+.kn-side input[type=search]{width:100%;padding:9px;background:var(--panel2);color:var(--fg);border:1px solid var(--line2)}
+.kn-index{display:flex;flex-direction:column;gap:2px}
+.kn-index-item{display:flex!important;flex-direction:column;align-items:flex-start;text-align:left;width:100%;padding:8px 10px!important;border:1px solid transparent!important;background:transparent!important;white-space:normal!important;color:var(--fg);font:13px var(--sans)!important;letter-spacing:0!important}
+.kn-index-item:hover{border-color:var(--line2)!important;background:var(--chip)!important}
+.kn-index-item small{color:var(--dim);font-size:11px;margin-top:2px}
+.kn-tree-row{display:flex;align-items:center;gap:2px;min-width:0}
+.kn-tree-row.kn-current .kn-tree-item{background:var(--chip)!important;border-color:var(--accent-dim)!important}
+.kn-tog{flex:0 0 20px;width:20px;height:26px;padding:0!important;border:none!important;background:none!important;color:var(--dim);cursor:pointer;font-size:11px}
+.kn-tree-item{flex:1;min-width:0;display:flex!important;align-items:center;justify-content:space-between;gap:8px;text-align:left;padding:5px 8px!important;border:1px solid transparent!important;background:transparent!important;color:var(--fg);white-space:nowrap!important;font:13px var(--sans)!important;letter-spacing:0!important}
+.kn-tree-item span{overflow:hidden;text-overflow:ellipsis;flex:1}
+.kn-tree-item small{color:var(--dim);font-size:10px;font-family:var(--mono)}
+.kn-tree-item:hover{border-color:var(--line2)!important;background:var(--chip)!important}
+.kn-tree-item.kn-old span{color:var(--dim);text-decoration:line-through}
+.kn-sections{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+.kn-sections .kn-card{margin:0}
+.kn-page{min-width:0;padding:22px 28px;overflow-wrap:anywhere}
+.kn-page h1{margin:4px 0 6px;font-size:24px;font-weight:450;letter-spacing:-.5px}
+.kn-page h2{font-size:15px;font-weight:500;margin:26px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.kn-meta{font-size:12px;color:var(--dim);display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 14px}
+.kn-dim{color:var(--dim)}
+.kn-warn{color:var(--warn)}
+.kn-error{color:var(--bad)}
+.kn-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.kn-linkish{background:none!important;border:none!important;color:var(--accent)!important;padding:0!important;cursor:pointer;text-decoration:underline;font:inherit!important;letter-spacing:0!important}
+.kn-badge{display:inline-block;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.05em;padding:2px 6px;border:1px solid var(--line2);background:var(--chip);color:var(--fg)}
+.kn-verified{border-color:var(--green);color:var(--green)}
+.kn-disputed{border-color:var(--bad);color:var(--bad)}
+.kn-archived{color:var(--dim)}
+.kn-md{font-size:14px;line-height:1.7;max-width:78ch}
+.kn-md p{margin:0 0 12px}
+.kn-md ul,.kn-md ol{margin:0 0 12px;padding-left:22px}
+.kn-md h3,.kn-md h4,.kn-md h5{margin:18px 0 8px;font-weight:500}
+.kn-md code{font-family:var(--mono);font-size:12px;background:var(--chip);padding:1px 4px}
+.kn-md pre{font-family:var(--mono);font-size:12px;background:var(--panel2);border:1px solid var(--line);padding:10px;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 12px}
+.kn-md a,.kn-list a{color:var(--accent);cursor:pointer}
+.kn-ref{text-decoration:underline dotted}
+.kn-list{padding-left:18px;line-height:1.8;margin:0}
+.kn-tags{display:flex;gap:6px;flex-wrap:wrap}
+.kn-card{display:flex!important;flex-direction:column;align-items:stretch;gap:4px;width:100%;text-align:left;margin:0 0 8px;padding:12px!important;border:1px solid var(--line)!important;background:var(--panel2)!important;white-space:normal!important;color:var(--fg);font:13px var(--sans)!important;letter-spacing:0!important}
+.kn-card:hover{border-color:var(--line2)!important}
+.kn-card-top{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.kn-card small{font-size:12px;color:var(--dim)}
+.kn-scroll{overflow-x:auto}
+.kn-table{width:100%;border-collapse:collapse;font-size:12px;background:none;border:0}
+.kn-table th,.kn-table td{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
+.kn-table th{color:var(--dim);font:500 10px var(--mono);letter-spacing:.06em;text-transform:uppercase}
+.kn-history{margin-top:24px;font-size:12px}
+.kn-history summary{cursor:pointer;color:var(--dim)}
+.kn-history pre{white-space:pre-wrap;font-size:11px;max-height:260px;overflow:auto}
+.kn-dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line2);width:min(680px,92vw);max-height:88vh;overflow:auto;padding:16px}
+.kn-dialog::backdrop{background:var(--backdrop)}
+.kn-dialog h2{font-size:17px;font-weight:500;margin:0 0 14px}
+.kn-fields{display:flex;flex-direction:column;gap:12px}
+.kn-fields label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--dim)}
+.kn-fields input,.kn-fields select,.kn-fields textarea{padding:9px;background:var(--panel2);color:var(--fg);border:1px solid var(--line2);font:inherit}
+.kn-fields textarea{min-height:180px;font-family:var(--mono);font-size:12px}
+.kn-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.kn-tools input[type=search]{flex:1 1 auto;min-width:0}
+.kn-side-body{display:flex;flex-direction:column;gap:8px;min-width:0}
+.kn-side-toggle{display:none}
+.kn-side-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.kn-side-head h3{margin-bottom:0}
+.kn-old-toggle{display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer}
+.kn-acts button,.kn-tools button,.kn-review button,.kn-reviewbar button,.kn-row button{font:11px var(--mono);letter-spacing:.03em;padding:7px 12px;min-height:34px;border:1px solid var(--line2);background:var(--panel2);color:var(--fg);cursor:pointer;border-radius:0;white-space:nowrap}
+.kn-acts button:hover,.kn-tools button:hover,.kn-review button:hover,.kn-reviewbar button:hover,.kn-row button:hover{border-color:var(--accent-dim);color:var(--accent)}
+.kn-acts .kn-primary,.kn-tools .kn-primary,.kn-row .kn-primary{background:var(--accent-bg-strong);color:var(--accent);border-color:var(--accent-dim)}
+.kn-add{width:36px;padding:0!important;font-size:18px!important;line-height:1}
+.kn-icon{width:34px;padding:0!important}
+.more-btn{min-width:34px;padding:0 8px!important;font-size:18px!important;line-height:1!important}
+.kn-titlerow{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.kn-titlerow h1{flex:1 1 260px;min-width:0}
+.kn-acts{display:flex;gap:6px;align-items:center;flex:0 0 auto;margin-top:6px}
+.kn-crumbs{display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;overflow:hidden;font-size:12px;color:var(--dim)}
+.kn-crumbs .kn-crumb{flex:0 1 auto;min-width:0;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap!important;text-decoration:none}
+.kn-crumbs button.kn-crumb{color:var(--accent)!important;flex-shrink:0;max-width:30%}
+.kn-crumbs .kn-here{color:var(--dim)}
+.kn-crumbs .kn-here:last-child{flex:1 1 auto;max-width:none}
+.kn-sep{color:var(--dim2);flex:0 0 auto}
+.copy-chip{display:inline-block;max-width:min(320px,60vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;padding:2px 7px;border:1px solid var(--line2);background:var(--panel2);font:10px var(--mono);color:var(--fg-soft);cursor:pointer}
+.copy-chip:hover{border-color:var(--accent);color:var(--accent)}
+.kn-excerpt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kn-dot{flex:0 0 7px;width:7px;height:7px;border-radius:50%;border:1px solid var(--line2);margin-right:2px}
+.kn-dot-verified{background:var(--green);border-color:var(--green)}
+.kn-dot-disputed{background:var(--bad);border-color:var(--bad)}
+.kn-grow{flex:1}
+.kn-review{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border:1px solid var(--line2);background:var(--panel2);padding:10px 12px;margin:0 0 16px;font-size:13px}
+.kn-review-verified{border-color:var(--green);color:var(--green)}
+.kn-review-disputed{border-color:var(--bad)}
+.kn-review-disputed strong{color:var(--bad)}
+.kn-review-unverified{border-style:dashed}
+.kn-ok{border-color:var(--green)!important;color:var(--green)!important}
+.kn-reviewbar{position:sticky;top:0;z-index:2;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border:1px solid var(--accent-dim);background:var(--panel);padding:10px 12px;margin:-6px 0 14px;font-size:13px}
+.kn-review-btn{margin-left:auto}
+.mg-menu{position:fixed;z-index:120;min-width:190px;padding:6px;background:var(--panel);border:1px solid var(--line2);box-shadow:0 12px 40px var(--shadow)}
+.mg-menu button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--fg);font:12px var(--sans);letter-spacing:0;padding:10px 12px;cursor:pointer}
+.mg-menu button:hover,.mg-menu button:focus{background:var(--accent-bg);color:var(--accent)}
+.mg-menu .danger{color:var(--bad)}
+@media(min-width:801px){.kn-tools input[type=search]{flex-basis:100%}.kn-tools .kn-review-btn{margin-left:0;flex:1}}
+@media(max-width:800px){
+  body{padding:8px}
+  .kn-layout{grid-template-columns:1fr;min-height:0}
+  .kn-side{border-right:0;border-bottom:1px solid var(--line);padding:10px 12px;gap:8px}
+  .kn-side-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:44px;padding:0 4px!important;background:none!important;border:0!important;color:var(--fg);font:500 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+  .kn-side-toggle:after{content:'\25b8';color:var(--dim);transition:transform .15s}
+  .kn-side.kn-open .kn-side-toggle:after{transform:rotate(90deg)}
+  .kn-tools{flex-wrap:nowrap}
+  .kn-excerpt{display:none}
+  .kn-side-body{display:none}
+  .kn-side.kn-open .kn-side-body{display:flex;max-height:60vh;overflow:auto}
+  .kn-tools button,.kn-acts button,.kn-review button,.kn-reviewbar button,.kn-row button{min-height:44px}
+  .kn-add,.kn-icon,.more-btn{min-width:44px}
+  .kn-tree-item,.kn-index-item{min-height:44px}
+  .kn-tog{flex-basis:28px;width:28px;min-height:44px}
+  .kn-page{padding:14px 12px}
+  .kn-page h1{font-size:21px}
+  .kn-acts{margin-top:0}
+  .kn-reviewbar{margin:-4px -4px 12px}
+  .kn-dialog .kn-row{position:sticky;bottom:-16px;background:var(--panel);padding:10px 0;margin-bottom:0;justify-content:flex-end}
+}
 </style>
 </head>
 <body>
-<form id="find" class="row"><input id="q" class="grow" placeholder="Search the wiki"><button>Search</button></form>
-<div id="list" class="scroll" style="margin-top:10px"></div>
-<div id="page" class="card" hidden></div>
+<div id="root"></div>
 <script>
 "use strict";
-const $ = (id) => document.getElementById(id);
+// ---- small helpers (0.4 manage.js: el, ago, more, copyChip) ----------------------------
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined && text !== null) e.textContent = String(text);
+  if (cls) e.className = cls;
+  return e;
+}
+const date = (t) => t ? new Date(t * 1000).toLocaleString() : "";
+const ago = (t) => t ? rook.ago(t) : "";
+const KINDS = ["observation", "fact", "decision", "procedure", "question", "summary", "skill"];
 
-function rows(pages) {
-  $("list").innerHTML = pages.length ? "<table>" + pages.map((p) =>
-    `<tr class="click" data-slug="${rook.esc(p.slug)}"><td>${rook.esc(p.title)}</td><td class="muted">${rook.esc(p.kind || "")}</td>
-     <td class="muted">${rook.ago(p.updated)}</td></tr>`).join("") + "</table>" : '<p class="muted">Nothing found.</p>';
+function btn(label, fn, cls) {
+  const b = el("button", label, cls);
+  b.type = "button";
+  b.onclick = (e) => { e.preventDefault(); Promise.resolve().then(fn).catch((err) => say(err)); };
+  return b;
 }
 
-function wiki(text) {
-  return rook.esc(text).replace(/\[\[([a-z0-9-]+)\]\]/g, '<a class="wiki" data-slug="$1">$1</a>');
+let closeMenu = null;
+function menu(anchor, items) {
+  if (closeMenu) closeMenu();
+  const box = el("div", null, "mg-menu");
+  box.setAttribute("role", "menu");
+  for (const i of items.filter(Boolean)) {
+    const b = el("button", i.label, i.danger ? "danger" : "");
+    b.type = "button";
+    b.setAttribute("role", "menuitem");
+    b.onclick = () => { close(); Promise.resolve().then(i.run).catch((err) => say(err)); };
+    box.append(b);
+  }
+  function close() {
+    box.remove();
+    closeMenu = null;
+    document.removeEventListener("pointerdown", away, true);
+    document.removeEventListener("keydown", key, true);
+  }
+  function away(e) { if (!box.contains(e.target)) close(); }
+  function key(e) { if (e.key === "Escape") { close(); anchor.focus(); } }
+  document.body.append(box);
+  closeMenu = close;
+  const r = anchor.getBoundingClientRect(), w = box.offsetWidth, hh = box.offsetHeight;
+  box.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + "px";
+  box.style.top = (r.bottom + hh + 8 > innerHeight ? Math.max(8, r.top - hh - 4) : r.bottom + 4) + "px";
+  setTimeout(() => { document.addEventListener("pointerdown", away, true); document.addEventListener("keydown", key, true); });
+  (box.querySelector("button") || box).focus();
+}
+function more(items, label) {
+  const b = el("button", "⋯", "more-btn");
+  b.type = "button";
+  b.title = label;
+  b.setAttribute("aria-label", label);
+  b.setAttribute("aria-haspopup", "menu");
+  b.onclick = (e) => { e.stopPropagation(); menu(b, typeof items === "function" ? items() : items); };
+  return b;
+}
+// A sandboxed page may not get the clipboard API: fall back to a selected text area.
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall back */ }
+  const t = el("textarea");
+  t.value = text;
+  t.style.cssText = "position:fixed;left:-9999px;top:0";
+  document.body.append(t);
+  t.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  t.remove();
+  return ok;
+}
+function copyChip(value) {
+  const c = el("span", value, "copy-chip");
+  c.title = value + " (tap to copy)";
+  c.tabIndex = 0;
+  c.setAttribute("role", "button");
+  c.setAttribute("aria-label", "Copy " + value);
+  c.onclick = async () => { const ok = await copyText(value); c.textContent = ok ? "Copied" : value; setTimeout(() => { c.textContent = value; }, 1200); };
+  return c;
+}
+function badge(text, kind) { return el("span", text, "kn-badge kn-" + String(kind || text).replace(/[^a-z_]/g, "")); }
+
+// Minimal, safe markdown: #/##/### headings, - and 1. lists, ``` code blocks, `code`,
+// **bold**, [[slug]] and http(s) links.
+function renderBody(text, onRef) {
+  const out = el("div", undefined, "kn-md");
+  let list = null, para = [], code = null;
+  const inline = (s, into) => {
+    for (const part of s.split(/(\[\[[a-z0-9][a-z0-9-]{0,79}\]\]|`[^`]+`|\*\*[^*]+\*\*|https?:\/\/[^\s)<>"]+)/)) {
+      if (!part) continue;
+      let m;
+      if ((m = part.match(/^\[\[(.+)\]\]$/))) {
+        const a = el("a", m[1], "kn-ref");
+        a.href = "#";
+        a.onclick = (e) => { e.preventDefault(); onRef(m[1]); };
+        into.append(a);
+      } else if (part.startsWith("`") && part.endsWith("`") && part.length > 1) into.append(el("code", part.slice(1, -1)));
+      else if (/^\*\*[^*]+\*\*$/.test(part)) into.append(el("strong", part.slice(2, -2)));
+      else if (/^https?:\/\//.test(part)) into.append(el("span", part, "kn-dim"));   // a page has no network: shown, not opened
+      else into.append(document.createTextNode(part));
+    }
+  };
+  const flush = () => { if (para.length) { const p = el("p"); inline(para.join(" "), p); out.append(p); para = []; } };
+  for (const line of (text || "").split("\n")) {
+    if (code !== null) { if (line.startsWith("```")) { out.append(el("pre", code.join("\n"))); code = null; } else code.push(line); continue; }
+    if (line.startsWith("```")) { flush(); list = null; code = []; continue; }
+    const h = line.match(/^(#{1,3})\s+(.*)$/);
+    if (h) { flush(); list = null; const e = el("h" + (h[1].length + 2)); inline(h[2], e); out.append(e); continue; }
+    const li = line.match(/^\s*[-*]\s+(.*)$/) || line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (li) {
+      flush();
+      const tag = /^\s*\d/.test(line) ? "OL" : "UL";
+      if (!list || list.tagName !== tag) { list = el(tag.toLowerCase()); out.append(list); }
+      const e = el("li"); inline(li[1], e); list.append(e);
+      continue;
+    }
+    if (list && /^\s{2,}\S/.test(line)) { inline(" " + line.trim(), list.lastChild); continue; }
+    if (!line.trim()) { flush(); list = null; continue; }
+    list = null;
+    para.push(line.trim());
+  }
+  if (code !== null) out.append(el("pre", code.join("\n")));
+  flush();
+  if (!out.childNodes.length) out.append(el("p", "(empty)", "kn-dim"));
+  return out;
 }
 
-async function show(slug) {
-  const p = await rook.call("knowledge.get", { id: slug });
-  const box = $("page");
-  const stubs = (title, xs) => xs && xs.length ? `<h3>${title}</h3><p>${xs.map((x) =>
-    `<a class="wiki" data-slug="${rook.esc(x.slug)}">${rook.esc(x.title)}</a>`).join(", ")}</p>` : "";
-  box.innerHTML = `<h2>${rook.esc(p.title)}</h2><p class="muted">${rook.esc(p.kind)} · ${rook.ago(p.updated)}</p>
-    <div class="body">${wiki(p.body || "")}</div>
-    ${(p.sources || []).length ? "<h3>Sources</h3><ul>" + p.sources.map((s) =>
-      `<li>[^${rook.esc(s.key || "")}] ${rook.esc(s.kind)} ${rook.esc(s.ref || "")} <span class="muted">${rook.esc(s.by || "")}</span></li>`).join("") + "</ul>" : ""}
-    ${stubs("Links to", p.links_out)}${stubs("Linked from", p.backlinks)}${stubs("Pages under it", p.children)}`;
-  box.hidden = false;
-  box.scrollIntoView();
+function crumbsNav(parts) {
+  const n = el("nav", undefined, "kn-crumbs");
+  n.setAttribute("aria-label", "Breadcrumbs");
+  parts.forEach((x, i) => {
+    if (i) n.append(el("span", "/", "kn-sep"));
+    if (Array.isArray(x)) { const b = btn(x[0], x[1], "kn-linkish kn-crumb"); b.title = x[0]; n.append(b); }
+    else { const t = el("span", x, "kn-crumb kn-here"); t.title = x; n.append(t); }
+  });
+  return n;
+}
+function foldSide(side, label, body) {
+  const tog = el("button", label, "kn-side-toggle");
+  tog.type = "button";
+  tog.setAttribute("aria-expanded", "false");
+  tog.onclick = () => { const o = side.classList.toggle("kn-open"); tog.setAttribute("aria-expanded", String(o)); };
+  const box = el("div", undefined, "kn-side-body");
+  box.append(...body);
+  side.append(tog, box);
+  return { tog, box, close() { side.classList.remove("kn-open"); tog.setAttribute("aria-expanded", "false"); } };
 }
 
-document.body.onclick = (e) => {
-  const a = e.target.closest("[data-slug]");
-  if (a) show(a.dataset.slug).catch((x) => { $("page").innerHTML = `<p class="bad">${rook.esc(x.message)}</p>`; $("page").hidden = false; });
+// Sources: who said it, where it came from and when ([^key] in the body cites one).
+function sourcesTable(sources) {
+  const t = el("table", undefined, "kn-table");
+  const h = el("tr");
+  for (const c of ["When", "Key", "Kind", "Reference", "By"]) h.append(el("th", c));
+  t.append(h);
+  for (const s of sources.slice().reverse()) {
+    const tr = el("tr");
+    const refText = [s.ref, s.quote ? "“" + s.quote + "”" : "", s.note ? "— " + s.note : ""].filter(Boolean).join(" ");
+    tr.append(el("td", date(s.when)), el("td", s.key ? "[^" + s.key + "]" : ""), el("td", s.kind), el("td", refText), el("td", s.by || ""));
+    t.append(tr);
+  }
+  const wrap = el("div", undefined, "kn-scroll");
+  wrap.append(t);
+  return wrap;
+}
+
+function historyBlock(id) {
+  const d = el("details", undefined, "kn-history");
+  const sum = el("summary", "History");
+  d.append(sum);
+  d.ontoggle = async () => {
+    if (!d.open || d.dataset.loaded) return;
+    d.dataset.loaded = "1";
+    try {
+      const events = await rook.call("knowledge.history", { id }, { why: "Show this wiki page's history." });
+      sum.textContent = "History (" + events.length + ")";
+      for (const e of events.slice().reverse()) {
+        const x = el("details");
+        x.append(el("summary", date(e.ts) + " · " + e.op + " · " + (e.actor || "")), el("pre", JSON.stringify(e.data, null, 2)));
+        d.append(x);
+      }
+    } catch (err) { d.append(el("p", err.message, "kn-error")); }
+  };
+  return d;
+}
+
+function dialog(root) {
+  const dlg = el("dialog", undefined, "kn-dialog");
+  const form = el("form");
+  const title = el("h2");
+  const fields = el("div", undefined, "kn-fields");
+  const err = el("p", "", "kn-error");
+  const row = el("div", undefined, "kn-row");
+  const cancel = el("button", "Cancel");
+  cancel.type = "button";
+  cancel.onclick = () => dlg.close();
+  const save = el("button", "Save", "kn-primary");
+  save.type = "submit";
+  row.append(cancel, save);
+  form.append(title, fields, err, row);
+  dlg.append(form);
+  root.append(dlg);
+  return (heading, build, submit) => {
+    title.textContent = heading;
+    fields.replaceChildren();
+    err.textContent = "";
+    build((name, label, value = "", type = "input") => {
+      const w = el("label", label);
+      const e = document.createElement(type);
+      e.name = name;
+      if (type !== "select") e.value = value;
+      w.append(e);
+      fields.append(w);
+      return e;
+    });
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      save.disabled = true;
+      try { await submit(new FormData(form)); dlg.close(); }
+      catch (x) { err.textContent = x.message; }
+      finally { save.disabled = false; }
+    };
+    dlg.showModal();
+  };
+}
+
+// ---- the view -------------------------------------------------------------------------
+const root = document.getElementById("root");
+const layout = el("div", undefined, "kn-layout");
+const side = el("aside", undefined, "kn-side");
+side.setAttribute("data-target", "knowledge.pages");
+const page = el("article", undefined, "kn-page");
+layout.append(side, page);
+root.append(layout);
+const form = dialog(root);
+function say(err) { page.prepend(el("p", (err && err.message) || String(err), "kn-error")); }
+
+const q = el("input");
+q.type = "search";
+q.placeholder = "Search the wiki";
+q.setAttribute("aria-label", "Search the wiki");
+q.setAttribute("data-target", "knowledge.search");
+const add = btn("+", () => edit(null, null), "kn-primary kn-add");
+add.setAttribute("aria-label", "New page");
+add.title = "New page";
+add.setAttribute("data-target", "knowledge.new");
+const showOld = el("label", " Old", "kn-dim kn-old-toggle");
+showOld.title = "Show archived pages";
+const chk = el("input");
+chk.type = "checkbox";
+chk.setAttribute("aria-label", "Show archived pages");
+showOld.prepend(chk);
+const index = el("nav", undefined, "kn-index");
+index.setAttribute("aria-label", "All pages");
+const reviewBtn = btn("Review", () => startReview(), "kn-review-btn");
+reviewBtn.setAttribute("data-target", "knowledge.review");
+const tools = el("div", undefined, "kn-tools");
+tools.append(q, reviewBtn, add);
+side.append(tools);
+const pagesHead = el("div", undefined, "kn-side-head");
+pagesHead.append(el("h3", "Pages"), showOld);
+const fold = foldSide(side, "Pages", [pagesHead, index]);
+
+let pages = [], cur = null, searching = false, reviewing = false;
+// Pages nest under pages (parent), like folders. Which are open is kept for this visit.
+const open_ = new Set();
+const byId = (id) => pages.find((p) => p.id === id);
+const ancestors = (p) => { const out = [], seen = new Set(); let x = p && p.parent && byId(p.parent); while (x && !seen.has(x.id)) { seen.add(x.id); out.unshift(x); x = x.parent && byId(x.parent); } return out; };
+const visible = (p) => chk.checked || p.state !== "archived";
+const byTitle = (a, b) => a.title.localeCompare(b.title);
+const vstate = (p) => p.verification || "unverified";
+
+// The view lives in the frame's #hash (back and forward work); a sandboxed page has an
+// opaque origin, so plain fragment navigation, never the History API's state calls.
+function hashParams() { return new URLSearchParams(location.hash.slice(1)); }
+function go(slug, review = reviewing, done = false) {
+  fold.close();
+  const h = new URLSearchParams(Object.entries({ p: slug, r: review && slug ? "1" : "" }).filter(([, v]) => v)).toString();
+  if (location.hash.slice(1) === h) { if (done && !slug) { reviewing = false; drawHome(true); } else route(); }
+  else { homeDone = done; location.hash = h; }
+}
+let homeDone = false;
+function ref(slug) {
+  if (!slug || pages.some((p) => p.slug === slug)) return go(slug);
+  go(slug);                       // not in the index (archived, or not a page): open says so
+}
+
+async function listAll() {
+  const out = [];
+  for (const archived of chk.checked ? [false, true] : [false]) {
+    for (let offset = 0; ; offset += 500) {
+      const got = await rook.call("knowledge.list", { limit: 500, offset, archived }, { why: "List the wiki's pages." });
+      for (const x of got) out.push({ ...x, state: x.archived ? "archived" : "active" });
+      if (got.length < 500) break;
+    }
+  }
+  return out;
+}
+async function loadIndex() {
+  pages = await listAll();
+  if (!searching) drawTree();
+  const n = queue().length;
+  reviewBtn.textContent = n ? "Review " + n : "Review";
+  reviewBtn.title = n ? n + " pages nobody has verified yet" : "Everything is verified";
+  fold.tog.textContent = "Pages · " + pages.filter(visible).length;
+}
+// Review mode walks the unverified pages in tree order.
+function treeOrder() { const out = []; const walk = (parent) => { for (const p of folders(kids(parent))) { out.push(p); walk(p.id); } }; walk(null); return out; }
+const queue = () => treeOrder().filter((p) => p.state === "active" && vstate(p) === "unverified");
+function startReview() { const q_ = queue(); if (q_.length) go(q_[0].slug, true); else go(null, false, true); }
+function nextInQueue(afterId) { const q_ = queue().filter((p) => p.id !== afterId); if (!q_.length) return null; const order = treeOrder().map((p) => p.id); const i = order.indexOf(afterId); return q_.find((p) => order.indexOf(p.id) > i) || q_[0]; }
+function advance(afterId) { const n = nextInQueue(afterId); if (n) go(n.slug, true); else go(null, false, true); }
+async function review(r, verdict, note) {
+  await rook.call("knowledge.review", { id: r.id, revision: r.revision, verdict, ...(note ? { note } : {}) },
+    { why: verdict === "verified" ? "The person verified this wiki page." : verdict === "disputed" ? "The person disputed this wiki page." : "The person set this wiki page back to unverified." });
+  await loadIndex();
+}
+function dispute(r, then) {
+  form("Dispute “" + r.title + "”", (f) => { f("note", "What's wrong? (an agent fixes it)", r.verification === "disputed" ? (r.review_note || "") : "", "textarea"); },
+    async (d) => { await review(r, "disputed", d.get("note")); then(); });
+}
+const folders = (list) => list.map((p) => [kids(p.id).length > 0, p]).sort((x, y) => y[0] - x[0] || byTitle(x[1], y[1])).map((x) => x[1]);
+function kids(parent) {
+  return pages.filter((p) => visible(p) && (parent ? p.parent === parent : !(p.parent && byId(p.parent) && visible(byId(p.parent))))).sort(byTitle);
+}
+function drawTree() {
+  searching = false;
+  index.replaceChildren();
+  const cp = cur && pages.find((p) => p.slug === cur.slug);
+  if (cp) for (const a of ancestors(cp)) open_.add(a.id);
+  const top = folders(kids(null));
+  if (!top.length) { index.append(el("p", "No pages yet.", "kn-dim")); return; }
+  const node = (p, depth) => {
+    const ch = kids(p.id), isOpen = open_.has(p.id);
+    const row = el("div", undefined, "kn-tree-row" + (cp && cp.id === p.id ? " kn-current" : ""));
+    row.style.paddingLeft = (depth * 14) + "px";
+    const tog = btn(ch.length ? (isOpen ? "▾" : "▸") : "", () => { if (!ch.length) return; isOpen ? open_.delete(p.id) : open_.add(p.id); drawTree(); }, "kn-tog");
+    tog.setAttribute("aria-label", ch.length ? (isOpen ? "Collapse " : "Expand ") + p.title : "");
+    if (!ch.length) tog.tabIndex = -1;
+    const a = btn("", () => go(p.slug), "kn-tree-item");
+    const v = vstate(p);
+    const dot = el("i", undefined, "kn-dot kn-dot-" + v);
+    dot.title = v;
+    a.append(dot, el("span", p.title));
+    if (ch.length) a.append(el("small", String(ch.length)));
+    if (p.state === "archived") a.classList.add("kn-old");
+    row.append(tog, a);
+    index.append(row);
+    if (isOpen) for (const k of folders(ch)) node(k, depth + 1);
+  };
+  for (const p of top) node(p, 0);
+}
+function drawResults(list) {
+  searching = true;
+  index.replaceChildren();
+  const shown = list.map((p) => byId(p.id) || { ...p, state: p.archived ? "archived" : "active" }).filter(visible).sort(byTitle);
+  if (!shown.length) { index.append(el("p", "No matches.", "kn-dim")); return; }
+  for (const p of shown) {
+    const a = btn("", () => go(p.slug), "kn-index-item");
+    a.append(el("span", p.title));
+    const anc = ancestors(p);
+    if (anc.length) a.append(el("small", anc.map((x) => x.title).join(" / ")));
+    index.append(a);
+  }
+}
+chk.onchange = () => { loadIndex().catch(say); };
+q.onkeydown = async (e) => {
+  if (e.key !== "Enter") return;
+  const term = q.value.trim();
+  if (!term) { drawTree(); return; }
+  try { drawResults(await rook.call("knowledge.search", { query: term, limit: 200 }, { why: "Search the wiki." })); }
+  catch (err) { index.replaceChildren(el("p", err.message, "kn-error")); }
 };
-$("find").onsubmit = async (e) => {
-  e.preventDefault();
-  const q = $("q").value.trim();
-  rows(q ? await rook.call("knowledge.search", { query: q, limit: 50 }) : await rook.call("knowledge.list", { limit: 50 }));
-};
-rook.call("knowledge.list", { limit: 50 }).then(rows)
-  .catch((x) => { $("list").innerHTML = `<p class="bad">${rook.esc(x.message)}</p>`; });
+q.oninput = () => { if (!q.value.trim() && searching) drawTree(); };
+// Parent picker: every page in tree order, indented, minus the page itself and its subpages.
+function parentSelect(f, value, exclude) {
+  const s = f("parent", "Parent", "", "select");
+  const none = el("option", "— Top level —");
+  none.value = "";
+  s.append(none);
+  const walk = (parent, depth) => {
+    for (const p of pages.filter((x) => x.state !== "archived" && (parent ? x.parent === parent : !(x.parent && byId(x.parent)))).sort(byTitle)) {
+      if (exclude && p.id === exclude) continue;
+      const o = el("option", "  ".repeat(depth) + p.title);
+      o.value = p.id;
+      s.append(o);
+      walk(p.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  s.value = value || "";
+  return s;
+}
+function kindSelect(f, value) {
+  const s = f("kind", "Kind", "", "select");
+  for (const k of KINDS) { const o = el("option", k); o.value = k; s.append(o); }
+  s.value = value || "observation";
+  return s;
+}
+function edit(r, parentId) {
+  form(r ? "Edit page" : "New page", (f) => {
+    f("title", "Title", r ? r.title : "");
+    parentSelect(f, r ? r.parent : parentId, r && r.id);
+    kindSelect(f, r && r.kind);
+    if (!r) f("slug", "Slug (optional)", "");
+    f("body", "Body (markdown, [[slug]] links)", r ? (r.body || "") : "", "textarea");
+  }, async (d) => {
+    const parent = d.get("parent") || "";
+    if (r) {
+      const args = { id: r.id, revision: r.revision, title: d.get("title"), body: d.get("body"), kind: d.get("kind") };
+      if ((r.parent || "") !== parent) args.parent = parent;
+      await rook.call("knowledge.update", args, { why: "The person edited this wiki page." });
+      await loadIndex();
+      await open(r.slug);
+    } else {
+      const n = await rook.call("knowledge.create", { title: d.get("title"), body: d.get("body"), kind: d.get("kind"),
+        ...(parent ? { parent } : {}), ...(d.get("slug") ? { slug: d.get("slug") } : {}) }, { why: "The person wrote a new wiki page." });
+      if (parent) open_.add(parent);
+      await loadIndex();
+      go(n.slug);
+    }
+  });
+}
+function reviewBlock(r) {
+  const v = r.verification || "unverified", who = r.reviewed_by, when = r.reviewed_at;
+  const box = el("div", undefined, "kn-review kn-review-" + v);
+  const reopen = () => open(r.slug);
+  if (v === "verified") {
+    box.append(el("span", "✓ Verified" + (who ? " · " + who.replace(/^person:/, "") + " · " + ago(when) : "")), el("span", undefined, "kn-grow"),
+      btn("Unverify", async () => { await review(r, "unverified"); reopen(); }, "kn-linkish"));
+  } else if (v === "disputed") {
+    const t = el("div");
+    t.append(el("strong", "Disputed" + (who ? " by " + who.replace(/^person:/, "") : "")), el("div", r.review_note || ""));
+    box.append(t, el("span", undefined, "kn-grow"), btn("✓ Verify", async () => { await review(r, "verified"); reopen(); }, "kn-ok"),
+      btn("Clear", async () => { await review(r, "unverified"); reopen(); }));
+  } else {
+    const t = el("div");
+    t.append(el("span", "Unverified"));
+    if (r.review_note) t.append(el("div", r.review_note, "kn-warn"));
+    box.append(t, el("span", undefined, "kn-grow"));
+    if (!reviewing) box.append(btn("✓ Verify", async () => { await review(r, "verified"); reopen(); }, "kn-ok"), btn("Dispute", () => dispute(r, reopen)));
+  }
+  return box;
+}
+function move(r) {
+  form("Move “" + r.title + "”", (f) => { parentSelect(f, r.parent, r.id); }, async (d) => {
+    const parent = d.get("parent") || "";
+    if ((r.parent || "") === parent) return;
+    await rook.call("knowledge.update", { id: r.id, revision: r.revision, parent }, { why: "The person moved this wiki page." });
+    await loadIndex();
+    await open(r.slug);
+  });
+}
+async function open(slug) {
+  const r = await rook.call("knowledge.get", { id: slug }, { why: "Open a wiki page." });
+  cur = { slug: r.slug };
+  if (!searching) drawTree();
+  page.replaceChildren();
+  const known = byId(r.id) || r;
+  page.append(crumbsNav([["Knowledge", () => go(null)], ...ancestors(known).map((a) => [a.title, () => go(a.slug)]), r.title]));
+  const head = el("header", undefined, "kn-head");
+  const titleRow = el("div", undefined, "kn-titlerow");
+  titleRow.append(el("h1", r.title));
+  const acts = el("div", undefined, "kn-acts");
+  acts.append(btn("Edit", () => edit(r), "kn-primary"), more(() => [
+    { label: "New subpage", run: () => edit(null, r.id) },
+    { label: "Move…", run: () => move(r) },
+    r.archived
+      ? { label: "Restore", run: async () => { await rook.call("knowledge.archive", { id: r.id, revision: r.revision, restore: true }, { why: "The person restored this wiki page." }); await loadIndex(); await open(r.slug); } }
+      : { label: "Archive", danger: true, run: async () => { await rook.call("knowledge.archive", { id: r.id, revision: r.revision }, { why: "The person archived this wiki page." }); await loadIndex(); go(null); } },
+  ], "More actions for this page"));
+  titleRow.append(acts);
+  head.append(titleRow);
+  const meta = el("p", undefined, "kn-meta");
+  meta.append(badge(r.verification || "unverified"), el("span", r.kind || "page"), copyChip("[[" + r.slug + "]]"),
+    el("span", [(r.creator || "").replace(/^(person|agent):/, ""), ago(r.updated)].filter(Boolean).join(" · ")));
+  if (r.archived) meta.append(badge("archived"));
+  head.append(meta);
+  if (reviewing) {
+    const bar = el("div", undefined, "kn-reviewbar");
+    const left = queue().filter((p) => p.id !== r.id).length;
+    const exit = btn("✕", () => go(r.slug, false), "kn-icon");
+    exit.setAttribute("aria-label", "Exit review");
+    exit.title = "Exit review";
+    bar.append(el("strong", "Review"), el("span", left ? left + " left" : "last", "kn-dim"), el("span", undefined, "kn-grow"),
+      btn("✓ Verify", async () => { await review(r, "verified"); advance(r.id); }, "kn-ok"),
+      btn("Dispute", () => dispute(r, () => advance(r.id))), btn("Skip", () => advance(r.id)), exit);
+    page.prepend(bar);
+  }
+  page.append(head, reviewBlock(r));
+  if (r.archived) page.append(el("p", "This page is archived.", "kn-warn"));
+  page.append(renderBody(r.body, (s) => ref(s)));
+  if ((r.missing || []).length) page.append(el("p", "No page yet for: " + r.missing.map((s) => "[[" + s + "]]").join(", "), "kn-dim"));
+  if ((r.tags || []).length) { const t = el("p", undefined, "kn-tags"); for (const x of r.tags) t.append(badge(x, "tag")); page.append(t); }
+  const sub = (r.children || []).map((x) => byId(x.id) || x).filter(visible).sort(byTitle);
+  if (sub.length) {
+    page.append(el("h2", "Subpages"));
+    const ul = el("ul", undefined, "kn-list");
+    for (const b of sub) {
+      const li = el("li");
+      const a = el("a", b.title);
+      a.href = "#";
+      a.onclick = (e) => { e.preventDefault(); go(b.slug); };
+      li.append(a);
+      const n = kids(b.id).length;
+      if (n) li.append(el("span", " · " + n + " page" + (n > 1 ? "s" : ""), "kn-dim"));
+      ul.append(li);
+    }
+    page.append(ul);
+  }
+  if ((r.backlinks || []).length) {
+    page.append(el("h2", "What links here"));
+    const ul = el("ul", undefined, "kn-list");
+    for (const b of r.backlinks) {
+      const li = el("li");
+      const a = el("a", b.title);
+      a.href = "#";
+      a.onclick = (e) => { e.preventDefault(); ref(b.slug); };
+      li.append(a);
+      ul.append(li);
+    }
+    page.append(ul);
+  }
+  if ((r.sources || []).length) page.append(el("h2", "Sources"), sourcesTable(r.sources));
+  page.append(historyBlock(r.id));
+}
+function drawHome(done) {
+  cur = null;
+  if (!searching) drawTree();
+  page.replaceChildren();
+  const live = pages.filter((p) => p.state === "active");
+  const recent = live.slice().sort((a, b) => b.updated - a.updated).slice(0, 12);
+  const counts = {};
+  for (const p of live) counts[vstate(p)] = (counts[vstate(p)] || 0) + 1;
+  if (done) page.append(el("p", "✓ All verified.", "kn-review kn-review-verified"));
+  const stats = el("p", undefined, "kn-meta");
+  stats.append(document.createTextNode(live.length + " pages"));
+  for (const [k, n] of Object.entries(counts)) stats.append(badge(n + " " + k, k), document.createTextNode(" "));
+  page.append(stats);
+  const sections = kids(null).filter((p) => kids(p.id).length);
+  if (sections.length) {
+    page.append(el("h2", "Sections"));
+    const grid = el("div", undefined, "kn-sections");
+    for (const s of sections) {
+      const ks = kids(s.id), n = ks.length;
+      const b = btn("", () => go(s.slug), "kn-card");
+      const top = el("div", undefined, "kn-card-top");
+      top.append(el("strong", s.title));
+      b.append(top, el("small", n + " page" + (n > 1 ? "s" : "") + ": " + ks.slice(0, 4).map((x) => x.title).join(", ") + (n > 4 ? "…" : "")));
+      grid.append(b);
+    }
+    page.append(grid);
+  }
+  page.append(el("h2", "Recent"));
+  const ul = el("ul", undefined, "kn-list");
+  for (const p of recent) {
+    const li = el("li");
+    const a = el("a", p.title);
+    a.href = "#";
+    a.onclick = (e) => { e.preventDefault(); go(p.slug); };
+    li.append(a);
+    const anc = ancestors(p);
+    li.append(el("span", (anc.length ? " · " + anc.map((x) => x.title).join(" / ") : "") + " · " + ago(p.updated) + " · " + (p.creator || "").replace(/^(person|agent):/, ""), "kn-dim"));
+    if (p.body) li.append(el("div", p.body.slice(0, 160), "kn-dim kn-excerpt"));
+    ul.append(li);
+  }
+  if (!recent.length) ul.append(el("li", "Nothing yet.", "kn-dim"));
+  page.append(ul);
+}
+async function route() {
+  const p = hashParams();
+  reviewing = p.get("r") === "1";
+  try {
+    const slug = p.get("p");
+    if (slug) await open(slug); else { drawHome(homeDone); homeDone = false; }
+  } catch (e) { page.replaceChildren(crumbsNav([["Knowledge", () => go(null)], p.get("p") || ""]), el("p", e.message, "kn-error")); }
+}
+window.addEventListener("hashchange", route);
+let again = null;
+rook.on("knowledge.*", () => { clearTimeout(again); again = setTimeout(() => { loadIndex().catch(() => {}); }, 400); });
+loadIndex().then(route).catch((e) => { page.replaceChildren(el("p", e.message, "kn-error")); });
 </script>
 </body>
 </html>

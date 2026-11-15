@@ -1,6 +1,6 @@
 # Texts on the phone running the Rook app: the SMS content provider to read,
-# SmsManager to send. Inbound texts become sms.received events (tainted:
-# whoever sent them wrote the words).
+# SmsManager to send. Inbound texts become sms.received events (outside
+# content: whoever sent them wrote the words).
 manifest: 1
 plugin: sms
 version: 0.5.0
@@ -15,7 +15,7 @@ caps:
     doc: "Recent texts, newest first: {messages: [{from, body, ts, box, read}]}. box is inbox, sent or all; since (epoch seconds) leaves out older ones."
     risk: read
     scope: local
-    effects: [personal, sensitive, taints]
+    effects: [sensitive]
     idempotent: true
     timeout: 20s
     args:

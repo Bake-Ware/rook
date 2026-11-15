@@ -1,5 +1,5 @@
-# Calls waiting for a person (spec 10.3) and questions for them (castling-caps C4:
-# approval.ask), for pages (castling-dashboard).
+# Calls waiting for a person (spec 6.4) and questions for them (castling-caps C4:
+# approval.ask).
 # Implemented by the hub (rook.core2.hub.doors.web.caps).
 manifest: 1
 plugin: approval
@@ -24,7 +24,7 @@ caps:
   ask:
     doc: >-
       Ask the person a question and wait (up to wait seconds) for the answer. It waits beside the held
-      calls (Approvals) and, with the agents package, the house agent gets it to them the way that fits.
+      calls (approval.list); a plugin hearing approval.asked may get it to them the way that fits.
       Nothing runs on the answer: it comes back to you, now or later with approval.get. Asked of the
       person you act for; with nobody behind you, of the owners. Questions don't expire.
     on: hub
@@ -76,11 +76,5 @@ emits:
       by: { type: str }
       person: { type: str }
       agent: { type: str, doc: Who asked. }
-
-pages:
-  approvals: { title: Approvals, file: pages/approvals.html, caps: [approval.list, approval.decide], events: ["hold.*", "approval.*"], nav: { section: Hub } }
-
-components:
-  holds: { title: Waiting for you, file: components/holds.js, doc: "Calls held for a person's answer, with a link to Approvals.", caps: [approval.list] }
 
 docs: { manual: docs/manual.md }

@@ -1,0 +1,23 @@
+# Serial ports as streams, served by the Rust worker (worker/src/caps/net.rs).
+manifest: 1
+plugin: serial
+version: 0.5.0
+title: Serial
+doc: Open a serial port on this worker as a live stream.
+package: core
+builtin: true
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+caps:
+  open:
+    doc: >-
+      Open a serial port (/dev/ttyUSB0, COM3) at baud and return {stream}. What the device
+      sends comes as bytes events (stream.read); stream.write {text} sends; stream.close (or
+      any signal) closes the port.
+    risk: exec
+    scope: local
+    timeout: 30s
+    stream: { types: [bytes], input: true, durable: false }
+    args:
+      port: { type: str, required: true }
+      baud: { type: int, default: 115200 }

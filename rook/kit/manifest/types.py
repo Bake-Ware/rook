@@ -5,7 +5,6 @@ payloads, contracts and component props::
 
     state: { type: str, enum: [Downloading, Seeding], required: true }
     tags:  { type: list, items: { type: str }, max: 10 }
-    raw:   { schema: { type: object } }        # JSON Schema passthrough
 
 ``type`` defaults to ``str``. Compiled schemas carry ``x-rook-type`` (and
 ``x-rook-ref`` for refs) so the source type survives the round trip.
@@ -13,10 +12,8 @@ payloads, contracts and component props::
 
 from __future__ import annotations
 
-import json
-
 TYPES = ("str", "int", "float", "bool", "time", "duration", "markdown", "json",
-         "file", "secret", "ref", "list", "map", "url", "path")
+         "file", "secret", "ref", "list", "map", "url", "path", "worker")
 
 DURATION_PATTERN = r"^[0-9]+(\.[0-9]+)?(ms|s|m|h|d|w)$"
 
@@ -42,6 +39,8 @@ _BASE = {
     # 1.1, for settings that hold connection strings and file locations.
     "url": {"type": "string", "format": "uri"},
     "path": {"type": "string"},
+    # A worker's name (as hub.workers lists them).
+    "worker": {"type": "string"},
 }
 _TEXT = {"str", "markdown", "url", "path"}
 
@@ -53,8 +52,6 @@ _ONLY = {
     "items": {"list", "map"},
     "fields": {"map"},
     "to": {"ref"},
-    # Cap args only: how an action renders a list inside a string.
-    "join": {"list"},
 }
 
 _BOUNDS = {**{t: ("minLength", "maxLength") for t in _TEXT}, "list": ("minItems", "maxItems")}
@@ -68,11 +65,6 @@ class TypeSpecError(ValueError):
 
 def compile_type(spec: dict, path: tuple = ()) -> dict:
     """One field spec -> JSON Schema."""
-    if "schema" in spec:
-        out = dict(spec["schema"])
-        if "doc" in spec:
-            out.setdefault("description", spec["doc"])
-        return out
     t = spec.get("type", "str")
     if t not in TYPES:
         raise TypeSpecError(path + ("type",), f"unknown type {t!r}")
@@ -124,8 +116,6 @@ def setting_spec(spec: dict) -> dict:
 
 def type_key(spec: dict):
     """What diff and contract checks compare: the type, its ref target, its
-    item type (or the raw schema)."""
-    if "schema" in spec:
-        return ("schema", json.dumps(spec["schema"], sort_keys=True))
+    item type."""
     items = spec.get("items")
     return (spec.get("type", "str"), spec.get("to"), type_key(items) if items else None)

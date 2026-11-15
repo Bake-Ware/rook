@@ -22,7 +22,7 @@ the bot (over the Gateway websocket) into `discord.message` events the house age
 |---|---|---|
 | `discord.send {to, text, title?}` | a direct message from the bot to a linked person (what notify uses) | - |
 | `discord.post {chat, text, reply_to?}` | a message to any channel the bot can write in, which can reach people outside the band | `sends_as` (a hard stop: the person approves) |
-| `discord.link` | a one-time code to link your account | `persists` |
+| `discord.link` | a one-time code to link your account | - |
 | `discord.unlink {to?}` | forget a link (yours; owners: anyone's) | - |
 | `discord.status {to?}` | connected, bot name, last error, whether a person is linked | - |
 
@@ -30,8 +30,8 @@ the bot (over the Gateway websocket) into `discord.message` events the house age
 
 Every message to the bot (or in a channel it can read) becomes a `discord.message` event: `text`, `chat` (answer with
 `discord.post`), `private`, `guild` (the server), `from`, `from_id`, `message` and, when the sender
-linked their account, `person`. The event is marked `taints`: a session that
-receives it is tainted, since the text comes from outside. `!link` messages are
+linked their account, `person`. The event is marked `taints` (outside
+content): on a page, one that names nobody shows to owners only. `!link` messages are
 handled by the plugin and are not events.
 
 A linked person's direct message is also answered: the agents package hands

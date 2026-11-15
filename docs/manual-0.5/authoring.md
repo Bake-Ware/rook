@@ -1,338 +1,211 @@
 # Writing a plugin
 
-A plugin is a thin adapter: it drives software or an API that already
-exists, so an agent gets one clear call instead of a ten-step shell
-struggle. Most plugins are only a `plugin.yaml`. Write code only for a cap
-that needs logic.
+A plugin is a thin adapter: it drives software, a device or an API that
+already exists, so an agent gets one clear call instead of a ten-step shell
+struggle. There is one way to write one: a manifest plus Python scripts that
+run on the hub. Workers only reach things (run a command, read and write
+files, open a stream); the script on the hub knows what to say.
+
+**How to write one**, step by step with two worked examples (a worker's
+cap, a record type with a page), what `ctx` gives a script, how to check
+it and how it gets onto the hub: the agents' skill,
+[plugins](../../rook/plugins/agents/skills/plugins.md) (agents read it with
+`agent.skill name=plugins`). This page is the reference for every key.
 
 ```
 myplugin/
   plugin.yaml      the manifest: required
-  scripts/*.py     code for run: caps, hooks and gates
+  scripts/*.py     the code each cap runs (run:)
   docs/manual.md   the plugin's manual page
-  pages/*          dashboard pages (hub plugins)
-  skills/*.md  personas/*.md  jobs/*.py
+  pages/*          dashboard pages
+  skills/*.md  personas/*.md
 ```
 
-The manifest is the whole contract. The hub validates it, answers "what
-does this cap do" from it with the worker offline, and signs the folder
-when it installs it. You never write `plugin.sig`. Plugins never import each
-other; they call each other's caps.
+The manifest is the whole contract: the hub validates it and answers "what
+does this cap do" from it with the worker offline. Plugins never import each
+other; they call each other's caps. The JSON Schema is
+`conformance/manifest/manifest.schema.json`; each section also has a
+knowledge page, `castling-manifest-<section>` (index: `castling-manifest`).
 
-## The smallest plugin
+## Top-level keys
 
-```yaml
-manifest: 1
-plugin: hello
-version: 0.1.0
-caps:
-  say:
-    doc: Say hello.
-    risk: read
-    scope: local
-    action:
-      exec: { argv: [echo, hello] }
-      parse: text
-```
+| Key | |
+|---|---|
+| `manifest` | `1`. Required |
+| `plugin` | the name, and its caps' namespace. Required |
+| `version` | semver; bump it for every change. Required |
+| `title`, `doc` | a display name; one line on what it is for |
+| `package` | `core`, `agents`, `workbench` or `devices`: which level installs it |
+| `segment` | where in the site its pages and settings belong: `Agents`, `Machines`, `Work`, `Hub` or a new name; none: `Hub` |
+| `runs_on` | `hub` for every new plugin ([below](#plugins-that-run-on-a-worker)) |
+| `platforms` | `linux`, `windows`, `macos`, `android`, `termux`, `ios`: the workers its `on: worker` caps fit |
+| `uses` | every cap its code calls, globs allowed; `ctx.call` refuses any other |
+| `requires` | `python` (pip requirements), `bins`, `hardware`, `settings` |
+| `settings` | [Settings](#settings) |
+| `caps` | [Cap keys](#cap-keys) |
+| `records` | [Records](#records) |
+| `appliance` | [Appliances](#appliances) |
+| `emits`, `hooks` | [Hooks and events](#hooks-and-events) |
+| `jobs` | ready-made jobs: `{doc, trigger, call, args, as, persona, enabled, catch_up}` ([Jobs](jobs.md)) |
+| `pages`, `components`, `shell` | [Pages](#pages-components-and-the-shell) |
+| `presets` | [Presets](#presets) |
+| `contracts`, `provides` | [Contracts](#contracts) |
+| `personas`, `skills` | agents and their playbooks ([Agents](agents.md)) |
+| `check` | caps run after an install; a failing one rolls a worker plugin back |
+| `docs` | `{manual: docs/manual.md}`: what each cap does, its settings, its quirks |
+| `license`, `source` | |
 
-Only `manifest`, `plugin` and `version` are required at the top. The
-plugin's name is its caps' namespace: this cap is `hello.say`. Every cap
-needs `doc`, `risk` and `scope` ([Caps](caps.md)).
+## Cap keys
 
-## A config plugin: Deluge
+A cap's name is `<plugin>.<key>`. `doc`, `risk` and `scope` are required
+([Caps](caps.md)).
 
-A cut-down version of the shipped `torrent` plugin. No code: each cap
-maps to a built-in **action**.
+| Key | |
+|---|---|
+| `doc` | what it does and returns, for an agent reading it cold |
+| `on` | `worker`: a cap of a worker or appliance ([below](#on-worker-caps)); `hub`: a cap of the hub (`worker=rook`) |
+| `run` | `scripts/<file>.py:<function>` (or `:Class.method`) |
+| `risk` | `read`, `write`, `exec`, `admin` |
+| `scope` | `self`, `local`, `multi-machine`, `multi-user`, `external` |
+| `effects` | e.g. `destructive`, `physical`, `sends_as` |
+| `args` | name: `{type, required, default, enum, min, max, pattern, items, fields, to, doc}` |
+| `result` | the same type language |
+| `timeout` | a duration (`20s`, `10m`) or `none` |
+| `idempotent` | `true` when calling twice changes nothing more |
+| `undo` | the cap that reverses this one |
+| `examples` | `[{args, result, doc}]` |
+| `stream` | the cap answers a stream: `{types, input, durable}` |
+| `platforms` | narrows the plugin's `platforms` for this cap |
 
-```yaml
-manifest: 1
-plugin: deluge
-version: 1.0.0
-title: Deluge
-doc: List and pause torrents through deluge-console.
-requires: { bins: [deluge-console] }
-settings:
-  console: { default: deluge-console, where: worker, doc: The deluge-console program. }
-caps:
-  list:
-    doc: Every torrent, one line each.
-    risk: read
-    scope: local
-    idempotent: true
-    action:
-      exec: { argv: ["{{settings.console}}", info], env: { LANG: C } }
-      fail_if: { regex: '(?i)^\s*could not connect' }
-      parse: lines
-  pause:
-    doc: Pause one torrent by its hash.
-    risk: write
-    scope: local
-    undo: deluge.resume
-    args:
-      id: { type: str, required: true, pattern: '^[0-9a-f]{40}$', doc: The torrent's 40-hex hash. }
-    action:
-      exec: { argv: ["{{settings.console}}", "pause {{args.id}}"] }
-      parse: text
-  resume:
-    doc: Resume one torrent by its hash.
-    risk: write
-    scope: local
-    args:
-      id: { type: str, required: true, pattern: '^[0-9a-f]{40}$' }
-    action:
-      exec: { argv: ["{{settings.console}}", "resume {{args.id}}"] }
-      parse: text
-check: [deluge.list]
-```
+Types: `str`, `int`, `float`, `bool`, `time`, `duration`, `markdown`,
+`json`, `file`, `secret`, `ref`, `list`, `map`, `url`, `path`, `worker` (a
+worker's name).
 
-What each part does:
+An argument a script passes to a program goes in its own `argv` slot, never
+into a shell string. A tool that re-parses its arguments (deluge-console
+splits on `;`) needs a `pattern` on the arg: that is the injection guard.
 
-- `requires.bins`: a worker without `deluge-console` shows these caps as
-  unavailable, with the reason, instead of failing strangely.
-- `settings`: values a person sets per worker (`worker.yaml`) or on the hub
-  ([Settings](settings.md)). Templates read them as `{{settings.console}}`.
-- `exec.argv`: always a list; each item is one argument slot, never a
-  shell string, so an argument can't break out of its slot.
-- `pattern` on `id`: deluge-console re-splits its command on `;`, so the
-  pattern is the injection guard. The validator warns when an argument
-  sits inside a larger argv item without a `pattern`, `enum` or number
-  type (`argv-arg-unguarded`), or could start with `-`
-  (`argv-option-injection`).
-- `fail_if`: deluge-console exits 0 when it can't reach the daemon; a
-  matching line turns that into an error.
-- `parse`: `text`, `lines`, `json`, `kv`, `csv`, `bytes` (a file), or
-  `{regex: "(?P<name>...)", each: true}` for one item per matching line.
-  `returns` picks fields from the result.
-- `undo`: names the cap that reverses this one.
-- `check`: caps called after every install or update; a failure rolls the
-  plugin back by itself. Pick a cap that needs nothing running.
+## `on: worker` caps
 
-## More from the action engine
+The hub lists an `on: worker` cap among the caps of every worker whose
+`os` is in `platforms` (none: every os) and that serves the caps in
+`uses`, and an agent calls it there (`worker=kaiju cap=battery.status`).
+The script runs on the hub with `ctx.worker` (`{id, name, os}`) and
+reaches the machine through the worker's primitives: `shell.exec`,
+`shell.env`, `file.*`, and streams (`shell.open`; on the Rust worker also
+`net.open`, `net.udp`, `serial.open`). Each of those calls is journaled as
+its own call, linked to the outer one by `parent`. A cap without `on:
+worker` in a hub plugin is a cap of the hub itself.
 
-Five action types: `exec`, `http` (method, url, headers, query,
-json/form/body, basic or bearer auth, `tls: {verify}`), `tcp` (send a line,
-read the reply), `ws` (one message, one reply) and `file` (read or write).
+## Settings
 
-```yaml
-action:
-  exec:
-    argv: ["{{settings.console}}", info, ["-s", "{{args.state}}"]]   # a nested list is dropped unless its args are set
-    windows: { argv: ["{{settings.console}}.exe", info] }           # per-OS override: linux, windows, macos, android, termux
-    try: [ { argv: [grim, "{{tmp}}/s.png"] }, { argv: [scrot, "{{tmp}}/s.png"] } ]   # fallbacks, in order
-    output: "{{tmp}}/s.png"                                          # return this file instead of stdout
-```
+`settings:` name: `{type, default, doc, secret, where, setup, apply, enum,
+min, max, pattern}`, set on the hub ([Settings](settings.md)) and read as
+`ctx.settings["name"]`, secrets resolved. A hub plugin's setting is the
+hub's unless `where: person` makes it each person's own
+(`ctx.settings_for(person)` reads someone else's). Give every setting a
+one-line `doc`: the Settings page shows it as the setting's description.
 
-Template variables: `args.*`, `settings.*`, `appliance.*`, `worker.os`,
-`worker.arch`, `worker.name`, `tmp` (a per-call folder), `plugin.dir`,
-`plugin.data`, and secrets as `{{secret:name}}`. URL parts are escaped and
-headers can't carry newlines. There are no loops, conditionals or
-variables in YAML: logic means `run:`. An `exec` whose program comes from an
-argument must be `risk: exec`. The full rules are on the knowledge page
-`castling-manifest-actions`.
+## Appliances
 
-## An appliance: PiKVM
+A device that runs no worker (a TV, a PiKVM, a bridge on the LAN) is an
+**appliance**: an instance with a name, onboarded with `appliance.add`
+([Workers](workers.md#appliances)), reached through a delegate worker on its
+network. Its plugin's `on: worker` caps are called by the device's name;
+the script gets the instance as `ctx.appliance` (`{name, host, port,
+settings}`, secrets resolved) with the delegate as `ctx.worker`.
 
-An appliance plugin targets devices that run no worker; a worker that can
-reach the device carries the call. A cut-down version of the shipped `kvm`
-plugin:
+| `appliance:` key | |
+|---|---|
+| `discover` | hints for an onboarding search, one kind per entry: `mdns`, `ssdp`, `http: {url, match}` (`{{host}}` in the url), `usb`, `adb`, `ble`, `serial` |
+| `settings` | per-device settings, same keys as `settings`; `setup` tells the person what to give |
+| `pair` | a cap `appliance.add` runs first; a secret it returns goes to the vault |
 
-```yaml
-manifest: 1
-plugin: pikvm
-version: 1.0.0
-package: devices
-appliance:
-  discover: [ { http: { url: "https://{{host}}/api/info", match: kvmd } } ]
-  settings:
-    password: { secret: true, setup: Ask the user for the PiKVM web password. }
-    verify_tls: { type: bool, default: false }
-caps:
-  power.set:
-    doc: Press the ATX power button.
-    risk: write
-    scope: local
-    effects: [physical]
-    args: { action: { type: str, enum: [on, off, off_hard, reset_hard], required: true } }
-    action:
-      http:
-        method: POST
-        url: "https://{{appliance.host}}/api/atx/power"
-        query: { action: "{{args.action}}" }
-        auth: { basic: [admin, "{{appliance.password}}"] }
-        tls: { verify: "{{appliance.verify_tls}}" }
-  screen.get:
-    doc: Current screen as JPEG.
-    risk: read
-    scope: local
-    effects: [sensitive]
-    result: { type: file }
-    action:
-      http: { url: "https://{{appliance.host}}/api/streamer/snapshot", auth: { basic: [admin, "{{appliance.password}}"] }, tls: { verify: "{{appliance.verify_tls}}" } }
-      fail_if: { regex: '\A\{\s*"ok"\s*:\s*false' }
-      parse: bytes
-```
+`rook.kit.net` is what the device plugins share: `Stream` (a worker's TCP,
+TLS, UDP or serial stream, read until a condition), `http` (one HTTP/1.1
+request over it), `WebSocket`, and `values(ctx.appliance)` (name, host,
+port, then its settings, flat). Examples: `rook/plugins/cec` (TCP),
+`rook/plugins/kvm` (HTTP), `rook/plugins/tv` (WebSocket).
 
-- `appliance.discover`: how onboarding finds one (here: `/api/info`
-  answering `kvmd`).
-- `appliance.settings`: per-device values; `secret: true` keeps the
-  password in the vault, fetched per call. `setup` tells the person (or the
-  agent onboarding the device) what to do.
-- Templates read the device as `{{appliance.host}}` and its settings as
-  `{{appliance.<name>}}`; the caps take no host argument.
-- `effects: [physical]` keeps `power.set` from children and guests;
-  `sensitive` marks the screen as private content.
+## Records
 
-Onboard a device with the hub's `appliance.add` ([Workers](workers.md#appliances));
-its instance values reach the cap with each call. `run:` code reads the
-same values as `ctx.appliance`.
+`records:` type: the kit gives storage, change history, events and caps.
 
-## Code: `run:`
+| Key | |
+|---|---|
+| `fields` | name: the arg keys, plus `unique`. Required |
+| `index` | fields to filter on |
+| `search` | fields `search` matches words in |
+| `history` | keep every revision (adds the `history` cap) |
+| `private` | each record seen only by its creator (and owners) |
+| `retain` | a duration: records not updated for that long are erased |
+| `caps` | which of `list`, `get`, `search`, `create`, `update`, `archive`, `delete`, `history` (default: all but `delete`, `search` with search fields, `history` with history) |
+| `risk` | per verb, over the defaults (`read` for looks, `write` for changes) |
 
-When a cap needs logic, point it at a function:
+The caps are `<plugin>.<type>.<verb>`, or `<plugin>.<verb>` for a type
+named like its plugin. Writes emit `<plugin>.<type>.created`, `.updated`
+and `.archived`. Scripts use `ctx.records.<type>`.
 
-```yaml
-manifest: 1
-plugin: uptime
-version: 0.1.0
-caps:
-  since:
-    doc: When this machine booted, as Unix time.
-    risk: read
-    scope: local
-    idempotent: true
-    result: { type: map, fields: { booted: { type: time } } }
-    run: scripts/uptime.py:since
-```
+## Pages, components and the shell
 
-```python
-# scripts/uptime.py
-import time
-
-def since(ctx):
-    try:
-        with open("/proc/uptime") as f:
-            up = float(f.read().split()[0])
-    except OSError:
-        raise ctx.Error("no /proc/uptime on this machine")
-    return {"booted": int(time.time() - up)}
-```
-
-A function (sync or async) gets `ctx` and the cap's arguments as keywords,
-and returns JSON-able data, `ctx.file(...)` or `ctx.stream(...)`.
-`ctx.Error("...")` fails cleanly with that message (`retry=True` if trying
-again later may work). `ctx` also carries:
-
-- who asks: `ctx.person`, `ctx.agent`, `ctx.session`, `ctx.why`;
-- `ctx.settings` (secrets resolved), `ctx.data` (the plugin's own
-  folder), `ctx.tmp` (removed after the call), `ctx.log`;
-- `ctx.call(cap, **args)` and `ctx.call_on(worker, cap, **args)`: other
-  caps, only those the manifest's `uses:` lists, and never more than the
-  caller may do;
-- `ctx.emit(event, payload)` for events the manifest declares in `emits:`;
-- `ctx.records` for the plugin's own records (hub plugins).
-
-Start processes only through core's launch path,
-`rook.core2.worker.security.launch(argv, getattr(ctx, "lease", None), ...)`,
-never `subprocess` directly, so no plugin can skip the normal-user rule and
-elevation ([Workers](workers.md#normal-user-elevation-on-request)). A
-plugin with any `.py` file is treated as code: reviewed and signed like
-code. Keep dependencies few; list them in `requires.python` and the hub
-resolves them for each worker before it installs.
-
-## A hub plugin: records, presets, pages
-
-Plugins can run on the hub (`runs_on: hub`) and declare **records**
-instead of building storage: the kit gives each record type its caps
-(`list`, `get`, `search`, `create`, `update`, `archive`, `history`),
-change history and events.
-
-```yaml
-manifest: 1
-plugin: homework
-version: 0.1.0
-title: Homework
-doc: Homework items for the family, with a board page.
-runs_on: hub
-uses: [notify.send]
-records:
-  item:
-    fields:
-      title: { type: str, required: true }
-      due: { type: time }
-      done: { type: bool, default: false }
-emits:
-  homework.overdue: { doc: An item is past due and not done., payload: { item: { type: str } } }
-caps:
-  overdue:
-    doc: Items past due and not done.
-    on: hub
-    risk: read
-    scope: multi-user
-    idempotent: true
-    run: scripts/homework.py:overdue
-hooks:
-  every: [ { interval: 1h, run: scripts/homework.py:check_due } ]
-presets:
-  child: { grants: ["homework.item.*", "homework.overdue"] }
-pages:
-  board: { title: Homework, file: pages/board.html, caps: ["homework.*"], nav: { section: Home } }
-docs: { manual: docs/manual.md }
-```
-
-- `records.item` makes `homework.item.list`, `homework.item.create`, ...
-- `presets.child` lets children use them. A plugin may add grants only
-  inside its own namespace, and never past a preset's limits: these caps
-  have no effects, so a child can use them.
-- `pages.board` is a sandboxed page that may call only `homework.*`
-  ([The hub site](dashboard.md)).
+- `pages:` name: `{title, file, caps, events}`: a sandboxed page (no
+  network) that calls only the caps it lists, as whoever views it
+  ([The hub site](dashboard.md)). It sits in the sidebar under the
+  plugin's `segment`.
+- `components:` name: `{title, doc, file, props, caps}`: a part a layout
+  page mounts (`page.components` lists them).
+- `shell:` name: `{file, caps}`: script and style files the hub site's own
+  pages load, outside the page sandbox, with the caps they may call as the
+  signed-in person (`shell: {dock: {file: shell/dock.js, caps:
+  [agent.chat.send]}}`; the agents package's chat dock is one).
 
 ## Hooks and events
 
 `hooks:` runs code without a call: `start` and `stop` (open and close
 connections), `status` (a small live status announced with the worker),
-`every: [{interval, run}]` for timers, and `on: [{event, call | run, args}]`
-to react to an event. Hooks act as the plugin itself, with only its own
-namespace and its `uses`. Events a plugin sends are declared in `emits:`
-and can be granted like caps. An event about one person's data carries a
-`person` field (declare it in the payload): pages show it only to that
-person and owners. An event with `taints: true` (outside content: an
-inbound message) that names nobody reaches owners' pages only.
+`every: [{interval, run | call, args}]` for timers, and `on: [{event,
+filter, call | run, args}]` to react to an event. Hooks act as the plugin
+itself, with only its own namespace and its `uses`. Events a plugin sends
+are declared in `emits:` (`{doc, payload, taints}`) and can be granted like
+caps. An event about one person's data carries a `person` field (declare
+it in the payload): pages show it only to that person and owners. An event
+with `taints: true` (outside content: an inbound message) that names nobody
+reaches owners' pages only.
 
 `ctx.emit(name, payload)` sends one. On a worker it runs that worker's own
 `on:` hooks and goes to the hub, which takes it only when the payload fits
 the declared fields (no others) and the worker's ceiling grants the name.
 The hub sets `person` (whoever owns the worker) and `worker` (its name) on
-the payload: an event from a machine is its owner's data, and a hook or job
-can answer on the same machine with `ctx.call_on(payload["worker"], ...)`.
+the payload: an event from a machine is its owner's data, and a hook (or a
+cap a job hands the event to) can answer on the same machine with
+`ctx.call_on(payload["worker"], ...)`.
 While the hub is away the worker keeps the newest 1000 events and sends
-them when it is back. Mark outside content (an inbound message, another
-app's notification) `taints: true`: hooks and jobs that act on it run their
-calls in a tainted session, which the security gate watches more closely.
+them when it is back.
 
-## Other sections
+## Presets
 
-`gate` (a security check at dispatch, [Security](security.md#writing-a-gate)),
-`contracts`/`provides` (answering a shared cap like `screen.capture` or
-`llm.complete`: declare the cap under the contract's name and list it,
+`presets:` name: `{grants, max_risk, effects, expires}` adds grants to a
+preset (`child: {grants: ["homework.item.*"]}` lets children use those
+caps). A plugin may add grants only inside its own namespace, and never
+past a preset's limits.
+
+## Contracts
+
+`contracts`/`provides`: answering a shared cap like `screen.capture` or
+`llm.complete`. Declare the cap under the contract's name and list it,
 `provides: [screen.capture]`; a grant on `screen.capture` then covers your
-cap when someone calls it by that name), `routes` (HTTP endpoints of a hub plugin, under `/p/<plugin>/`),
-`personas`, `skills`, `concepts`, `components`, `jobs` ([Jobs](jobs.md)),
-`assets` (large downloads with their sha256). Each section has its own
-knowledge page, `castling-manifest-<section>`; the index is
-`castling-manifest`. The JSON Schema is
-`conformance/manifest/manifest.schema.json`.
+cap when someone calls it by that name.
 
-## Checking and trying it
+## Plugins that run on a worker
 
-```sh
-python -m rook.kit.manifest validate myplugin/        # errors and warnings, then a summary
-python -m rook.kit.manifest diff old/ new/            # breaking changes and the version bump they need
-```
+A few plugins still run on a worker, because what they do has to live on
+that machine (`shell`, `file`, the browser, the phone app's plugins): they
+have no `runs_on: hub`, the hub pushes them to a worker
+([Plugins](plugins.md#installing-a-plugin-on-a-worker)), and their scripts
+start processes only through core's launch path,
+`rook.core2.worker.security.launch(argv, getattr(ctx, "lease", None), ...)`,
+never `subprocess` directly ([Workers](workers.md#normal-user-elevation-on-request)).
+A new plugin is a hub script.
 
-Then try it on one worker: add the folder to `plugins:` in `worker.yaml`
-and restart that worker, or put it in the hub's library and push it
-([Plugins](plugins.md#installing-a-plugin-on-a-worker)), which loads it
-without a restart and rolls back a failing check. Bump `version` for every
-change you push: a worker refuses the same version with different files.
-Write the plugin's `docs/manual.md` (what each cap does, its settings, its
-quirks) and list it in the manifest as `docs: { manual: docs/manual.md }`.
+A plugin with any `.py` file is treated as code: reviewed and signed like
+code. Keep dependencies few; list them in `requires.python`.

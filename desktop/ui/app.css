@@ -10,7 +10,6 @@ h1{font-size:24px;font-weight:450;letter-spacing:-.5px;margin:0}
 h2{font-size:15px;font-weight:550;margin:0 0 4px}
 p{margin:0 0 10px}
 .muted{color:var(--dim)}.small{font-size:12px}
-.mono{font-family:var(--mono)}
 label.field{display:block;margin:12px 0 0}
 label.field>span:first-child{display:block;font:10px var(--mono);letter-spacing:.8px;text-transform:uppercase;color:var(--dim2);margin-bottom:5px}
 input[type=text],input[type=url],input[type=password],select{width:100%;appearance:none;-webkit-appearance:none;background:var(--panel2);color:var(--fg);border:1px solid var(--line2);padding:9px 10px;font:13px var(--sans);border-radius:0}
@@ -71,16 +70,11 @@ body.overlay{background:var(--panel);border:1px solid var(--line2);height:100vh;
 @keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
 
 /* Installer */
-pre.log{background:#0b0e0b;border:1px solid var(--line);color:#c9d1b5;font:11px/1.5 var(--mono);padding:10px;height:240px;overflow:auto;white-space:pre-wrap;margin:12px 0 0}
 .done{border:1px solid #38432d;background:#141b12;padding:12px 14px;margin-top:12px}
-.facts{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;margin:8px 0}.facts dt{font:10px var(--mono);color:var(--dim2);text-transform:uppercase;letter-spacing:.6px;padding-top:3px}.facts dd{margin:0;overflow-wrap:anywhere}
 .done dl{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;margin:8px 0}
 .done dt{font:10px var(--mono);color:var(--dim2);text-transform:uppercase;letter-spacing:.6px;padding-top:3px}
 .done dd{margin:0;font-family:var(--mono);overflow-wrap:anywhere}
 .cmd{display:flex;gap:8px;margin-top:10px}.cmd code{flex:1;background:#0b0e0b;border:1px solid var(--line);padding:9px 10px;font:12px var(--mono);overflow-wrap:anywhere}
-.choice{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);padding:10px 12px;margin-top:8px;cursor:pointer}
-.choice input{margin-top:3px}
-.choice:has(input:checked){border-color:#514b35;background:#1a1d15}
 
 /* Rook panel */
 body.panel{min-height:100vh}
@@ -100,12 +94,10 @@ body.panel{min-height:100vh}
 .pn-tabs button{border:0;border-bottom:2px solid transparent;background:none;padding:9px 12px;white-space:nowrap;color:var(--dim)}
 .pn-tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
 .pn-tabs .count:not(:empty){margin-left:4px;padding:0 5px;background:var(--chip);color:var(--fg)}
-.pn-search{display:flex;gap:8px;margin-top:12px}.pn-search input{flex:1}
 .pn .msg{margin:10px 0 0}
 .pn-list{list-style:none;margin:6px 0 0;padding:0;flex:1}
 .pn-item{border:1px solid var(--line);border-left:3px solid var(--line2);background:var(--panel);padding:10px 12px;margin:0 0 8px;cursor:pointer}
 .pn-item:hover,.pn-item:focus-visible{border-color:var(--accent-dim)}
-.pn-item.blocked{border-left-color:var(--bad)}.pn-item.active{border-left-color:var(--green)}
 .pn-title{font-weight:550;overflow-wrap:anywhere}
 .pn-meta{font:10px var(--mono);color:var(--dim2);letter-spacing:.3px;margin-top:2px;overflow-wrap:anywhere}
 .pn-body{font-size:13px;color:var(--dim);margin-top:4px;overflow-wrap:anywhere}

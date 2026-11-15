@@ -74,13 +74,8 @@ with your Rook user name and password, the same as the hub site.
    Advanced settings; no client secret. Connect, and sign in with your
    user name and password.
 
-With nobody typing anything: add the connector with just the address
-(claude.ai registers itself). Its sign-in page shows a short code and
-"Waiting for approval"; an owner approves that code with `token.approve
-{code}` (an agent acting for them can) or `python -m rook.core2.hub
---config hub.yaml oauth approve <CODE>` on the hub's machine, and the page
-goes on. Codes last 10 minutes and work once; "Sign in with your password
-instead" is on the same page.
+With just the address, claude.ai registers itself and shows the same
+sign-in page.
 
 Or, with no password typed: mint a token (`token.create {agent:
 "claude-web"}` from an agent, or the **Tokens** page) and use its reply's
@@ -149,6 +144,6 @@ call worker=kaiju cap=shell.exec args={...} why="..." session=9f2c…
 ```
 
 Calls in it can't reach other caps, their journal entries go on that
-project's chain, and the security gate compares risky calls with the task.
+project's chain.
 A session lasts up to 12 hours and never grows: start a new one for more.
 `session end=<id>` ends it.

@@ -1,0 +1,45 @@
+[package]
+name = "rook-worker"
+version = "0.5.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "The Rook worker: join a band, announce caps, answer calls, heartbeat (docs/spec/worker-profile.md)."
+publish = false
+
+[[bin]]
+name = "rook-worker"
+path = "src/main.rs"
+
+[dependencies]
+telesthete = { git = "https://github.com/Bake-Ware/telesthete", rev = "c0fe4e6c96895555258a25171c4fedc5a7964c52" }
+chacha20poly1305 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "process", "time", "macros", "sync", "io-util", "fs"] }
+serde_json = "1"
+sha2 = "0.10"
+yaml-rust2 = "0.10"
+getrandom = "0.2"
+regex = "1"
+glob = "0.3"
+base64 = "0.22"
+serialport = { version = "4", default-features = false }
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+# The desktop app uses the same, so it is built once there.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# net.open's TLS: the rustls (with ring) and web roots reqwest already brings.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+# The band's web socket fallback (wss through the hub's door), on the same rustls and web roots.
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"

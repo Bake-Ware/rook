@@ -1,35 +1,23 @@
-# Change records (castling-changes; castling-caps C2): records, not a runner.
+# Change records (castling-changes; castling-caps C2): records only.
 #
 # A lasting change gets a record: what changes, why, what could break, how it
-# was tested, how to undo it, and the steps someone else could follow.
-# Writing one is the preparation ritual; the records are the audit trail
-# later agents read to learn why things are the way they are. Gating is the
-# least of it: the change then goes ahead as ordinary calls, and the hub's
-# one hold path (sacred machines, hard stops, the security gate) applies to
-# those calls as to any other.
-#
-# How much a record must say follows the project's trust level
-# (project.trust): sacred and normal want the full record, ship-it a
-# one-line note. No project, or no workbench: normal.
+# was tested, how to undo it, and the steps someone else could follow. The
+# records are the trail later agents read to learn why things are the way
+# they are. A record gates and runs nothing: the change goes ahead as
+# ordinary calls.
 #
 # Applying, testing and rolling back are not this plugin's job: when they are
 # automated they are a job (the jobs plugin) the record links with `job` and
 # `rollback_job`; running the rollback is job.run on that job.
-#
-# Core writes a record here for plugin pushes and core rollouts when this
-# plugin is installed; core never needs it.
-#
-# Code: scripts/changes.py.
 manifest: 1
 plugin: change
-version: 0.6.0
+version: 0.7.0
 title: Change records
-doc: "Lasting changes get a record (what, why, risk, testing, rollback, steps), as full as the project's trust level asks; searchable, linked to project, task, workers and caps."
-package: core
+doc: "Lasting changes get a record (what, why, risk, testing, rollback, steps); searchable, linked to project, task, workers and caps."
+package: workbench
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-uses: ["project.get", "project.list", "project.trust.list"]
 
 records:
   change:
@@ -41,9 +29,8 @@ records:
       rollback: { type: markdown, doc: "How to undo it, or why it can't be undone." }
       steps: { type: markdown, doc: "The steps, so someone else could follow them." }
       category: { type: str, doc: "deploy, config, database, plugin, update, ... (free text, for finding similar changes)." }
-      project: { type: str, doc: The project's id or slug; its trust level sets the ceremony. }
+      project: { type: str, doc: The project it is for. }
       task: { type: str, doc: The task this change is for. }
-      level: { type: str, enum: [sacred, normal, ship-it], doc: "The ceremony it got (from the project; normal without one)." }
       workers: { type: list, items: { type: str }, doc: The workers it touches. }
       caps: { type: list, items: { type: str }, doc: The caps it calls. }
       job: { type: str, doc: "The job that applies and tests it, when that is automated." }
@@ -52,32 +39,6 @@ records:
     index: [project, task, category]
     search: [what, why, risk, testing, rollback, steps, category, outcome]
     history: true
-    caps: [list, get, search, update, history]
-
-caps:
-  create:
-    doc: >-
-      Record a lasting change before you make it. what and why always; unless the project is
-      ship-it, also risk, testing, rollback and steps (a sentence each, at least). The record
-      gates nothing: make the change with ordinary calls, then change.update its outcome.
-    risk: write
-    scope: multi-user
-    run: scripts/changes.py:create
-    args:
-      what: { type: str, required: true }
-      why: { type: str, required: true }
-      risk: { type: str, doc: What could break. }
-      testing: { type: markdown, doc: How it is tested. }
-      rollback: { type: markdown, doc: "How to undo it, or why it can't be." }
-      steps: { type: markdown, doc: The steps someone else could follow. }
-      category: { type: str }
-      project: { type: str, doc: "Project id or slug (its trust level sets what the record needs)." }
-      task: { type: str }
-      workers: { type: list, items: { type: str } }
-      caps: { type: list, items: { type: str } }
-      job: { type: str }
-      rollback_job: { type: str }
-      outcome: { type: str, doc: "For a change already made (written up afterwards)." }
-    result: { type: map }
+    caps: [list, get, search, create, update, history]
 
 docs: { manual: docs/manual.md }

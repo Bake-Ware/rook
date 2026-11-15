@@ -20,6 +20,19 @@ call worker=kaiju cap=shell.open args={"pty": true} why="Look around kaiju's dis
 Without `argv` it starts a login shell; `pty: false` runs a process on
 pipes instead of a terminal.
 
+A Rust worker (`worker/`) also opens a TCP connection (`net.open {host,
+port}`) or a serial port (`serial.open {port, baud}`) as a stream: what
+arrives is output, `{"text": ...}` or `{"bytes": <base64>}` is sent, closing
+the stream closes it. `net.open {..., tls: true}` wraps the connection in
+TLS (`verify: false` takes a device's self-signed certificate); the hub
+script speaks HTTP or WebSocket over it, the worker only carries bytes.
+
+`net.udp` opens a UDP socket: `{"bytes": ..., "to": "host:port"}` sends one
+datagram (broadcast and multicast addresses too: Wake-on-LAN, SSDP, mDNS),
+and each datagram that arrives is a `bytes` event whose `by` is its sender
+(`ip:port`). `{"bytes": ...}` input is the Rust worker's; the Python worker
+answers that it isn't on it.
+
 ## Reading and writing
 
 Agents use the MCP `stream` tool ([MCP for agents](mcp.md)):
@@ -32,7 +45,8 @@ Agents use the MCP `stream` tool ([MCP for agents](mcp.md)):
   Ctrl-C; `{"resize": [120, 40]}` sets the window size.
 
 A stream belongs to the people and agents it was opened for, and to the
-hub's owners; others can't read it. Closing keeps it readable; it just
+hub's owners; others can't read it (on a Rust worker anyone can, until the
+hardening pass). Closing keeps it readable; it just
 takes no more events.
 
 ## Finding one

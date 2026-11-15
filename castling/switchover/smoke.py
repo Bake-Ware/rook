@@ -15,7 +15,7 @@ the hub's HTTP door, the way a client sees it:
   waits on a person (castling-switchover-decisions, "Usable first, security later");
 - every moved store reads back in full through its caps, paged to the end
   (active and archived records): knowledge, tasks, task comments, projects,
-  concepts, huddles, jobs, change records, secret names, rooms and huddles
+  concepts, huddles, change records, secret names, rooms and huddles
   as streams, and their text and status events; with ``--verify-json`` each
   count must reach what verify moved;
 - a migrated huddle reads back through ``stream.read``.
@@ -53,7 +53,6 @@ RECORDS = [
     (names.cap("projects", "list"), "projects"),
     (names.cap("concepts", "list"), "concepts"),
     (names.cap("huddle", "list"), None),
-    (names.cap("jobs", "list"), "jobs (disabled, 0.4 definition kept)"),
     (names.cap("changes", "list"), "change records"),
 ]
 STREAMS = "chat rooms and huddles -> streams"

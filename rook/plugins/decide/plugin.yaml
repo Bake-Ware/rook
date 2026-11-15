@@ -1,13 +1,13 @@
 # A one-pass decision model (Diffucision, or the typed decision engine)
-# answering a batch of typed questions about one state: the gate
-# classifier's upgrade path (castling-caps), and decide.drive, a screen loop
-# on it (kept by Bake's C3 amendment). Code: scripts/decide.py.
+# answering a batch of typed questions about one state, and decide.drive, a
+# screen loop on it (kept by Bake's C3 amendment). Code: scripts/decide.py.
 manifest: 1
 plugin: decide
 version: 0.5.0
 title: Decision model
 doc: Ask a one-pass decision model (Diffucision) a batch of typed questions about one state.
 package: agents
+segment: Agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
@@ -36,7 +36,7 @@ settings:
   max_steps: { type: int, default: 20, min: 1, max: 500, where: hub, doc: drive's step budget when the call gives none. }
   settle: { type: duration, default: 300ms, where: hub, doc: drive's pause after each input. }
   grid: { default: 8x8, pattern: "^[1-9][0-9]?x[1-9][0-9]?$", where: hub, doc: "drive's click grid when there are no elements: ROWSxCOLS." }
-  halt: { type: bool, default: false, where: hub, doc: "Kill switch: drive refuses to start. A running drive ends at its max_seconds; every input it sends still goes through the gate." }
+  halt: { type: bool, default: false, where: hub, doc: "Kill switch: drive refuses to start. A running drive ends at its max_seconds; every input it sends still goes through dispatch." }
   confirm: { enum: [gated, always], default: gated, where: hub, doc: "always: every drive action stops for a person; gated: only when a gate below fires." }
   min_confidence: { type: float, default: 0.9, min: 0, max: 1, where: hub, doc: "Below this confidence a drive action stops for a person." }
   confirm_p: { type: float, default: 0.2, min: 0, max: 1, where: hub, doc: "The model's P(needs confirmation) that stops an action for a person." }

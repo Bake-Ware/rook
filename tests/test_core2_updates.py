@@ -3,6 +3,7 @@ the worker's boot selector and updater, and the hub's update.* rollout."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -329,21 +330,13 @@ class FakeHub:
 
     def __init__(self, data: Path, workers: dict):
         self.data, self.op, self.hub_id, self.node = data, OP, HUB, "hubnode"
-        self.plugins = SimpleNamespace(plugins={"change": object()})
-        self.changes: list = []          # change records the rollouts left (Hub.note_change)
-        self.known = {n: SimpleNamespace(id=n, name=n, version="0.5.0", online=True, band="b") for n in workers}
+        self.known = {n: SimpleNamespace(id=n, name=n, version="0.5.0", online=True, band="b", facts={}) for n in workers}
         self.dispatcher = SimpleNamespace(workers={n: SimpleNamespace(caps={"worker.update": {}} if up else {})
                                                    for n, up in workers.items()})
         self.transport = SimpleNamespace(offer=lambda band, blob, to=None: {"id": "d", "to": to})
-        self.fail: dict = {}            # worker -> how it fails: "refuse" | "rollback"
+        self.fail: dict = {}            # worker -> how it fails: "refuse" | "rollback" | the status it serves
         self.calls: list = []
         self.cores = {n: {"running": None, "trial": None, "failed": None} for n in workers}
-
-    async def note_change(self, who, record):
-        if "change" not in self.plugins.plugins:
-            return None
-        self.changes.append((who.person, record))
-        return f"c{len(self.changes)}"
 
     async def call_as(self, who, cap, args, target=None, **kw):
         self.calls.append((cap, target, who.person))
@@ -354,7 +347,8 @@ class FakeHub:
                 return {"ok": False, "error": "update refused: smoke check failed"}
             self._version = args
             how = self.fail.get(target)
-            self.cores[target] = ({"running": None, "trial": None,
+            self.cores[target] = (how if isinstance(how, dict) else
+                                  {"running": None, "trial": None,
                                    "failed": {"version": self._target, "reason": "did not come up"}}
                                   if how == "rollback" else {"running": self._target, "trial": None, "failed": None})
             return {"ok": True, "result": {"restarting": True}}
@@ -410,15 +404,36 @@ def test_rollout_goes_canary_first_then_batches_and_skips_what_it_cannot_update(
     assert all(p == "bake" for _, _, p in hub.calls)                     # as the person who started it
     assert [(cap, t) for cap, t, _ in hub.calls if cap == "worker.update"][1:] == \
         [("worker.update", "a"), ("worker.update", "b")]
-    # one change record for the whole rollout, as the person, written when it ended
-    [(by, rec)] = hub.changes
-    assert by == "bake" and rec["category"] == "update" and rec["workers"] == ["c", "a", "b"]
-    assert rec["outcome"] == "done: updated c, a, b" and status["rollout"]["change"] == "c1"
     assert status["rollout"]["status"] == "done"
     assert {w["name"]: w["state"] for w in status["rollout"]["workers"]} == \
         {"c": "updated", "a": "updated", "b": "updated", "d": "skipped", "phone": "skipped"}
     events = [e["event"] for e in history["entries"]]
     assert events[0] == "rollout.done" and events[-1] == "prepared" and events.count("worker.updated") == 3
+
+
+def test_a_release_of_built_files_goes_only_to_workers_that_run_one_of_them(tmp_path, monkeypatch):
+    hub, up = make(tmp_path, monkeypatch, {"py": True, "one": True, "other": True})
+    hub.known["one"].facts = {"artifact": "rook-worker-linux-x86_64"}
+    hub.known["other"].facts = {"artifact": "rook-worker-linux-aarch64"}
+    hub._target = "0.5.1"
+    built = tmp_path / "built"
+    built.mkdir()
+    (built / "rook-worker-linux-x86_64").write_bytes(b"\x7fELF one")
+
+    async def go():
+        started = await up.rollout(ctx(), "0.5.1", source=str(built))
+        await finish(up)
+        source_ro = await up._prepare(ctx(), version="0.5.2", source=str(source(tmp_path)))
+        return started, source_ro, up._workers("0.5.2")
+    started, source_ro, rows = asyncio.run(go())
+    assert started["canary"] == ["one"] and started["rest"] == []
+    assert started["skipped"] == {"other": "0.5.1 has no rook-worker-linux-aarch64",
+                                  "py": "0.5.1 holds built files, not the source this worker runs"}
+    sig = release.read_sig(tmp_path / "hub" / "releases" / "0.5.1.tar.gz")
+    assert sig["files"] == {"rook-worker-linux-x86_64": hashlib.sha256(b"\x7fELF one").hexdigest()}
+    assert source_ro["artifacts"] == []
+    assert {r["name"]: r.get("skip") for r in rows} == {
+        "py": None, "one": "0.5.2 has no rook-worker-linux-x86_64", "other": "0.5.2 has no rook-worker-linux-aarch64"}
 
 
 def test_a_failing_canary_stops_the_rollout(tmp_path, monkeypatch):
@@ -436,7 +451,28 @@ def test_a_failing_canary_stops_the_rollout(tmp_path, monkeypatch):
     assert states["a"] == ("failed", "rolled back on the worker: did not come up")
     assert states["b"][0] == states["c"][0] == "not started"
     assert [t for cap, t, _ in hub.calls if cap == "worker.update"] == ["a"]
-    assert hub.changes[0][1]["outcome"] == "failed: updated none; a failed: rolled back on the worker: did not come up"
+
+
+def test_a_trial_that_gives_up_is_failed_even_before_it_restarts(tmp_path, monkeypatch):
+    """Between abandon() and its restart the trial process still serves
+    worker.status: running the version, no trial. That is a rollback."""
+    hub, up = make(tmp_path, monkeypatch, {"a": True})
+    hub._target = "0.5.1"
+    worker = updater(tmp_path / "w")
+    run(worker.receive(built(tmp_path, name="w")[0]))
+    trial = updater(tmp_path / "w", running="0.5.1")
+    trial.abandon("no call from the home hub served within 6s")
+    status = trial.status()
+    assert status["running"] == "0.5.1" and status["trial"] is None
+    hub.fail["a"] = status               # what the worker serves until it restarts
+
+    async def go():
+        await up.rollout(ctx(), "0.5.1", source=str(source(tmp_path)))
+        await finish(up)
+        return (await up.status(ctx()))["rollout"]
+    ro = asyncio.run(go())
+    assert ro["status"] == "failed", ro
+    assert ro["workers"][0]["reason"] == "rolled back on the worker: no call from the home hub served within 6s"
 
 
 def test_a_refused_update_and_a_worker_that_never_comes_back_fail(tmp_path, monkeypatch):
@@ -474,20 +510,6 @@ def test_rollout_refusals(tmp_path, monkeypatch):
         with pytest.raises(KitError, match="already on 0.5.1"):
             await up.rollout(ctx(), "0.5.1")
     asyncio.run(go())
-
-
-def test_a_rollout_needs_no_change_plugin(tmp_path, monkeypatch):
-    hub, up = make(tmp_path, monkeypatch, {"a": True})
-    hub._target = "0.5.1"
-    hub.plugins.plugins.clear()
-
-    async def go():
-        await up.rollout(ctx(), "0.5.1", source=str(source(tmp_path)))
-        await finish(up)
-        return (await up.status(ctx()))["rollout"]
-    ro = asyncio.run(go())
-    assert ro["status"] == "done" and ro["change"] is None and not hub.changes
-    assert [t for cap, t, _ in hub.calls if cap == "worker.update"] == ["a"]
 
 
 def test_a_held_update_stops_the_rollout(tmp_path, monkeypatch):

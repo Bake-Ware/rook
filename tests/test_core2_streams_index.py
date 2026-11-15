@@ -200,7 +200,7 @@ def test_the_index_outlives_the_hub_and_a_hub_without_one_learns_by_resync(band,
         kept.close()
         await until(lambda: w.transport.lost(BAND), 20)
         # A new hub process's announce seq starts at the clock; the old one's ran ahead of it
-        # (several announces a second), and the worker takes only a newer seq (spec 5.4).
+        # (several announces a second), and the worker takes only a newer seq (spec 10.3).
         await asyncio.sleep(max(0.0, hub._seq + 1 - time.time()))
         for f in (tmp_path / "hub").glob("streams.db*"):  # a hub that lost its index
             f.unlink()

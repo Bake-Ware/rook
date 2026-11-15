@@ -180,7 +180,7 @@ class FakeWorker:
 
     def __init__(self, hub: Hub, band: Loopback, tmp: Path, core: str = "2.0", extra: dict | None = None):
         self.hub, self.core = hub, core
-        self.key = SigningKey.generate()    # its own key: signs its core.call / core.elevate (13.1)
+        self.key = SigningKey.generate()    # its own key: signs its core.call / core.elevate (10.2)
         folder = plugin(tmp, "echo", ECHO, {"echo.py": "def say(ctx, text): return text\n"})
         self.echo_raw, _ = check(folder)
         self.core_raw, _ = check(CORE)
@@ -431,53 +431,27 @@ def test_ending_a_session_drops_its_leases_on_the_worker(hubs):
             await hub.stop()
     run(go())
 
-def test_a_session_names_only_a_project_its_caller_may_see(hubs, tmp_path):
-    # Naming a project opens its journal to the session's agent (11.4): the
-    # hub checks access at session start (review H9).
-    import shutil
-    lib = tmp_path / "lib"
-    lib.mkdir()
-    shutil.copytree(Path(runtime.__file__).parents[2] / "plugins" / "projects", lib / "projects")
-
+def test_a_sessions_project_is_a_name(hubs, tmp_path):
+    # The hub stamps a session's project on its entries and lets the
+    # session's agent read that project's history (7.4); it knows nothing
+    # else about projects.
     async def go():
-        hub, _, token = await hubs(config(tmp_path, library=lib), worker=False)
+        hub, _, token = await hubs(config(tmp_path), worker=False)
         try:
-            _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "project.create", "why": WHY,
-                                                       "args": {"title": "Castling", "slug": "castling"}}, token)
-            assert out["ok"], out
-            pid = out["result"]["id"]
             claude = hub.add_token(runtime.Caller(agent="agent:claude"))
-            kid = hub.add_token(runtime.Caller(person="person:kid"))
-            for project in ("castling", pid):
-                _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": project}, claude)
-                assert out["ok"], out
-            _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": "secret-plans"}, claude)
-            assert out == {"ok": False, "error": "denied: project: no project secret-plans"}
-            _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": "castling"}, kid)
-            assert out["error"] == "denied: project: you may not read projects"
+            _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": "castling"}, claude)
+            assert out["ok"], out
+            assert hub.journal.query(kind="session", limit=1)[0]["project"] == "castling"
             _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": ["castling"]}, claude)
-            assert out["error"] == "denied: project: a project id or slug"
-            # owners read the whole journal anyway: any project
+            assert out["error"] == "bad request: project must be a name"
             _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": "secret-plans"}, token)
             assert out["ok"], out
-            # so an agent's journal view holds only projects it was let into
+            # an agent's journal view holds only the projects its sessions named
             _, out = await http(hub, "GET", "/journal?project=secret-plans", token=claude)
             assert out["ok"] and out["entries"] == []
         finally:
             await hub.stop()
     run(go())
-
-    async def bare():      # no workbench: no projects to name
-        hub, _, _ = await hubs(config(tmp_path / "bare"), worker=False)
-        try:
-            claude = hub.add_token(runtime.Caller(agent="agent:claude"))
-            _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": "castling"}, claude)
-            assert out["error"] == "denied: project: no project castling (no projects on this hub)"
-            _, out = await http(hub, "POST", "/session", {"caps": ["*"]}, claude)
-            assert out["ok"]
-        finally:
-            await hub.stop()
-    run(bare())
 
 
 def test_holds_wait_for_the_person(hubs, tmp_path):
@@ -579,7 +553,6 @@ def test_hub_plugins_records_contracts_and_hooks(hubs, tmp_path):
         try:
             library = [n for n, p in hub.plugins.plugins.items() if not p.manifest.get("builtin")]
             assert library == ["notes"]       # broken was refused, the hub runs
-            assert hub._installed()["notes"] == "1.0.0"     # what requires.plugins is checked against
             # Only defined contracts become grantable names (a plugin can't make one up).
             assert hub._contracted({"risk": "read", "contracts": ["notify.send", "made.up"]})["contracts"] == ["notify.send"]
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notes.note.create",
@@ -588,7 +561,7 @@ def test_hub_plugins_records_contracts_and_hooks(hubs, tmp_path):
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notify.send",
                                                        "args": {"text": "eggs"}, "why": WHY}, token)
             assert out["ok"], out
-            # A session for notify.send alone still reaches its provider (spec 8.2).
+            # A session for notify.send alone still reaches its provider (spec 6.2).
             _, s = await http(hub, "POST", "/session", {"caps": ["notify.send"]}, token)
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notify.send", "session": s["session"],
                                                        "args": {"text": "jam"}, "why": WHY}, token)
@@ -813,61 +786,6 @@ def test_a_call_the_hub_gives_up_on_stops_being_resent(hubs):
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(hub._send(hub.band, req), 0.1)      # dispatch's timeout
             assert forgotten == [(hub.band, "d" * 32)] and hub._late["d" * 32]["worker"] == "e" * 32
-        finally:
-            await hub.stop()
-    run(go())
-
-
-BOT = """\
-manifest: 1
-plugin: bot
-version: 1.0.0
-runs_on: hub
-settings:
-  token: { type: str }
-routes:
-  signed: { path: /signed, methods: [POST], run: scripts/bot.py:hook, auth: { hmac: "{{secret:BOT_KEY}}" } }
-  tg: { path: /tg, methods: [POST], run: scripts/bot.py:hook,
-        auth: { token: "{{settings.token}}", header: X-Telegram-Bot-Api-Secret-Token } }
-  bearer: { path: /bearer, methods: [POST], run: scripts/bot.py:hook, auth: { token: "{{settings.token}}" } }
-  bare: { path: /bare, methods: [POST], run: scripts/bot.py:hook, auth: token }
-"""
-
-
-def test_hmac_and_token_routes(hubs, tmp_path):
-    import hashlib
-    import hmac as hmac_
-    lib = tmp_path / "lib"
-    plugin(lib, "bot", BOT, {"bot.py": "def hook(ctx, request):\n    return {'got': request['body'].decode()}\n"})
-
-    async def post(hub, path, body: bytes, headers: dict):
-        def go():
-            req = urllib.request.Request(f"http://127.0.0.1:{hub.doors[0].port}/p/bot{path}", data=body,
-                                         method="POST", headers=headers)
-            try:
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    return r.status, json.loads(r.read())
-            except urllib.error.HTTPError as e:
-                return e.code, json.loads(e.read())
-        return await asyncio.to_thread(go)
-
-    async def go():
-        hub, _, _ = await hubs(config(tmp_path, library=lib, settings={"bot": {"token": "t0k"}}), worker=False)
-        try:
-            hub.vault.set("BOT_KEY", "k3y", by="person:bake")
-            body = b'{"ref": "main"}'
-            sig = "sha256=" + hmac_.new(b"k3y", body, hashlib.sha256).hexdigest()
-            assert await post(hub, "/signed", body, {"X-Hub-Signature-256": sig}) == (200, {"got": body.decode()})
-            assert (await post(hub, "/signed", body + b" ", {"X-Hub-Signature-256": sig}))[0] == 401
-            assert (await post(hub, "/signed", body, {}))[0] == 401
-            assert (await post(hub, "/signed", body, {"X-Hub-Signature-256": "sha256=\u00e9\u00e9"}))[0] == 401
-            assert (await post(hub, "/tg", body, {"X-Telegram-Bot-Api-Secret-Token": "t0k"}))[0] == 200
-            assert (await post(hub, "/tg", body, {"X-Telegram-Bot-Api-Secret-Token": "nope"}))[0] == 401
-            assert (await post(hub, "/bearer", body, {"Authorization": "Bearer t0k"}))[0] == 200
-            assert (await post(hub, "/bearer", body, {"Authorization": "Bearer t0"}))[0] == 401
-            assert (await post(hub, "/bare", body, {}))[0] == 501
-            hub.vault.delete("BOT_KEY")                     # an unset secret refuses everything
-            assert (await post(hub, "/signed", body, {"X-Hub-Signature-256": sig}))[0] == 401
         finally:
             await hub.stop()
     run(go())
@@ -1257,8 +1175,10 @@ def test_rook_run_agents_have_their_own_identity_and_turn_tokens(hubs, tmp_path)
             # Only the plugin that runs it mints its turn tokens.
             with pytest.raises(runtime.KitError, match="doesn't run agent scribe"):
                 hub.turn_token("notes", "person:bake", "scribe", 60)
-            # A turn token: the agent, for the person whose call it came from.
-            token = (await call(owner, "crew.token", name="scribe"))["result"]
+            # A turn token, by name: the agent, for the person whose call it came from.
+            name = (await call(owner, "crew.token", name="scribe"))["result"]
+            assert name.startswith("turn-")
+            token = hub.identities.turn_token(name)
             assert hub.authenticate(token) == runtime.Caller("person:bake", "agent:scribe")
             out = await call(token, "crew.count")
             assert out["result"] == {"person": "person:bake", "agent": "agent:scribe"}, out
@@ -1267,10 +1187,11 @@ def test_rook_run_agents_have_their_own_identity_and_turn_tokens(hubs, tmp_path)
             out = await call(token, "crew.hire", name="scribe", grants=["*"])     # its own grants hold
             assert out["error"] == "denied: agent: grants", out
             # For a child, only what both may (the child's preset refuses crew.count).
-            kid = hub.turn_token("crew", "person:kid", "scribe", 60)
+            kid_name = hub.turn_token("crew", "person:kid", "scribe", 60)
+            kid = hub.identities.turn_token(kid_name)
             assert (await call(kid, "crew.count"))["error"] == "denied: person: grants"
             # Alone: its own grants only.
-            alone = hub.turn_token("crew", None, "scribe", 60)
+            alone = hub.identities.turn_token(hub.turn_token("crew", None, "scribe", 60))
             assert (await call(alone, "crew.count"))["result"] == {"person": None, "agent": "agent:scribe"}
             # A contract through one chosen provider: rights match the contract.
             out = await call(owner, "crew.think", name="scribe", provider="notes.tell")
@@ -1281,8 +1202,8 @@ def test_rook_run_agents_have_their_own_identity_and_turn_tokens(hubs, tmp_path)
             out = await call(owner, "crew.think", name="scribe", provider="notes.count")
             assert "doesn't provide notify.send" in out["error"], out
             # Tokens end with the turn, expire, and die with the agent.
-            hub.end_turn_token(kid)
-            assert hub.authenticate(kid) is None
+            hub.end_turn_token(kid_name)
+            assert hub.authenticate(kid) is None and hub.identities.turn_token(kid_name) is None
             assert (await http(hub, "GET", "/workers", token=alone))[0] == 200
             now[0] += 61
             assert hub.authenticate(alone) is None and hub.authenticate(token) is None
@@ -1314,7 +1235,7 @@ caps:
     doc: Pair with it.
     risk: admin
     scope: local
-    effects: [persists]
+    effects: []
     run: scripts/lamp.py:pair
   on:
     doc: Switch it on.
@@ -1412,6 +1333,245 @@ def test_appliances_are_onboarded_called_by_name_and_carry_their_settings(hubs, 
             assert out["ok"]
             assert (await rc("lamp.on", worker="den-lamp"))["error"] == "unknown worker: den-lamp"
             assert "pair-k3y" not in (hub.data / "appliances.json").read_text()
+        finally:
+            await hub.stop()
+    run(go())
+
+
+SHELL = """\
+manifest: 1
+plugin: shell
+version: 1.0.0
+doc: Runs commands.
+caps:
+  exec:
+    doc: Run a command.
+    risk: exec
+    scope: local
+    run: scripts/shell.py:exec_
+    args:
+      argv: { type: list, items: { type: str } }
+"""
+
+PROBE = """\
+manifest: 1
+plugin: probe
+version: 1.0.0
+doc: A worker's uptime, worked out on the hub.
+runs_on: hub
+platforms: [linux]
+uses: [shell.exec]
+appliance:
+  settings:
+    level: { type: int, default: 50 }
+caps:
+  uptime:
+    doc: The worker's uptime.
+    on: worker
+    risk: read
+    scope: local
+    run: scripts/probe.py:uptime
+  count:
+    doc: A hub cap beside it.
+    risk: read
+    scope: self
+    run: scripts/probe.py:count
+"""
+
+PROBE_PY = """\
+async def uptime(ctx):
+    out = await ctx.call_on(ctx.worker["id"], "shell.exec", argv=["uptime"])
+    return {"worker": ctx.worker, "appliance": ctx.appliance, "stdout": out["stdout"]}
+
+def count(ctx):
+    return 1
+"""
+
+NEEDY = """\
+manifest: 1
+plugin: needy
+version: 1.0.0
+doc: Needs a primitive no worker serves.
+runs_on: hub
+uses: [serial.open]
+caps:
+  poke:
+    doc: Poke it.
+    on: worker
+    risk: read
+    scope: local
+    run: scripts/needy.py:poke
+"""
+
+
+def test_a_hub_plugin_serves_a_workers_cap_and_an_appliances(hubs, tmp_path):
+    """castling-design, Workers: "workers reach things, the hub knows what to
+    say"; Plugins: "A script can call any worker, check results, branch and
+    loop; every step lands in the journal." """
+    lib = tmp_path / "lib"
+    plugin(lib, "probe", PROBE, {"probe.py": PROBE_PY})
+    plugin(lib, "needy", NEEDY, {"needy.py": "def poke(ctx): return 1\n"})
+    ran = []
+
+    def exec_(msg):
+        ran.append(msg["args"])
+        return {"ok": True, "code": 0, "stdout": "up 3 days", "stderr": ""}
+
+    cfg = config(tmp_path, library=lib, settings={"hub": {"security": "off"}})
+
+    async def go():
+        hub, w, token = await hubs(cfg, extra={SHELL: {"shell.exec": exec_}})
+
+        async def rc(cap, worker, args=None):
+            return (await http(hub, "POST", "/call", {"worker": worker, "cap": cap, "why": WHY,
+                                                      "args": args or {}}, token))[1]
+        try:
+            assert "probe.count" in hub.dispatcher.workers[hub.node].caps
+            assert "probe.uptime" not in hub.dispatcher.workers[hub.node].caps
+            await w.announce(facts={"os": "windows"})
+            await until(lambda: "shell.exec" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+            assert "probe.uptime" not in hub.dispatcher.workers[WID].caps      # not one of its platforms
+            await w.announce(facts={"os": "linux"})
+            await until(lambda: "probe.uptime" in hub.dispatcher.workers[WID].caps)
+            assert "needy.poke" not in hub.dispatcher.workers[WID].caps         # it serves no serial.open
+            assert "appliance.discover" not in hub.dispatcher.workers[WID].caps  # nor net.udp (the hub's builtin's)
+            assert "appliance.discover" in hub.plugins.worker_caps()["appliance"][1]
+            _, caps = await http(hub, "GET", "/caps?worker=kaiju", token=token)
+            assert "probe.uptime" in caps["workers"]["kaiju"]["caps"]
+
+            # Called on the worker as any of its caps; the script runs on the hub.
+            n = len(w.verified)
+            out = await rc("probe.uptime", "kaiju")
+            assert out["ok"], out
+            assert out["result"] == {"worker": {"id": WID, "name": "kaiju", "os": "linux"}, "appliance": None,
+                                     "stdout": "up 3 days"}
+            assert [t["cap"] for t in w.verified[n:]] == ["shell.exec"] and ran == [{"argv": ["uptime"]}]
+            outer = hub.journal.query(call=out["id"])[0]
+            assert (outer["cap"], outer["worker"], outer["why"]) == ("probe.uptime", WID, WHY)
+            [inner] = [e for e in hub.journal.query(cap="shell.exec") if e.get("parent") == out["id"]]
+            assert (inner["worker"], inner["why"], inner["session"]) == (WID, WHY, outer["session"])
+
+            # The same through an appliance: the delegate's primitives, the instance in ctx.
+            out = await rc("appliance.add", "rook", {"name": "den-box", "plugin": "probe", "worker": "kaiju",
+                                                     "host": "10.0.0.7", "settings": {"level": 80}})
+            assert out["ok"], out
+            out = await rc("probe.uptime", "den-box")
+            assert out["ok"], out
+            assert out["result"]["worker"]["id"] == WID
+            assert out["result"]["appliance"] == {"name": "den-box", "host": "10.0.0.7", "settings": {"level": 80}}
+            outer = hub.journal.query(call=out["id"])[0]
+            assert (outer["appliance"], outer["worker"]) == ("den-box", WID)
+            assert [e["cap"] for e in hub.journal.query() if e.get("parent") == out["id"]] == ["shell.exec"]
+        finally:
+            await hub.stop()
+    run(go())
+
+
+GREET = """\
+manifest: 1
+plugin: greet
+version: {version}
+doc: Says which version answers.
+runs_on: hub
+uses: [shell.exec]
+caps:
+  hello:
+    doc: Which version answers.
+    risk: read
+    scope: self
+    run: scripts/greet.py:hello
+  ping:
+    doc: A worker's cap, run on the hub.
+    on: worker
+    risk: read
+    scope: local
+    run: scripts/greet.py:hello
+hooks:
+  start: scripts/greet.py:start
+  stop: scripts/greet.py:stop
+pages:
+  board: {{ title: Board, file: pages/board.html, caps: [greet.hello] }}
+"""
+
+GREET_PY = """\
+from pathlib import Path
+MARKS = Path({marks!r})
+
+def hello(ctx):
+    return {version!r}
+
+def start(ctx):
+    (MARKS / "started-{version}").touch()
+
+def stop(ctx):
+    (MARKS / "stopped-{version}").touch()
+"""
+
+
+def test_hub_load_brings_a_library_plugin_to_life_without_a_restart(hubs, tmp_path):
+    """castling-design, Plugins: "One skill teaches agents to write plugins,
+    since agents will write most of them." The plugin an agent just wrote
+    serves its caps, page and worker caps at once, and a new version replaces
+    the old one in place."""
+    lib, marks = tmp_path / "lib", tmp_path / "marks"
+    lib.mkdir()
+    marks.mkdir()
+    bake = runtime.Caller(person="person:bake")
+
+    def write(version, script=None, manifest=None):
+        d = lib / "greet"
+        (d / "scripts").mkdir(parents=True, exist_ok=True)
+        (d / "pages").mkdir(exist_ok=True)
+        (d / "pages" / "board.html").write_text("<p>board</p>")
+        (d / "plugin.yaml").write_text(manifest or GREET.format(version=version))
+        (d / "scripts" / "greet.py").write_text(script or GREET_PY.format(marks=str(marks), version=version))
+
+    cfg = config(tmp_path, library=lib, settings={"hub": {"security": "off"}})
+
+    async def go():
+        hub, w, _ = await hubs(cfg, extra={SHELL: {"shell.exec": lambda msg: {"ok": True}}})
+
+        async def call(cap, worker="rook", **args):
+            return await hub.call(bake, {"worker": worker, "cap": cap, "args": args, "why": WHY}, "web")
+        try:
+            await w.announce(facts={"os": "linux"})
+            await until(lambda: "shell.exec" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+            out = await call("hub.load", plugin="greet")
+            assert not out["ok"] and "not in the hub's library" in out["error"], out
+
+            write("1.0.0")
+            out = await call("hub.load", plugin="greet")
+            assert out["ok"], out
+            assert (out["result"]["version"], out["result"]["was"], out["result"]["hooks"]) == ("1.0.0", None, True)
+            assert (await call("greet.hello"))["result"] == "1.0.0"
+            assert (await call("greet.ping", worker="kaiju"))["result"] == "1.0.0"     # the worker's new cap
+            _, caps = await http(hub, "GET", "/caps?worker=kaiju", token=(hub.data / "owner.token").read_text().strip())
+            assert "greet.ping" in caps["workers"]["kaiju"]["caps"]
+            pages = [p for s in (await call("page.list"))["result"]["segments"] for p in s["pages"]]
+            assert any(p["page"] == "greet/board" for p in pages), pages
+            assert (marks / "started-1.0.0").exists()
+
+            write("2.0.0")
+            out = await call("hub.load", plugin="greet")
+            assert out["ok"] and (out["result"]["version"], out["result"]["was"]) == ("2.0.0", "1.0.0"), out
+            assert (await call("greet.hello"))["result"] == "2.0.0"
+            assert (await call("greet.ping", worker="kaiju"))["result"] == "2.0.0"
+            assert (marks / "stopped-1.0.0").exists() and (marks / "started-2.0.0").exists()
+            assert [e for e in hub.journal.query(cap="hub.load") if e["ok"]]
+
+            # A folder that fails the check: refused with the validator's words, 2.0.0 runs on.
+            write("3.0.0", manifest=GREET.format(version="3.0.0").replace("    risk: read\n", "", 1))
+            out = await call("hub.load", plugin="greet")
+            assert not out["ok"] and "risk" in out["error"], out
+            assert (await call("greet.hello"))["result"] == "2.0.0"
+            # One that passes the check but fails to load (its script doesn't compile): the same.
+            write("3.0.0", script="def hello(ctx:\n")
+            out = await call("hub.load", plugin="greet")
+            assert not out["ok"] and "SyntaxError" in out["error"], out
+            assert (await call("greet.hello"))["result"] == "2.0.0"
+            assert (await call("greet.ping", worker="kaiju"))["result"] == "2.0.0"
+            assert "greet" in hub.plugins.scheduler.plugins and not (marks / "started-3.0.0").exists()
+            assert hub.plugins.plugins["greet"].manifest["version"] == "2.0.0"
         finally:
             await hub.stop()
     run(go())

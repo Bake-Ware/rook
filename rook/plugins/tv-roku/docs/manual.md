@@ -4,8 +4,9 @@ Drives Roku players and Roku TVs over Roku's External Control Protocol
 (ECP): plain HTTP on port 8060, **no pairing**. A Roku is an **appliance**:
 it runs no Rook worker. Onboard it once (the hub finds it by SSDP,
 `roku:ecp`) with `appliance.add plugin=tv-roku`; a worker on the Roku's
-network carries its calls. Name the Roku in the call; the caps don't take a
-host.
+network carries its calls: the plugin runs on the hub and sends each request
+over a TCP stream from that worker (`net.open`, which the Rust worker
+serves). Name the Roku in the call; the caps don't take a host.
 
 | Cap | What it does |
 |---|---|

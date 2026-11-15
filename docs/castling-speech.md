@@ -65,7 +65,7 @@ The 0.4 apps stream PCM over the voice WebSocket (`/voice/ws`, protocol 2)
 to the standalone server. On 0.5 they talk to the hub's door instead:
 
 - **A person's token** for the hub door (the app signs in at enrollment,
-  spec 12) and calls `/call` with `worker: rook`, a `why`, and the cap.
+  spec 8) and calls `/call` with `worker: rook`, a `why`, and the cap.
 - **Utterances, not a stream.** Keep the on-device Silero VAD
   (SpeechDetector.kt) and end an utterance on its silence; send it as
   `speech.hear {stream, audio: {data: base64 L16 16 kHz, mime: "audio/L16"}}`

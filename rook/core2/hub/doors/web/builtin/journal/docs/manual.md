@@ -9,7 +9,7 @@ at most 500), and returns entries newest first. Owners read everything; an
 agent reads its own calls and its projects' history; a person reads their
 own calls.
 
-The **Journal** page (under More) searches it. The `journal/recent`
+The **Journal** page (under Hub) searches it. The `journal/recent`
 component shows the latest entries on any page, optionally for one `cap`
 or `worker`.
 

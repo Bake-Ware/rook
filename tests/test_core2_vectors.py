@@ -148,15 +148,9 @@ def test_presets():
 
 
 def test_hard_stops():
-    assert rights.hard_stop(["destructive"]) and rights.hard_stop(["spends"]) and rights.hard_stop(["sends_as"])
+    assert rights.hard_stop(["destructive"]) and rights.hard_stop(["sends_as"])
     assert rights.hard_stop(["teleports"])  # unknown effect counts as destructive
-    assert not rights.hard_stop(["physical", "persists"]) and not rights.hard_stop([])
-
-
-def test_gate():
-    v = vec("gate")
-    for c in v["cases"]:
-        assert rights.gate_decision(c["results"], c.get("risk")) == c["expect"], c["name"]
+    assert not rights.hard_stop(["physical", "sensitive"]) and not rights.hard_stop([])
 
 
 def test_journal():

@@ -12,4 +12,4 @@ hooks:
 check: [thing.b]
 skills: { s: /etc/passwd }
 jobs:
-  j: { trigger: { cron: "* * * * *", every: 5m }, run: jobs/j.py:main, call: thing.a }
+  j: { trigger: { cron: "* * * * *", every: 5m }, call: thing.a }

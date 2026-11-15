@@ -34,28 +34,15 @@ caps:
     risk: read
     scope: local
     result: { type: map, fields: { percent: { type: int }, charging: { type: bool } } }
-    action:
-      exec:
-        argv: [upower, -i, /org/freedesktop/UPower/devices/DisplayDevice]
-        env: { LANG: C }
-        termux:
-          argv: [termux-battery-status]
-          parse: json
-          returns: { percent: percentage, charging: plugged }
-      parse: { regex: "percentage:\\s+(?P<percent>\\d+)" }
+    run: scripts/task.py:battery
   remote:
     doc: Ask the task server.
     risk: read
     scope: external
     args:
-      tags: { type: list, items: { type: str, pattern: "^[a-z]+$" }, join: "," }
-      state: { type: str, enum: [S, D], map: { S: Seeding, D: Downloading } }
-    action:
-      http:
-        url: "{{settings.api}}/tasks"
-        query: { tags: "{{args.tags}}", state: "{{args.state}}" }
-        tls: { verify: "{{settings.tls_verify}}" }
-      fail_if: { regex: "^ERR " }
+      tags: { type: list, items: { type: str, pattern: "^[a-z]+$" } }
+      state: { type: str, enum: [S, D] }
+    run: scripts/task.py:remote
 records:
   task: { fields: { title: { required: true } }, history: true }   # task.list ... task.history
 contracts:

@@ -231,8 +231,6 @@ def _browsers_dir() -> Path | None:
         return Path(env)
     if sys.platform == "win32":
         return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "ms-playwright"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / "ms-playwright"
     return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"
 
 
@@ -243,7 +241,7 @@ def chromium_installed() -> bool:
 
 
 def _has_display() -> bool:
-    if sys.platform in ("win32", "darwin"):
+    if sys.platform == "win32":
         return True
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 

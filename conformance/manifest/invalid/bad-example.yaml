@@ -8,4 +8,4 @@ caps:
     scope: local
     args: { q: { type: str, required: true }, n: { type: int, min: 1 } }
     examples: [ { args: { q: x, extra: 1 } }, { args: { n: 0 } } ]
-    action: { exec: { argv: [find, "{{args.q}}"] } }
+    run: scripts/x.py:f

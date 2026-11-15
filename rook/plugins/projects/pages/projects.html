@@ -9,7 +9,7 @@
 </style>
 </head>
 <body>
-<div class="scroll"><table>
+<div class="scroll" data-target="projects.list"><table>
   <thead><tr><th>Project</th><th>State</th><th>Open tasks</th><th>Changed</th></tr></thead>
   <tbody id="rows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
 </table></div>
@@ -27,7 +27,7 @@ function render() {
   let html = "";
   for (const p of projects) {
     const mine = tasks.filter((t) => t.project === p.id && OPEN.includes(t.state));
-    html += `<tr class="click" data-id="${rook.esc(p.id)}"><td>${rook.esc(p.title)}</td><td>${rook.esc(p.state)}</td>
+    html += `<tr class="click" data-id="${rook.esc(p.id)}" data-target="projects.${rook.esc(p.title)}"><td>${rook.esc(p.title)}</td><td>${rook.esc(p.state)}</td>
       <td>${mine.length}</td><td class="muted">${rook.ago(p.updated)}</td></tr>`;
     if (shown === p.id) {
       html += `<tr class="detail"><td colspan="4">${p.body ? `<p>${rook.esc(p.body)}</p>` : ""}

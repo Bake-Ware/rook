@@ -5,59 +5,50 @@ XML, ``POST /keypress/<key>`` presses a remote button, ``POST /launch/<id>``
 opens a channel. Newer Roku OS answers 403 while "Control by mobile apps"
 is limited or off (Settings > System > Advanced system settings).
 
-Every call is a few short requests; nothing is kept between calls.
+Every call is a few short requests from the hub, each over a TCP stream from
+the appliance's delegate (rook.kit.net); nothing is kept between calls.
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
-import urllib.error
 import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any
 
+from rook.kit.net import http, values
+
 TIMEOUT = 5.0
-MAX_REPLY = 1 << 20     # an app list is a few KB
 KEY_GAP = 0.05          # between key presses, so the Roku doesn't drop any
 _HOST = re.compile(r"\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~-]+")
 ON_MODES = ("PowerOn",)
+# hid.key's names -> ECP keys (others pass through: InputHDMI2, FindRemote).
+KEYS = {"home": "Home", "back": "Back", "escape": "Back", "esc": "Back", "up": "Up", "down": "Down",
+        "left": "Left", "right": "Right", "select": "Select", "ok": "Select", "enter": "Select", "info": "Info",
+        "play": "Play", "pause": "Play", "rewind": "Rev", "fastforward": "Fwd", "replay": "InstantReplay",
+        "search": "Search", "backspace": "Backspace", "volumeup": "VolumeUp", "volumedown": "VolumeDown",
+        "mute": "VolumeMute", "channelup": "ChannelUp", "channeldown": "ChannelDown"}
+INPUTS = {"tuner": "InputTuner", "hdmi1": "InputHDMI1", "hdmi2": "InputHDMI2", "hdmi3": "InputHDMI3",
+          "hdmi4": "InputHDMI4", "av1": "InputAV1"}
 
 
 class _Roku:
     def __init__(self, ctx):
-        a = getattr(ctx, "appliance", None) or {}
+        a = values(ctx.appliance)
         self.host = str(a.get("host") or "")
         if not _HOST.fullmatch(self.host):
             raise ctx.Error("roku: this call has no appliance instance (or its host is not a host name)")
         self.port = int(a.get("port") or 8060)
         self.name = str(a.get("name") or self.host)
-        self.base = f"http://{self.host}:{self.port}"
         self.ctx = ctx
-
-
-def _http(method: str, url: str) -> tuple[int, bytes]:
-    # No proxies (a Roku is on the LAN) and no redirects followed anywhere else.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
-    req = urllib.request.Request(url, method=method, data=b"" if method == "POST" else None)
-    try:
-        with opener.open(req, timeout=TIMEOUT) as r:
-            return r.status, r.read(MAX_REPLY)
-    except urllib.error.HTTPError as e:
-        return e.code, e.read(2000) if e.fp else b""
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *a, **kw):
-        return None
 
 
 async def _call(r: _Roku, method: str, path: str) -> bytes:
     try:
-        code, body = await asyncio.to_thread(_http, method, r.base + path)
-    except Exception as e:
-        raise r.ctx.Error(f"{r.name} is off or unreachable ({_why(e)})", retry=True) from None
+        code, _, body = await http(r.ctx, r.ctx.worker["id"], method, r.host, r.port, path, timeout=TIMEOUT)
+    except r.ctx.Error as e:
+        raise r.ctx.Error(f"{r.name} is off or unreachable ({e.message})", retry=True) from None
     if code == 403:
         raise r.ctx.Error(f"{r.name} refused ECP (403): set Settings > System > Advanced system settings > "
                           "Control by mobile apps > Network access to Default or Permissive")
@@ -78,10 +69,6 @@ async def _xml(r: _Roku, path: str) -> ET.Element:
 
 async def _key(r: _Roku, key: str) -> None:
     await _call(r, "POST", "/keypress/" + urllib.parse.quote(key, safe=""))
-
-
-def _why(e: BaseException) -> str:
-    return f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
 
 
 def _text(el: ET.Element | None, tag: str) -> str | None:
@@ -199,6 +186,14 @@ async def media(ctx, want: str) -> dict:
         raise ctx.Error(f"{r.name}: nothing to play (the player is {state or 'idle'})")
     await _key(r, "Play")      # one key toggles play and pause
     return {"ok": True, "state": want}
+
+
+async def key(ctx, key: str, mods=()) -> None:
+    await _key(_Roku(ctx), KEYS.get(key, key))
+
+
+async def set_input(ctx, input: str) -> None:
+    await _key(_Roku(ctx), INPUTS[input])
 
 
 async def seek(ctx, by: int | None = None) -> dict:

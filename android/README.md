@@ -1,51 +1,44 @@
 # Rook Worker — native Android app (Chaquopy)
 
-A real APK that runs the `rook.worker` band worker as a **foreground service**,
-so it survives Doze far better than the Termux path, and adds two native backends
-Termux can't do well:
-
-- **`screenshot.capture`** → real screen capture via **MediaProjection**
-  (the Termux build could only take a *camera* photo).
-- **`hid.*`** → taps / swipes / text / back-home-recents via an
-  **AccessibilityService** — **no root required**.
-
-It connects to the same band as every other worker: `mcp.example.com:443 --ws`
-with the band PSK. No `band-worker.pyz` download — the worker Python is bundled
-into the APK.
+A real APK that runs the Rook worker (`rook.core2.worker`, with the phone
+plugins under `rook/plugins` that list `android` in `platforms`) as a
+**foreground service**, so it survives Doze, and adds the phone's own voice,
+widgets, notifications and watch link. The worker Python is bundled into the
+APK. How the worker runs and signs in: [docs/castling-phone.md](../docs/castling-phone.md).
 
 ## Layout
 
 ```
 android/
 ├── settings.gradle / build.gradle / gradle.properties
-├── stage_worker.py            # copies rook.worker + telesthete.protocol into the APK python source
+├── stage_worker.py            # copies Rook 0.5 + telesthete.protocol into the APK python source
 └── app/
     ├── build.gradle           # Android + Kotlin + Chaquopy; pip: pynacl aiohttp websockets
     └── src/main/
         ├── AndroidManifest.xml
         ├── java/systems/bake/rook/
-        │   ├── MainActivity.kt          # settings + grant screen/HID/battery
-        │   ├── WorkerService.kt         # foreground service -> worker_entry.start()
+        │   ├── MainActivity.kt          # the conversation screen
+        │   ├── SettingsActivity.kt      # voice, sign-in, permissions, app
+        │   ├── WorkerService.kt         # foreground service -> castling_entry.start()
         │   ├── BootReceiver.kt          # autostart after reboot
         │   ├── PythonHost.kt            # Chaquopy bootstrap
         │   ├── ScreenCaptureBridge.kt   # MediaProjection -> JPEG
         │   └── HidAccessibilityService.kt
         ├── python/
-        │   ├── worker_entry.py          # start()/stop(); swaps in native plugins
-        │   └── rook_android/plugins/    # screen.py (MediaProjection), hid_a11y.py (AccessibilityService)
+        │   └── castling_entry.py        # status/enroll/start/stop/kick for the service
         └── res/...
 ```
 
-`app/src/main/python/rook/` and `.../telesthete/` are **generated** by
-`stage_worker.py` and git-ignored.
+`app/src/main/python/rook/`, `.../telesthete/` and `castling_plugins.zip` are
+**generated** by `stage_worker.py` and git-ignored.
 
 ## Build
 
 Prereqs: Android Studio (or the SDK + JDK 17), and a sibling `telesthete`
-checkout at `../telesthete/telesthete` (same layout `build_band_worker.py` expects).
+checkout at `../telesthete/telesthete` (or a pip-installed telesthete).
 
 ```bash
-# 1. Stage the worker + protocol into the Chaquopy python source set
+# 1. Stage Rook 0.5 + the protocol into the Chaquopy python source set (the build also runs it)
 python3 android/stage_worker.py
 
 # 2. Build the debug APK
@@ -57,12 +50,8 @@ cd android
 # APK: android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> Re-run `stage_worker.py` whenever `rook.worker` or `telesthete.protocol` change.
-> It needs a python3 with `pyyaml` (it reads the plugin manifests to pick the
-> phone plugins for Rook 0.5).
-
-Rook 0.5 (Castling) rides in the same APK behind Settings > Band > Rook
-version; 0.4 stays the default. See [docs/castling-phone.md](../docs/castling-phone.md).
+> `stage_worker.py` needs a python3 with `pyyaml` (it reads the plugin
+> manifests to pick the phone plugins).
 
 ## Deployment settings
 
@@ -72,66 +61,32 @@ build time from `-P` properties, environment variables, or an untracked
 
 | Setting | Default | What it's for |
 |---|---|---|
-| `ROOK_SERVER` | `https://rook.example.com` | Your Rook site: account login and pairing, the APK download link, and the **only** origin the self-updater accepts updates from |
+| `ROOK_SERVER` | `https://rook.example.com` | The APK download link, and the **only** origin the self-updater accepts updates from |
 | `ROOK_VOICE_URL` | `wss://voice.example.com/ws` | The voice agent's WebSocket (editable in Settings) |
-| `ROOK_GOOGLE_WEB_CLIENT_ID` | *(none)* | Your Google OAuth web client ID; without it the Google sign-in button is hidden and pairing codes are used |
 | `ROOK_WAKE_MODEL` | *(none)* | An openWakeWord model under `app/src/main/assets/wakeword/` (e.g. `private/hey_rook.onnx`); without it voice is tap-to-talk |
 | `ROOK_WAKE_PHRASE` | *(none)* | The phrase that model detects, shown in the app |
 | `ROOK_ASSISTANT_NAME` | `Rook` | The name shown on the conversation screen |
-| `ROOK_DEFAULT_HUB` | `hub.example.com:443` | Prefilled hub |
 
 ```properties
 # android/rook.properties
 ROOK_SERVER=https://rook.yourdomain.com
 ROOK_VOICE_URL=wss://voice.yourdomain.com/ws
-ROOK_GOOGLE_WEB_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
 ROOK_WAKE_MODEL=private/hey_rook.onnx
 ROOK_WAKE_PHRASE=hey rook
 ```
 
 Put private wake-word models in `assets/wakeword/private/` (also gitignored).
-The build refuses to embed a band PSK or a voice token: devices get those by
-signing in or pairing. Publish the update feed with
+The build refuses to embed a voice token. Publish the update feed with
 `ROOK_PUBLIC_BASE=<same as ROOK_SERVER> python3 android/build_apk_manifest.py`.
 
 ## First run on the device
 
-1. Open **Rook Worker**. The hub/PSK prefill from `BuildConfig` defaults — edit
-   if needed, set a worker name.
-2. Tap **Start worker** → a persistent notification appears and the worker joins
-   the band (verify with `rook_workers`).
-3. Optional grants (each is one tap, then a system dialog):
-   - **Grant screen capture** → enables `screenshot.capture`.
-   - **Enable HID (accessibility)** → enables `hid.*`. Toggle "Rook Worker" on in
-     the Accessibility settings screen that opens.
-   - **Ignore battery optimization** → strongly recommended so Android doesn't
-     kill the service.
-
-## Capability parity
-
-| Capability        | Termux build            | This app                          |
-|-------------------|-------------------------|-----------------------------------|
-| `shell.*`         | ✅ Termux shell          | ✅ (app sandbox shell)            |
-| `file.*`          | ✅                       | ✅ (app-scoped storage)           |
-| `info.*`          | ✅                       | ✅                                |
-| `screenshot.*`    | camera photo only       | ✅ real screen (MediaProjection)  |
-| `hid.*`           | needs root              | ✅ rootless (AccessibilityService)|
-| persistence       | termux-services + Boot  | ✅ foreground service + BootReceiver |
-
-## Notes / TODO
-
-- `ScreenCaptureBridge` grabs a single frame per call (create/destroy a
-  VirtualDisplay each time) — fine for occasional screenshots; for streaming,
-  keep the VirtualDisplay + ImageReader alive.
-- MediaProjection consent does not survive an app kill; the service restart will
-  need a re-grant (Android 14 keeps it for the session). Consider persisting via
-  a re-prompt on next launch.
-- `hid.mouse.move` is intentionally unimplemented (no cursor on touch); callers
-  get "unknown capability".
-- `shell.exec` runs in the app's restricted sandbox — far less capable than the
-  Termux environment. If you need a full userland, keep the Termux worker too;
-  both can be on the band at once under different names.
-
+1. Open **Rook Worker** > Settings > Band and sign in to your hub (its address,
+   or scan its sign-in QR with the camera).
+2. Tap **Start worker**: a persistent notification appears and the worker joins
+   the band.
+3. Settings > Permissions lists each grant (screen capture, accessibility for
+   `hid.*`, battery optimisation off, ...) with its live state; tap one to grant it.
 
 ## Voice and default assistant (0.4.2)
 
@@ -153,13 +108,10 @@ for protocol, deployment and acoustic-test limitations.
 
 ## Attention: decision cards and the quiet feed
 
-`attention.*` puts Yes/No decision cards on the phone and reports what was
-done with them (decided, seen, opened, dismissed, acknowledged, unlocked);
-the notification listener also sorts other apps' notifications on the phone
-into urgent / family / normal / ignore with `assets/attention_rules.json`.
-Content stays on the phone; only short summaries of urgent and family items
-leave it. The **Attention** tab lists the grants it needs, waiting cards and
-the feed. Contract, privacy and rules: [docs/design/attention-phone.md](../docs/design/attention-phone.md).
+The hub's cards reach the phone as `notification.post` with an `id` and show
+as Yes/No decision cards; what was done with them (decided, seen, opened,
+dismissed, acknowledged, unlocked) goes back as `notification-android.card`
+events. The **Attention** tab lists the grants it needs and the waiting cards. Contract, privacy and rules: [docs/design/attention-phone.md](../docs/design/attention-phone.md).
 
 Settings → App → Stable / Beta picks the APK update channel (stable by default).
 
@@ -168,9 +120,9 @@ Settings → App → Stable / Beta picks the APK update channel (stable by defau
 `:wear` is a small watch app: opening it (launcher, its tile, or a key you map to it) starts
 listening, and a tap ends the conversation or stops a reply. The watch is only a microphone
 and a speaker. It streams Opus (PCM where a device has no Opus codec) over a Wear Data Layer
-channel (`/rook/voice`) to this app on the paired phone; `WatchBridge` runs an ordinary voice
-session there (same voice server, key and conversation; the phone's own open session gives way)
-and sends the reply audio back to play on the watch's earbuds or glasses. Shared protocol and
+channel (`/rook/voice`) to this app on the paired phone; `WatchBridge` runs a `speech` session
+on the hub there, with your hub token (Settings > Band), and sends the reply audio back to play
+on the watch's earbuds or glasses ([docs/castling-watch.md](../docs/castling-watch.md)). Shared protocol and
 codec code is in `:wearlink`.
 
 The Data Layer only links apps with the same package name and signing key, so the watch APK
@@ -184,8 +136,3 @@ adb pair <watch-ip>:<pair-port>      # enter the code the watch shows
 adb connect <watch-ip>:<port>
 adb -s <watch-ip>:<port> install -r wear/build/outputs/apk/debug/wear-debug.apk
 ```
-
-The phone needs a build with `WatchVoiceListener` (this one or later). On Rook 0.5 (Settings >
-Band > Rook version) the phone talks to the hub's `speech` plugin instead, with your hub token
-(Settings > Band): see [docs/castling-watch.md](../docs/castling-watch.md). The watch app is
-the same for both.

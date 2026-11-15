@@ -1,5 +1,5 @@
 """The band's Discord bot: direct messages to linked people, posts to
-channels, link codes, and inbound messages as tainted ``discord.message``
+channels, link codes, and inbound messages as ``discord.message``
 events.
 
 One Gateway connection runs from the start hook until stop: hello, identify,

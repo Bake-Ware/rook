@@ -47,12 +47,8 @@ Flags for what a cap does that needs care. A cap lists any that apply:
 |---|---|---|
 | `destructive` | erases or overwrites data for good | always waits for you; never retried automatically |
 | `sensitive` | reveals secrets or private content (screen, camera) | waits for you when it reveals a secret's value |
-| `personal` | reads or writes someone's personal data (messages, location) | kept from children and guests |
 | `physical` | acts on the physical world (power, locks, speakers) | kept from children and guests; never retried automatically |
 | `sends_as` | sends as you to someone else | always waits for you |
-| `spends` | spends money | always waits for you |
-| `persists` | creates persistence (services, keys, users, scheduled tasks) | the security gate looks harder |
-| `taints` | brings outside content in (web pages, email, inbound messages) | marks the session tainted |
 
 A flag the hub doesn't know counts as `destructive`.
 

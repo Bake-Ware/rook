@@ -23,7 +23,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-machine
-    effects: [persists]
+    effects: []
     timeout: 5m
     args:
       version: { type: str, doc: "A held release, or (with source) the name to sign it as; blank: the package's version plus the code's digest." }

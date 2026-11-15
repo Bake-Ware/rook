@@ -6,9 +6,8 @@ Smart Turn v3.2 model and feature extractor provide local turn completion;
 Rook owns the transport, session and background-job lifecycle. The full Pipecat
 transport framework is not a runtime dependency.
 
-A hub can serve this service itself, at `/voice/` on its own address, either
-in the hub process or by forwarding to this server running on a GPU host: see
-the voice hub plugin, [docs/operations/voice.md](../../docs/operations/voice.md).
+On a Rook 0.5 band it joins as a worker: see the speech-engine plugin's
+manual ([rook/plugins/speech-engine/docs/manual.md](../../rook/plugins/speech-engine/docs/manual.md)).
 Running it standalone, as below, is unchanged. Behind a hub on another
 machine, set `FORWARDED_ALLOW_IPS=<the hub's address>` so the admin page's
 sign-in limit counts each client, not the hub.
@@ -35,8 +34,7 @@ Runtime configuration:
   (`VOICE_ELEVENLABS_API_KEY`; `VOICE_ELEVENLABS_VOICES` as `name=voice_id,...`
   to choose them; `VOICE_ELEVENLABS_MODEL`, `VOICE_ELEVENLABS_URL`,
   `VOICE_ELEVENLABS_TIMEOUT_S`). Text goes there only when one of those voices
-  speaks; a failure speaks the line in the Kokoro default. See
-  docs/operations/voice.md.
+  speaks; a failure speaks the line in the Kokoro default.
 * `VOICE_TOKEN`: bearer credential. No hardcoded credential or implicit public
   access. `VOICE_ALLOW_ANONYMOUS=1` lets keyless clients in as guests, with or
   without keys configured; a supplied key that isn't valid is still refused. Keyless guests (and unprivileged keys) get

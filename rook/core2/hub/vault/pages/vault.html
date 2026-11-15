@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vault</title>
+<style>
+  section { margin-bottom: 20px; }
+  .new { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .new input { min-width: 0; flex: 1 1 160px; max-width: 280px; }
+</style>
+</head>
+<body>
+<section>
+  <h2>Add or replace a secret</h2>
+  <form class="new" id="new">
+    <input id="name" data-target="vault.name" type="text" placeholder="name, e.g. gh-token" autocomplete="off" required>
+    <input id="value" data-target="vault.value" type="password" placeholder="value" autocomplete="new-password" required>
+    <input id="description" data-target="vault.description" type="text" placeholder="what it's for (optional)" autocomplete="off">
+    <button class="primary" data-target="vault.save">Save</button>
+    <span id="out" class="muted"></span>
+  </form>
+</section>
+<section>
+  <h2>Secrets</h2>
+  <p class="muted">Calls use one as <code>{{secret:NAME}}</code> in their args. Values are never shown here.</p>
+  <div class="scroll" data-target="vault.list"><table>
+    <thead><tr><th>Name</th><th>What it's for</th><th>Set by</th><th>Updated</th><th></th></tr></thead>
+    <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+  </table></div>
+</section>
+<script>
+"use strict";
+const esc = rook.esc;
+
+async function load() {
+  const rows = document.getElementById("rows");
+  try {
+    const out = await rook.call("secret.list");
+    if (!out.secrets.length) { rows.innerHTML = '<tr><td colspan="5" class="muted">No secrets.</td></tr>'; return; }
+    rows.innerHTML = out.secrets.map((s) => `<tr>
+      <td><code>${esc(s.name)}</code></td><td>${esc(s.description || "")}</td><td>${esc(s.set_by || "")}</td>
+      <td class="muted">${s.updated ? rook.ago(s.updated) : ""}</td>
+      <td class="row"><button data-act="replace" data-name="${esc(s.name)}" data-target="vault.${esc(s.name)}.replace">Replace</button>
+        <button data-act="delete" data-name="${esc(s.name)}">Delete</button></td></tr>`).join("");
+  } catch (x) {
+    rows.innerHTML = `<tr><td colspan="5" class="bad">${esc(x.message)}</td></tr>`;
+  }
+}
+
+document.getElementById("new").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const out = document.getElementById("out"), value = document.getElementById("value");
+  const name = document.getElementById("name").value.trim();
+  try {
+    await rook.call("secret.set", { name, value: value.value, description: document.getElementById("description").value.trim() },
+      { why: `The person saved ${name} on the Vault page.` });
+    value.value = "";
+    out.className = "ok";
+    out.textContent = `Saved ${name}.`;
+    load();
+  } catch (x) {
+    out.className = "bad";
+    out.textContent = x.message;
+  }
+});
+
+document.getElementById("rows").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  if (b.dataset.act === "replace") {
+    document.getElementById("name").value = b.dataset.name;
+    document.getElementById("value").focus();
+    return;
+  }
+  try {
+    await rook.call("secret.delete", { name: b.dataset.name }, { why: `The person deleted ${b.dataset.name} on the Vault page.` });
+  } catch (x) { b.textContent = x.message; return; }
+  load();
+});
+
+load();
+</script>
+</body>
+</html>

@@ -48,7 +48,7 @@ def test_a_person_uses_the_workers_page(band):
     status, _, shell = b.request("GET", "/")
     assert status == 200 and b"/web/static/shell.js" in shell
 
-    pages = b.post("/web/api/call", {"cap": "page.list"})["result"]["pages"]
+    pages = [p for s in b.post("/web/api/call", {"cap": "page.list"})["result"]["segments"] for p in s["pages"]]
     assert "hub/workers" in [p["page"] for p in pages]
     opened = b.post("/web/api/open", {"page": "hub/workers"})
     assert opened["ok"], opened
@@ -95,18 +95,21 @@ def test_the_house_agent_makes_and_archives_a_page_from_the_dock(fresh):
         assert out.get("ok"), out
         return out["result"]
 
-    assert shell("page.site") == {"person": "person:bake", "start": None, "dock": "house", "workbench": True}
+    assert shell("page.site") == {"person": "person:bake", "start": None}
+    dock = shell("agent.site")
+    assert dock["dock"] == "house" and dock["look"]["next"] == "sound"     # look and feel comes first
     assert shell("agent.chat.read", agent="house")["events"] == []         # first run
     assert "How do you want to use the site" in shell(
         "agent.chat.send", agent="house", text="[site] First visit to the hub site. Ask me.")["text"]
     reply = shell("agent.chat.send", agent="house",
                   text="[site] The person is on the page hub/workers (Workers).\nmake a page uptime")["text"]
-    assert reply.startswith("Made page/uptime (task r_"), reply
+    assert reply.startswith("Made page/uptime"), reply
     assert shell("page.site")["start"] == "page/uptime"
     page = shell("page.get", page="page/uptime")
-    assert page["made_by"]["task"] and page["note"].startswith("# Uptime")
-    task = fresh.owner.call("task.get", {"id": page["made_by"]["task"]}, worker="rook")["result"]
-    assert task["links"][0]["ref"] == "page/uptime" and task["state"] == "in_progress"
+    assert page["note"].startswith("# Uptime")
+    tasks = until(lambda: fresh.owner.call("task.list", {}, worker="rook")["result"],
+                  what="the build task the workbench makes when it hears page.created")
+    assert tasks[0]["links"][0]["ref"] == "page/uptime" and tasks[0]["state"] == "in_progress"
 
     opened = b.post("/web/api/open", {"page": "page/uptime"})
     status, headers, doc = b.request("GET", opened["frame"])

@@ -1,6 +1,5 @@
 package systems.bake.rook
 
-import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -23,29 +22,6 @@ class HubAddressTest {
             assertFalse(h.toString(), HubAddress.isLocalHost(h))
     }
 
-    @Test fun serverOriginAllowsHttpOnlyOnTheLocalNetwork() {
-        assertEquals("https://rook.example.com", HubAddress.serverOrigin(" https://rook.example.com/ "))
-        assertEquals("https://rook.example.com:8443", HubAddress.serverOrigin("https://rook.example.com:8443"))
-        assertEquals("http://192.168.1.20:7005", HubAddress.serverOrigin("http://192.168.1.20:7005"))
-        assertEquals("http://10.0.2.2:17605", HubAddress.serverOrigin("http://10.0.2.2:17605/"))
-        assertEquals("http://rook.local:7005", HubAddress.serverOrigin("http://rook.local:7005"))
-        assertEquals("http://[fd00::5]:7005", HubAddress.serverOrigin("http://[fd00::5]:7005"))
-        assertEquals("HTTP://192.168.1.20:7005", HubAddress.serverOrigin("HTTP://192.168.1.20:7005"))
-        for (bad in listOf("http://rook.example.com", "http://8.8.8.8:7005", "http://[2001:db8::1]:7005",
-                "ftp://192.168.1.20", "192.168.1.20:7005", "rook.example.com", "",
-                "https://user@rook.example.com", "http://user:pw@192.168.1.20:7005",
-                "https://rook.example.com/path", "http://192.168.1.20:7005/enroll",
-                "https://rook.example.com?x=1", "http://192.168.1.20:7005#frag",
-                "http://192.168.1.20.evil.com", "http://10.0.0.1.nip.io:7005")) {
-            try { HubAddress.serverOrigin(bad); fail(bad) } catch (_: IllegalArgumentException) {}
-        }
-    }
-
-    @Test fun refusalSaysWhatToDo() {
-        val e = try { HubAddress.serverOrigin("http://rook.example.com"); null } catch (e: IllegalArgumentException) { e }
-        assertTrue(e!!.message!!.contains("local network"))
-    }
-
     @Test fun cleartextOnlyToLocalHosts() {
         assertTrue(HubAddress.cleartextAllowed("wss://voice.example.com/ws"))
         assertTrue(HubAddress.cleartextAllowed("https://voice.example.com/api/voice"))
@@ -56,11 +32,5 @@ class HubAddressTest {
         assertFalse(HubAddress.cleartextAllowed("Ws://voice.example.com/ws"))
         assertFalse(HubAddress.cleartextAllowed("http://8.8.8.8/"))
         assertFalse(HubAddress.cleartextAllowed("ws://192.168.1.30@voice.example.com/ws"))
-    }
-
-    @Test fun serverBandsUseTheWebSocketBridge() {
-        assertTrue(HubAddress.bandUsesWebSocket(JSONObject("""{"hub":"192.168.1.20:7005"}""")))
-        assertTrue(HubAddress.bandUsesWebSocket(JSONObject("""{"hub":"192.168.1.20:7005","transport":"ws"}""")))
-        assertFalse(HubAddress.bandUsesWebSocket(JSONObject("""{"hub":"192.168.1.20:7474","transport":"udp"}""")))
     }
 }

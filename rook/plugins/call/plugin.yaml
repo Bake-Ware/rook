@@ -15,7 +15,7 @@ caps:
     doc: "Recent calls, newest first: {calls: [{number, name, direction, duration_s, ts}]}; direction is incoming, outgoing, missed, voicemail, rejected or blocked."
     risk: read
     scope: local
-    effects: [personal]
+    effects: []
     idempotent: true
     timeout: 20s
     args:

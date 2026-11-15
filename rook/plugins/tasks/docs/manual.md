@@ -22,6 +22,12 @@ The record caps (`task.list`, `get`, `search`, `create`, `update`,
 `archive`, `history`) are the records kit's; updates need the current
 `revision`. `task.list where={assignee: ...}` is what is waiting on someone.
 
+**Pages.** A page someone makes (`page.create`) becomes a task, `Page:
+<title>`, assigned to the person to review and linked to the page, unless a
+task already links it: to build under your own task, `task.link kind=page
+ref=page/<name> relation=produced` before `page.create`. Every task linked
+to a page gets a comment for each `page.update`.
+
 **Handing off** (`task.handoff to=<who> note=<what they need>`): sets
 `assignee`, drops your claim, notes it, and sends the event
 `task.handed_off` so an agent or a person can be told. Hand off directly
@@ -31,7 +37,7 @@ task depends on other work.
 **Sign-off** (`task.request_signoff reviewers=[...]`): any task can ask for
 sign-off before it is done. With no reviewers named it goes to the expert
 roles of the project's concepts (`concept.pool`), as `role:<name>`; on a
-sacred project (`project.trust`) the owners are added, since the trust level
+sacred project (`trust.level`, from the trust plugin) the owners are added, since the trust level
 decides whether the person signs. With the agents package installed, the
 agents asked are messaged with the request (as the one asking). Reviewers
 answer with `task.signoff approve=true|false` (`reviewer=` when they answer

@@ -14,7 +14,7 @@ journal; agents and workers can't.
 - the **why**;
 - the cap's risk, scope and effects;
 - the decision (`allow`, `deny` and which layer refused, `held`,
-  `released`, `refused`), each security gate's reading;
+  `released`, `refused`);
 - the outcome: ok or the error, and how long it took.
 
 Arguments are kept with secret values replaced; a hash of the exact
@@ -22,7 +22,7 @@ arguments ties the entry to the ticket that ran.
 
 ## Reading it
 
-- **Dashboard**: Journal (under More), searchable by cap, worker, person
+- **Dashboard**: Journal (under Hub), searchable by cap, worker, person
   and project.
 - **Agents**: the MCP `journal` tool, or the cap `journal.search` on `rook`.
 - **HTTP**: `GET /journal?cap=shell.exec&worker=kaiju&limit=20` (filters:
@@ -30,10 +30,8 @@ arguments ties the entry to the ticket that ran.
   `chain`, `since`, `until`, `limit`).
 
 Owners read everything. A person reads their own calls. An agent reads its
-own calls and the history of the projects its sessions work for. A session
-names only a project its caller may see: an owner names any; anyone else
-needs rights to read projects and the project on the workbench (by id or
-slug), else the session is refused (`denied: project: ...`).
+own calls and the history of the projects its sessions work for. A
+session's project is only a name the hub stamps on its entries.
 
 `journal call=<id>` is how you find out what happened to a call that timed
 out or was held: a late result is journaled when it arrives.
@@ -50,6 +48,4 @@ on the hub's machine.
 ## How long it is kept
 
 The `general` chain is pruned a day at a time once the day is 90 days
-old, whatever was in it. Project chains are meant to go whole, some time after the project
-closes; that step isn't wired to the workbench yet, so project chains are
-kept for now.
+old, whatever was in it. Project chains are kept.

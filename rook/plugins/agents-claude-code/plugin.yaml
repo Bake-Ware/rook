@@ -1,25 +1,31 @@
-# An agent.backend provider: one agent turn in the Claude Code CLI on this
-# worker, under the subscription it is signed in with (castling-inference:
-# CLI subscriptions are the common case). `claude -p --output-format json`,
-# resumed by session id; the prompt goes in on stdin. Code: scripts/claude.py.
+# An agent.backend provider: one agent turn in the Claude Code CLI under the
+# subscription it is signed in with (castling-inference: CLI subscriptions
+# are the common case). The plugin runs on the hub; the CLI runs on the worker
+# named by the `worker` setting (castling-design: "A worker is a thin set of
+# primitives in Rust; the knowledge of what to do with them lives on the
+# hub"). `claude -p --output-format json`, resumed by session id; the prompt
+# goes in on stdin. Code: scripts/claude.py.
 manifest: 1
 plugin: agents-claude-code
-version: 0.5.1
-title: Claude Code backend
-doc: Agent turns in the Claude Code CLI, for the agents package.
+version: 0.6.1
+title: Claude Code
+doc: Agent turns in the Claude Code CLI signed in on one of the band's workers, for the agents package.
 package: agents
+segment: Agents
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-platforms: [linux, macos, windows]
+runs_on: hub
+uses: [shell.open, shell.env, file.write, stream.read, stream.write, stream.close]
 settings:
-  claude: { default: claude, doc: "The claude program: a name on PATH or a full path." }
-  model: { default: opus, doc: "System Two's model when the agent names none (opus, sonnet, haiku or a full model id)." }
-  model_three: { default: haiku, doc: "System Three's model (dream cycles)." }
-  permission_mode: { doc: "Claude Code's --permission-mode for agent turns (default, acceptEdits, plan, ...); blank: its own default." }
-  allowed_tools: { type: list, items: { type: str }, doc: "Tools a turn may use without asking (--allowedTools), e.g. Read, Bash(git status:*)." }
-  door_url: { type: url, default: "http://127.0.0.1:8741/mcp", doc: "The hub's MCP door as this worker reaches it. Each turn reaches it with that turn's own token (the agent, for the person behind it)." }
-  mcp_config: { type: path, doc: "An MCP config file with other MCP servers for agent turns (--mcp-config). Rook itself comes from door_url, with the turn's token." }
-  isolate: { type: bool, default: true, doc: "Leave out the signed-in user's own Claude Code settings, hooks and MCP servers (--setting-sources project,local --strict-mcp-config): a turn reaches only what mcp_config gives it." }
+  worker: { where: hub, type: worker, doc: "The worker (name) where Claude Code is installed and signed in; turns fail until it is set." }
+  claude: { where: hub, default: claude, doc: "The claude program on that worker: a name on PATH or a full path (~ is its home)." }
+  model: { where: hub, default: opus, doc: "System Two's model when the agent names none (opus, sonnet, haiku or a full model id); blank: Claude Code's own default." }
+  model_three: { where: hub, default: haiku, doc: "System Three's model (dream cycles); blank: Claude Code's own default." }
+  permission_mode: { where: hub, doc: "Claude Code's --permission-mode for agent turns (default, acceptEdits, plan, ...); blank: its own default." }
+  allowed_tools: { where: hub, type: list, items: { type: str }, doc: "Tools a turn may use without asking (--allowedTools), e.g. Read, Bash(git status:*). Rook's (mcp__rook) is added for a turn given Rook." }
+  door_url: { where: hub, type: url, default: "http://127.0.0.1:8741/mcp", doc: "The hub's MCP door as the worker reaches it. Each turn reaches it with that turn's own token (the agent, for the person behind it)." }
+  mcp_config: { where: hub, type: path, doc: "An MCP config file on the worker with other MCP servers for agent turns (--mcp-config). Rook itself comes from door_url, with the turn's token." }
+  isolate: { where: hub, type: bool, default: true, doc: "Leave out the signed-in user's own Claude Code settings, hooks and MCP servers (--setting-sources project,local --strict-mcp-config): a turn reaches only what mcp_config gives it." }
 caps:
   turn:
     doc: One agent turn in Claude Code; pass session back to continue the conversation.
@@ -30,18 +36,25 @@ caps:
     args:
       prompt: { type: str, required: true }
       session: { type: str, doc: "The Claude Code session id to resume; blank: a new session." }
-      cwd: { type: str, doc: "The folder Claude Code works in; blank: this plugin's work folder." }
+      cwd: { type: str, doc: "The folder on the worker Claude Code works in; blank: ~/.rook-plugins/agents-claude-code/work there." }
       model: { type: str, doc: "A model, or two/three for System Two/Three; blank: the model setting." }
       effort: { type: str, doc: "Not used: Claude Code sets its own reasoning effort." }
       system: { type: str, doc: Appended to Claude Code's system prompt. }
       timeout: { type: duration, default: 20m, doc: How long the turn may take. }
-      door: { type: secret, doc: "The turn's door token, from the agents runtime: the turn's Rook MCP server uses it. Never journaled." }
+      door: { type: secret, doc: "The turn's door token by name ({{secret:turn-...}}), from the agents runtime: the turn's Rook MCP server uses it." }
     result:
       type: map
       fields:
         text: { type: str, required: true }
         session: { type: str, required: true }
         usage: { type: map, items: { type: int } }
+  models:
+    doc: "The models the model setting and an agent's model take (Claude Code's aliases; a full model id works too), and the model setting."
+    risk: read
+    scope: self
+    idempotent: true
+    run: scripts/claude.py:models
+    result: { type: map }
 provides:
   agent.backend: agents-claude-code.turn
 docs: { manual: docs/manual.md }

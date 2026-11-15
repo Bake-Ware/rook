@@ -4,8 +4,8 @@
 //! records where things stand (no burst of old messages at start-up); later
 //! polls report what is new.
 
-use crate::hub::{AttentionItem, Room, OPERATOR};
-use std::collections::{HashMap, HashSet};
+use crate::hub::AttentionItem;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Notice {
@@ -18,17 +18,7 @@ const MAX_SEPARATE: usize = 3;
 
 #[derive(Default)]
 pub struct Watcher {
-    unread: Option<HashMap<String, u64>>,
     attention: Option<HashSet<String>>,
-}
-
-fn display_name(identity: &str) -> String {
-    let short = identity.split_once(':').map(|(_, n)| n).unwrap_or(identity);
-    if short.is_empty() {
-        "Someone".into()
-    } else {
-        short.to_string()
-    }
 }
 
 fn clip(text: &str, max: usize) -> String {
@@ -45,45 +35,6 @@ fn clip(text: &str, max: usize) -> String {
 impl Watcher {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Rooms the operator is in whose unread count went up since the last
-    /// poll, with the newest message from someone else. `skip` is the
-    /// quick-ask room: its replies already show in the quick-ask box.
-    pub fn rooms(&mut self, rooms: &[Room], skip: Option<&str>) -> Vec<Notice> {
-        let now: HashMap<String, u64> = rooms
-            .iter()
-            .filter(|r| r.member)
-            .map(|r| (r.room.clone(), r.unread))
-            .collect();
-        let Some(prev) = self.unread.replace(now) else {
-            return vec![];
-        };
-        let mut out = vec![];
-        for r in rooms.iter().filter(|r| r.member && Some(r.room.as_str()) != skip) {
-            let before = prev.get(&r.room).copied().unwrap_or(0);
-            let from = r.last_sender.as_deref().unwrap_or("");
-            if r.unread <= before || from.is_empty() || from == OPERATOR {
-                continue;
-            }
-            let text = r.last_text.as_deref().unwrap_or("");
-            let who = display_name(from);
-            let title = if text.trim_end().ends_with('?') {
-                format!("{who} is asking")
-            } else {
-                format!("New message from {who}")
-            };
-            let room = if r.title.is_empty() {
-                "Chat".to_string()
-            } else {
-                clip(&r.title, 40)
-            };
-            out.push(Notice {
-                title,
-                body: format!("{room}: {}", clip(text, 140)),
-            });
-        }
-        summarize(out, "rooms have new messages")
     }
 
     /// New items from the hub's attention list. `None` (the hub has no such
@@ -111,7 +62,6 @@ impl Watcher {
 }
 
 fn attention_notice(item: &AttentionItem) -> Notice {
-    // The kinds of approvals.list (rook/hub/relay.py KINDS).
     let title = match item.kind.as_str() {
         "ask" | "card" => "A question for you",
         "hold" | "job" => "An agent is waiting for your OK",
@@ -143,75 +93,6 @@ fn summarize(mut out: Vec<Notice>, what: &str) -> Vec<Notice> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn room(id: &str, unread: u64, from: &str, text: &str) -> Room {
-        Room {
-            room: id.into(),
-            title: format!("room {id}"),
-            participants: vec![OPERATOR.into(), from.into()],
-            member: true,
-            unread,
-            last_sender: Some(from.into()),
-            last_text: Some(text.into()),
-        }
-    }
-
-    #[test]
-    fn first_poll_is_a_baseline() {
-        let mut w = Watcher::new();
-        assert!(w.rooms(&[room("a", 5, "agent:x", "old")], None).is_empty());
-        let got = w.rooms(&[room("a", 6, "agent:x", "Shall I deploy?")], None);
-        assert_eq!(
-            got,
-            vec![Notice {
-                title: "x is asking".into(),
-                body: "room a: Shall I deploy?".into()
-            }]
-        );
-        // Same count again: nothing new.
-        assert!(w.rooms(&[room("a", 6, "agent:x", "Shall I deploy?")], None).is_empty());
-    }
-
-    #[test]
-    fn own_messages_skipped_rooms_and_new_rooms() {
-        let mut w = Watcher::new();
-        w.rooms(&[], None);
-        let mut mine = room("a", 1, OPERATOR, "hi");
-        mine.unread = 1;
-        let mut outsider = room("o", 3, "agent:y", "x");
-        outsider.member = false;
-        let got = w.rooms(
-            &[
-                mine,
-                outsider,
-                room("q", 1, "agent:home", "answer"),
-                room("n", 1, "agent:z", "done"),
-            ],
-            Some("q"),
-        );
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].title, "New message from z");
-    }
-
-    #[test]
-    fn many_become_a_summary_and_text_is_clipped() {
-        let mut w = Watcher::new();
-        w.rooms(&[], None);
-        let rooms: Vec<Room> = (0..5).map(|i| room(&i.to_string(), 1, "agent:a", "hey")).collect();
-        assert_eq!(
-            w.rooms(&rooms, None),
-            vec![Notice {
-                title: "Rook".into(),
-                body: "5 rooms have new messages.".into()
-            }]
-        );
-        let long = "x".repeat(400);
-        let mut w = Watcher::new();
-        w.rooms(&[], None);
-        let got = w.rooms(&[room("a", 1, "agent:a", &long)], None);
-        assert!(got[0].body.chars().count() < 200);
-        assert!(got[0].body.ends_with('\u{2026}'));
-    }
 
     fn item(id: &str, kind: &str) -> AttentionItem {
         AttentionItem {

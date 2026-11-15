@@ -21,29 +21,21 @@ pip install -e '.[dev]'
 ```
 
 `telesthete` (the transport) is installed from GitHub as a dependency. If a checkout
-exists at `../telesthete`, the tests and the worker-bundle builder use it instead, so
-you can work on both at once.
+exists at `../telesthete`, the tests and the APK staging use it instead, so you can
+work on both at once.
 
-The pin is one commit, in two places that must agree: `pyproject.toml` (the
-`telesthete @ git+...@<sha>` dependency) and the `Dockerfile`'s `TELESTHETE_REV`
-(the relay the hub image compiles with `RELAY_SOURCE=source`; by default it uses
-the prebuilt relay from a telesthete release); a test checks they match. The bundle builders
-(`rook/remote/build_band_worker.py`, `android/stage_worker.py`) refuse to build
-from a telesthete git checkout at any other commit, so a bundle never ships a
-different transport than the hub installs; set `ROOK_TELESTHETE_ANY_REV=1` to
+The pin is one commit, in `pyproject.toml` (the `telesthete @ git+...@<sha>`
+dependency). `android/stage_worker.py` refuses to stage a telesthete git checkout at
+any other commit, so the APK never ships a different transport than the hub installs; set `ROOK_TELESTHETE_ANY_REV=1` to
 build anyway (a warning) while changing both repos. The pin may point at a
-telesthete PR branch while a change is in review; when that PR merges, move both
+telesthete PR branch while a change is in review; when that PR merges, move it
 to the merged commit on telesthete `main`.
 
-To run a hub locally, get the relay once (`python3 scripts/fetch-relay.py --dest
-.venv/bin` downloads the prebuilt one; or
-`cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium`) and
-use `scripts/local-hub.sh`; see the [README quickstart](docs/README-0.4.md#c-from-source).
+To run a hub locally, see [Install and first run](docs/manual-0.5/install.md).
 
 CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11 and 3.12 with the voice
 service's light deps (`tests/requirements-voice.txt`), the generators' `--check` modes,
-`node --check` and shellcheck. Releases are cut by pushing a `vX.Y.Z` tag; see
-[Releases and versions](docs/operations/install.md#releases-and-versions).
+`node --check` and shellcheck.
 
 ## Tests
 
@@ -52,8 +44,8 @@ pytest -q
 ```
 
 The suite runs offline in about a minute; it needs no hub, relay or network. Add a
-test with any behaviour change, especially in `rook/worker`, `rook/band_mcp` and
-`rook/remote`. Some browser checks (`tests/browser_*.py`) need Playwright and are not
+test with any behaviour change, especially in `rook/core2`, `rook/kit` and
+`rook/plugins`. Some browser checks (`tests/browser_*.py`) need Playwright and are not
 part of the default run.
 
 The Android app (`android/`) and the ESP32 firmware (`firmware/`) have their own build
@@ -65,44 +57,21 @@ steps; see [android/README.md](android/README.md) and the PlatformIO project in
 - **Python 3.11+**, standard library first. The worker in particular must stay light:
   it runs on Raspberry Pis, phones (via Chaquopy) and Windows. New worker dependencies
   need a good reason and must be optional where possible.
-- **Plugins** live in `rook/worker/plugins/`, export `PLUGIN`, claim one namespace, and
-  mark methods with `@capability`. Implement `available()` so the plugin only loads
-  where it can actually work.
-- **Windows is a first-class worker.** Open text files with `encoding="utf-8"`, and keep
-  PowerShell installer text in `rook/remote/bootstrap.py` pure ASCII.
+- **Plugins** live in `rook/plugins/<name>/`: a `plugin.yaml` manifest and scripts
+  (docs/manual-0.5/authoring.md).
+- **Windows is a first-class worker.** Open text files with `encoding="utf-8"`.
 - **Configuration goes through flags and `ROOK_*` environment variables**, documented in
-  `--help` and [.env.example](.env.example). Never commit keys, tokens, passwords,
+  `--help`. Never commit keys, tokens, passwords,
   hostnames or IP addresses of real machines; use `example.com` and placeholders.
-- **Peer compatibility has a floor.** `rook/core/compat.py` names the oldest worker
-  build, Android app and hub this release still talks to. A fallback that serves only
-  peers older than that can go; one the newest Android app or the ESP32/RP2040
-  firmware still needs stays, and so does code that reads files or databases an older
-  release wrote. Raise the floor deliberately, in its own change.
 - Match the surrounding code's style and comment density. Comments explain *why*.
 
 ## The user manual
 
-`docs/manual/` is Rook's user manual: plain-language pages for people who run
-Rook, shown under **Help** and copied into each hub's knowledge base. It is
-part of the product, so it ships current with **every release**:
-
-- A change that adds, removes or deprecates a user-visible feature, setting,
-  plugin or command updates the manual pages that cover it in the same pull
-  request. A new feature goes into a page's front matter `features`; a removed
-  one is dropped from it, or its page is marked `deprecated: true`.
-- A bullet under an `Added`, `Removed` or `Deprecated` heading in the
-  CHANGELOG names the pages it changed: `(manual: jobs, workers)` on the
-  bullet, or a `Manual: jobs` line in its block (`n/a` for a change users
-  cannot see).
-- Run `python tools/manual_check.py` before you push. The test suite only
-  checks that pages parse and their links resolve; CI reports coverage and
-  CHANGELOG findings without blocking your pull request; the release tooling
-  (`tools/release_prep.py`) runs the same check with `--release` and refuses
-  to cut a release with a stale manual, so whoever cuts it has to fix what
-  was left. `docs/manual/manifest.json` is generated, never committed.
-
-See docs/manual/README.md for how to write a page and
-docs/operations/user-manual.md for the checks and the hub side.
+`docs/manual-0.5/` is Rook's user manual, with each plugin's own
+`docs/manual.md`. A change that adds, removes or changes something users see
+updates the pages that cover it in the same pull request. Run
+`python tools/manual05_check.py` before you push (tests/test_manual05.py runs
+the same checks).
 
 ## Pull requests
 

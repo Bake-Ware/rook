@@ -1,7 +1,12 @@
 # Cameras
 
-Still photos from this worker's cameras (webcams, a phone's cameras under
+Still photos from a worker's cameras (webcams, a phone's cameras under
 Termux). The screen is `screen.capture`; this is a physical camera.
+
+It runs on the hub: the hub lists it on Linux, Termux and Windows workers
+that serve `shell.exec`, `shell.env` and `file.read`, runs the tools there,
+and reads the photo back from the worker's temp folder (`TMPDIR`, `TEMP` on
+Windows, else `/tmp`), removing it after.
 
 | Cap | What it does |
 |---|---|

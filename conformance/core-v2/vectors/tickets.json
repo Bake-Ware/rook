@@ -21,9 +21,7 @@
    },
    "core.trust.set": {
     "risk": "admin",
-    "effects": [
-     "persists"
-    ]
+    "effects": []
    },
    "kvm.screen.capture": {
     "risk": "read",

@@ -35,49 +35,27 @@ still enabled, preserving the existing band settings and stable worker ID.
 
 ## Publishing
 
-Build the universal APK with the existing signing certificate. Stamp the hub's
-update public key into the bundled worker with `ROOK_UPDATE_PUBKEY=<base64>`
-(`python rook/remote/update_keys.py pubkey` on the hub prints it) so the build
-host never needs, or creates, a private signing key. Then run:
+Build the universal APK with the existing signing certificate, then run:
 
 ```
 python3 android/build_apk_manifest.py
 ```
 
-Publish `app-debug.apk` as `rook/remote/rook-worker.apk` and the generated
-`rook-worker-apk.json` beside it in a new server release. Set
-`ROOK_PUBLIC_APK_SHA256` to the manifest hash when switching the release.
-`/apk.json` is public only with this allowlist and fails closed if the approved
-APK or manifest does not match. Always advance both versionName and versionCode
-in `android/app/build.gradle`. The ROOK_APK_VERSION_CODE/NAME Gradle properties
-are available for isolated upgrade tests; never publish their test artifacts.
-Desktop worker update artifacts are independent and need not change for APK-only
-releases.
-
-When a Rook release carries the APK (`rook-worker.apk` and
-`rook-worker-apk.json`), Settings > Updates > Phones and apps can publish it
-instead: the hub checks both against the release's `SHA256SUMS`, serves them
-at `/apk` and `/apk.json`, and asks phones that are behind to check now
-(docs/operations/updates.md).
+Put the APK as `rook-worker.apk` and the generated `rook-worker-apk.json`
+beside it in the hub's `<data>/apk/` folder; the hub's http door serves them
+at `/apk` and `/apk.json` with no token (`rook/core2/hub/apkfeed.py`). Always
+advance both versionName and versionCode in `android/app/build.gradle`. The
+ROOK_APK_VERSION_CODE/NAME Gradle properties are available for isolated
+upgrade tests; never publish their test artifacts.
 
 ## Beta channel
 
-A beta APK lives in the updates directory, outside the release dirs so hub
-deploys keep it: `<updates dir>/apk-beta/rook-worker.apk` and
-`rook-worker-apk.json` (build_apk_manifest.py output; set its `url` to
-`<base>/apk?channel=beta`). It is approved by `ROOK_BETA_APK_SHA256`
-(`updates.apk_beta_sha256`) and checked like the stable APK: the file's
-SHA-256, the manifest's sha256, package `systems.bake.rook`, an integer
-`version_code` and the size.
-
+A beta APK goes in `<data>/apk-beta/` (`rook-worker.apk` and
+`rook-worker-apk.json`; set the manifest's `url` to `<base>/apk?channel=beta`).
 `/apk.json?channel=beta` and `/apk?channel=beta` serve the beta only while it
-is approved, verifies and has a higher `version_code` than the stable APK;
-otherwise they answer exactly as `/apk.json` and `/apk` do, so a beta phone
-rejoins stable once stable passes it. Any other or missing `channel` gets the
-stable answer unchanged. With only the beta hash set, `?channel=beta` is
-public for the beta alone (no stable fallback; plain `/apk` stays behind the
-login). The update service (Settings > Updates, `device.update` pushes) never
-reads the beta.
+verifies and has a higher `version_code` than the stable APK; otherwise they
+answer exactly as `/apk.json` and `/apk` do, so a beta phone rejoins stable
+once stable passes it.
 
 ## Verification
 

@@ -1,4 +1,4 @@
-"""Enrollment (rook/core2/enroll; spec 12): a hub started in-process with a
+"""Enrollment (rook/core2/enroll; spec 8): a hub started in-process with a
 loopback band, the device side talking to its HTTP door, local network
 discovery on a loopback port, the hub's ``init`` and ``recovery-key``.
 
@@ -34,7 +34,6 @@ from rook.core2.worker.security import TrustStore  # noqa: E402
 PSK = "e2e-enroll-test-band-key-0123456789"
 BAND = band_of(PSK)
 OWNER = Caller(person="person:bake")
-ON = {"hub": {"security": "on"}}       # device codes wait for a person (security off approves them at once)
 
 
 def run(coro, timeout=30):
@@ -114,7 +113,7 @@ def test_a_qr_code_enrolls_a_device_once_and_install_writes_what_the_worker_read
     assert bundle["owner"] == "person:bake" and bundle["name"] == "laptop" and bundle["core"] == "2.0"
     assert again == {"ok": False, "error": "unknown or expired code"}         # one use
     assert enrolled[bundle["worker_id"]]["owner"] == "person:bake"
-    assert enrolled[bundle["worker_id"]]["key"] == wire.pub_text(sk)            # the hub pins it (5.8)
+    assert enrolled[bundle["worker_id"]]["key"] == wire.pub_text(sk)            # the hub pins it (10.2)
     assert entries[0]["key"] == wire.key_id(wire.pub_text(sk))
     assert entries[0]["worker"] == bundle["worker_id"] and entries[0]["person"] == "person:bake"
 
@@ -146,73 +145,59 @@ def test_a_qr_code_enrolls_a_device_once_and_install_writes_what_the_worker_read
         device.install(cfg_path, bundle, "http://hub")
     (cfg_path.parent / "data" / "memberships.json").write_text("{}")
     device.install(cfg_path, {**bundle, "worker_id": "a" * 32}, "http://hub", force=True)
-    assert not (cfg_path.parent / "data" / "memberships.json").exists()     # re-anchoring drops them (9.5)
+    assert not (cfg_path.parent / "data" / "memberships.json").exists()     # re-anchoring drops them (10.10)
     assert yaml.safe_load(cfg_path.read_text())["worker_id"] == "a" * 32
 
 
-def test_a_device_code_waits_for_the_person_and_can_be_refused(tmp_path):
-    said = []
-
-    async def go():
-        hub, tok = await started(tmp_path, settings=ON)
-        try:
-            task = asyncio.create_task(asyncio.to_thread(
-                device.sign_in, url(hub), "tablet", key=wire.pub_text(sk), say=said.append,
-                sleep=lambda s: __import__("time").sleep(0.05)))
-            async def listed():   # the device prints the code only once the hub's answer is back
-                return said and await _pending(hub, tok["ann"])
-            pending = await until(listed)
-            code = pending[0]["user_code"]
-            assert pending[0]["name"] == "tablet" and said and code in said[0] and hub.hub_id in said[0]
-            # the approver sees where the request came from and how old it is (review D4)
-            assert pending[0]["address"] == "127.0.0.1" and isinstance(pending[0]["age"], int)
-            kid = await http(hub, "POST", "/enroll/approve", {"code": code}, tok["kid"])
-            ok = await http(hub, "POST", "/enroll/approve", {"code": code.lower().replace("-", " ")}, tok["ann"])
-            bundle = await task
-
-            refused = asyncio.create_task(asyncio.to_thread(
-                device.sign_in, url(hub), "other", say=said.append, sleep=lambda s: __import__("time").sleep(0.05)))
-            code2 = (await until(lambda: _pending(hub, tok["ann"])))[0]["user_code"]
-            no = await http(hub, "POST", "/enroll/approve", {"code": code2, "decision": "refuse"}, tok["bake"])
-            with pytest.raises(device.EnrollError, match="refused by the person"):
-                await refused
-            unknown = await http(hub, "POST", "/enroll/approve", {"code": "BCDF-GHJK"}, tok["bake"])
-            bad = [await http(hub, "POST", path, {"name": "box", "code": "x", "key": "ed25519:short"})
-                   for path in ("/enroll/device", "/enroll/claim")]
-            return kid, ok, bundle, no, unknown, bad, hub.worker_key(bundle["worker_id"])
-        finally:
-            await hub.stop()
-    sk = device.signing_key(tmp_path / "nowhere.yaml")
-    kid, ok, bundle, no, unknown, bad, pinned = run(go())
-    assert pinned == wire.pub_text(sk)                 # recorded with the worker id it was given
-    assert [b["error"] for b in bad] == ["bad request: key is an ed25519: public key"] * 2
-    assert kid == {"ok": False, "error": "denied: person may not set up machines"}
-    assert ok == {"ok": True, "name": "tablet", "decision": "approve"}
-    assert bundle["owner"] == "person:ann" and bundle["name"] == "tablet"    # the approver owns it
-    assert no["ok"] and unknown == {"ok": False, "error": "unknown or expired code"}
-
-
-def test_with_security_off_a_device_code_is_approved_at_once_and_journaled(tmp_path):
-    """castling-switchover-decisions, "Usable first, security later" (Bake, Oct 31): "enrollment
-    approvals ...: off / not on the path". The default hub.security (off)
-    approves a device code as the first owner; the journal names the machine."""
+def test_a_machine_without_a_token_waits_and_one_tap_lets_it_in_or_says_no(tmp_path):
+    """castling-design, Enrollment: "one tap on the Workers page when a person runs the
+    installer (the machine shows as \"wants to join\"). ... The device-code step goes away."
+    Security is off (the default) and the machine still waits for the tap."""
     said = []
 
     async def go():
         hub, tok = await started(tmp_path)
         try:
             assert hub.security_off()
-            bundle = await asyncio.to_thread(device.sign_in, url(hub), "janitor", say=said.append,
-                                             sleep=lambda s: __import__("time").sleep(0.05))
-            left = await _pending(hub, tok["bake"])
-            return bundle, left, hub.journal.query(kind="enroll")
+            task = asyncio.create_task(asyncio.to_thread(
+                device.sign_in, url(hub), "tablet", key=wire.pub_text(sk), say=said.append,
+                sleep=lambda s: __import__("time").sleep(0.05)))
+            async def listed():   # the device speaks once the hub's answer is back
+                return said and await _pending(hub, tok["ann"])
+            pending = await until(listed)
+            assert "waiting for someone to let this machine in" in said[0] and hub.hub_id in said[0]
+            # shown by its name, where the request came from and how long it has waited
+            assert pending[0]["name"] == "tablet" and pending[0]["address"] == "127.0.0.1"
+            assert isinstance(pending[0]["age"], int)
+            await asyncio.sleep(0.3)
+            assert not task.done()                              # nobody tapped yet: it waits
+            ok = await _cap(hub, tok["ann"], "hub.join", request=pending[0]["id"])   # the Join button
+            bundle = await task
+            left = await _pending(hub, tok["ann"])
+
+            refused = asyncio.create_task(asyncio.to_thread(
+                device.sign_in, url(hub), "other", say=said.append, sleep=lambda s: __import__("time").sleep(0.05)))
+            rid = (await until(lambda: _pending(hub, tok["ann"])))[0]["id"]
+            no = await _cap(hub, tok["bake"], "hub.join", request=rid, refuse=True)
+            with pytest.raises(device.EnrollError, match="refused by the person"):
+                await refused
+            unknown = await _cap(hub, tok["bake"], "hub.join", request=rid)
+            bad = [await http(hub, "POST", path, {"name": "box", "code": "x", "key": "ed25519:short"})
+                   for path in ("/enroll/ask", "/enroll/claim")]
+            return ok, bundle, left, no, unknown, bad, hub.worker_key(bundle["worker_id"]), \
+                hub.journal.query(kind="enroll")
         finally:
             await hub.stop()
-    bundle, left, journaled = run(go())
-    assert bundle["owner"] == "person:bake" and bundle["name"] == "janitor"
-    [e] = journaled
-    assert (e["name"], e["person"], e["via"]) == ("janitor", "person:bake", "device code (security off: approved at once)")
-    assert left == [] and "approved at once" in said[0] and "approve code" not in said[0]
+    sk = device.signing_key(tmp_path / "nowhere.yaml")
+    ok, bundle, left, no, unknown, bad, pinned, journaled = run(go())
+    assert pinned == wire.pub_text(sk)                 # recorded with the worker id it was given
+    assert [b["error"] for b in bad] == ["bad request: key is an ed25519: public key"] * 2
+    assert ok["ok"] and ok["result"] == {"name": "tablet", "joined": True}
+    assert bundle["owner"] == "person:ann" and bundle["name"] == "tablet"    # whoever tapped Join owns it
+    assert left == []
+    assert [(e["name"], e["person"], e["via"]) for e in journaled] == [("tablet", "person:ann", "asked to join")]
+    assert no["ok"] and no["result"] == {"name": "other", "joined": False}
+    assert not unknown["ok"] and "unknown or expired request" in unknown["error"]
 
 
 def test_a_yaml_on_turns_security_on(tmp_path):
@@ -222,50 +207,56 @@ def test_a_yaml_on_turns_security_on(tmp_path):
         assert Hub(config(tmp_path, settings=settings), transport=Loopback()).security_off() is off
 
 
-def test_with_security_on_a_device_code_waits(tmp_path):
-    async def go():
-        hub, tok = await started(tmp_path, settings=ON)
-        try:
-            assert not hub.security_off()
-            out = await http(hub, "POST", "/enroll/device", {"name": "janitor"})
-            return out, await _pending(hub, tok["bake"])
-        finally:
-            await hub.stop()
-    out, pending = run(go())
-    assert out["ok"] and "approved" not in out and [p["name"] for p in pending] == ["janitor"]
+async def _cap(hub, token, cap, **args):
+    return await http(hub, "POST", "/call", {"worker": "rook", "cap": cap, "args": args,
+                                             "why": "Let a machine in from the Workers page."}, token)
 
 
 async def _pending(hub, token):
-    got = await http(hub, "GET", "/enroll/pending", None, token)
-    return got.get("devices")
+    got = await _cap(hub, token, "hub.joins")
+    return got["result"]["devices"]
 
 
-def test_who_may_enroll_see_the_recovery_key_and_invite(tmp_path):
+def test_an_agents_token_gets_a_join_code_and_the_machine_joins_with_no_tap(tmp_path):
+    """castling-design, Enrollment: "An agent already connected to the hub (e.g. Claude Code on
+    that machine) installs and joins a worker with no tap." """
+    async def go():
+        hub, tok = await started(tmp_path)
+        try:
+            got = await _cap(hub, tok["claude-for-bake"], "hub.join_code")
+            code = got["result"]["code"]          # no enroll.url on this hub: the address goes by hand
+            bundle = await asyncio.to_thread(device.sign_in, url(hub), "kaiju", code, hub.hub_id)
+            return got, bundle, await _pending(hub, tok["bake"])
+        finally:
+            await hub.stop()
+    got, bundle, pending = run(go())
+    assert got["ok"] and got["result"]["code"]
+    assert bundle["name"] == "kaiju" and bundle["owner"] == "person:bake"     # the person the agent works for
+    assert pending == []
+
+
+def test_who_may_enroll_and_see_the_recovery_key(tmp_path):
     async def go():
         hub, tok = await started(tmp_path)
         try:
             out = {}
             for who in ("bake", "ann", "kid", "claude", "claude-for-bake", "root-for-bake"):
                 out[who] = [(await http(hub, m, p, b, tok[who])).get("error")
-                            for m, p, b in (("POST", "/enroll/code", {}), ("GET", "/recovery-key", None),
-                                            ("POST", "/bands/invite", {"ceiling": {"grants": ["e2e.*"]}}))]
+                            for m, p, b in (("POST", "/enroll/code", {}), ("GET", "/recovery-key", None))]
             key = await http(hub, "GET", "/recovery-key", None, tok["bake"])
-            open_ = await http(hub, "POST", "/enroll/device", {"name": "rook"})
+            open_ = await http(hub, "POST", "/enroll/ask", {"name": "rook"})
             noauth = await http(hub, "POST", "/enroll/code", {})
             return out, key, open_, noauth, hub
         finally:
             await hub.stop()
     out, key, open_, noauth, hub = run(go())
     alone = "denied: only an owner, signed in as themselves"
-    assert out["bake"] == [None, None, None]
-    assert out["ann"] == [None, alone, alone]
-    assert out["kid"] == ["denied: person may not set up machines", alone, alone]
-    assert out["claude"] == ["denied: setting up a machine needs a person", alone, alone]
-    # an agent never sets up a machine, even for an owner with full rights: the
-    # code it gets would claim a bundle holding the band key
-    person = "denied: setting up a machine is for the person, not an agent"
-    assert out["claude-for-bake"] == [person, alone, alone]
-    assert out["root-for-bake"] == [person, alone, alone]
+    assert out["bake"] == [None, None]
+    assert out["ann"] == [None, alone]
+    assert out["kid"] == [None, alone]
+    assert out["claude"] == ["denied: setting up a machine needs a person", alone]
+    assert out["claude-for-bake"] == [None, alone]       # an agent with a token joins machines
+    assert out["root-for-bake"] == [None, alone]
     assert key["recovery_key"] == recovery_key(hub.data) == \
         (hub.data / "keys" / "recovery.key").read_text().strip()
     assert len(key["recovery_key"]) == 39 and key["recovery_key"].count("-") == 7
@@ -275,7 +266,7 @@ def test_who_may_enroll_see_the_recovery_key_and_invite(tmp_path):
 
 def test_codes_expire_and_waiting_devices_are_bounded(tmp_path):
     now = [1_800_000_000.0]
-    hub = Hub(config(tmp_path, settings=ON), transport=Loopback(), clock=lambda: now[0])
+    hub = Hub(config(tmp_path), transport=Loopback(), clock=lambda: now[0])
     hub.data, hub.hub_id = Path(tmp_path / "data"), "0" * 16
     hub.data.mkdir()
     e = Enrollment(hub, {})
@@ -284,25 +275,25 @@ def test_codes_expire_and_waiting_devices_are_bounded(tmp_path):
 
     async def go():
         code = (await e.new_code(OWNER))["code"]
-        dev = await e.device_start({"name": "box"})
+        dev = await e.ask({"name": "box"})
         now[0] += CODE_SECS + 1
         late = await e.claim({"code": code, "name": "box"})
-        poll = await e.device_poll({"device_code": dev["device_code"]})
+        poll = await e.poll({"ticket": dev["ticket"]})
         for _ in range(MAX_PENDING):
-            assert (await e.device_start({"name": "box"}))["ok"]
-        busy = await e.device_start({"name": "box"})
+            assert (await e.ask({"name": "box"}))["ok"]
+        busy = await e.ask({"name": "box"})
         return late, poll, busy
     late, poll, busy = run(go())
     assert late["error"] == "unknown or expired code"
-    assert poll["error"] == "unknown or expired device code"
+    assert poll["error"] == "unknown or expired request"
     assert busy["error"].startswith("busy:")
 
 
-def test_unpolled_device_codes_go_fast_so_a_flood_cannot_hold_the_queue(tmp_path):
-    # /enroll/device takes no token: codes nobody polls must not fill the
+def test_unpolled_requests_go_fast_so_a_flood_cannot_hold_the_queue(tmp_path):
+    # /enroll/ask takes no token: requests nobody polls must not fill the
     # queue for ten minutes (review D4).
     now = [1_800_000_000.0]
-    hub = Hub(config(tmp_path, settings=ON), transport=Loopback(), clock=lambda: now[0])
+    hub = Hub(config(tmp_path), transport=Loopback(), clock=lambda: now[0])
     hub.data, hub.hub_id = Path(tmp_path / "data"), "0" * 16
     hub.data.mkdir()
     e = Enrollment(hub, {})
@@ -310,66 +301,17 @@ def test_unpolled_device_codes_go_fast_so_a_flood_cannot_hold_the_queue(tmp_path
     hub.identities.add_user("bake", "owner")
 
     async def go():
-        real = await e.device_start({"name": "laptop"}, address="10.0.0.7")
+        real = await e.ask({"name": "laptop"}, address="10.0.0.7")
         for _ in range(MAX_PENDING - 1):
-            assert (await e.device_start({"name": "bake-laptop"}, address="203.0.113.9"))["ok"]
-        assert (await e.device_start({"name": "x"}))["error"].startswith("busy:")
+            assert (await e.ask({"name": "bake-laptop"}, address="203.0.113.9"))["ok"]
+        assert (await e.ask({"name": "x"}))["error"].startswith("busy:")
         for _ in range(4):                     # the real device keeps polling; the flood doesn't
             now[0] += UNPOLLED_SECS / 3
-            assert (await e.device_poll({"device_code": real["device_code"]}))["pending"]
+            assert (await e.poll({"ticket": real["ticket"]}))["pending"]
         pending = (await e.pending(OWNER))["devices"]
         assert [(d["name"], d["address"], d["age"]) for d in pending] == [("laptop", "10.0.0.7", int(UNPOLLED_SECS * 4 / 3))]
-        return await e.device_start({"name": "tablet"})
+        return await e.ask({"name": "tablet"})
     assert run(go())["ok"]
-
-
-def test_membership_requests_are_checked_and_band_keys_resolve_for_owners_only(tmp_path):
-    async def go():
-        hub, tok = await started(tmp_path)
-        other, otok = await started(tmp_path / "other", transport={"bands": [{"psk": "the-other-band-key-abcdef",
-                                                                             "relay": "10.0.0.2:7474"}]})
-        try:
-            invite = (await http(other, "POST", "/bands/invite", {"ceiling": {"grants": ["e2e.ping"]}},
-                                 otok["bake"]))["invite"]
-            own = (await http(hub, "POST", "/bands/invite", {"role": "co-owner"}, tok["bake"]))["invite"]
-            out = {
-                "kid": await http(hub, "POST", "/memberships", {"worker": "x", "invite": invite}, tok["kid"]),
-                "unknown": await http(hub, "POST", "/memberships", {"worker": "nope", "invite": invite}, tok["bake"]),
-            }
-            hub.dispatcher.workers["w" * 32] = __import__("rook.core2.hub.dispatch", fromlist=["x"]).Worker(
-                "w" * 32, "kaiju", BAND, {}, {"grants": ["*"]})
-            for name, body in (("own", {"invite": own}), ("forged", {"invite": {**invite, "hub": "0" * 16}}),
-                               ("badpsk", {"invite": {**invite, "connect": {**invite["connect"], "psk": "x"}}}),
-                               ("noband", {"band": "1" * 32, "role": "guest", "ceiling": {"grants": []}}),
-                               ("homerole", {"role": "guest"}), ("noceiling", {"invite": {**invite, "ceiling": None}})):
-                out[name] = await http(hub, "POST", "/memberships", {"worker": "kaiju", "why": "test", **body},
-                                       tok["bake"])
-            ref = "{{secret:band-psk-%s}}" % invite["band"]
-            resolved = hub.enroll.resolve({"connect": {"psk": ref}, "x": [ref, "keep"]}, OWNER, "core.trust.set")
-            with pytest.raises(ValueError, match="only an owner"):
-                hub.enroll.resolve({"psk": ref}, Caller(person="person:ann"), "core.trust.set")
-            # an agent acting for the owner, or any other cap, never gets a band key
-            with pytest.raises(ValueError, match="only an owner"):
-                hub.enroll.resolve({"psk": ref}, Caller(person=OWNER.person, agent="agent:claude"), "core.trust.set")
-            with pytest.raises(ValueError, match="only in core.trust.set"):
-                hub.enroll.resolve({"argv": ["echo", ref]}, OWNER, "shell.exec")
-            return invite, out, resolved
-        finally:
-            await other.stop()
-            await hub.stop()
-    invite, out, resolved = run(go())
-    assert invite["role"] == "guest" and invite["connect"] == {"psk": "the-other-band-key-abcdef",
-                                                               "relay": "10.0.0.2:7474"}
-    assert out["kid"]["error"].startswith("denied")
-    assert out["unknown"]["error"] == "unknown worker: nope"
-    assert out["own"]["error"] == "bad invite: it is for this hub's own band"
-    assert out["forged"]["error"] == "bad invite: its hub is not key_id(root)"
-    assert out["badpsk"]["error"] == "bad invite: its PSK is for another band"
-    assert out["noband"]["error"].startswith("unknown band")
-    assert out["homerole"]["error"].endswith("the role is home")
-    assert "ceiling" in out["noceiling"]["error"]
-    # the bad-ceiling invite was still a valid invite: its band is known now, its key resolves
-    assert resolved == {"connect": {"psk": "the-other-band-key-abcdef"}, "x": ["the-other-band-key-abcdef", "keep"]}
 
 
 def test_local_network_discovery_finds_the_hub(tmp_path):
@@ -472,5 +414,5 @@ def test_enroll_requests_send_a_user_agent(monkeypatch):
         seen.update(req.headers)
         return Resp()
     monkeypatch.setattr(device.urllib.request, "urlopen", fake_urlopen)
-    assert device._post("https://hub.example", "/enroll/device", {})["ok"]
+    assert device._post("https://hub.example", "/enroll/ask", {})["ok"]
     assert seen.get("User-agent", "").startswith("rook-") and "urllib" not in seen["User-agent"].lower()

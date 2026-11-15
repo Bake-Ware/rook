@@ -1,8 +1,5 @@
 """phone.*: FindDeviceBridge, the PIN unlock (rook.kit.android.screen),
-Vibrator, the camera's torch and the app's 0.4/0.5 switch."""
-
-import json
-import os
+Vibrator and the camera's torch."""
 
 from rook.kit import android
 from rook.kit.android import screen
@@ -44,17 +41,3 @@ def torch(ctx, on):
         raise KitError("this phone has no camera with a flash")
     cm.setTorchMode(camera, on)
     return {"on": on}
-
-
-#: The app's one-shot switch request (WorkerService.kt reads it every 15 s).
-SWITCH = "rook05/switch.json"
-
-
-def switch(ctx, to):
-    path = os.path.join(str(android.context().getFilesDir().getAbsolutePath()), SWITCH)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"to": to}, f)
-    os.replace(tmp, path)
-    return {"to": to, "asked": True}

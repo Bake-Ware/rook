@@ -1,5 +1,5 @@
 """Worker keys on real processes: the worker signs its requests to the hub
-with its own key (castling/review.md H2, docs/spec/core-v2.md 5.8 and 13.1).
+with its own key (castling/review.md H2, docs/spec/core-v2.md 10.2).
 
 Another node on the band (any PSK holder) reads the ticket of a call in
 flight and asks the hub for a sub-call with it. Before worker keys the hub ran

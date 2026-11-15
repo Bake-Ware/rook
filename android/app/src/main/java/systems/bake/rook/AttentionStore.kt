@@ -1,23 +1,17 @@
 package systems.bake.rook
 
-import android.Manifest
 import android.app.KeyguardManager
-import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
-import android.provider.ContactsContract
-import android.service.notification.StatusBarNotification
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.CopyOnWriteArraySet
-import java.util.concurrent.Executors
 
 /**
  * Attention on the phone (docs/design/attention-phone.md): decision cards the hub posts,
@@ -42,20 +36,13 @@ object AttentionStore {
     private val outcomes = object : LinkedHashMap<String, AttentionCard>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, AttentionCard>?) = size > 50
     }
-    /** Last content seen per notification key: updates that change nothing are not classified twice. */
-    private val lastContent = object : LinkedHashMap<String, Int>() {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?) = size > 300
-    }
     /** The original app's tap target for a local alert (memory only). */
     private val targets = object : LinkedHashMap<String, PendingIntent>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PendingIntent>?) = size > 50
     }
     private var lastId = 0L
-    private var starred: List<String> = emptyList()
-    private var starredAt = 0L
     private val listeners = CopyOnWriteArraySet<Runnable>()
     private val main = Handler(Looper.getMainLooper())
-    private val worker = Executors.newSingleThreadExecutor()
 
     private fun now() = System.currentTimeMillis() / 1000.0
 
@@ -374,89 +361,5 @@ object AttentionStore {
             ctx.startActivity(Intent(ctx, AttentionCardActivity::class.java).putExtra(AttentionCardActivity.EXTRA_ID, id)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         } catch (e: Exception) { Log.i(TAG, "card takeover not allowed: ${e.message}") }
-    }
-
-    // ---- notifications from other apps ----------------------------------------
-
-    /** From [RookNotificationListener]: classify on the phone; only urgent/family summaries ever leave it. */
-    fun observe(ctx: Context, sbn: StatusBarNotification) {
-        val app = ctx.applicationContext
-        if (sbn.packageName == app.packageName || sbn.isOngoing) return
-        val n = sbn.notification ?: return
-        if (n.flags and (Notification.FLAG_FOREGROUND_SERVICE or Notification.FLAG_GROUP_SUMMARY or Notification.FLAG_ONGOING_EVENT) != 0) return
-        if (n.category in NOISE) return
-        val ex = n.extras ?: return
-        val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
-        val text = (ex.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: ex.getCharSequence(Notification.EXTRA_TEXT))?.toString().orEmpty().take(2000)
-        if (title.isBlank() && text.isBlank()) return
-        val hash = (title + "\u0000" + text).hashCode()
-        synchronized(lock) { if (lastContent[sbn.key] == hash) return; lastContent[sbn.key] = hash }
-        val target = n.contentIntent
-        worker.execute { runCatching { classify(app, sbn.packageName, title, text, target) }.onFailure { Log.w(TAG, "classify failed", it) } }
-    }
-
-    private fun classify(app: Context, pkg: String, title: String, text: String, target: PendingIntent?) {
-        val label = appLabel(app, pkg)
-        val names = starredNames(app)
-        var alert: AttentionCard? = null
-        var ring = false
-        val verdict = synchronized(lock) {
-            ensure(app)
-            val v = rules.classify(AttentionRules.Item(pkg, label, title, text), names)
-            val t = now()
-            if (v.priority == AttentionRules.IGNORE) { quiet.ignore(t); saveFeed(); return@synchronized v }
-            val summary = AttentionRules.summary(label, v.category, title, text)
-            lastId = maxOf(System.currentTimeMillis(), lastId + 1)
-            val id = "f" + java.lang.Long.toString(lastId, 36)
-            quiet.add(JSONObject().put("id", id).put("ts", t).put("app", label).put("pkg", pkg).put("category", v.category)
-                .put("priority", v.priority).put("summary", summary), t)
-            saveFeed()
-            if (v.priority == AttentionRules.URGENT || v.priority == AttentionRules.FAMILY) {
-                var cardId = id
-                if (v.priority == AttentionRules.URGENT) {
-                    // One ringing alert per app at a time: a burst updates it instead of ringing again.
-                    val open = book.showing(t).firstOrNull { it.local && it.state == "pending" && it.source == label && t - it.created < 600 }
-                    val c = AttentionCard.fromPost(JSONObject().put("id", open?.id ?: "n$id").put("kind", "alert").put("line", summary)
-                        .put("urgency", "urgent").put("channel", "urgent").put("actions", JSONArray(listOf("ack")))
-                        .put("source", label).put("expires_at", t + 12 * 3600), open?.created ?: t, local = true)
-                    ring = book.post(c); saveCards()
-                    alert = book[c.id]; cardId = c.id
-                    if (target != null) targets[c.id] = target
-                }
-                event("notice", JSONObject().put("id", cardId).put("app", label).put("category", v.category)
-                    .put("priority", v.priority).put("summary", summary))
-            }
-            v
-        }
-        alert?.let { show(app, it, ring) }
-        if (verdict.priority == AttentionRules.FAMILY) AttentionChannels.postFamily(app, pkg, "$label: ${title.ifBlank { verdict.category }}", text, target)
-        if (verdict.priority != AttentionRules.IGNORE) changed()
-    }
-
-    private val NOISE = setOf(Notification.CATEGORY_ALARM, Notification.CATEGORY_CALL, Notification.CATEGORY_PROGRESS,
-        Notification.CATEGORY_SERVICE, Notification.CATEGORY_SYSTEM, Notification.CATEGORY_TRANSPORT, Notification.CATEGORY_NAVIGATION,
-        Notification.CATEGORY_STOPWATCH)
-
-    private fun appLabel(ctx: Context, pkg: String): String = try {
-        val pm = ctx.packageManager
-        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-    } catch (_: Exception) {
-        // Package visibility can hide other apps' labels: fall back to a readable package segment.
-        pkg.split('.').lastOrNull { it !in setOf("android", "app", "mobile", "client") }?.replaceFirstChar { it.uppercase() } ?: pkg
-    }
-
-    /** Starred contacts' names (refreshed every 30 minutes) when contacts are granted and the rules want them. */
-    private fun starredNames(ctx: Context): List<String> {
-        if (!synchronized(lock) { ensure(ctx); rules.familyStarred }) return emptyList()
-        if (System.currentTimeMillis() - starredAt < 30 * 60_000L) return starred
-        starredAt = System.currentTimeMillis()
-        if (ctx.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) { starred = emptyList(); return starred }
-        starred = try {
-            ctx.contentResolver.query(ContactsContract.Contacts.CONTENT_URI, arrayOf(ContactsContract.Contacts.DISPLAY_NAME),
-                "${ContactsContract.Contacts.STARRED}=1", null, null)?.use { c ->
-                buildList { while (c.moveToNext()) c.getString(0)?.trim()?.takeIf { it.length >= 2 }?.let { add(it) } }
-            } ?: emptyList()
-        } catch (_: Exception) { emptyList() }
-        return starred
     }
 }

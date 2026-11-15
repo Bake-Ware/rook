@@ -34,7 +34,7 @@
 // 0.6.3: re-commits the source for the flashed-but-uncommitted 0.6.2 image
 // (master already carried every 0.6.x feature; only this #define lagged) and
 // adds mDNS so the host can reach the dongle by name across DHCP changes.
-#define ROOK_FW_VERSION "0.6.7"
+#define ROOK_FW_VERSION "0.7.0"
 
 // ---- TF Card (SD_MMC 4-bit) ----
 #define SDMMC_CLK   12

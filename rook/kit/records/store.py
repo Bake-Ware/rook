@@ -9,14 +9,12 @@ A manifest ``records:`` block (castling-manifest-2, "Records") declares a type;
   it was made for.
 * ``"h:<plugin>.<record>"``: a snapshot per write when ``history: true``.
 * ``"f:<plugin>.<record>"``: an FTS5 index over the ``search`` fields.
-* ``kit_refs``: every ``ref`` field value, so backlinks work across plugins.
 * ``kit_schema``: the fields each type was last registered with.
 
-Migrations are additive: new fields become new columns, dropped fields keep
+Changes are additive: new fields become new columns, dropped fields keep
 their column (rolling a plugin back never loses data), index and unique
 changes rebuild their indexes, search changes rebuild the FTS table. A type
-change is not additive and needs the plugin's migration (SQLite can't retype
-a column, so the migration moves it aside and adds the new one).
+change is not additive and is refused (SQLite can't retype a column).
 
 Every operation takes the :class:`~rook.kit.ctx.Caller`: rows are filtered to
 the caller's band, private types to their creator (and owners), and records
@@ -35,12 +33,11 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
 from .._types import check, parse_duration
 from ..manifest.types import TypeSpecError, compile_type
-from ..ctx import Caller, KitError, load_run
+from ..ctx import Caller, KitError
 
 __all__ = ["RecordDef", "RecordStore", "RecordType", "VERBS"]
 
@@ -62,13 +59,11 @@ class RecordDef:
     fields: dict[str, dict]
     index: list[tuple[str, ...]] = field(default_factory=list)
     search: list[str] = field(default_factory=list)
-    semantic: list[str] = field(default_factory=list)
     history: bool = False
     private: bool = False
     retain: float | None = None
     verbs: list[str] = field(default_factory=list)
     risk: dict[str, str] = field(default_factory=dict)
-    migrations: str | None = None
 
     @property
     def full(self) -> str:
@@ -101,8 +96,7 @@ class RecordDef:
                 spec["to"] = f"{plugin}.{spec['to']}"
         index = [tuple([i] if isinstance(i, str) else i) for i in block.get("index") or []]
         search = list(block.get("search") or [])
-        semantic = list(block.get("semantic") or [])
-        for f in [c for cols in index for c in cols] + search + semantic:
+        for f in [c for cols in index for c in cols] + search:
             if f not in fields:
                 raise KitError(f"{plugin}.{name}: index/search names unknown field {f!r}")
         history = bool(block.get("history"))
@@ -118,26 +112,15 @@ class RecordDef:
         if "history" in verbs and not history:
             raise KitError(f"{plugin}.{name}: caps lists history but the type keeps no history")
         retain = block.get("retain")
-        return cls(plugin, name, fields, index, search, semantic,
+        return cls(plugin, name, fields, index, search,
                    history=history, private=bool(block.get("private")),
                    retain=parse_duration(retain) if retain not in (None, "forever") else None,
-                   verbs=verbs, risk=dict(block.get("risk") or {}),
-                   migrations=block.get("migrations"))
-
-
-def _script_migrate(plugin_dir: str | Path, ref: str) -> Callable:
-    """The plugin's migration script, loaded only when a change needs it."""
-    return lambda db, rdef, old: load_run(plugin_dir, ref)(db, rdef, old)
+                   verbs=verbs, risk=dict(block.get("risk") or {}))
 
 
 def _q(name: str) -> str:
     """Quote an identifier. Names are validated, so they never hold a quote."""
     return '"' + name + '"'
-
-
-def _private_key(rec: Mapping) -> str:
-    """Who may see a private record, in kit_refs: its person, else its agent."""
-    return f"p:{rec['person']}" if rec["person"] else f"a:{rec['creator']}"
 
 
 def _fts_query(text: str) -> str:
@@ -150,10 +133,10 @@ def _fts_query(text: str) -> str:
 
 class RecordStore:
     """The hub's record store. ``emit(event, payload, source)`` publishes the
-    auto events; ``semantic`` is the embedding hook (below)."""
+    auto events."""
 
     def __init__(self, path: str = ":memory:", *, emit: Callable[[str, dict, str], Any] | None = None,
-                 semantic: Any = None, clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time):
         self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._db.row_factory = sqlite3.Row
         if path != ":memory:":
@@ -161,19 +144,8 @@ class RecordStore:
         self._lock = threading.RLock()
         self._types: dict[str, RecordType] = {}
         self._emit = emit
-        # TODO(castling): semantic search. No embedding model yet. When one
-        # exists, pass an object with index(type, id, text), forget(type, id)
-        # and search(type, query, limit) -> [id]; the store feeds it the
-        # ``semantic`` fields on every write and search(semantic=True) uses it.
-        self.semantic = semantic
         self.clock = clock
-        self._db.executescript("""
-            CREATE TABLE IF NOT EXISTS kit_schema (type TEXT PRIMARY KEY, fields TEXT, search TEXT);
-            CREATE TABLE IF NOT EXISTS kit_refs (
-                src TEXT, src_id TEXT, field TEXT, dst TEXT, dst_id TEXT, band TEXT,
-                private_creator TEXT, PRIMARY KEY (src, src_id, field));
-            CREATE INDEX IF NOT EXISTS kit_refs_dst ON kit_refs (dst, dst_id);
-        """)
+        self._db.execute("CREATE TABLE IF NOT EXISTS kit_schema (type TEXT PRIMARY KEY, fields TEXT, search TEXT)")
 
     def close(self) -> None:
         self._db.close()
@@ -196,24 +168,15 @@ class RecordStore:
 
     # -- types ----------------------------------------------------------------
 
-    def register(self, manifest: Mapping, *, plugin_dir: str | Path | None = None,
-                 migrate: Callable | None = None) -> list["RecordType"]:
+    def register(self, manifest: Mapping, *, plugin_dir: Any = None) -> list["RecordType"]:
         """Register every type in a manifest's ``records:`` block (the adapter
-        over the plain manifest dict). For a non-additive change the type's
-        ``migrations:`` script (``migrate(db, rdef, old_fields)`` in it, found
-        under ``plugin_dir``) or the ``migrate`` callback runs inside the
-        transaction."""
+        over the plain manifest dict). ``plugin_dir`` is unused; castling/switchover
+        still passes it."""
         plugin = manifest["plugin"]
-        out = []
-        for name, block in (manifest.get("records") or {}).items():
-            rdef = RecordDef.parse(plugin, name, block or {})
-            fn = migrate
-            if fn is None and rdef.migrations and plugin_dir is not None:
-                fn = _script_migrate(plugin_dir, f"{rdef.migrations}:migrate")
-            out.append(self.define(rdef, migrate=fn))
-        return out
+        return [self.define(RecordDef.parse(plugin, name, block or {}))
+                for name, block in (manifest.get("records") or {}).items()]
 
-    def define(self, rdef: RecordDef, *, migrate: Callable | None = None) -> "RecordType":
+    def define(self, rdef: RecordDef) -> "RecordType":
         with self._tx() as db:
             row = db.execute("SELECT fields, search FROM kit_schema WHERE type=?", (rdef.full,)).fetchone()
             old = json.loads(row["fields"]) if row else {}
@@ -221,10 +184,7 @@ class RecordStore:
                        and old[f].get("type", "str") != spec["type"]
                        and {old[f].get("type", "str"), spec["type"]} - _SAME_STORAGE]
             if changed:
-                if migrate is None:
-                    raise KitError(f"{rdef.full}: changing the type of {', '.join(changed)} "
-                                   "is not additive; the plugin needs a migration")
-                migrate(db, rdef, old)
+                raise KitError(f"{rdef.full}: changing the type of {', '.join(changed)} is not additive")
             self._create_tables(db, rdef)
             if row is None or json.loads(row["search"]) != rdef.search:
                 self._rebuild_fts(db, rdef)
@@ -291,15 +251,6 @@ class RecordStore:
         db.execute(f"INSERT INTO {f} (id, {cols}) SELECT id, {cols} FROM {_q('r:' + rdef.full)}")
 
     # -- cross-type -----------------------------------------------------------
-
-    def backlinks(self, caller: Caller, full: str, rid: str) -> list[dict]:
-        """Records (any plugin) whose ref fields point at ``full`` record ``rid``."""
-        rows = self._query(
-            "SELECT src, src_id, field FROM kit_refs WHERE dst=? AND dst_id=? AND band=? "
-            "AND (private_creator IS NULL OR ? OR private_creator IN (?, ?)) ORDER BY src, src_id",
-            (full, rid, caller.band, caller.owner, f"p:{caller.person}" if caller.person else "",
-             f"a:{caller.actor}"))
-        return [{"type": r["src"], "id": r["src_id"], "field": r["field"]} for r in rows]
 
     def prune(self, now: float | None = None) -> int:
         """Drop records older than their type's ``retain``. Core runs this daily."""
@@ -378,13 +329,8 @@ class RecordType:
             rec[f] = v
         return rec
 
-    def get(self, caller: Caller, id: str, history: bool = False, backlinks: bool = False) -> dict:
-        rec = self._out(self._row(caller, id))
-        if history:
-            rec["history"] = self.history(caller, id)
-        if backlinks:
-            rec["backlinks"] = self.store.backlinks(caller, self.rdef.full, id)
-        return rec
+    def get(self, caller: Caller, id: str) -> dict:
+        return self._out(self._row(caller, id))
 
     def history(self, caller: Caller, id: str) -> list[dict]:
         if not self.rdef.history:
@@ -416,18 +362,7 @@ class RecordType:
             [*params, max(1, min(int(limit), 500)), max(0, int(offset))])
         return [self._out(r) for r in rows]
 
-    def search(self, caller: Caller, query: str, limit: int = 20, semantic: bool = False) -> list[dict]:
-        if semantic:
-            if self.store.semantic is None or not self.rdef.semantic:
-                raise KitError("semantic search is not available yet")
-            ids = self.store.semantic.search(self.rdef.full, query, int(limit))
-            out = []
-            for rid in ids:
-                try:
-                    out.append(self.get(caller, rid))
-                except KitError:
-                    pass
-            return out
+    def search(self, caller: Caller, query: str, limit: int = 20) -> list[dict]:
         if not self.rdef.search:
             raise KitError(f"{self.rdef.full} declares no search fields")
         vis, params = self._visible(caller, "r.")
@@ -554,7 +489,7 @@ class RecordType:
                 raise KitError(f"bad args: {f}: no {spec['to']} {v}")
 
     def _after_write(self, db: sqlite3.Connection, caller: Caller, rec: dict, op: str) -> None:
-        """History snapshot, FTS row, ref rows, semantic feed: all inside the write."""
+        """History snapshot and FTS row: inside the write."""
         rdef, rid = self.rdef, rec["id"]
         fields = {f: rec[f] for f in rdef.fields}
         if rdef.history:
@@ -567,18 +502,6 @@ class RecordType:
             db.execute(f"INSERT INTO {ft} (id, {', '.join(map(_q, rdef.search))}) "
                        f"VALUES (?{', ?' * len(rdef.search)})",
                        [rid, *(self._store_value(f, rec[f]) for f in rdef.search)])
-        for f, spec in rdef.fields.items():
-            if spec["type"] != "ref":
-                continue
-            if rec[f] is None:
-                db.execute("DELETE FROM kit_refs WHERE src = ? AND src_id = ? AND field = ?",
-                           (rdef.full, rid, f))
-            else:
-                db.execute("INSERT OR REPLACE INTO kit_refs VALUES (?, ?, ?, ?, ?, ?, ?)",
-                           (rdef.full, rid, f, spec["to"], rec[f], caller.band,
-                            _private_key(rec) if rdef.private else None))
-        if self.store.semantic is not None and rdef.semantic:
-            self.store.semantic.index(rdef.full, rid, "\n\n".join(str(rec[f] or "") for f in rdef.semantic))
 
     def _erase(self, db: sqlite3.Connection, rid: str) -> None:
         rdef = self.rdef
@@ -587,9 +510,6 @@ class RecordType:
             db.execute(f"DELETE FROM {_q('f:' + rdef.full)} WHERE id = ?", (rid,))
         if rdef.history:
             db.execute(f"DELETE FROM {_q('h:' + rdef.full)} WHERE id = ?", (rid,))
-        db.execute("DELETE FROM kit_refs WHERE src = ? AND src_id = ?", (rdef.full, rid))
-        if self.store.semantic is not None and rdef.semantic:
-            self.store.semantic.forget(rdef.full, rid)
 
     def _event(self, what: str, caller: Caller, rec: dict) -> None:
         if self.store._emit is None:

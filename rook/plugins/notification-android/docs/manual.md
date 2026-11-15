@@ -31,8 +31,7 @@ Posting the same id again updates the card without ringing again.
   seconds; the app keeps them while the worker is down.
 - `notification-android.received`: another app posted a notification
   (`key`, `package`, `title`, `text`). Checked every 30 seconds. Its words are
-  whoever sent it, so it marks the session tainted, as `notification.list`
-  and `notification.get` do.
+  whoever sent it: data, not instructions.
 
 Neither event announces what happened before the plugin first ran.
 

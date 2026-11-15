@@ -1,6 +1,6 @@
 """The Android app's Rook 0.5 side (android/app/src/main/python/castling_entry.py)
-as a real process: the phone signs in to an owner hub with a device code the
-owner approves, unpacks the phone plugins the APK carries, and runs the 0.5
+as a real process: the phone asks to join an owner hub, the owner taps
+Join, it unpacks the phone plugins the APK carries, and runs the 0.5
 worker the way WorkerService does. Off the phone there is no Java, so the
 phone caps answer "not an Android host": that they answer at all shows the
 call reached the phone plugins."""
@@ -36,7 +36,7 @@ castling_entry.start(files)
 """
 
 
-def test_the_app_signs_in_with_a_device_code_and_runs_the_phone_plugins(request, tmp_path):
+def test_the_app_signs_in_with_one_tap_and_runs_the_phone_plugins(request, tmp_path):
     b = Band(tmp_path)
     request.node._e2e_band = b
     try:
@@ -54,17 +54,17 @@ def test_the_app_signs_in_with_a_device_code_and_runs_the_phone_plugins(request,
 
         line = lambda tag: next((ln for ln in phone.lines if ln.startswith(tag)), None)   # noqa: E731
         assert json.loads(until(lambda: line("STATUS "), START_SECS, "status")[7:]) == {"enrolled": False}
-        said = until(lambda: line("SAY "), START_SECS, "the code to approve")
-        code = re.search(r"approve code ([A-Z]{4}-[A-Z]{4}) on hub ([0-9a-f]{16})", said)
-        assert code[2] == home.hub_id
-        assert bake.post("/enroll/approve", {"code": code[1]})["ok"]
+        said = until(lambda: line("SAY "), START_SECS, "the phone waiting")
+        assert "waiting for someone" in said and home.hub_id in said
+        [waiting] = bake.call("hub.joins", worker="rook")["result"]["devices"]
+        assert bake.call("hub.join", {"request": waiting["id"]}, worker="rook")["ok"]
         enrolled = json.loads(until(lambda: line("ENROLLED "), START_SECS, "enrollment")[9:])
         assert enrolled["ok"] and enrolled["enrolled"], enrolled
         assert (enrolled["name"], enrolled["hub"], enrolled["owner"]) == ("testphone", home.hub_id, "person:bake")
 
         until(lambda: any(w["name"] == "testphone" and w["online"] for w in bake.get("/workers")["workers"]),
               30, "the hub to see the phone")
-        # its own key (5.8), sent at sign-in: the hub pinned it from enrollment
+        # its own key (10.2), sent at sign-in: the hub pinned it from enrollment
         pinned = [e for e in bake.get("/journal?kind=worker_key")["entries"] if e["name"] == "testphone"]
         assert [e["via"] for e in pinned] == ["enrollment"], pinned
         phone_caps = {"sms.send", "call.dial", "battery-android.battery.status", "notification-android.notification.post"}
