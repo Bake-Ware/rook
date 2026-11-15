@@ -362,6 +362,13 @@ def wol(net):
     return [(data, to) for data, to in net.sent if to and to.endswith(":9")]
 
 
+def test_power_toggle(tv):
+    got = call(tv, "tv.power.toggle")
+    assert got["ok"] and got["on"] is False and tv.power == "Suspend"      # it was on: off
+    with pytest.raises(KitError):                                          # nothing answers: on needs a MAC
+        call(tv, "tv.power.toggle", {"wait": 0}, up=False)
+
+
 def test_power_on(tv):
     assert call(tv, "tv.power.on")["already_on"]
     with pytest.raises(KitError, match="MAC address unknown"):
