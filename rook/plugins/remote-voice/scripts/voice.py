@@ -147,13 +147,13 @@ def _direct(u: urllib.parse.SplitResult, headers: dict, data: bytes) -> str:
         return str(json.loads(r.read()).get("text") or "")
 
 
-# Run on the voice_via worker: decode the frames it was handed, ask the voice
-# server, print what it heard. (The same decoding as decode() above.)
+# Run on the voice_via worker: fetch the frames from the hub (an address that
+# answers once), decode them, ask the voice server, print what it heard. (The same decoding as decode() above.)
 AWAY = r'''
-import json, os, ssl, struct, sys, urllib.request
-path, url, token = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""
-raw = open(path, "rb").read()
-os.unlink(path)
+import json, ssl, struct, sys, urllib.request
+src, url, token = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""
+with urllib.request.urlopen(src, timeout=15) as r:
+    raw = r.read()
 S = (7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,
      230,253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,2272,2499,
      2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,15289,16818,18500,
@@ -184,36 +184,46 @@ req = urllib.request.Request(url, data=struct.pack("<%dh" % len(wide), *wide), m
 with urllib.request.urlopen(req, timeout=40, context=tls) as r:
     print(json.dumps({"text": json.loads(r.read()).get("text") or ""}))
 '''
-PIECE = 6000                 # bytes of audio a call to the worker carries: big band messages get lost
 
 
 async def transcribe(ctx, frames: bytes, pcm: list[int]) -> str:
     """What the voice server hears: its POST /api/transcribe, the way the
     phone app asks it (audio/L16 at 16 kHz, a bearer key when it wants one).
     The server signs its own certificate, so it is not checked. With
-    voice_via the hub hands the frames as they are (an eighth the size of the
-    sound) to that worker, one on the server's network, which decodes them
-    and asks: the hub often cannot reach a voice server at home, and a few
-    hundred KB over the band does not arrive."""
+    voice_via a worker on the server's network asks instead (the hub often
+    cannot reach a voice server at home). It fetches the frames from the hub,
+    from an address that answers once (hub_url/once/...): audio in a call's
+    arguments would be kept in the journal, and a big message over the band
+    does not arrive. The journal keeps the words (speech.hear's text)."""
     st = ctx.settings
     u, token, via = _server(st["voice_url"]), st["voice_token"] or "", st["voice_via"]
     if not via:
         headers = {"Content-Type": "audio/L16", **({"Authorization": f"Bearer {token}"} if token else {})}
         return await asyncio.to_thread(_direct, u, headers, struct.pack(f"<{len(pcm)}h", *pcm))
+    hub = (st["hub_url"] or "").strip().rstrip("/")
+    if not hub:
+        raise ValueError("voice_via needs hub_url: the address the worker fetches the audio from")
+    folder = ctx.data / "once"
     last: Exception | None = None
-    for attempt in range(2):                 # a lost call spoils the file: start a new one
-        path = f"/tmp/rook-remote-voice-{os.urandom(6).hex()}.raw"
+    for attempt in range(2):                 # a lost call: hand it out again
+        name = os.urandom(24).hex()
         try:
-            for i in range(0, len(frames), PIECE):
-                await asyncio.wait_for(ctx.call_on(via, "file.write", path=path, encoding="base64", append=i > 0,
-                                                   content=base64.b64encode(frames[i:i + PIECE]).decode()), 6)
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_bytes(frames)
             got = await asyncio.wait_for(ctx.call_on(via, "shell.exec", timeout=50, argv=[
-                "python3", "-c", AWAY, path, u.geturl() + "/api/transcribe", token]), 55)
+                "python3", "-c", AWAY, f"{hub}/once/remote-voice/{name}", u.geturl() + "/api/transcribe",
+                *([token] if token else [])]), 55)
             if got.get("code") != 0:
                 raise ValueError((got.get("stderr") or "").strip()[-200:] or f"exit {got.get('code')}")
             return str(json.loads(got.get("stdout") or "{}").get("text") or "")
-        except (asyncio.TimeoutError, ctx.Error, ValueError) as e:
+        except (asyncio.TimeoutError, ctx.Error, ValueError, OSError) as e:
             last = e
+        finally:
+            for left in (folder / name, folder / (name + ".taken")):
+                try:
+                    left.unlink(missing_ok=True)
+                except OSError:
+                    pass
     raise ValueError(f"{type(last).__name__}: {last}")
 
 
