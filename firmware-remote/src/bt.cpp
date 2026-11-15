@@ -25,7 +25,7 @@ const char* const V_SVC = "ab5e0001-5a21-4f05-bc7d-af01f617b664";
 const char* const V_TX = "ab5e0002-5a21-4f05-bc7d-af01f617b664";
 const char* const V_RX = "ab5e0003-5a21-4f05-bc7d-af01f617b664";
 const char* const V_CTL = "ab5e0004-5a21-4f05-bc7d-af01f617b664";
-const uint32_t V_MAX_MS = 12000;            // an utterance is cut off here
+const uint32_t V_MAX_MS = 30000;            // an utterance is cut off here (the hub takes 30 s at most)
 const size_t V_BUF_MAX = 16000;             // nobody is taking the audio: stop keeping it
 NimBLERemoteCharacteristic* v_tx = nullptr;
 volatile bool v_ready = false, v_open = false, v_want_open = false, v_want_close = false, v_done = false;
@@ -103,7 +103,7 @@ void on_audio(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
         if (v_run >= V_SPOKEN) v_speech = true;         // a few loud frames in a row: someone is talking
         if (v_run >= 2) v_quiet = 0;                    // one loud frame alone is a knock, not more talking
         else v_quiet++;
-        if ((v_speech && v_quiet >= V_QUIET) || (!v_speech && v_frames >= V_WAIT)) v_want_close = true;
+        // (Measured for remote.bt only: the person ends the utterance, with the key.)
     }
 }
 
@@ -294,6 +294,12 @@ void connect_to(const std::string& addr, uint8_t type) {
         client->disconnect();
         return;
     }
+    // Every service is read once, before anything subscribes: reading them again
+    // would replace the objects the subscriptions hang on, and the keys would go quiet.
+    std::string svcs;
+    auto* all = client->getServices(true);
+    if (all)
+        for (auto* s : *all) svcs += (svcs.empty() ? "" : " ") + s->getUUID().toString();
     int n = 0;
     NimBLERemoteService* hid = client->getService(NimBLEUUID(HID_SERVICE));
     if (hid) {
@@ -308,10 +314,6 @@ void connect_to(const std::string& addr, uint8_t type) {
         return;
     }
     nlasts = 0;
-    std::string svcs;
-    auto* all = client->getServices(true);
-    if (all)
-        for (auto* s : *all) svcs += (svcs.empty() ? "" : " ") + s->getUUID().toString();
     v_tx = nullptr;
     bool voice = false;
     NimBLERemoteService* vs = client->getService(NimBLEUUID(V_SVC));

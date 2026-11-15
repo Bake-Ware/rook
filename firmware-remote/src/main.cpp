@@ -30,7 +30,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.7.3"
+#define FW_VERSION "0.8.0"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -347,6 +347,12 @@ static void on_button(const ButtonEvent& ev) {
         else if (e.name == "down") ui::menu_move(1);
         else if (e.name == "ok") menu_pick(ui::menu_selected());
         else if (is_name(e.name, {"back", "input", "home"})) { ui::menu_end(); mode = REMOTE; }
+        return;
+    }
+    // A text too long for the screen (an agent's answer): up and down read it, back puts it away.
+    if (!strcmp(e.action, "press") && is_name(e.name, {"up", "down", "back"}) && ui::text_scroll(0)) {
+        if (e.name == "back") ui::text("", 0);
+        else ui::text_scroll(e.name == "up" ? -4 : 4);
         return;
     }
     if ((e.name == "input" || e.name == "bt_menu") && !buttons::learning()) {
@@ -1113,7 +1119,7 @@ void loop() {
         voice_seq = voice_bytes = 0;
         voice_started = ms;
         voice_hold = false;
-        ui::text("Listening...", 15);
+        ui::text("Listening...\n\npress again\nwhen done", 32);
     }
     if (voice_open) {
         std::string held = bt_name_of(bt::held());

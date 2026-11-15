@@ -19,6 +19,8 @@ void redraw();                                        // something drawn from ou
 
 void status_line(int line, const std::string& text);  // lines 0..3 of the status screen
 void text(const std::string& t, uint32_t seconds);    // agent text; 0 s = until replaced
+// Move a text too long for the screen by delta lines. False: nothing on screen scrolls.
+bool text_scroll(int delta);
 std::string shown();                                  // what the screen says now
 void flash(const std::string& t);                     // a brief note (1.5 s) over the status screen
 void big(const std::string& t);                       // a few characters, large, until replaced

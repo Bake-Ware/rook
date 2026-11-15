@@ -14,7 +14,6 @@ import io
 import json
 import ssl
 import struct
-import textwrap
 import time
 import urllib.error
 import urllib.parse
@@ -178,29 +177,14 @@ async def transcribe(ctx, pcm: list[int]) -> str:
     return str(json.loads(body).get("text") or "")
 
 
-def pages(text: str, cols: int, rows: int) -> list[str]:
-    lines: list[str] = []
-    for para in text.split("\n"):
-        lines += textwrap.wrap(para, cols, break_long_words=True) or [""]
-    return ["\n".join(lines[i:i + rows]) for i in range(0, len(lines), rows)] or [""]
-
-
 async def _show(ctx, remote: str, text: str, hold: int = 60) -> None:
-    """text on the remote's screen, a page at a time; the last page stays for hold seconds."""
-    s = ctx.settings
-    ps = pages(text, int(s["cols"]), int(s["rows"]))
-    for i, page in enumerate(ps):
-        last = i == len(ps) - 1
-        for attempt in range(4):         # a remote that just stopped listening can miss a call: ask again soon
-            try:
-                await asyncio.wait_for(ctx.call_on(remote, "remote.display", text=page,
-                                                   seconds=hold if last else int(s["page_seconds"]) + 2), 4)
-                break
-            except (asyncio.TimeoutError, ctx.Error):
-                if attempt == 3:
-                    return               # the remote went away: nothing to show it on
-        if not last:
-            await asyncio.sleep(int(s["page_seconds"]))
+    """text on the remote's screen for hold seconds; the remote wraps it and its up and down keys scroll it."""
+    for attempt in range(4):             # a remote that just stopped listening can miss a call: ask again soon
+        try:
+            await asyncio.wait_for(ctx.call_on(remote, "remote.display", text=text[:6000], seconds=hold), 4)
+            return
+        except (asyncio.TimeoutError, ctx.Error):
+            pass                         # after the last try: the remote went away, nothing to show it on
 
 
 async def _session(ctx, remote: str, fresh: bool = False) -> dict:
@@ -290,5 +274,5 @@ async def hear(ctx, event):
                     reply = d["text"].strip()
             if got.get("closed"):
                 break
-        await _show(ctx, remote, reply or "(no answer yet)", 90 if reply else 8)
+        await _show(ctx, remote, f"> {heard}\n{reply}" if reply else "(no answer yet)", 120 if reply else 8)
     return {"heard": heard, "say": say, "reply": reply, "handoff": handoff, "audio": info}

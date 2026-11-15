@@ -18,6 +18,7 @@ SemaphoreHandle_t mu;
 std::string status[4];
 std::string agent_text;
 uint32_t agent_until = 0;      // 0 = until replaced; set when agent_text is shown
+int agent_top = 0;             // the first line of agent_text on screen (it scrolls when long)
 bool agent_on = false, agent_big = false;
 std::string note;
 uint32_t note_until = 0;
@@ -139,7 +140,13 @@ void draw() {
         oled.setCursor(1, H / 2 - 12);
         oled.print(agent_text.substr(0, COLS).c_str());
     } else if (agent_on) {
-        lines(wrap(agent_text, ROWS), 0, 8);
+        auto all = wrap(agent_text, 400);
+        int n = (int)all.size(), top = std::max(0, std::min(agent_top, n - ROWS));
+        lines(std::vector<std::string>(all.begin() + top, all.begin() + std::min(n, top + ROWS)), 0, 8);
+        if (n > ROWS) {                       // where this page is in the whole, down the right edge
+            int h = std::max(4, H * ROWS / n);
+            oled.drawFastVLine(W - 1, (H - h) * top / (n - ROWS), h, 1);
+        }
     } else {
         static const int Y[4] = {0, 14, 24, 44};
         for (int i = 0; i < 4; i++) {
@@ -197,6 +204,7 @@ void status_line(int line, const std::string& t) {
 void text(const std::string& t, uint32_t seconds) {
     xSemaphoreTake(mu, portMAX_DELAY);
     agent_text = t;
+    agent_top = 0;
     agent_on = !t.empty();
     agent_big = false;
     agent_until = seconds ? millis() + seconds * 1000 : 0;
@@ -204,6 +212,19 @@ void text(const std::string& t, uint32_t seconds) {
     note_until = 0;
     dirty = true;
     xSemaphoreGive(mu);
+}
+
+bool text_scroll(int delta) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    int n = agent_on && !agent_big ? (int)wrap(agent_text, 400).size() : 0;
+    bool can = n > ROWS;
+    if (can) {
+        agent_top = std::max(0, std::min(agent_top + delta, n - ROWS));
+        if (agent_until) agent_until = millis() + 90000;      // being read: it stays
+        dirty = true;
+    }
+    xSemaphoreGive(mu);
+    return can;
 }
 
 std::string shown() {

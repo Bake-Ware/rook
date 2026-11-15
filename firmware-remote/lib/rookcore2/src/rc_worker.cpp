@@ -265,11 +265,15 @@ void Worker::on_message(const uint8_t* data, size_t len) {
     if (kind && strcmp(kind, "announce") == 0) {
         if (!clock_ok()) return;
         bool before = hub_ok();
-        if (gate.hub_announce(band_.band_hex(), m, now()) && (!before || !had_contact_)) {
-            had_contact_ = true;
-            announce_due_ = true;          // the hub may have restarted since we last announced
-            batch_backoff_ = 1000;
-            if (log) log("hub contact");
+        if (gate.hub_announce(band_.band_hex(), m, now())) {
+            if (!before || !had_contact_) {
+                had_contact_ = true;
+                announce_due_ = true;      // the hub may have restarted since we last announced
+                batch_backoff_ = 1000;
+                if (log) log("hub contact");
+            } else if (millis() - last_announce_ > 120000) {
+                announce_due_ = true;      // a hub back within the contact window forgot us without our noticing
+            }
         }
         return;
     }

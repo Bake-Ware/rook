@@ -8,7 +8,7 @@
 # (remote.display). Code: scripts/voice.py.
 manifest: 1
 plugin: remote-voice
-version: 0.1.4
+version: 0.2.0
 title: Remote voice
 doc: Talk to the house agent with a Rook remote's Assistant key; the answer comes back on its screen.
 package: devices
@@ -22,9 +22,6 @@ settings:
   voice_url: { type: str, default: "", doc: "A voice server to do the hearing (its POST /api/transcribe, as the phone app uses it), e.g. https://kaiju:8900. Blank: the band's own speech-to-text (voice.stt)." }
   voice_token: { type: str, default: "", secret: true, doc: "That server's key, when it wants one." }
   voice_via: { type: str, default: "", doc: "A worker on the voice server's network to make the request from (its net.open), when the hub itself can't reach it. Blank: straight from the hub." }
-  cols: { type: int, default: 21, min: 4, max: 40, doc: "Characters across the remote's screen (21 on the 128x64 bridge build)." }
-  rows: { type: int, default: 8, min: 2, max: 20, doc: Lines down it. }
-  page_seconds: { type: int, default: 6, min: 2, max: 30, doc: How long each page of a long reply stays up. }
 
 caps:
   hear:
