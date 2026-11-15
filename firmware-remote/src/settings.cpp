@@ -139,6 +139,21 @@ void wifi_add(const std::string& ssid, const std::string& pass) {
 
 void wifi_clear() { prefs.remove("wifi"); }
 
+void wifi_remove(const std::string& ssid) {
+    JsonDocument d;
+    JsonArray a = d.to<JsonArray>();
+    for (auto& n : wifi()) {
+        if (n.first == ssid) continue;
+        JsonObject o = a.add<JsonObject>();
+        o["ssid"] = n.first;
+        o["pass"] = n.second;
+    }
+    std::string j;
+    serializeJson(d, j);
+    put("wifi", j);
+    if (get("wifi_last") == ssid) prefs.remove("wifi_last");
+}
+
 void seed(uint8_t out[32]) {
     if (prefs.getBytesLength("seed") == 32) {
         prefs.getBytes("seed", out, 32);

@@ -25,6 +25,7 @@ void set_name(const std::string& n);
 std::vector<std::pair<std::string, std::string>> wifi();
 void wifi_add(const std::string& ssid, const std::string& pass);
 void wifi_clear();
+void wifi_remove(const std::string& ssid);
 std::string wifi_last();                       // the network that last let us in: tried first
 void set_wifi_last(const std::string& ssid);
 

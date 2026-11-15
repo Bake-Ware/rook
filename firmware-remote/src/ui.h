@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+class Adafruit_GFX;
+
 namespace ui {
 
 bool begin(uint8_t addr, int rotation);               // rotation: quarter turns clockwise, 0..3
@@ -35,5 +37,6 @@ int menu_selected();
 void menu_end();
 
 void game(bool on);                                   // the screen is the game's (tetris::draw)
+void canvas(void (*draw)(Adafruit_GFX&));             // the screen is this function's (nullptr: no longer)
 
 }  // namespace ui

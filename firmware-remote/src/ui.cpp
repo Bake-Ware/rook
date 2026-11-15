@@ -30,6 +30,7 @@ std::string menu_title;
 std::vector<std::string> menu_items;
 int menu_sel = 0;
 bool game_on = false;
+void (*canvas_fn)(Adafruit_GFX&) = nullptr;
 #ifdef ROOK_BRIDGE
 const int W = 128, H = 64, COLS = 21, ROWS = 8, PITCH = 10;     // 0.96" 128x64, landscape
 #else
@@ -115,6 +116,8 @@ void draw() {
         auto p = wrap(ask_prompt, H / 16);
         lines(p, 0, 8);
         list(p.size() * 8 + 3, ask_opts, ask_sel, ms);
+    } else if (canvas_fn) {
+        canvas_fn(oled);
     } else if (game_on) {
         tetris::draw(oled);
     } else if (menu_on) {
@@ -207,6 +210,7 @@ std::string shown() {
     xSemaphoreTake(mu, portMAX_DELAY);
     std::string s;
     if (ask_on) s = ask_prompt;
+    else if (canvas_fn) s = "keyboard";
     else if (game_on) s = "Tetris";
     else if (menu_on) {
         s = menu_title;
@@ -294,6 +298,13 @@ int menu_selected() { return menu_sel; }
 void menu_end() {
     xSemaphoreTake(mu, portMAX_DELAY);
     menu_on = false;
+    dirty = true;
+    xSemaphoreGive(mu);
+}
+
+void canvas(void (*draw)(Adafruit_GFX&)) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    canvas_fn = draw;
     dirty = true;
     xSemaphoreGive(mu);
 }

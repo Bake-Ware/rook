@@ -17,6 +17,7 @@
 #include <time.h>
 #include "bt.h"
 #include "buttons.h"
+#include "osk.h"
 #include "rc_sig.h"
 #include "rc_worker.h"
 #include "remote_manifest.h"
@@ -24,7 +25,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.4.1"
+#define FW_VERSION "0.5.0"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -47,7 +48,20 @@ static std::string last_note;
 static volatile bool wifi_hold = false;     // the scan command has the radio: no joining meanwhile
 // What the buttons do now: the TV's (events to the hub), the menu's (the input
 // button opens it: pick the device the events are for, or the game), the game's.
-enum Mode { REMOTE, MENU, GAME };
+enum Mode { REMOTE, MENU, GAME, TYPING };
+// The menu on screen: the main one, the Wi-Fi networks heard, or the saved ones to forget.
+enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET };
+static MenuKind menu_kind = MENU_MAIN;
+static std::vector<std::string> menu_labels, menu_values;
+static std::string typing_ssid;             // the network whose password is being typed
+static uint32_t typing_until = 0;
+// A scan asked of the Wi-Fi task (it owns the radio): 0 none, 1 wanted, 2 results in.
+struct WifiHeard { std::string ssid; int rssi; bool open; };
+static std::vector<WifiHeard> wifi_heard;
+static SemaphoreHandle_t wifi_mu;
+static volatile int wifi_scan_state = 0;
+static volatile bool wifi_kick = false;     // drop the network in use and join again (a new one was chosen)
+static bool wifi_pending = false;           // the menu waits for the scan
 static volatile Mode mode = REMOTE;
 static uint32_t menu_until = 0;             // the menu closes itself when left alone
 static bool swallow = false;                // drop the release of the press that left the game
@@ -75,34 +89,111 @@ static bool is_name(const std::string& n, std::initializer_list<const char*> set
     return false;
 }
 
-static void open_menu() {
-    std::vector<std::string> items = settings::targets();
-    items.push_back("Tetris");
-    items.push_back("Pair BT");
-    if (bt::saved()) items.push_back("Forget BT");
-    ui::menu_begin("MENU", items, settings::target());
+static void show_menu(MenuKind kind, const char* title, const std::vector<std::string>& labels,
+                      const std::vector<std::string>& values, int selected) {
+    menu_kind = kind;
+    menu_labels = labels;
+    menu_values = values;
+    ui::menu_begin(title, labels, selected);
     menu_until = millis() + MENU_IDLE_MS;
     mode = MENU;
 }
 
+static void open_menu() {
+    std::vector<std::string> items = settings::targets();
+    items.push_back("Tetris");
+    items.push_back("Wi-Fi");
+    items.push_back("Pair BT");
+    if (bt::saved()) items.push_back("Forget BT");
+    show_menu(MENU_MAIN, "MENU", items, items, settings::target());
+}
+
+// The networks heard (strongest first; * marks a saved one), then the saved ones to forget.
+static void open_wifi_menu() {
+    std::vector<std::string> labels, values;
+    auto saved = settings::wifi();
+    xSemaphoreTake(wifi_mu, portMAX_DELAY);
+    for (auto& h : wifi_heard) {
+        bool known = false;
+        for (auto& n : saved) known = known || n.first == h.ssid;
+        labels.push_back((known ? "*" : "") + h.ssid);
+        values.push_back(h.ssid);
+    }
+    xSemaphoreGive(wifi_mu);
+    labels.push_back("Rescan");
+    values.push_back("");
+    if (!saved.empty()) {
+        labels.push_back("Forget...");
+        values.push_back("");
+    }
+    show_menu(MENU_WIFI, "WI-FI", labels, values, 0);
+}
+
+static void start_wifi_scan() {
+    wifi_scan_state = 1;
+    wifi_pending = true;
+    mode = REMOTE;
+    ui::text("Wi-Fi:\nlooking for networks", 25);
+}
+
+static void save_wifi(const std::string& ssid, const std::string& pass) {
+    settings::wifi_add(ssid, pass);
+    settings::set_wifi_last(ssid);          // tried first from now on
+    wifi_kick = true;
+    ui::flash("joining\n" + ssid);
+}
+
 static void menu_pick(int i) {
-    auto ts = settings::targets();
+    std::string label = i >= 0 && i < (int)menu_labels.size() ? menu_labels[i] : "";
+    std::string value = i >= 0 && i < (int)menu_values.size() ? menu_values[i] : "";
+    MenuKind kind = menu_kind;
     ui::menu_end();
-    int extra = i - (int)ts.size();     // 0 Tetris, 1 Pair BT, 2 Forget BT
+    mode = REMOTE;
+    if (kind == MENU_WIFI) {
+        if (label == "Rescan") {
+            start_wifi_scan();
+        } else if (label == "Forget...") {
+            std::vector<std::string> names;
+            for (auto& n : settings::wifi()) names.push_back(n.first);
+            show_menu(MENU_FORGET, "FORGET", names, names, 0);
+        } else if (!value.empty()) {
+            bool open = false;
+            xSemaphoreTake(wifi_mu, portMAX_DELAY);
+            for (auto& h : wifi_heard) open = open || (h.ssid == value && h.open);
+            xSemaphoreGive(wifi_mu);
+            if (open) {
+                save_wifi(value, "");
+            } else {
+                typing_ssid = value;
+                typing_until = millis() + 120000;
+                osk::begin(value, "");
+                ui::canvas(osk::draw);
+                mode = TYPING;
+            }
+        }
+        return;
+    }
+    if (kind == MENU_FORGET) {
+        if (!value.empty()) {
+            settings::wifi_remove(value);
+            ui::flash("forgot\n" + value);
+        }
+        return;
+    }
+    auto ts = settings::targets();
     if (i < (int)ts.size()) {
         settings::set_target(i);
-        mode = REMOTE;
         ui::flash(ts[i]);
-    } else if (extra == 0) {
+    } else if (label == "Tetris") {
         tetris::start(millis());
         ui::game(true);
         mode = GAME;
-    } else if (extra == 1) {
-        mode = REMOTE;
+    } else if (label == "Wi-Fi") {
+        start_wifi_scan();
+    } else if (label == "Pair BT") {
         bt::pair();
         ui::text(BT_PAIR_TEXT, 35);
-    } else {
-        mode = REMOTE;
+    } else if (label == "Forget BT") {
         bt::forget();
         ui::flash("BT\ngone");
     }
@@ -131,6 +222,19 @@ static void on_button(const ButtonEvent& ev) {
         return;
     }
     if (swallow || mode == GAME) return;       // the game reads the held buttons itself (loop)
+    if (mode == TYPING) {                      // a Wi-Fi password on the on-screen keyboard
+        if (strcmp(e.action, "press")) return;
+        typing_until = millis() + 120000;
+        int done = osk::key(e.name);
+        ui::redraw();
+        if (done) {
+            ui::canvas(nullptr);
+            mode = REMOTE;
+            if (done > 0) save_wifi(typing_ssid, osk::text());
+            osk::begin("", "");              // don't keep the password around
+        }
+        return;
+    }
     if (mode == MENU) {
         if (strcmp(e.action, "press")) return;
         menu_until = millis() + MENU_IDLE_MS;
@@ -205,7 +309,7 @@ static void fill_bt(JsonObject o) {
 static void fill_state(JsonObject r) {
     r["name"] = settings::name();
     r["version"] = FW_VERSION;
-    r["mode"] = mode == GAME ? "game" : mode == MENU ? "menu" : "remote";
+    r["mode"] = mode == GAME ? "game" : mode == MENU ? "menu" : mode == TYPING ? "typing" : "remote";
     fill_bt(r["bt"].to<JsonObject>());
     r["target"] = settings::target_name();
     JsonArray tg = r["targets"].to<JsonArray>();
@@ -323,6 +427,21 @@ static bool cap_bt(JsonObjectConst a, JsonObject r, std::string&) {
         load_bt_names();
     }
     fill_bt(r);
+    return true;
+}
+
+static bool cap_wifi(JsonObjectConst a, JsonObject r, std::string& err) {
+    std::string action = a["action"] | "list";
+    std::string ssid = a["ssid"] | "";
+    if (action == "add" || action == "forget") {
+        if (ssid.empty()) { err = "bad args: ssid is needed"; return false; }
+        if (action == "add") settings::wifi_add(ssid, a["password"] | "");
+        else settings::wifi_remove(ssid);
+    }
+    JsonArray saved = r["saved"].to<JsonArray>();
+    for (auto& n : settings::wifi()) saved.add(n.first);
+    r["in_use"] = WiFi.SSID();
+    r["rssi"] = WiFi.RSSI();
     return true;
 }
 
@@ -566,9 +685,47 @@ static bool wifi_join(unsigned attempt) {
     return true;
 }
 
+static void wifi_scan() {
+    if (WiFi.status() != WL_CONNECTED) {
+        WiFi.disconnect();
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    int n = WiFi.scanNetworks(false, false, false, 300);
+    std::vector<WifiHeard> heard;
+    for (int i = 0; i < n; i++) {
+        std::string ssid = WiFi.SSID(i).c_str();
+        if (ssid.empty()) continue;
+        WifiHeard* same = nullptr;
+        for (auto& h : heard)
+            if (h.ssid == ssid) same = &h;
+        if (same) {
+            if (WiFi.RSSI(i) > same->rssi) same->rssi = WiFi.RSSI(i);
+        } else {
+            heard.push_back({ssid, (int)WiFi.RSSI(i), WiFi.encryptionType(i) == WIFI_AUTH_OPEN});
+        }
+    }
+    if (n >= 0) WiFi.scanDelete();
+    std::sort(heard.begin(), heard.end(), [](const WifiHeard& x, const WifiHeard& y) { return x.rssi > y.rssi; });
+    if (heard.size() > 12) heard.resize(12);
+    xSemaphoreTake(wifi_mu, portMAX_DELAY);
+    wifi_heard = heard;
+    xSemaphoreGive(wifi_mu);
+    logf("wifi: scan heard %d networks", (int)heard.size());
+}
+
 static void wifi_task(void*) {
     unsigned attempt = 0;
     for (;;) {
+        if (wifi_scan_state == 1) {
+            wifi_scan();
+            wifi_scan_state = 2;
+        }
+        if (wifi_kick) {
+            wifi_kick = false;
+            WiFi.disconnect();
+            vTaskDelay(pdMS_TO_TICKS(300));
+            attempt = 0;
+        }
         if (!wifi_hold && WiFi.status() != WL_CONNECTED && !settings::wifi().empty()) {
             if (wifi_join(attempt)) {
                 attempt = 0;
@@ -577,7 +734,7 @@ static void wifi_task(void*) {
                 logf("wifi: join failed (status %d)", (int)WiFi.status());
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        for (int t = 0; t < 10 && wifi_scan_state != 1 && !wifi_kick; t++) vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
@@ -603,6 +760,7 @@ void setup() {
     Serial.setRxBufferSize(4096);   // the enrollment bundle arrives as one ~1 KB line
     Serial.begin(115200);
     ev_mu = xSemaphoreCreateMutex();
+    wifi_mu = xSemaphoreCreateMutex();
     settings::begin();
     Wire.begin(PIN_SDA, PIN_SCL, 100000);
     ui::begin(OLED_ADDR, settings::rotation());
@@ -654,6 +812,7 @@ void setup() {
             worker.on("remote.ask", cap_ask, true);
             worker.on("remote.wait", cap_wait, true);
             worker.on("remote.bt", cap_bt);
+            worker.on("remote.wifi", cap_wifi);
             worker_on = true;
         } else {
             logf("enrollment is unusable (hub root key or manifest); enroll again");
@@ -722,6 +881,17 @@ void loop() {
         else if (bt_was == "pairing" && bt_now != "pairing") ui::flash("BT:\nnone\nfound");
         else if (bt_was == "connected") ui::flash("BT\nsleep");
         bt_was = bt_now;
+    }
+    if (wifi_pending && wifi_scan_state == 2) {
+        wifi_pending = false;
+        wifi_scan_state = 0;
+        ui::text("", 0);
+        if (mode == REMOTE) open_wifi_menu();
+    }
+    if (mode == TYPING && (int32_t)(ms - typing_until) >= 0) {
+        ui::canvas(nullptr);
+        osk::begin("", "");
+        mode = REMOTE;
     }
     if (mode == MENU && (int32_t)(ms - menu_until) >= 0) {
         ui::menu_end();
