@@ -11,10 +11,17 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
+import ssl
 import struct
 import textwrap
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import wave
+
+from rook.kit.net import Stream
 
 FRAME, HEAD = 134, 6
 KEEP = 120.0                 # seconds a half-arrived utterance is kept
@@ -135,6 +142,54 @@ def to_16k(pcm: list[int]) -> list[int]:
     return out
 
 
+def _server(url: str) -> urllib.parse.SplitResult:
+    base = url.strip().rstrip("/")
+    for was, now in (("wss://", "https://"), ("ws://", "http://")):
+        if base.startswith(was):
+            base = now + base[len(was):]
+    if base.endswith("/ws"):
+        base = base[:-3]
+    return urllib.parse.urlsplit(base)
+
+
+def _direct(u: urllib.parse.SplitResult, headers: dict, data: bytes) -> str:
+    req = urllib.request.Request(u.geturl() + "/api/transcribe", data=data, method="POST", headers=headers)
+    tls = ssl.create_default_context()
+    tls.check_hostname = False
+    tls.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(req, timeout=45, context=tls) as r:
+        return str(json.loads(r.read()).get("text") or "")
+
+
+async def transcribe(ctx, pcm: list[int]) -> str:
+    """What the voice server hears in 16 kHz samples: its POST /api/transcribe,
+    the way the phone app asks it (audio/L16, a bearer key when it wants one).
+    The server signs its own certificate, so it is not checked. With voice_via,
+    the request goes out from that worker (one on the server's network), as
+    the TV plugins reach their TVs."""
+    st = ctx.settings
+    u, token, via = _server(st["voice_url"]), st["voice_token"] or "", st["voice_via"]
+    data = struct.pack(f"<{len(pcm)}h", *pcm)
+    headers = {"Content-Type": "audio/L16", **({"Authorization": f"Bearer {token}"} if token else {})}
+    if not via:
+        return await asyncio.to_thread(_direct, u, headers, data)
+    tls = u.scheme == "https"
+    host, port = u.hostname, u.port or (443 if tls else 80)
+    head = "\r\n".join([f"POST {u.path.rstrip('/')}/api/transcribe HTTP/1.1", f"Host: {host}:{port}", "Connection: close",
+                         f"Content-Length: {len(data)}", *(f"{k}: {v}" for k, v in headers.items())]) + "\r\n\r\n"
+    async with await Stream.tcp(ctx, via, host, port, tls=tls, verify=False) as s:
+        await s.send(head.encode())
+        for i in range(0, len(data), 48000):      # a few seconds of sound is too much for one write
+            await s.send(data[i:i + 48000])
+        got = (await s.read_until(b"\r\n\r\n", 45)).decode("latin-1")
+        status = int(got.split()[1])
+        length = [h.partition(":")[2].strip() for h in got.split("\r\n") if h.lower().startswith("content-length:")]
+        body = await s.read_exactly(int(length[0]), 20) if length else await s.read_to_close(20)
+    if status != 200:
+        raise ValueError(f"http {status}: {body[:120].decode('latin-1')}")
+    return str(json.loads(body).get("text") or "")
+
+
 def pages(text: str, cols: int, rows: int) -> list[str]:
     lines: list[str] = []
     for para in text.split("\n"):
@@ -196,14 +251,26 @@ async def hear(ctx, event):
         return {"heard": "", "audio": info}
     if rate == 8000:
         pcm, rate = to_16k(pcm), 16000
-    audio = {"data": base64.b64encode(wav_bytes(pcm, rate)).decode(), "mime": "audio/wav"}
+    pcm = pcm[:30 * rate]
+    said: dict = {"audio": {"data": base64.b64encode(wav_bytes(pcm, rate)).decode(), "mime": "audio/wav"}}
+    if ctx.settings["voice_url"]:            # a voice server hears it (as the phone app does), the session gets the words
+        try:
+            text = await transcribe(ctx, pcm)
+        except (OSError, ValueError, IndexError, urllib.error.URLError, ctx.Error) as e:
+            await _show(ctx, remote, "The voice server didn't answer", 8)
+            raise ctx.Error(f"the voice server did not transcribe it: {e}") from None
+        info["heard_by"] = "voice server"
+        if not text.strip():
+            await _show(ctx, remote, "Didn't catch that", 6)
+            return {"heard": "", "audio": info}
+        said = {"text": text.strip()}
     s = await _session(ctx, remote)
     try:
         s["next"] = (await ctx.call("speech.read", stream=s["stream"], after=s["next"], limit=500))["next"]
     except ctx.Error:                        # the session is gone (closed, or the hub restarted): a new one
         s = await _session(ctx, remote, fresh=True)
     try:
-        out = await ctx.call("speech.hear", stream=s["stream"], audio=audio, final=True)
+        out = await ctx.call("speech.hear", stream=s["stream"], final=True, **said)
     except ctx.Error as e:
         no_ears = "voice.stt" in str(e)
         await _show(ctx, remote, "The hub has no speech-to-text yet" if no_ears else "That didn't work", 8)
