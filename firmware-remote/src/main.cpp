@@ -25,6 +25,8 @@
 #include "ota.h"
 #include "rc_sig.h"
 #include "swarm.h"
+#include "g2048.h"
+#include "towers.h"
 #include "rc_util.h"
 #include "rc_worker.h"
 #include "remote_manifest.h"
@@ -32,7 +34,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.9.10"
+#define FW_VERSION "0.10.0"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -93,7 +95,24 @@ static volatile bool wifi_kick = false;     // drop the network in use and join 
 static bool wifi_pending = false;           // the menu waits for the scan
 static volatile Mode mode = REMOTE;
 static uint32_t menu_until = 0;             // the menu closes itself when left alone
-static int game_kind = 0;                   // which game has the screen: 0 Tetris, 1 Swarm
+static int game_kind = 0;                   // which of GAMES has the screen
+// The games. flat: played with the screen as it sits (the others turn it a
+// quarter turn, and the keys with it). draw null: ui draws it (Tetris).
+struct GameDef {
+    const char* label;
+    bool flat;
+    void (*start)(uint32_t);
+    bool (*tick)(uint32_t, uint16_t);
+    bool (*quit)();
+    uint32_t (*score)();
+    void (*draw)(Adafruit_GFX&);
+};
+static const GameDef GAMES[] = {
+    {"Tetris", false, tetris::start, tetris::tick, tetris::quit, tetris::score, nullptr},
+    {"Swarm", false, swarm::start, swarm::tick, swarm::quit, swarm::score, swarm::draw},
+    {"2048", true, g2048::start, g2048::tick, g2048::quit, g2048::score, g2048::draw},
+    {"Towers", true, towers::start, towers::tick, towers::quit, towers::score, towers::draw},
+};
 static bool swallow = false;                // drop the release of the press that left the game
 static const uint32_t MENU_IDLE_MS = 20000;
 static uint32_t seq_all = 0;                // one count over the handheld's buttons and a paired remote's keys
@@ -176,6 +195,20 @@ static void set_local(const std::string& id) {
     settings::set_kv("local", local_id);
 }
 
+// The game called label takes the screen. False: there is none by that name.
+static bool start_game(const std::string& label) {
+    for (size_t i = 0; i < sizeof GAMES / sizeof GAMES[0]; i++) {
+        if (label != GAMES[i].label) continue;
+        game_kind = (int)i;
+        GAMES[i].start(millis());
+        if (GAMES[i].draw) ui::canvas(GAMES[i].draw, GAMES[i].label);
+        else ui::game(true);
+        mode = GAME;
+        return true;
+    }
+    return false;
+}
+
 // The hub's targets, then the devices found on this network that the remote
 // can drive itself, then the rest.
 static void open_menu() {
@@ -188,7 +221,7 @@ static void open_menu() {
         values.push_back("lan:" + d.id);
     }
 #ifdef ROOK_BRIDGE
-    for (const char* s : {"Assistant", "Find devs", "Tetris", "Swarm", "Wi-Fi", "Update", "Pair BT"}) {
+    for (const char* s : {"Assistant", "Find devs", "Tetris", "Swarm", "2048", "Towers", "Wi-Fi", "Update", "Pair BT"}) {
 #else
     for (const char* s : {"Assistant", "Find devs", "Tetris", "Wi-Fi", "Update", "Pair BT"}) {
 #endif
@@ -356,16 +389,7 @@ static void menu_pick(int i) {
             mode = REMOTE;
             ui::card("UPDATE", "checking", -2);
         }
-    } else if (label == "Swarm") {
-        swarm::start(millis());
-        ui::canvas(swarm::draw, "Swarm");
-        game_kind = 1;
-        mode = GAME;
-    } else if (label == "Tetris") {
-        tetris::start(millis());
-        ui::game(true);
-        game_kind = 0;
-        mode = GAME;
+    } else if (start_game(label)) {
     } else if (label == "Wi-Fi") {
         start_wifi_scan();
     } else if (label == "Pair BT") {
@@ -1274,6 +1298,11 @@ void setup() {
 // What a held button (the handheld's, or the paired remote's) does in the game.
 static uint16_t game_key(const std::string& n) {
 #ifdef ROOK_BRIDGE
+    if (GAMES[game_kind].flat)       // the screen as it sits: the keys mean what they say (ROTATE is up)
+        return n == "left" ? tetris::LEFT : n == "right" ? tetris::RIGHT : n == "down" ? tetris::DOWN :
+               n == "up" ? tetris::ROTATE : (n == "vol_up" || n == "vol_down") ? tetris::ROTATE_BACK :
+               n == "ok" ? tetris::DROP : n == "home" ? tetris::HOLD : (n == "mute" || n == "play") ? tetris::PAUSE :
+               n == "back" ? tetris::QUIT : 0;
     // The game is drawn a quarter turn clockwise, so the remote is held with its
     // top to the left and its keys turn with it: its up is the game's left.
     // Volume turns the piece (up: left, down: right), home puts it aside.
@@ -1303,14 +1332,14 @@ void loop() {
             std::string bt_held = bt::held();
             if (!bt_held.empty()) keys |= game_key(bt_name_of(bt_held));
             if (!inject_held.empty() && (int32_t)(ms - inject_until) < 0) keys |= game_key(inject_held);
-            bool sw = game_kind == 1;
-            if (sw ? swarm::tick(ms, keys) : tetris::tick(ms, keys)) ui::redraw();
-            if (sw ? swarm::quit() : tetris::quit()) {
-                if (sw) ui::canvas(nullptr);
+            const GameDef& gd = GAMES[game_kind];
+            if (gd.tick(ms, keys)) ui::redraw();
+            if (gd.quit()) {
+                if (gd.draw) ui::canvas(nullptr);
                 else ui::game(false);
                 mode = REMOTE;
                 swallow = true;
-                ui::flash("score\n" + std::to_string(sw ? swarm::score() : tetris::score()));
+                ui::flash("score\n" + std::to_string(gd.score()));
             }
         }
     }
