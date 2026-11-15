@@ -31,7 +31,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.9.1"
+#define FW_VERSION "0.9.2"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -489,6 +489,8 @@ static void fill_bt(JsonObject o) {
     if (bt::state() == "connected") {
         o["voice_info"] = bt::voice_info();
         o["services"] = bt::services();
+        o["find"] = bt::find_ready();
+        if (!bt::find_info().empty()) o["find_info"] = bt::find_info();
     }
     if (bt::saved()) {
         o["name"] = bt::name();
@@ -664,13 +666,17 @@ static bool cap_wait(JsonObjectConst a, JsonObject r, std::string&) {
     return true;
 }
 
-static bool cap_bt(JsonObjectConst a, JsonObject r, std::string&) {
+static bool cap_bt(JsonObjectConst a, JsonObject r, std::string& err) {
     std::string action = a["action"] | "status";
     if (action == "pair") {
         bt::pair();
         ui::text(BT_PAIR_TEXT, 35);
     } else if (action == "forget") {
         bt::forget();
+    } else if (action == "find" || action == "quiet") {
+        if (!bt::find_ready()) { err = "the paired remote has no find-me service, or is not connected"; return false; }
+        bt::find(action == "find" ? (int)(a["level"] | 3) : 0);
+        delay(400);                  // long enough for its answer to be in the reply
     }
     JsonObjectConst names = a["names"].as<JsonObjectConst>();
     if (!names.isNull()) {

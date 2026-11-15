@@ -40,6 +40,12 @@ bool voice_spoke();                   // the utterance (open or just ended) had 
 // ended. done: this was the last of an utterance. False: nothing to take.
 bool voice_take(std::string& out, bool& done, size_t min_bytes);
 std::string services();               // the connected remote's GATT services
+
+// Google's Find My Remote service, on remotes with a buzzer: the host makes
+// the remote beep so it can be found.
+bool find_ready();                    // the connected remote has the service
+void find(int level);                 // 1..3: beep (quiet to loud); 0: stop
+std::string find_info();              // what was written and what the remote said back (hex)
 std::string voice_info();             // its answer about its voice service, and its last control message (hex)
 
 }  // namespace bt

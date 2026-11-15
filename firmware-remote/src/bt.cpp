@@ -25,6 +25,15 @@ const char* const V_SVC = "ab5e0001-5a21-4f05-bc7d-af01f617b664";
 const char* const V_TX = "ab5e0002-5a21-4f05-bc7d-af01f617b664";
 const char* const V_RX = "ab5e0003-5a21-4f05-bc7d-af01f617b664";
 const char* const V_CTL = "ab5e0004-5a21-4f05-bc7d-af01f617b664";
+// Find My Remote (FMS): the mode goes to CTL (e100: alert), the command to DATA
+// (e101..e103: beep, quiet to loud; 0000: stop), both high byte first. The
+// remote answers on DATA: e18x its alert state, 0f0x an error.
+const char* const F_SVC = "18020001-5a21-4f05-bc7d-af01f617b664";
+const char* const F_CTL = "18020002-5a21-4f05-bc7d-af01f617b664";
+const char* const F_DATA = "18020003-5a21-4f05-bc7d-af01f617b664";
+NimBLERemoteCharacteristic *f_ctl = nullptr, *f_data = nullptr;
+volatile int f_want = -1;
+std::string f_said;
 const uint32_t V_MAX_MS = 30000;            // an utterance is cut off here (the hub takes 30 s at most)
 const size_t V_BUF_MAX = 16000;             // nobody is taking the audio: stop keeping it
 NimBLERemoteCharacteristic* v_tx = nullptr;
@@ -110,6 +119,21 @@ void on_audio(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
 }
 
 void logf(const char* fmt, ...);
+
+void f_note(const std::string& s) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    f_said += (f_said.empty() ? "" : " ") + s;
+    if (f_said.size() > 100) f_said.erase(0, f_said.size() - 100);
+    xSemaphoreGive(mu);
+}
+
+void on_fms(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
+    char hex[24] = "";
+    int at = 0;
+    for (size_t i = 0; i < len && i < 8; i++) at += snprintf(hex + at, sizeof hex - at, "%02x", d[i]);
+    logf("bt: find said %s", hex);
+    f_note(std::string("said:") + hex);
+}
 
 // Runs on the Bluetooth stack's task: only flags here, the writes are the bt task's.
 void on_ctl(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
@@ -332,6 +356,14 @@ void connect_to(const std::string& addr, uint8_t type) {
             voice = v_tx->writeValue(caps, sizeof caps, !v_tx->canWriteNoResponse());
         }
     }
+    f_ctl = f_data = nullptr;
+    NimBLERemoteService* fs = client->getService(NimBLEUUID(F_SVC));
+    if (fs) {
+        f_ctl = fs->getCharacteristic(NimBLEUUID(F_CTL));
+        f_data = fs->getCharacteristic(NimBLEUUID(F_DATA));
+        if (f_data && (f_data->canNotify() || f_data->canIndicate())) f_data->subscribe(f_data->canNotify(), on_fms);
+    }
+    f_want = -1;
     xSemaphoreTake(mu, portMAX_DELAY);
     services_text = svcs;
     v_buf.clear();
@@ -376,6 +408,20 @@ void task(void*) {
                 v_done = true;
             }
             v_want_close = false;
+        }
+        if (connected && f_want >= 0 && client && client->isConnected()) {
+            int lv = f_want;
+            f_want = -1;
+            if (f_ctl && f_data) {
+                const uint8_t mode[] = {0xE1, 0x00};
+                const uint8_t cmd[] = {(uint8_t)(lv ? 0xE1 : 0x00), (uint8_t)lv};
+                bool a = f_ctl->writeValue(mode, sizeof mode, !f_ctl->canWriteNoResponse());
+                bool b = f_data->writeValue(cmd, sizeof cmd, !f_data->canWriteNoResponse());
+                char t[40];
+                snprintf(t, sizeof t, "wrote:e100%s,%02x%02x%s", a ? "" : "!", cmd[0], cmd[1], b ? "" : "!");
+                logf("bt: find %s", t);
+                f_note(t);
+            }
         }
         if (connected && !(client && client->isConnected())) {
             connected = false;
@@ -537,6 +583,18 @@ std::string services() {
     if (!mu) return "";
     xSemaphoreTake(mu, portMAX_DELAY);
     std::string s = services_text;
+    xSemaphoreGive(mu);
+    return s;
+}
+
+bool find_ready() { return connected && f_ctl && f_data; }
+
+void find(int level) { f_want = level < 0 ? 0 : level > 3 ? 3 : level; }
+
+std::string find_info() {
+    if (!mu) return "";
+    xSemaphoreTake(mu, portMAX_DELAY);
+    std::string s = f_said;
     xSemaphoreGive(mu);
     return s;
 }
