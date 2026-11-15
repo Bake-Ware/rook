@@ -217,14 +217,27 @@ async def transcribe(ctx, frames: bytes, pcm: list[int]) -> str:
     raise ValueError(f"{type(last).__name__}: {last}")
 
 
-async def _show(ctx, remote: str, text: str, hold: int = 60) -> None:
-    """text on the remote's screen for hold seconds; the remote wraps it and its up and down keys scroll it."""
+PLAIN: set[str] = set()      # remotes whose firmware has no conversation view (remote.chat): plain text for them
+
+
+async def _show(ctx, remote: str, text: str, hold: int = 60, who: str = "note") -> None:
+    """One more line of the conversation on the remote's screen: what the person
+    said (who you), what the agent said (agent), or a note about it. A remote
+    whose firmware has no conversation view gets it as plain text for hold seconds."""
     for attempt in range(4):             # a remote that just stopped listening can miss a call: ask again soon
         try:
-            await asyncio.wait_for(ctx.call_on(remote, "remote.display", text=text[:6000], seconds=hold), 4)
+            if remote in PLAIN:
+                shown = f"> {text}" if who == "you" else text
+                await asyncio.wait_for(ctx.call_on(remote, "remote.display", text=shown[:6000], seconds=hold), 4)
+            else:
+                await asyncio.wait_for(ctx.call_on(remote, "remote.chat", who=who, text=text[:700]), 4)
             return
-        except (asyncio.TimeoutError, ctx.Error):
-            pass                         # after the last try: the remote went away, nothing to show it on
+        except asyncio.TimeoutError:
+            pass
+        except ctx.Error as e:
+            if remote not in PLAIN and "unknown cap" in str(e).lower():
+                PLAIN.add(remote)        # an older remote: say it the old way, now
+            # anything else: the remote went away; after the last try there is nothing to show it on
 
 
 async def _session(ctx, remote: str, fresh: bool = False) -> dict:
@@ -303,7 +316,9 @@ async def hear(ctx, event):
         return {"heard": "", "audio": info}
     say = ((out.get("say") or {}).get("text") or "").strip()
     handoff = bool(out.get("handoff"))
-    await _show(ctx, remote, f"> {heard}" + (f"\n{say}" if say else "\n..." if handoff else ""), 20 if handoff else 60)
+    await _show(ctx, remote, heard, 20 if handoff else 60, "you")
+    if say:
+        await _show(ctx, remote, say, 60, "agent")
     reply = ""
     if handoff:                              # the agent's own answer follows in the session
         end = time.monotonic() + 150
@@ -316,5 +331,5 @@ async def hear(ctx, event):
                     reply = d["text"].strip()
             if got.get("closed"):
                 break
-        await _show(ctx, remote, f"> {heard}\n{reply}" if reply else "(no answer yet)", 120 if reply else 8)
+        await _show(ctx, remote, reply or "(no answer yet)", 120 if reply else 8, "agent" if reply else "note")
     return {"heard": heard, "say": say, "reply": reply, "handoff": handoff, "audio": info}

@@ -2,6 +2,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Wire.h>
+#include <algorithm>
 #include "tetris.h"
 
 namespace {
@@ -32,6 +33,9 @@ std::vector<std::string> menu_items;
 int menu_sel = 0;
 bool game_on = false;
 void (*canvas_fn)(Adafruit_GFX&) = nullptr;
+std::string canvas_name;
+bool dark = false;             // the panel is switched off (the remote was left alone)
+int menu_first = 0, menu_hl = -1, menu_was_first = 0;   // the menu's first row on screen; where its highlight is, sliding
 #ifdef ROOK_BRIDGE
 const int W = 128, H = 64, COLS = 21, ROWS = 8, PITCH = 10;     // 0.96" 128x64, landscape
 #else
@@ -106,6 +110,84 @@ void list(int y0, const std::vector<std::string>& opts, int sel, uint32_t ms) {
     }
 }
 
+// 8x8 pictures for the menu's rows, picked by what the row says.
+const uint8_t IC_TV[] PROGMEM = {0x7E, 0x81, 0x81, 0x81, 0x81, 0x7E, 0x18, 0x3C};
+const uint8_t IC_GAME[] PROGMEM = {0x00, 0x7E, 0xFF, 0xDB, 0xFF, 0xE7, 0xC3, 0x00};
+const uint8_t IC_WIFI[] PROGMEM = {0x3C, 0x42, 0x99, 0x24, 0x00, 0x18, 0x18, 0x00};
+const uint8_t IC_BT[] PROGMEM = {0x10, 0x18, 0x54, 0x38, 0x38, 0x54, 0x18, 0x10};
+const uint8_t IC_FIND[] PROGMEM = {0x38, 0x44, 0x82, 0x82, 0x44, 0x3C, 0x06, 0x03};
+const uint8_t IC_CHAT[] PROGMEM = {0x7E, 0x81, 0x81, 0x81, 0x7E, 0x30, 0x20, 0x00};
+const uint8_t IC_X[] PROGMEM = {0x00, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x00};
+const uint8_t IC_DOT[] PROGMEM = {0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00};
+
+const uint8_t* icon_for(const std::string& label) {
+    std::string l;
+    for (char c : label) l += (char)tolower((unsigned char)c);
+    auto has = [&](const char* w) { return l.find(w) != std::string::npos; };
+    if (has("tetris") || has("game")) return IC_GAME;
+    if (has("wi-fi") || has("wifi")) return IC_WIFI;
+    if (has("forget")) return IC_X;
+    if (has(" bt") || has("bluetooth")) return IC_BT;
+    if (has("find") || has("scan")) return IC_FIND;
+    if (has("assistant")) return IC_CHAT;
+    if (has("tv") || has("roku") || has("cast")) return IC_TV;
+    return IC_DOT;
+}
+
+// The menu: a title bar with where you are in the list, rows with a picture
+// each, a highlight that slides to the row chosen, and a mark down the right
+// edge when there is more than fits. (The narrow screen keeps the plain list.)
+void menu_draw(uint32_t ms) {
+    if (W < 100) {
+        int y = 0;
+        if (!menu_title.empty()) {
+            oled.setCursor(1, 0);
+            oled.print(menu_title.substr(0, COLS).c_str());
+            oled.drawFastHLine(0, 9, W, SSD1306_WHITE);
+            y = 12;
+        }
+        list(y, menu_items, menu_sel, ms);
+        return;
+    }
+    const int BAR = 11, Y0 = 13, ROW = 12;
+    int n = (int)menu_items.size(), rows = (H - Y0) / ROW;
+    if (menu_sel < menu_first) menu_first = menu_sel;
+    if (menu_sel >= menu_first + rows) menu_first = menu_sel - rows + 1;
+    menu_first = std::max(0, std::min(menu_first, n - rows));
+    oled.fillRect(0, 0, W, BAR, SSD1306_WHITE);
+    oled.setTextColor(SSD1306_BLACK);
+    oled.setCursor(3, 2);
+    oled.print(menu_title.substr(0, 12).c_str());
+    char where[12];
+    snprintf(where, sizeof where, "%d/%d", menu_sel + 1, n);
+    oled.setCursor(W - 3 - (int)strlen(where) * 6, 2);
+    oled.print(where);
+    oled.setTextColor(SSD1306_WHITE);
+    for (int r = 0; r < rows && menu_first + r < n; r++) {
+        const std::string& item = menu_items[menu_first + r];
+        int y = Y0 + r * ROW;
+        oled.drawBitmap(3, y + 1, icon_for(item), 8, 8, SSD1306_WHITE);
+        oled.setCursor(15, y + 2);
+        oled.print(item.substr(0, (W - 4 - 16) / 6).c_str());
+    }
+    int target = Y0 + (menu_sel - menu_first) * ROW;
+    if (menu_hl < 0 || menu_first != menu_was_first) menu_hl = target;     // the list itself moved: no slide
+    menu_was_first = menu_first;
+    if (menu_hl != target) {
+        int step = (target - menu_hl) / 2;
+        menu_hl += step ? step : (target > menu_hl ? 1 : -1);
+        anim = true;
+    }
+    // The highlight inverts what is under it; its corners are put back, to round it.
+    oled.fillRect(0, menu_hl, W - 4, ROW - 1, SSD1306_INVERSE);
+    for (int cx : {0, W - 5})
+        for (int cy : {menu_hl, menu_hl + ROW - 2}) oled.drawPixel(cx, cy, SSD1306_INVERSE);
+    if (n > rows) {
+        int h = std::max(4, (H - Y0) * rows / n);
+        oled.drawFastVLine(W - 1, Y0 + (H - Y0 - h) * menu_first / (n - rows), h, SSD1306_WHITE);
+    }
+}
+
 void draw() {
     oled.clearDisplay();
     oled.setTextSize(1);
@@ -122,14 +204,7 @@ void draw() {
     } else if (game_on) {
         tetris::draw(oled);
     } else if (menu_on) {
-        int y = 0;
-        if (!menu_title.empty()) {
-            oled.setCursor(1, 0);
-            oled.print(menu_title.substr(0, COLS).c_str());
-            oled.drawFastHLine(0, 9, W, SSD1306_WHITE);
-            y = 12;
-        }
-        list(y, menu_items, menu_sel, ms);
+        menu_draw(ms);
     } else if (note_until && (int32_t)(note_until - ms) > 0) {
         oled.setCursor(1, 0);
         oled.print(status[0].substr(0, COLS).c_str());
@@ -183,8 +258,8 @@ void tick() {
     uint32_t ms = millis();
     if (agent_on && agent_until && (int32_t)(ms - agent_until) >= 0) { agent_on = false; dirty = true; }
     if (note_until && (int32_t)(ms - note_until) >= 0) { note_until = 0; dirty = true; }
-    if (anim && ms - last_draw >= 60) dirty = true;
-    if (dirty) {
+    if (anim && ms - last_draw >= 40) dirty = true;
+    if (dirty && !dark) {
         dirty = false;
         draw();
         last_draw = millis();
@@ -231,7 +306,7 @@ std::string shown() {
     xSemaphoreTake(mu, portMAX_DELAY);
     std::string s;
     if (ask_on) s = ask_prompt;
-    else if (canvas_fn) s = "keyboard";
+    else if (canvas_fn) s = canvas_name;
     else if (game_on) s = "Tetris";
     else if (menu_on) {
         s = menu_title;
@@ -300,6 +375,8 @@ void menu_begin(const std::string& title, const std::vector<std::string>& items,
     menu_title = title;
     menu_items = items;
     menu_sel = selected >= 0 && selected < (int)items.size() ? selected : 0;
+    menu_first = 0;
+    menu_hl = -1;
     scroll_t0 = millis();
     dirty = true;
     xSemaphoreGive(mu);
@@ -323,10 +400,37 @@ void menu_end() {
     xSemaphoreGive(mu);
 }
 
-void canvas(void (*draw)(Adafruit_GFX&)) {
+void canvas(void (*draw)(Adafruit_GFX&), const char* name) {
     xSemaphoreTake(mu, portMAX_DELAY);
     canvas_fn = draw;
+    canvas_name = name ? name : "";
     dirty = true;
+    xSemaphoreGive(mu);
+}
+
+bool snapshot(std::string& out, int& w, int& h, int& rotation, bool& is_dark) {
+    if (!ok) return false;
+    xSemaphoreTake(mu, portMAX_DELAY);
+#ifdef ROOK_BRIDGE
+    w = 128; h = 64;
+#else
+    w = 128; h = 32;
+#endif
+    rotation = oled.getRotation();
+    is_dark = dark;
+    out.assign((const char*)oled.getBuffer(), (size_t)w * h / 8);
+    xSemaphoreGive(mu);
+    return true;
+}
+
+void sleep(bool on) {
+    if (!ok) return;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    if (on != dark) {
+        dark = on;
+        oled.ssd1306_command(on ? SSD1306_DISPLAYOFF : SSD1306_DISPLAYON);
+        dirty = true;                // what changed while it was dark is drawn when it comes back
+    }
     xSemaphoreGive(mu);
 }
 

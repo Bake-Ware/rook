@@ -39,6 +39,11 @@ int menu_selected();
 void menu_end();
 
 void game(bool on);                                   // the screen is the game's (tetris::draw)
-void canvas(void (*draw)(Adafruit_GFX&));             // the screen is this function's (nullptr: no longer)
+// The screen is this function's (nullptr: no longer); name is what ui::shown() calls it.
+void canvas(void (*draw)(Adafruit_GFX&), const char* name = "keyboard");
+void sleep(bool on);                                  // the panel off (nothing is drawn) or back on
+// The panel's picture as it holds it: w x h pixels before rotation, a byte for
+// each 8 pixels down a column, columns left to right, in bands of 8 rows.
+bool snapshot(std::string& out, int& w, int& h, int& rotation, bool& is_dark);
 
 }  // namespace ui

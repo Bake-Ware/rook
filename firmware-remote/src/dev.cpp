@@ -387,6 +387,7 @@ static bool lg_power(const lan::Device& d, std::string& did, std::string& err) {
 // ---- the task ------------------------------------------------------------------
 
 static bool perform(Job& j) {
+    for (int t = 0; t < 80 && WiFi.status() != WL_CONNECTED; t++) vTaskDelay(pdMS_TO_TICKS(100));   // it may be waking up
     if (WiFi.status() != WL_CONNECTED) { j.error = "no Wi-Fi"; return false; }
     if (j.action == "scan") {
         j.out = std::to_string(lan::scan());

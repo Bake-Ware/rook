@@ -18,6 +18,7 @@
 #include <time.h>
 #include "bt.h"
 #include "buttons.h"
+#include "chat.h"
 #include "dev.h"
 #include "lan.h"
 #include "osk.h"
@@ -30,7 +31,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.8.1"
+#define FW_VERSION "0.9.0"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -53,7 +54,20 @@ static std::string last_note;
 static volatile bool wifi_hold = false;     // the scan command has the radio: no joining meanwhile
 // What the buttons do now: the TV's (events to the hub), the menu's (the input
 // button opens it: pick the device the events are for, or the game), the game's.
-enum Mode { REMOTE, MENU, GAME, TYPING };
+enum Mode { REMOTE, MENU, GAME, TYPING, CHAT };
+// Left alone, the remote goes dark (DIM: the screen off) and then to sleep
+// (ASLEEP: Wi-Fi off and the processor slowed too; Bluetooth stays, so a key
+// of the paired remote still arrives). Any key wakes it, and still counts:
+// what it sends waits the few seconds Wi-Fi takes to come back.
+enum Power { AWAKE, DIM, ASLEEP };
+static volatile Power power_state = AWAKE;
+static volatile uint32_t last_active = 0;
+static volatile bool wifi_sleep = false;    // the Wi-Fi task keeps the radio off while this is set
+static uint32_t screen_off_s = 30, sleep_s = 300, cpu_full = 160;   // seconds left alone before each (0: never)
+static volatile bool chat_show = false;     // a cap put something in the conversation: show it
+static uint32_t chat_until = 0, thinking_until = 0;
+
+static void active() { last_active = millis(); }
 // The menu on screen: the main one, the Wi-Fi networks heard, or the saved ones to forget.
 enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS };
 // A device on this network the buttons drive directly (dev.h), in place of a
@@ -103,8 +117,43 @@ static bool is_name(const std::string& n, std::initializer_list<const char*> set
     return false;
 }
 
+static void logf(const char* fmt, ...);
+
+static void set_power(Power p) {
+    Power was = power_state;
+    if (p == was) return;
+    power_state = p;
+    if ((p == AWAKE) != (was == AWAKE)) ui::sleep(p != AWAKE);
+    if ((p == ASLEEP) != (was == ASLEEP)) {
+        wifi_sleep = p == ASLEEP;
+        setCpuFrequencyMhz(p == ASLEEP ? 80 : cpu_full);
+        logf(p == ASLEEP ? "power: asleep (Wi-Fi off)" : "power: awake");
+    }
+}
+
+static void load_sleep() {
+    std::string a = settings::kv("scr_off"), b = settings::kv("sleep");
+    screen_off_s = a.empty() ? 30 : (uint32_t)atoi(a.c_str());
+    sleep_s = b.empty() ? 300 : (uint32_t)atoi(b.c_str());
+}
+
+// The conversation with the house agent takes the screen (chat.h).
+static void open_chat() {
+    ui::menu_end();
+    ui::canvas(chat::draw, "chat");
+    mode = CHAT;
+    chat_until = millis() + 120000;
+}
+
+static void close_chat() {
+    if (mode != CHAT) return;
+    ui::canvas(nullptr);
+    mode = REMOTE;
+}
+
 static void show_menu(MenuKind kind, const char* title, const std::vector<std::string>& labels,
                       const std::vector<std::string>& values, int selected) {
+    if (mode == CHAT) ui::canvas(nullptr);
     menu_kind = kind;
     menu_labels = labels;
     menu_values = values;
@@ -136,7 +185,7 @@ static void open_menu() {
         labels.push_back(d.name);
         values.push_back("lan:" + d.id);
     }
-    for (const char* s : {"Find devs", "Tetris", "Wi-Fi", "Pair BT"}) {
+    for (const char* s : {"Assistant", "Find devs", "Tetris", "Wi-Fi", "Pair BT"}) {
         labels.push_back(s);
         values.push_back(s);
     }
@@ -278,6 +327,8 @@ static void menu_pick(int i) {
         settings::set_target(i);
         set_local("");
         ui::flash(ts[i]);
+    } else if (label == "Assistant") {
+        open_chat();
     } else if (label == "Find devs") {
         start_dev_scan();
     } else if (label == "Tetris") {
@@ -300,6 +351,8 @@ static void menu_pick(int i) {
 static void on_button(const ButtonEvent& ev) {
     ButtonEvent e = ev;
     e.seq = ++seq_all;
+    active();
+    if (power_state != AWAKE) set_power(AWAKE);      // the key that wakes it still counts
     xSemaphoreTake(ev_mu, portMAX_DELAY);
     recent.push_back(e);
     while (recent.size() > 16) recent.pop_front();
@@ -352,6 +405,18 @@ static void on_button(const ButtonEvent& ev) {
         else if (e.name == "down") ui::menu_move(1);
         else if (e.name == "ok") menu_pick(ui::menu_selected());
         else if (is_name(e.name, {"back", "input", "home"})) { ui::menu_end(); mode = REMOTE; }
+        return;
+    }
+    // The conversation is up: up and down read back through it, back or home puts it away.
+    if (mode == CHAT && is_name(e.name, {"up", "down", "back", "home"})) {
+        if (strcmp(e.action, "press")) return;
+        chat_until = millis() + 120000;
+        if (e.name == "up" || e.name == "down") {
+            chat::scroll(e.name == "up" ? -24 : 24);
+            ui::redraw();
+        } else {
+            close_chat();
+        }
         return;
     }
     // A text too long for the screen (an agent's answer): up and down read it, back puts it away.
@@ -439,7 +504,11 @@ static void fill_bt(JsonObject o) {
 static void fill_state(JsonObject r) {
     r["name"] = settings::name();
     r["version"] = FW_VERSION;
-    r["mode"] = mode == GAME ? "game" : mode == MENU ? "menu" : mode == TYPING ? "typing" : "remote";
+    r["mode"] = mode == GAME ? "game" : mode == MENU ? "menu" : mode == TYPING ? "typing" : mode == CHAT ? "chat" : "remote";
+    r["power"] = power_state == ASLEEP ? "asleep" : power_state == DIM ? "dim" : "awake";
+    r["screen_off"] = screen_off_s;
+    r["sleep"] = sleep_s;
+    r["idle_s"] = (millis() - last_active) / 1000;
     fill_bt(r["bt"].to<JsonObject>());
     r["target"] = settings::target_name();
     JsonArray tg = r["targets"].to<JsonArray>();
@@ -489,7 +558,54 @@ static bool cap_state(JsonObjectConst, JsonObject r, std::string&) {
     return true;
 }
 
+static bool cap_chat(JsonObjectConst a, JsonObject r, std::string&) {
+    if (a["clear"] | false) chat::clear();
+    std::string text = a["text"] | "";
+    if (!text.empty()) {
+        chat::add(a["who"] | "agent", text);
+        chat_show = true;
+        active();
+    }
+    if (!a["status"].isNull()) {
+        chat::status(a["status"] | "");
+        chat_show = true;
+        active();
+    }
+    chat::fill(r["messages"].to<JsonArray>());
+    return true;
+}
+
+// A key pressed from the band, as if on the paired remote: the loop takes it from here.
+static std::deque<std::string> injected;
+static std::string inject_held;             // held a moment, so the game sees it too
+static uint32_t inject_until = 0;
+
+static bool cap_press(JsonObjectConst a, JsonObject r, std::string& err) {
+    std::string b = a["button"] | "";
+    if (b.empty()) { err = "bad args: button is needed"; return false; }
+    xSemaphoreTake(ev_mu, portMAX_DELAY);
+    if (injected.size() < 8) injected.push_back(b);
+    xSemaphoreGive(ev_mu);
+    r["queued"] = b;
+    return true;
+}
+
+static bool cap_screen(JsonObjectConst, JsonObject r, std::string& err) {
+    std::string px;
+    int w = 0, h = 0, rot = 0;
+    bool dark = false;
+    if (!ui::snapshot(px, w, h, rot, dark)) { err = "no screen"; return false; }
+    r["width"] = w;
+    r["height"] = h;
+    r["rotation"] = rot;
+    r["dark"] = dark;
+    r["says"] = ui::shown();
+    r["data"] = rc::b64((const uint8_t*)px.data(), px.size());
+    return true;
+}
+
 static bool cap_display(JsonObjectConst a, JsonObject r, std::string&) {
+    active();
     ui::text(a["text"] | "", a["seconds"] | 0);
     r["screen"] = ui::shown();
     return true;
@@ -658,6 +774,11 @@ static bool cap_map(JsonObjectConst a, JsonObject r, std::string&) {
         for (JsonVariantConst v : tg) ts.push_back(v | "");
         settings::set_targets(ts);
     }
+    if (!a["screen_off"].isNull()) settings::set_kv("scr_off", std::to_string((int)(a["screen_off"] | 30)));
+    if (!a["sleep"].isNull()) settings::set_kv("sleep", std::to_string((int)(a["sleep"] | 300)));
+    load_sleep();
+    r["screen_off"] = screen_off_s;
+    r["sleep"] = sleep_s;
     JsonArray bs = r["buttons"].to<JsonArray>();
     for (int i = 0; i < buttons::count(); i++) bs.add(buttons::name(i));
     JsonArray to = r["targets"].to<JsonArray>();
@@ -677,6 +798,7 @@ static void reply(JsonDocument& d) {
 static void handle_line(const std::string& line) {
     JsonDocument in, out;
     if (line.empty()) return;
+    active();
     if (line[0] == '{') {
         if (deserializeJson(in, line)) { out["ok"] = false; out["error"] = "bad json"; reply(out); return; }
     } else {
@@ -858,9 +980,39 @@ struct WifiCandidate {
     uint8_t bssid[6];
 };
 
+static WifiCandidate wifi_quick;            // the access point that last let us in
+static bool wifi_have_quick = false, wifi_quick_low = false;
+
+static bool wifi_connect(const WifiCandidate& c, bool low, int tenths) {
+    WiFi.begin(c.ssid.c_str(), c.pass.c_str(), c.ch, c.bssid, false);
+    wifi_config_t conf;
+    if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
+        conf.sta.pmf_cfg.capable = false;
+        conf.sta.pmf_cfg.required = false;
+        esp_wifi_set_config(WIFI_IF_STA, &conf);
+    }
+    WiFi.setTxPower(low ? WIFI_POWER_8_5dBm : WIFI_POWER_19_5dBm);
+    esp_wifi_connect();
+    for (int t = 0; t < tenths && WiFi.status() != WL_CONNECTED; t++) vTaskDelay(pdMS_TO_TICKS(100));
+    return WiFi.status() == WL_CONNECTED;
+}
+
 static bool wifi_join(unsigned attempt) {
+    if (WiFi.getMode() == WIFI_OFF) WiFi.mode(WIFI_STA);      // it was asleep
     WiFi.disconnect();
     vTaskDelay(pdMS_TO_TICKS(200));
+    // Waking up where it fell asleep: straight back to the same access point, no scan.
+    if (attempt == 0 && wifi_have_quick) {
+        bool saved = false;
+        for (auto& net : settings::wifi()) saved = saved || net.first == wifi_quick.ssid;
+        if (saved) {
+            logf("wifi: back to %s (ch %d)", wifi_quick.ssid.c_str(), wifi_quick.ch);
+            if (wifi_connect(wifi_quick, wifi_quick_low, 50)) return true;
+            WiFi.disconnect();
+            vTaskDelay(pdMS_TO_TICKS(200));
+        }
+        wifi_have_quick = false;
+    }
     int n = WiFi.scanNetworks(false, true, false, 300);
     if (n < 0) {
         logf("wifi: scan failed (%d)", n);
@@ -890,18 +1042,11 @@ static bool wifi_join(unsigned attempt) {
     const WifiCandidate& c = heard[attempt % heard.size()];
     bool low = (c.rssi > -45) != (((attempt / heard.size()) & 1) != 0);
     logf("wifi: joining %s (ch %d, %d dBm) at %s power", c.ssid.c_str(), c.ch, c.rssi, low ? "low" : "full");
-    WiFi.begin(c.ssid.c_str(), c.pass.c_str(), c.ch, c.bssid, false);
-    wifi_config_t conf;
-    if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
-        conf.sta.pmf_cfg.capable = false;
-        conf.sta.pmf_cfg.required = false;
-        esp_wifi_set_config(WIFI_IF_STA, &conf);
-    }
-    WiFi.setTxPower(low ? WIFI_POWER_8_5dBm : WIFI_POWER_19_5dBm);
-    esp_wifi_connect();
-    for (int t = 0; t < 150 && WiFi.status() != WL_CONNECTED; t++) vTaskDelay(pdMS_TO_TICKS(100));
-    if (WiFi.status() != WL_CONNECTED) return false;
+    if (!wifi_connect(c, low, 150)) return false;
     settings::set_wifi_last(c.ssid);
+    wifi_quick = c;
+    wifi_quick_low = low;
+    wifi_have_quick = true;
     return true;
 }
 
@@ -939,6 +1084,14 @@ static void wifi_task(void*) {
         if (wifi_scan_state == 1) {
             wifi_scan();
             wifi_scan_state = 2;
+        }
+        if (wifi_sleep) {                 // asleep: the radio stays off until a key wakes the remote
+            if (WiFi.getMode() != WIFI_OFF) {
+                WiFi.disconnect(true);
+                logf("wifi: off");
+            }
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
         }
         if (wifi_kick) {
             wifi_kick = false;
@@ -1002,7 +1155,11 @@ void setup() {
     for (auto& n : settings::wifi()) wifi.addAP(n.first.c_str(), n.second.c_str());
     configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
 
-    ota::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) { ui::text(t, 0); });
+    chat::begin();
+    load_sleep();
+    cpu_full = getCpuFrequencyMhz();
+    active();
+    ota::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) { active(); ui::text(t, 0); });
     lan::begin([](const char* m) { logf("%s", m); });
     dev::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) { ui::flash(t); });
     set_local(settings::kv("local"));
@@ -1033,6 +1190,9 @@ void setup() {
             worker.gate.on_replay_change = [] { settings::set_replay(replay_blob(worker.gate)); };
             worker.on("remote.state", cap_state);
             worker.on("remote.display", cap_display);
+            worker.on("remote.chat", cap_chat);
+            worker.on("remote.screen", cap_screen);
+            worker.on("remote.press", cap_press);
             worker.on("remote.map", cap_map);
             worker.on("remote.ask", cap_ask, true);
             worker.on("remote.wait", cap_wait, true);
@@ -1056,7 +1216,16 @@ void setup() {
 }
 
 // What a held button (the handheld's, or the paired remote's) does in the game.
-static uint8_t game_key(const std::string& n) {
+static uint16_t game_key(const std::string& n) {
+#ifdef ROOK_BRIDGE
+    // The game is drawn a quarter turn clockwise, so the remote is held with its
+    // top to the left and its keys turn with it: its up is the game's left.
+    // Volume turns the piece (up: left, down: right), home puts it aside.
+    return n == "up" ? tetris::LEFT : n == "down" ? tetris::RIGHT : n == "left" ? tetris::DOWN :
+           n == "right" ? tetris::ROTATE : n == "vol_up" ? tetris::ROTATE_BACK : n == "vol_down" ? tetris::ROTATE :
+           n == "ok" ? tetris::DROP : n == "home" ? tetris::HOLD : (n == "mute" || n == "play") ? tetris::PAUSE :
+           n == "back" ? tetris::QUIT : 0;
+#endif
     return n == "left" ? tetris::LEFT : n == "right" ? tetris::RIGHT : n == "down" ? tetris::DOWN :
            n == "up" ? tetris::ROTATE : n == "ok" ? tetris::DROP : n == "home" ? tetris::PAUSE :
            n == "back" ? tetris::QUIT : 0;
@@ -1070,13 +1239,14 @@ void loop() {
         buttons::poll();
         if (swallow && buttons::held().empty() && bt::held().empty()) swallow = false;
         if (mode == GAME && !ui::asking()) {
-            uint8_t keys = 0;
+            uint16_t keys = 0;
             for (int i : buttons::held()) {
                 std::string n = buttons::name(i);
                 keys |= game_key(n);
             }
             std::string bt_held = bt::held();
             if (!bt_held.empty()) keys |= game_key(bt_name_of(bt_held));
+            if (!inject_held.empty() && (int32_t)(ms - inject_until) < 0) keys |= game_key(inject_held);
             if (tetris::tick(ms, keys)) ui::redraw();
             if (tetris::quit()) {
                 ui::game(false);
@@ -1084,6 +1254,22 @@ void loop() {
                 swallow = true;
                 ui::flash("score\n" + std::to_string(tetris::score()));
             }
+        }
+    }
+    // A key pressed from the band (remote.press).
+    {
+        std::string name;
+        xSemaphoreTake(ev_mu, portMAX_DELAY);
+        if (!injected.empty() && (int32_t)(ms - inject_until) >= 60) {
+            name = injected.front();
+            injected.pop_front();
+        }
+        xSemaphoreGive(ev_mu);
+        if (!name.empty()) {
+            inject_held = name;
+            inject_until = ms + 120;
+            ButtonEvent e{0, -1, name, "band", "press", 0, ms};
+            on_button(e);
         }
     }
     // The paired Bluetooth remote's keys, and what became of it.
@@ -1124,7 +1310,14 @@ void loop() {
         voice_seq = voice_bytes = 0;
         voice_started = ms;
         voice_hold = false;
-        ui::text("Listening...\n\nany key when done", 20);
+        active();
+        if (mode == REMOTE || mode == CHAT) {
+            open_chat();
+            chat::status("Listening (any key)");
+            ui::redraw();
+        } else {
+            ui::text("Listening...", 20);
+        }
     }
     if (voice_open) {
         std::string held = bt_name_of(bt::held());
@@ -1158,8 +1351,17 @@ void loop() {
                     p["worker"] = settings::name();
                     p["ms"] = ms - voice_started;
                     worker.emit("remote.voice", p.as<JsonObjectConst>());
-                    ui::text("Thinking...", 45);
+                    if (mode == CHAT) {
+                        chat::status("Thinking...");
+                        thinking_until = ms + 75000;
+                        chat_until = ms + 180000;
+                        ui::redraw();
+                    } else {
+                        ui::text("Thinking...", 45);
+                    }
                 } else {
+                    chat::status("");
+                    ui::redraw();
                     ui::text("", 0);
                     ui::flash(worker_on ? "heard\nnothing" : "no hub");
                 }
@@ -1167,6 +1369,19 @@ void loop() {
             }
         }
     }
+    // Something new in the conversation: show it (unless the menu, the game or the keyboard has the screen).
+    if (chat_show) {
+        chat_show = false;
+        thinking_until = 0;
+        if (mode == REMOTE || mode == CHAT) open_chat();
+        ui::redraw();
+    }
+    if (thinking_until && (int32_t)(ms - thinking_until) >= 0) {       // no answer came
+        thinking_until = 0;
+        chat::status("");
+        ui::redraw();
+    }
+    if (mode == CHAT && (int32_t)(ms - chat_until) >= 0) close_chat();
     if (devs_pending && lan::scans() != devs_scans) {
         devs_pending = false;
         ui::text("", 0);
@@ -1206,6 +1421,12 @@ void loop() {
         ui::status_line(1, bt::state() == "connected" ? "TV: B" : "TV:");
         ui::status_line(2, local_id.empty() ? settings::target_name() : local_name);
         ota::tick(worker_on && worker.hub_ok());
+        // Left alone: the screen goes dark, then Wi-Fi goes off too. Not while something is going on.
+        if (mode == GAME || mode == TYPING || bt::voice_open() || ota::busy() || ui::asking() ||
+            bt::state() == "pairing" || buttons::learning() || thinking_until)
+            active();
+        uint32_t idle = ms - last_active;
+        set_power(sleep_s && idle > sleep_s * 1000u ? ASLEEP : screen_off_s && idle > screen_off_s * 1000u ? DIM : AWAKE);
         if (buttons::learning()) {
             char b[24];
             snprintf(b, sizeof b, "L%d/%d", buttons::count(), buttons::expected());

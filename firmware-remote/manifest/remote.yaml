@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.7.0
+version: 0.9.0
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -26,6 +26,29 @@ caps:
     args:
       text: { type: str, required: true }
       seconds: { type: int, default: 0, min: 0, max: 86400 }
+    result: { type: map }
+  chat:
+    doc: "The conversation with the house agent on the remote's screen: the last dozen things said, in bubbles (the person's on the right, the agent's on the left, notes bare), scrolled with up and down; the remote's menu has it under Assistant. text adds one, said by who (you: the person, agent, or note), and brings the conversation up; status sets the line under it (Thinking...; blank: none); clear empties it. Answers the conversation as it stands: {messages: [{who, text}]}."
+    risk: write
+    scope: local
+    args:
+      who: { type: str, enum: [you, agent, note], default: agent }
+      text: { type: str }
+      status: { type: str }
+      clear: { type: bool, default: false }
+    result: { type: map }
+  screen:
+    doc: "The screen's picture right now: {width, height, rotation (quarter turns clockwise it is shown at), dark (the panel is off), says (the same in words), data}. data is base64 of the panel's own buffer before rotation: one byte for each 8 pixels down a column (lowest bit on top), columns left to right, in bands of 8 rows."
+    risk: read
+    scope: local
+    idempotent: true
+    result: { type: map }
+  press:
+    doc: "Press a key as if on the Bluetooth remote paired to this one (up, down, left, right, ok, back, home, input, vol_up...): it does whatever that key does now, in the menu, the game or the conversation, or goes to the device the remote drives. Wakes the remote."
+    risk: write
+    scope: local
+    args:
+      button: { type: str, required: true }
     result: { type: map }
   ask:
     doc: Ask the person holding the remote a question and wait for their answer. The screen shows the prompt and the options; they step through options with the navigation buttons and pick one with OK. Answers {choice, index, button}, or {timeout true} when nobody answered in time.
@@ -62,13 +85,15 @@ caps:
       password: { type: str }
     result: { type: map }
   map:
-    doc: Name the buttons and the devices. names lists one name per button, in the order remote.state lists them; blank keeps the current names. targets lists the devices the remote's own menu offers (its input button opens it); the one picked there rides every remote.button event as target.
+    doc: Name the buttons and the devices, and say how soon the remote rests. names lists one name per button, in the order remote.state lists them; blank keeps the current names. targets lists the devices the remote's own menu offers (its input button opens it); the one picked there rides every remote.button event as target.
     risk: write
     scope: self
     effects: [persists]
     args:
       names: { type: list, items: { type: str } }
       targets: { type: list, items: { type: str } }
+      screen_off: { type: int, min: 0, max: 86400, doc: "Seconds left alone before the screen goes dark (30; 0: never)." }
+      sleep: { type: int, min: 0, max: 86400, doc: "Seconds left alone before the remote sleeps: Wi-Fi off, so the hub cannot reach it until a key wakes it (300; 0: never)." }
     result: { type: map }
 
   scan:

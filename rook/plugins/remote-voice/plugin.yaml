@@ -8,14 +8,14 @@
 # (remote.display). Code: scripts/voice.py.
 manifest: 1
 plugin: remote-voice
-version: 0.3.0
+version: 0.4.0
 title: Remote voice
 doc: Talk to the house agent with a Rook remote's Assistant key; the answer comes back on its screen.
 package: devices
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-uses: [speech.open, speech.hear, speech.read, remote.display, file.write, shell.exec]
+uses: [speech.open, speech.hear, speech.read, remote.chat, remote.display, file.write, shell.exec]
 
 settings:
   agent: { type: str, default: "", doc: "The agent the remote talks to; blank: the speech plugin's own default." }
