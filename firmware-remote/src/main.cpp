@@ -31,7 +31,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.9.0"
+#define FW_VERSION "0.9.1"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -1425,7 +1425,10 @@ void loop() {
         if (mode == GAME || mode == TYPING || bt::voice_open() || ota::busy() || ui::asking() ||
             bt::state() == "pairing" || buttons::learning() || thinking_until)
             active();
-        uint32_t idle = ms - last_active;
+        // millis() again: active() may have just moved last_active past this pass's ms,
+        // and the difference, unsigned, would read as weeks of idling.
+        int32_t since = (int32_t)(millis() - last_active);
+        uint32_t idle = since > 0 ? (uint32_t)since : 0;
         set_power(sleep_s && idle > sleep_s * 1000u ? ASLEEP : screen_off_s && idle > screen_off_s * 1000u ? DIM : AWAKE);
         if (buttons::learning()) {
             char b[24];
