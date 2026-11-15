@@ -30,11 +30,19 @@ std::string Worker::pub() const { return pub_text(pub_); }
 bool Worker::begin(const WorkerConfig& cfg, const char* manifest_json, const char* plugin) {
     cfg_ = cfg;
     plugin_ = plugin;
-    manifest_json_ = manifest_json;
+    manifest_text_ = manifest_json;
+    manifest_len_ = strlen(manifest_json);
     lock_ = xSemaphoreCreateMutex();
-    if (deserializeJson(manifest_, manifest_json_)) return false;
+    // Parsed without the docs, which are most of it: memory is short on the small chips.
+    JsonDocument keep;
+    keep["version"] = true;
+    keep["caps"]["*"]["risk"] = true;
+    JsonObject arg = keep["caps"]["*"]["args"]["*"].to<JsonObject>();
+    for (const char* k : {"type", "required", "default", "min", "max", "items"}) arg[k] = true;
+    if (deserializeJson(manifest_, manifest_text_, DeserializationOption::Filter(keep))) return false;
+    manifest_.shrinkToFit();
     uint8_t d[32];
-    sha256(manifest_json_.data(), manifest_json_.size(), d);
+    sha256(manifest_text_, manifest_len_, d);
     manifest_hash_ = hex(d, 32);
     // entries: one builtin manifest; manifests_hash = sha256(canonical(entries))
     JsonDocument entries;
@@ -114,15 +122,29 @@ void Worker::send_heartbeat() {
     band_.send(out);
 }
 
-void Worker::reply_raw(const std::string& id, const std::string& result_json) {
+// The reply is put together in one allocation: a big result copied three times
+// over (as it was) is more than a small chip has in one piece.
+void Worker::reply_parts(const std::string& id, const char* pre, const char* body, size_t body_len, const char* post) {
     JsonDocument r;
     r["id"] = id;
     r["from"] = cfg_.worker_id;
     r["ok"] = true;
-    r["result"] = serialized(result_json);
+    std::string head;
+    serializeJson(r, head);
+    head.pop_back();                       // its closing brace: the result goes in before it
     std::string out;
-    serializeJson(r, out);
+    out.reserve(head.size() + strlen(pre) + body_len + strlen(post) + 12);
+    out += head;
+    out += ",\"result\":";
+    out += pre;
+    out.append(body, body_len);
+    out += post;
+    out += "}";
     band_.send(out);
+}
+
+void Worker::reply_raw(const std::string& id, const std::string& result_json) {
+    reply_parts(id, "", result_json.data(), result_json.size(), "");
 }
 
 void Worker::reply_ok(const std::string& id, JsonVariantConst result) {
@@ -346,7 +368,7 @@ void Worker::on_request(JsonObjectConst req) {
         JsonArrayConst want = args["plugins"].as<JsonArrayConst>();
         bool include = want.isNull() || want.size() == 0;
         for (JsonVariantConst p : want) if (p.as<const char*>() && plugin_ == p.as<const char*>()) include = true;
-        reply_raw(id, include ? "{\"manifests\":[" + manifest_json_ + "]}" : "{\"manifests\":[]}");
+        reply_parts(id, "{\"manifests\":[", manifest_text_, include ? manifest_len_ : 0, "]}");
         return;
     }
     if (!strcmp(cap, "core.lease.drop")) { reply_raw(id, "{\"dropped\":0}"); return; }

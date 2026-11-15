@@ -32,6 +32,7 @@ class Worker {
 public:
     static const char* const CORE;   // "2.0"
 
+    // manifest_json must outlive the worker (a constant): it is served from where it is.
     bool begin(const WorkerConfig& cfg, const char* manifest_json, const char* plugin);
     void on(const char* cap, Handler h, bool blocking = false);
     // Queue an event this worker's plugin declares in its manifest's emits.
@@ -59,8 +60,10 @@ private:
 
     WorkerConfig cfg_;
     Band band_;
-    std::string plugin_, manifest_json_, manifest_hash_, manifests_hash_, entries_json_;
-    JsonDocument manifest_;
+    std::string plugin_, manifest_hash_, manifests_hash_, entries_json_;
+    const char* manifest_text_ = nullptr;   // the caller's constant, not copied: it is several KB
+    size_t manifest_len_ = 0;
+    JsonDocument manifest_;                 // what the worker itself needs of it: risks and argument schemas
     std::vector<Route> routes_;
     uint8_t secret_[64], pub_[32];
     uint32_t next_hb_ = 0, last_announce_ = 0, calls_ = 0, events_sent_ = 0;
@@ -77,6 +80,7 @@ private:
     void on_reply(JsonObjectConst rep);
     void reply_ok(const std::string& id, JsonVariantConst result);
     void reply_raw(const std::string& id, const std::string& result_json);
+    void reply_parts(const std::string& id, const char* pre, const char* body, size_t body_len, const char* post);
     void reply_err(const std::string& id, const std::string& err);
     bool validate(const char* cap, JsonObjectConst args, JsonDocument& out, std::string& err);
     void send_announce();
