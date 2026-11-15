@@ -171,6 +171,8 @@ static void task(void*) {
         say("update: %s", err.c_str());
         set_state("failed", err);
         if (show_) show_("Update\nfailed");
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        if (show_) show_("");                // back to the status screen
         busy_ = false;
         vTaskDelete(nullptr);
         return;
