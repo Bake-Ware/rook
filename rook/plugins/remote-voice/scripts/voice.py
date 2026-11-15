@@ -96,30 +96,18 @@ def _frames(raw: bytes) -> tuple[list[bytes], int]:
     return frames, skipped
 
 
-def _rough(pcm: list[int]) -> float:
-    return sum(abs(pcm[i] - 2 * pcm[i - 1] + pcm[i - 2]) for i in range(2, len(pcm))) / max(1, len(pcm))
-
-
 def decode(raw: bytes) -> tuple[list[int], dict]:
-    """ATVV frames to 16-bit samples. The nibble order and the predictor's byte
-    order are whichever gives the smoother sound (wrong ones give noise)."""
+    """ATVV frames to 16-bit samples: the predictor is big-endian and the high
+    nibble of each byte comes first (checked on a real remote: decoded that
+    way, every frame ends on exactly the state the next one's header gives)."""
     frames, skipped = _frames(raw)
     info = {"bytes": len(raw), "frames": len(frames), "skipped": skipped}
-    if not frames:
-        return [], info
-    best = None
-    for big in (True, False):
-        for high in (False, True):
-            pcm: list[int] = []
-            for f in frames:
-                pred = struct.unpack_from(">h" if big else "<h", f, 3)[0]
-                pcm += _nibbles(f[HEAD:], pred, f[5], high)
-            r = _rough(pcm)
-            if best is None or r < best[0]:
-                best = (r, pcm, big, high)
-    info.update(predictor="big-endian" if best[2] else "little-endian", nibble="high first" if best[3] else "low first",
-                rough=round(best[0], 1), peak=max(abs(s) for s in best[1]))
-    return best[1], info
+    pcm: list[int] = []
+    for f in frames:
+        pcm += _nibbles(f[HEAD:], struct.unpack_from(">h", f, 3)[0], f[5], True)
+    if pcm:
+        info["peak"] = max(abs(x) for x in pcm)
+    return pcm, info
 
 
 def wav_bytes(pcm: list[int], rate: int) -> bytes:
@@ -231,6 +219,7 @@ async def hear(ctx, event):
     while len((PARTS.get(uid) or {}).get("parts", {})) < n and time.monotonic() < deadline:
         await asyncio.sleep(0.05)
     u = PARTS.pop(uid, None)
+    t_start = time.monotonic()
     if not u or not u["parts"]:
         await _show(ctx, remote, "The audio didn't arrive", 6)
         raise ctx.Error(f"no audio arrived for utterance {uid}")
@@ -255,7 +244,9 @@ async def hear(ctx, event):
     said: dict = {"audio": {"data": base64.b64encode(wav_bytes(pcm, rate)).decode(), "mime": "audio/wav"}}
     if ctx.settings["voice_url"]:            # a voice server hears it (as the phone app does), the session gets the words
         try:
+            t0 = time.monotonic()
             text = await transcribe(ctx, pcm)
+            info["stt_seconds"] = round(time.monotonic() - t0, 1)
         except (OSError, ValueError, IndexError, urllib.error.URLError, ctx.Error) as e:
             await _show(ctx, remote, "The voice server didn't answer", 8)
             raise ctx.Error(f"the voice server did not transcribe it: {e}") from None
@@ -276,6 +267,7 @@ async def hear(ctx, event):
         await _show(ctx, remote, "The hub has no speech-to-text yet" if no_ears else "That didn't work", 8)
         raise
     heard = (out.get("heard") or "").strip()
+    info["to_heard_seconds"] = round(time.monotonic() - t_start, 1)
     if not heard:
         await _show(ctx, remote, "Didn't catch that", 6)
         return {"heard": "", "audio": info}
