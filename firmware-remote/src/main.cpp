@@ -31,7 +31,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.9.5"
+#define FW_VERSION "0.9.6"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -1340,6 +1340,13 @@ void loop() {
         if (worker_on && worker.events_queued() > 16) bt::voice_stop();   // the hub is not keeping up
     }
     voice_was_open = voice_open;
+    // Listening and thinking move on the screen: the meter, the dots, the clock.
+    static uint32_t voice_frame = 0;
+    if (mode == CHAT && (voice_open || thinking_until) && ms - voice_frame >= 70) {
+        voice_frame = ms;
+        if (voice_open) chat::level(bt::voice_level());
+        ui::redraw();
+    }
     {
         std::string audio;
         bool done = false;

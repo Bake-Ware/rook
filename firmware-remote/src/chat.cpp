@@ -10,6 +10,10 @@ struct Msg { std::string who, text; };
 const size_t KEEP = 12, MAX_TEXT = 700;
 std::deque<Msg> msgs;
 std::string status_line;
+int busy = 0;                // what status_line says is going on: 1 listening, 2 thinking, 0 neither
+uint32_t busy_t0 = 0;
+const int HIST = 26;
+uint8_t hist[HIST];          // the loudness heard lately, oldest first
 int top = 0;                 // the first pixel row of the conversation on screen
 bool stick = true;           // follow the newest (until the person scrolls up)
 SemaphoreHandle_t mu;
@@ -90,6 +94,19 @@ void status(const std::string& s) {
     xSemaphoreTake(mu, portMAX_DELAY);
     status_line = s;
     stick = true;
+    int now = s.rfind("Listening", 0) == 0 ? 1 : s.rfind("Thinking", 0) == 0 ? 2 : 0;
+    if (now != busy) {
+        busy = now;
+        busy_t0 = millis();
+        memset(hist, 0, sizeof hist);
+    }
+    xSemaphoreGive(mu);
+}
+
+void level(int percent) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    memmove(hist, hist + 1, HIST - 1);
+    hist[HIST - 1] = (uint8_t)std::max(0, std::min(100, percent));
     xSemaphoreGive(mu);
 }
 
@@ -113,7 +130,37 @@ void draw(Adafruit_GFX& d) {
     bool wide = W >= 64;
     d.setTextSize(1);
     d.setTextWrap(false);
-    int view = H - (status_line.empty() ? 0 : 10);
+    uint32_t ms = millis();
+    int secs = (int)((ms - busy_t0) / 1000);
+    char clock[8];
+    snprintf(clock, sizeof clock, "%d:%02d", secs / 60, secs % 60);
+    if (busy == 1 && W >= 100) {
+        // Listening has the whole screen: a microphone, how long, what it hears
+        // as bars moving left, and how to send it.
+        d.setTextColor(1);
+        d.fillRoundRect(3, 1, 5, 8, 2, 1);                   // the microphone
+        d.drawLine(1, 6, 1, 8, 1);
+        d.drawLine(9, 6, 9, 8, 1);
+        d.drawFastHLine(2, 9, 7, 1);
+        d.drawFastVLine(5, 10, 2, 1);
+        d.setCursor(15, 2);
+        d.print("Listening");
+        d.setCursor(W - (int)strlen(clock) * 6 - 1, 2);
+        d.print(clock);
+        if ((ms / 400) & 1) d.fillCircle(W - (int)strlen(clock) * 6 - 8, 5, 2, 1);      // recording
+        const int MID = 31, X0 = (W - HIST * 5 + 2) / 2;
+        for (int i = 0; i < HIST; i++) {
+            int h = 2 + hist[i] * 26 / 100;
+            d.fillRoundRect(X0 + i * 5, MID - h / 2, 3, h, 1, 1);
+        }
+        const char* hint = "any key to send";
+        d.setCursor((W - (int)strlen(hint) * 6) / 2, H - 9);
+        d.print(hint);
+        xSemaphoreGive(mu);
+        return;
+    }
+    bool strip = busy == 2 && W >= 100;                      // thinking: a taller strip, with dots that take turns
+    int view = H - (status_line.empty() ? 0 : strip ? 14 : 10);
     std::vector<Box> boxes;
     int total = layout(W, boxes);
     int last = std::max(0, total - view);
@@ -151,8 +198,20 @@ void draw(Adafruit_GFX& d) {
     if (!status_line.empty()) {                  // what is happening now, on its own strip
         d.fillRect(0, view, W, H - view, 0);
         d.drawFastHLine(0, view, W, 1);
-        d.setCursor(1, view + 2);
-        d.print(status_line.substr(0, W / 6).c_str());
+        if (strip) {
+            for (int i = 0; i < 3; i++) {
+                int ph = (int)((ms / 110 + (3 - i) * 2) % 9);            // each rises a little after the one before
+                int up = ph < 2 ? ph * 2 : ph < 4 ? (4 - ph) * 2 : 0;
+                d.fillCircle(6 + i * 9, view + 9 - up, 2, 1);
+            }
+            d.setCursor(34, view + 4);
+            d.print("thinking");
+            d.setCursor(W - (int)strlen(clock) * 6 - 3, view + 4);
+            d.print(clock);
+        } else {
+            d.setCursor(1, view + 2);
+            d.print(status_line.substr(0, W / 6).c_str());
+        }
     }
     if (total > view) {                          // where this is in the whole, down the right edge
         int h = std::max(4, view * view / total);

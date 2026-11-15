@@ -31,6 +31,7 @@ bool voice_ready();                   // the connected remote has the service
 bool voice_open();                    // its microphone is open now
 void voice_start();
 void voice_stop();
+int voice_level();                    // how loud it is hearing now, 0..100 (for a meter)
 int voice_codec();                    // 1: ADPCM 8 kHz, 2: ADPCM 16 kHz
 bool voice_spoke();                   // the utterance (open or just ended) had speech in it
 // The Assistant key starts an utterance and any key ends it (voice_stop);

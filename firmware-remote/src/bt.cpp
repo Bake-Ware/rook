@@ -54,6 +54,7 @@ std::string v_buf, v_caps, v_ctl, v_hist, services_text;
 const int V_FRAME = 134, V_QUIET = 62, V_WAIT = 250;      // 32 ms a frame at 8 kHz
 const int V_SKIP = 10, V_SPOKEN = 3;
 int v_floor = 0, v_max = 0, v_run = 0, v_louds = 0;
+volatile int v_now = 0;                     // the last frame's level, for a meter
 uint8_t v_frame[V_FRAME];
 int v_fill = 0, v_frames = 0, v_quiet = 0, v_loud = 0;
 volatile bool v_speech = false;
@@ -102,6 +103,7 @@ void on_audio(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
         v_fill = 0;
         v_frames++;
         int level = frame_level(v_frame);
+        if (level >= 0) v_now = level;
         if (level < 0 || v_frames <= V_SKIP) continue;
         if (level < v_floor) v_floor = level;
         else v_floor += 1;
@@ -585,6 +587,13 @@ std::string services() {
     std::string s = services_text;
     xSemaphoreGive(mu);
     return s;
+}
+
+int voice_level() {
+    if (!v_open) return 0;
+    int quiet = v_floor > 20000 ? 0 : v_floor, top = std::max(v_max, quiet * 3 + 300);
+    int over = v_now - quiet;
+    return over <= 0 ? 0 : std::min(100, over * 100 / std::max(1, top - quiet));
 }
 
 bool find_ready() { return connected && f_ctl && f_data; }

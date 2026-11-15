@@ -16,6 +16,7 @@ namespace chat {
 void begin();
 void add(const std::string& who, const std::string& text);   // who: you | agent | note
 void clear();
+void level(int percent);                 // while listening: how loud it hears now (a meter is drawn from these)
 void status(const std::string& s);       // the line under the bubbles; blank: none
 void scroll(int pixels);                 // towards older (negative) or newer
 size_t count();
