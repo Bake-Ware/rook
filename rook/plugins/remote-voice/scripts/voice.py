@@ -191,10 +191,14 @@ async def _show(ctx, remote: str, text: str, hold: int = 60) -> None:
     ps = pages(text, int(s["cols"]), int(s["rows"]))
     for i, page in enumerate(ps):
         last = i == len(ps) - 1
-        try:
-            await ctx.call_on(remote, "remote.display", text=page, seconds=hold if last else int(s["page_seconds"]) + 2)
-        except ctx.Error:
-            return                       # the remote went away: nothing to show it on
+        for attempt in range(4):         # a remote that just stopped listening can miss a call: ask again soon
+            try:
+                await asyncio.wait_for(ctx.call_on(remote, "remote.display", text=page,
+                                                   seconds=hold if last else int(s["page_seconds"]) + 2), 4)
+                break
+            except (asyncio.TimeoutError, ctx.Error):
+                if attempt == 3:
+                    return               # the remote went away: nothing to show it on
         if not last:
             await asyncio.sleep(int(s["page_seconds"]))
 
