@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.9.7
+version: 0.9.8
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -129,6 +129,12 @@ caps:
     result: { type: map }
 
 emits:
+  remote.update.check:
+    doc: Someone picked Update in the remote's menu. The hub's remote-update plugin answers over the band, with remote.update when it holds a newer build for this board.
+    payload:
+      worker: { type: str, required: true, doc: This remote's name. }
+      version: { type: str, required: true, doc: The firmware it runs. }
+      board: { type: str, required: true, doc: "bridge-c3 or s3: which build it takes." }
   remote.voice:
     doc: Someone finished saying something into the microphone of the Bluetooth remote paired to this one (its Assistant key). The audio came before it, in parts remote.voice.part events with the same id.
     payload:

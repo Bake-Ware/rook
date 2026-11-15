@@ -131,6 +131,7 @@ const uint8_t IC_FIND[] PROGMEM = {0x38, 0x44, 0x82, 0x82, 0x44, 0x3C, 0x06, 0x0
 const uint8_t IC_CHAT[] PROGMEM = {0x7E, 0x81, 0x81, 0x81, 0x7E, 0x30, 0x20, 0x00};
 const uint8_t IC_X[] PROGMEM = {0x00, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x00};
 const uint8_t IC_DOT[] PROGMEM = {0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00};
+const uint8_t IC_UPD[] PROGMEM = {0x18, 0x18, 0x18, 0x7E, 0x3C, 0x18, 0x00, 0x7E};
 const uint8_t IC_RING[] PROGMEM = {0x00, 0x3C, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00};
 
 const uint8_t* icon_for(const std::string& label) {
@@ -141,6 +142,7 @@ const uint8_t* icon_for(const std::string& label) {
     if (has("wi-fi") || has("wifi")) return IC_WIFI;
     if (has("forget")) return IC_X;
     if (has(" bt") || has("bluetooth")) return IC_BT;
+    if (has("update")) return IC_UPD;
     if (has("find") || has("scan")) return IC_FIND;
     if (has("assistant")) return IC_CHAT;
     if (has(" (")) return IC_RING;               // found, but nothing here drives it: name (what it answered as)

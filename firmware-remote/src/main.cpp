@@ -31,7 +31,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.9.7"
+#define FW_VERSION "0.9.8"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -185,7 +185,7 @@ static void open_menu() {
         labels.push_back(d.name);
         values.push_back("lan:" + d.id);
     }
-    for (const char* s : {"Assistant", "Find devs", "Tetris", "Wi-Fi", "Pair BT"}) {
+    for (const char* s : {"Assistant", "Find devs", "Tetris", "Wi-Fi", "Update", "Pair BT"}) {
         labels.push_back(s);
         values.push_back(s);
     }
@@ -331,6 +331,25 @@ static void menu_pick(int i) {
         open_chat();
     } else if (label == "Find devs") {
         start_dev_scan();
+    } else if (label == "Update") {
+        // Ask the hub whether it holds a newer build for this board. Its answer
+        // comes over the band: remote.update with the build's address and hash,
+        // or a word that this one is the newest.
+        if (!worker_on || !worker.hub_ok()) {
+            ui::flash("no hub");
+        } else {
+            JsonDocument p;
+            p["worker"] = settings::name();
+            p["version"] = FW_VERSION;
+#ifdef ROOK_BRIDGE
+            p["board"] = "bridge-c3";
+#else
+            p["board"] = "s3";
+#endif
+            worker.emit("remote.update.check", p.as<JsonObjectConst>());
+            mode = REMOTE;
+            ui::card("UPDATE", "checking", -2);
+        }
     } else if (label == "Tetris") {
         tetris::start(millis());
         ui::game(true);

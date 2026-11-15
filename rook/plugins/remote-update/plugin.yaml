@@ -1,0 +1,31 @@
+# A Rook remote (firmware-remote) asks for an update from its own menu: it
+# sends remote.update.check with its board and version, and remote-update.check
+# (a job on that event) looks in the hub's firmware folder (the files GET
+# /firmware/<name>.bin serves) for a newer build named
+# rook-remote-<board>-<version>.bin. When there is one it tells the remote to
+# take it (remote.update: address and SHA-256, over the band, so the remote
+# trusts the hash and not the download); when not, it says so on its screen.
+manifest: 1
+plugin: remote-update
+version: 0.1.0
+title: Remote update
+doc: A Rook remote checks for newer firmware from its own menu and takes it from the hub.
+package: devices
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+uses: [remote.update, remote.display]
+
+settings:
+  firmware_url: { type: str, default: "", doc: "This hub's address as a remote reaches it, e.g. http://rook.example.com: builds are fetched from <it>/firmware/<name>.bin. Plain http is fine (the remote checks the hash it was sent over the band), and lighter for a small device." }
+
+caps:
+  check:
+    doc: "A remote asked for an update (event: {name, payload: {worker, version, board}}). Answers {remote, board, runs, newest, update: bool}."
+    risk: write
+    scope: multi-user
+    timeout: 1m
+    run: scripts/update.py:check
+    args:
+      event: { type: map, required: true, doc: "{name, payload}: the remote.update.check event." }
+    result: { type: map }
