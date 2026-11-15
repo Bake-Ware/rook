@@ -53,6 +53,10 @@ void set_rotation(int r);
 std::string bt_names();
 void set_bt_names(const std::string& json);
 
+// Small named values other modules keep (keys of at most 15 characters).
+std::string kv(const char* key);
+void set_kv(const char* key, const std::string& value);
+
 void factory_reset();
 
 }  // namespace settings

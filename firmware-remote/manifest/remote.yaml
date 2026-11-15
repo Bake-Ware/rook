@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.5.0
+version: 0.6.0
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -14,7 +14,7 @@ source: https://github.com/Bake-Ware/rook
 
 caps:
   state:
-    doc: The remote's buttons (names, which are held), the last presses, the device its buttons are for (target, of targets), its mode (remote, menu or game), what the screen shows, Wi-Fi and hub status.
+    doc: The remote's buttons (names, which are held), the last presses, the device its buttons are for (target, of targets), its mode (remote, menu or game), what the screen shows, Wi-Fi and hub status, the device on its own network it is driving (local), free memory and the firmware update's state.
     risk: read
     scope: local
     idempotent: true
@@ -71,6 +71,36 @@ caps:
       targets: { type: list, items: { type: str } }
     result: { type: map }
 
+  scan:
+    doc: Look for devices on the Wi-Fi network the remote has joined (SSDP and mDNS, about 15 seconds) and answer what it found. Each device has an id (its MAC address when known), name, model, address, the kinds it answered as (roku, webos, cast, androidtv, airplay, dial, samsung, wled...), the driver the remote has for it (roku or webos; blank when it can only be seen), what that driver supports, and whether it is paired. The remote also scans on its own a few seconds after joining a network.
+    risk: read
+    scope: external
+    result: { type: map }
+  devices:
+    doc: What the last scan found, without scanning again, and the device the remote's buttons are driving now (selected), if any.
+    risk: read
+    scope: local
+    idempotent: true
+    result: { type: map }
+  device:
+    doc: Act on a device the scan found, straight from the remote over the local network, no hub in between. device is its id, name or address. action key presses key (up, down, left, right, ok, back, home, menu, vol_up, vol_down, mute, play, pause, rewind, forward, power, or the device's own key name in its own spelling); launch starts app (youtube, netflix, prime, disney, hulu, appletv, plex, or the device's own app id; a Roku also takes an app's name); power turns it off, or wakes it when it is off; pair has an LG TV show its prompt and waits a minute for someone to accept (a Roku needs none); forget drops the pairing; select makes the remote's own buttons drive this device from now on, and release hands them back to the hub's target.
+    risk: write
+    scope: external
+    args:
+      device: { type: str, required: true }
+      action: { type: str, enum: [key, launch, power, pair, forget, select, release], default: key }
+      key: { type: str }
+      app: { type: str }
+    result: { type: map }
+  update:
+    doc: Update the remote's firmware over the air. url is where the build is (http or https, reachable from the network the remote is on) and sha256 its SHA-256 in hex; the remote downloads it into its spare slot, checks the hash, answers started and restarts into it. The new build has five minutes to reach the hub, or the remote goes back to the build before. Blank answers the running version, the update's state (idle, downloading, failed, restarting), and whether the build is still on trial.
+    risk: exec
+    scope: self
+    args:
+      url: { type: str }
+      sha256: { type: str }
+    result: { type: map }
+
 emits:
   remote.button:
     doc: A button on the remote was pressed (action press) or held down (action long, once while held). Not sent for the input button (it opens the remote's menu), nor while the menu or the game is up.
@@ -81,3 +111,4 @@ emits:
       held_ms: { type: int }
       target: { type: str, doc: The device picked in the remote's menu (an appliance's name). }
       source: { type: str, doc: "bt when the key was pressed on the Bluetooth remote paired to this one." }
+      local: { type: bool, doc: "true when target is a device on the remote's own network that it has already driven itself (remote.device select): nothing is left for a job to do." }

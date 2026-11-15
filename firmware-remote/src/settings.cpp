@@ -226,6 +226,12 @@ void set_wifi_last(const std::string& ssid) {
     if (get("wifi_last") != ssid) put("wifi_last", ssid);
 }
 
+std::string kv(const char* key) { return get(key); }
+
+void set_kv(const char* key, const std::string& value) {
+    if (get(key) != value) put(key, value);
+}
+
 std::string bt_names() { return get("bt_names"); }
 
 void set_bt_names(const std::string& json) { put("bt_names", json); }

@@ -17,7 +17,10 @@
 #include <time.h>
 #include "bt.h"
 #include "buttons.h"
+#include "dev.h"
+#include "lan.h"
 #include "osk.h"
+#include "ota.h"
 #include "rc_sig.h"
 #include "rc_worker.h"
 #include "remote_manifest.h"
@@ -25,7 +28,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.5.0"
+#define FW_VERSION "0.6.0"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -50,7 +53,12 @@ static volatile bool wifi_hold = false;     // the scan command has the radio: n
 // button opens it: pick the device the events are for, or the game), the game's.
 enum Mode { REMOTE, MENU, GAME, TYPING };
 // The menu on screen: the main one, the Wi-Fi networks heard, or the saved ones to forget.
-enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET };
+enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS };
+// A device on this network the buttons drive directly (dev.h), in place of a
+// hub target: its id, and its name for the screen and the events.
+static std::string local_id, local_name;
+static bool devs_pending = false;           // the menu waits for a device scan
+static uint32_t devs_scans = 0;
 static MenuKind menu_kind = MENU_MAIN;
 static std::vector<std::string> menu_labels, menu_values;
 static std::string typing_ssid;             // the network whose password is being typed
@@ -99,13 +107,83 @@ static void show_menu(MenuKind kind, const char* title, const std::vector<std::s
     mode = MENU;
 }
 
+static void set_local(const std::string& id) {
+    lan::Device d;
+    if (id.empty() || !lan::find(id, d)) {
+        local_id.clear();
+        local_name.clear();
+    } else {
+        local_id = d.id;
+        local_name = d.name;
+    }
+    settings::set_kv("local", local_id);
+}
+
+// The hub's targets, then the devices found on this network that the remote
+// can drive itself, then the rest.
 static void open_menu() {
-    std::vector<std::string> items = settings::targets();
-    items.push_back("Tetris");
-    items.push_back("Wi-Fi");
-    items.push_back("Pair BT");
-    if (bt::saved()) items.push_back("Forget BT");
-    show_menu(MENU_MAIN, "MENU", items, items, settings::target());
+    std::vector<std::string> labels = settings::targets(), values = labels;
+    int selected = settings::target();
+    for (auto& d : lan::devices()) {
+        if (d.driver.empty()) continue;
+        if (d.id == local_id) selected = (int)labels.size();
+        labels.push_back(d.name);
+        values.push_back("lan:" + d.id);
+    }
+    for (const char* s : {"Find devs", "Tetris", "Wi-Fi", "Pair BT"}) {
+        labels.push_back(s);
+        values.push_back(s);
+    }
+    if (bt::saved()) {
+        labels.push_back("Forget BT");
+        values.push_back("Forget BT");
+    }
+    show_menu(MENU_MAIN, "MENU", labels, values, selected);
+}
+
+// Everything the last scan found: what the remote can drive first, the rest
+// with what they answered as.
+static void open_devs_menu() {
+    std::vector<std::string> labels, values;
+    for (auto& d : lan::devices()) {
+        labels.push_back(d.driver.empty() ? d.name + " (" + d.kinds[0] + ")" : d.name);
+        values.push_back((d.driver.empty() ? "x:" : "lan:") + d.id);
+    }
+    labels.push_back("Rescan");
+    values.push_back("");
+    show_menu(MENU_DEVS, "DEVICES", labels, values, 0);
+}
+
+static void start_dev_scan() {
+    std::string err;
+    if (WiFi.status() != WL_CONNECTED) {
+        ui::flash("no\nWi-Fi");
+        return;
+    }
+    devs_scans = lan::scans();
+    if (!dev::run("scan", "", "", 0, err)) {
+        ui::flash("busy");
+        return;
+    }
+    devs_pending = true;
+    mode = REMOTE;
+    ui::text("Looking for devices", 30);
+}
+
+// The buttons are this device's from now on; an LG TV not yet paired asks its
+// person to accept the remote first.
+static void pick_device(const std::string& id) {
+    lan::Device d;
+    if (!lan::find(id, d)) return;
+    if (d.driver.empty()) {
+        ui::flash("no\ndriver");
+        return;
+    }
+    lan::keep(d.id);
+    set_local(d.id);
+    std::string err;
+    if (!dev::paired(d)) dev::run("pair", d.id, "", 0, err);
+    else ui::flash(d.name);
 }
 
 // The networks heard (strongest first; * marks a saved one), then the saved ones to forget.
@@ -180,10 +258,22 @@ static void menu_pick(int i) {
         }
         return;
     }
+    if (value.rfind("lan:", 0) == 0) {
+        pick_device(value.substr(4));
+        return;
+    }
+    if (kind == MENU_DEVS) {
+        if (label == "Rescan") start_dev_scan();
+        else ui::flash("no\ndriver");
+        return;
+    }
     auto ts = settings::targets();
     if (i < (int)ts.size()) {
         settings::set_target(i);
+        set_local("");
         ui::flash(ts[i]);
+    } else if (label == "Find devs") {
+        start_dev_scan();
     } else if (label == "Tetris") {
         tetris::start(millis());
         ui::game(true);
@@ -255,13 +345,22 @@ static void on_button(const ButtonEvent& ev) {
     } else {
         ui::flash(e.name + (strcmp(e.action, "long") ? "" : " (hold)"));
     }
+    // A device on this network picked in the menu: the remote presses its key itself.
+    bool local = !local_id.empty();
+    if (local && !strcmp(e.action, "press")) {
+        std::string err;
+        dev::run("key", local_id, e.name, 0, err);
+    }
     if (worker_on) {
         JsonDocument p;
         p["button"] = e.name;
         p["action"] = e.action;
         p["index"] = e.index;
         p["held_ms"] = e.held_ms;
-        if (!settings::target_name().empty()) p["target"] = settings::target_name();
+        if (local) {
+            p["target"] = local_name;
+            p["local"] = true;
+        } else if (!settings::target_name().empty()) p["target"] = settings::target_name();
         if (e.index < 0) p["source"] = "bt";
         worker.emit("remote.button", p.as<JsonObjectConst>());
     }
@@ -341,6 +440,13 @@ static void fill_state(JsonObject r) {
     r["wifi"]["ssid"] = WiFi.SSID();
     r["wifi"]["rssi"] = WiFi.RSSI();
     r["wifi"]["ip"] = WiFi.localIP().toString();
+    if (!local_id.empty()) {
+        r["local"]["id"] = local_id;
+        r["local"]["name"] = local_name;
+    }
+    r["devices"] = (int)lan::devices().size();
+    ota::fill(r["update"].to<JsonObject>());
+    r["heap"] = (unsigned)ESP.getFreeHeap();
     r["hub_contact"] = worker.hub_ok();
     r["events_sent"] = worker.events_sent();
     r["events_queued"] = (unsigned)worker.events_queued();
@@ -442,6 +548,66 @@ static bool cap_wifi(JsonObjectConst a, JsonObject r, std::string& err) {
     for (auto& n : settings::wifi()) saved.add(n.first);
     r["in_use"] = WiFi.SSID();
     r["rssi"] = WiFi.RSSI();
+    return true;
+}
+
+static void fill_devices(JsonObject r) {
+    JsonArray a = r["devices"].to<JsonArray>();
+    for (auto& d : lan::devices()) dev::fill(d, a.add<JsonObject>());
+    r["network"] = WiFi.SSID();
+    r["scans"] = lan::scans();
+    if (!local_id.empty()) r["selected"] = local_id;
+}
+
+static bool cap_scan(JsonObjectConst, JsonObject r, std::string& err) {
+    if (!dev::run("scan", "", "", 45000, err)) return false;
+    fill_devices(r);
+    return true;
+}
+
+static bool cap_devices(JsonObjectConst, JsonObject r, std::string&) {
+    fill_devices(r);
+    return true;
+}
+
+static bool cap_device(JsonObjectConst a, JsonObject r, std::string& err) {
+    std::string device = a["device"] | "", action = a["action"] | "key";
+    lan::Device d;
+    if (!lan::find(device, d)) {
+        err = "no device called " + device + ": remote.scan finds what is on this network";
+        return false;
+    }
+    if (action == "select") {
+        if (d.driver.empty()) { err = "the remote has no driver for " + d.name; return false; }
+        lan::keep(d.id);
+        set_local(d.id);
+    } else if (action == "release") {
+        if (local_id == d.id) set_local("");
+    } else {
+        std::string arg = action == "launch" ? (a["app"] | "") : (a["key"] | "");
+        if ((action == "key" || action == "launch") && arg.empty()) {
+            err = action == "key" ? "bad args: key is needed" : "bad args: app is needed";
+            return false;
+        }
+        std::string out;
+        if (!dev::run(action, d.id, arg, action == "pair" ? 70000 : 20000, err, &out)) return false;
+        if (!out.empty()) r["did"] = out;
+        if (action == "forget" && local_id == d.id) set_local("");
+    }
+    lan::Device now;
+    if (lan::find(d.id, now)) dev::fill(now, r["device"].to<JsonObject>());
+    if (!local_id.empty()) r["selected"] = local_id;
+    return true;
+}
+
+static bool cap_update(JsonObjectConst a, JsonObject r, std::string& err) {
+    std::string url = a["url"] | "";
+    if (!url.empty()) {
+        if (!ota::start(url, a["sha256"] | "", err)) return false;
+        r["started"] = true;
+    }
+    r["version"] = FW_VERSION;
+    ota::fill(r);
     return true;
 }
 
@@ -580,6 +746,29 @@ static void handle_line(const std::string& line) {
             bt::forget();
         }
         fill_bt(out["bt"].to<JsonObject>());
+    } else if (cmd == "dev.scan") {
+        std::string err;
+        out["queued"] = dev::run("scan", "", "", 0, err);
+    } else if (cmd == "devices") {
+        fill_devices(out.to<JsonObject>());
+        out["ok"] = true;
+    } else if (cmd == "dev") {
+        std::string err, did;
+        std::string action = in["action"] | "key";
+        if (!dev::run(action, in["device"] | "", in["arg"] | "", action == "pair" ? 70000 : 20000, err, &did)) {
+            out["ok"] = false;
+            out["error"] = err;
+        }
+        if (!did.empty()) out["did"] = did;
+    } else if (cmd == "update") {
+        std::string err;
+        if (!ota::start(in["url"] | "", in["sha256"] | "", err)) {
+            out["ok"] = false;
+            out["error"] = err;
+        }
+    } else if (cmd == "update.confirm") {
+        ota::confirm();
+        ota::fill(out["update"].to<JsonObject>());
     } else if (cmd == "reboot") {
         reply(out);
         delay(200);
@@ -592,7 +781,7 @@ static void handle_line(const std::string& line) {
         ESP.restart();
     } else {
         out["ok"] = false;
-        out["error"] = "commands: status key wifi wifi.clear scan name enroll unenroll show names identify layout.set layout.reset targets rotate bt bt.pair bt.forget reboot factory";
+        out["error"] = "commands: status key wifi wifi.clear scan name enroll unenroll show names identify layout.set layout.reset targets rotate bt bt.pair bt.forget dev.scan devices dev update update.confirm reboot factory";
     }
     reply(out);
 }
@@ -782,6 +971,11 @@ void setup() {
     for (auto& n : settings::wifi()) wifi.addAP(n.first.c_str(), n.second.c_str());
     configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
 
+    ota::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) { ui::text(t, 0); });
+    lan::begin([](const char* m) { logf("%s", m); });
+    dev::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) { ui::flash(t); });
+    set_local(settings::kv("local"));
+
     const Enrollment& e = settings::enrollment();
     if (e.ok) {
         rc::WorkerConfig c;
@@ -813,6 +1007,10 @@ void setup() {
             worker.on("remote.wait", cap_wait, true);
             worker.on("remote.bt", cap_bt);
             worker.on("remote.wifi", cap_wifi);
+            worker.on("remote.scan", cap_scan, true);
+            worker.on("remote.devices", cap_devices);
+            worker.on("remote.device", cap_device, true);
+            worker.on("remote.update", cap_update);
             worker_on = true;
         } else {
             logf("enrollment is unusable (hub root key or manifest); enroll again");
@@ -888,6 +1086,23 @@ void loop() {
         ui::text("", 0);
         if (mode == REMOTE) open_wifi_menu();
     }
+    if (devs_pending && lan::scans() != devs_scans) {
+        devs_pending = false;
+        ui::text("", 0);
+        if (mode == REMOTE) open_devs_menu();
+    }
+    // A look around each network joined, once it has settled, so the menu has its devices.
+    static uint32_t up_since = 0;
+    static bool looked = false;
+    if (WiFi.status() != WL_CONNECTED) {
+        up_since = 0;
+        looked = false;
+    } else if (!up_since) {
+        up_since = ms | 1;
+    } else if (!looked && ms - up_since > 8000 && !ota::busy()) {
+        std::string err;
+        looked = dev::run("scan", "", "", 0, err);
+    }
     if (mode == TYPING && (int32_t)(ms - typing_until) >= 0) {
         ui::canvas(nullptr);
         osk::begin("", "");
@@ -908,7 +1123,8 @@ void loop() {
         else s0 = worker.hub_ok() ? "band" : "hub?";
         ui::status_line(0, s0);
         ui::status_line(1, bt::state() == "connected" ? "TV: B" : "TV:");
-        ui::status_line(2, settings::target_name());
+        ui::status_line(2, local_id.empty() ? settings::target_name() : local_name);
+        ota::tick(worker_on && worker.hub_ok());
         if (buttons::learning()) {
             char b[24];
             snprintf(b, sizeof b, "L%d/%d", buttons::count(), buttons::expected());
