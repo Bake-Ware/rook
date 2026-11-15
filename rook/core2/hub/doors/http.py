@@ -16,6 +16,8 @@ agent, or an agent for a person).
     GET  /updates/desktop.json  no token: the desktop app's files in Rook's latest release (its update check)
     GET  /apk.json[?channel=beta], /apk[?channel=beta]  no token: the phone app's update check and
                           download, from files an owner put in the data folder (:mod:`..apkfeed`)
+    GET  /firmware.json, /firmware/<name>.bin  no token: firmware for the band's small devices, from
+                          files an owner put in the data folder (:mod:`..firmware`)
 
 Enrollment (spec 8; rook.core2.enroll.hub):
 
@@ -49,6 +51,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from ..apkfeed import ApkFeed
+from ..firmware import FirmwareFeed
 from .web import Web
 
 log = logging.getLogger("rook.hub.door.http")
@@ -76,6 +79,7 @@ class HttpDoor:
         self.web = None if web is False else Web(hub, web if isinstance(web, dict) else {})
         self.band = options.get("band")
         self._apk: ApkFeed | None = None
+        self._firmware: FirmwareFeed | None = None
         self._thread: threading.Thread | None = None
 
     async def start(self) -> None:
@@ -96,6 +100,12 @@ class HttpDoor:
         if self._apk is None:
             self._apk = ApkFeed(self.hub.data)
         return self._apk
+
+    @property
+    def firmware(self) -> FirmwareFeed:
+        if self._firmware is None:
+            self._firmware = FirmwareFeed(self.hub.data)
+        return self._firmware
 
     def challenge(self, host: str | None = None) -> str:
         """The ``WWW-Authenticate`` a 401 carries (``host``: the request's Host header)."""
@@ -211,6 +221,14 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/apk.json":
                 return 200, got[1]
             return 200, _File(got[0], "application/vnd.android.package-archive", "rook-worker.apk")
+        if method == "GET" and path == "/firmware.json":            # a device updating itself has no token
+            return 200, self.door.firmware.listing()
+        if method == "GET" and path.startswith("/firmware/") and path.count("/") == 2:
+            name = unquote(path[len("/firmware/"):])
+            got = self.door.firmware.file(name)
+            if got is None:
+                raise _Error(404, "no such firmware here")
+            return 200, _File(got, "application/octet-stream", name)
         if method == "POST" and path in OPEN:      # a device enrolling has no token yet
             extra = {"address": self._address()} if OPEN[path] == "ask" else {}
             return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body(), **extra))
