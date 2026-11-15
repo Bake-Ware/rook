@@ -273,6 +273,22 @@ void card_draw(uint32_t ms) {
     }
 }
 
+// The time in the bottom right corner, once the clock is set. How wide it came out (0: not drawn).
+int home_clock() {
+    time_t now = time(nullptr);
+    if (now <= 1700000000) return 0;
+    struct tm t;
+    localtime_r(&now, &t);
+    char hm[8];
+    int h = t.tm_hour % 12;
+    snprintf(hm, sizeof hm, "%d:%02d", h ? h : 12, t.tm_min);
+    int w = (int)strlen(hm) * 6;
+    oled.setCursor(W - w - 2, 53);
+    oled.print(hm);
+    anim = true;                     // the minute turns over on its own
+    return w;
+}
+
 void home_draw(uint32_t ms, bool noted) {
     const std::string &target = status[2], &key = status[3];
     home_bar(ms);
@@ -299,9 +315,10 @@ void home_draw(uint32_t ms, bool noted) {
         if (t.find('\n') != std::string::npos && t.size() <= 10)      // "BT\ngone": short enough for one large line
             std::replace(t.begin(), t.end(), '\n', ' ');
         big(t);
+        int clock = home_clock();            // the time stays where it was
         oled.drawBitmap(1, 52, IC_TV, 8, 8, SSD1306_WHITE);
         oled.setCursor(13, 53);
-        oled.print(target.substr(0, COLS - 3).c_str());
+        oled.print(target.substr(0, (W - 13 - (clock ? clock + 8 : 0)) / 6).c_str());
         return;
     }
     big(target.empty() ? std::string("no device") : target);
@@ -314,18 +331,8 @@ void home_draw(uint32_t ms, bool noted) {
         oled.print(k.c_str());
         oled.setTextColor(SSD1306_WHITE);
     }
-    // The time, once the clock is set, where the menu hint was.
-    time_t now = time(nullptr);
-    if (now > 1700000000) {
-        struct tm t;
-        localtime_r(&now, &t);
-        char hm[8];
-        int h = t.tm_hour % 12;
-        snprintf(hm, sizeof hm, "%d:%02d", h ? h : 12, t.tm_min);
-        int w = (int)strlen(hm) * 6;
-        oled.setCursor(W - w - 2, 53);
-        oled.print(hm);
-        anim = true;                 // the minute turns over on its own
+    // The time where the menu hint was; the hint until the clock is set.
+    if (home_clock()) {
     } else if (key.size() <= 8) {
         for (int i = 0; i < 3; i++) oled.drawFastHLine(W - 38, 54 + i * 2, 6, SSD1306_WHITE);     // the input key opens it
         oled.setCursor(W - 29, 53);
