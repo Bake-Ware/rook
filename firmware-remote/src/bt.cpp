@@ -33,11 +33,69 @@ volatile uint8_t v_codec = 1;
 uint32_t v_opened = 0;
 std::string v_buf, v_caps, v_ctl, services_text;
 
+// The remote never says the key was let go, so the end of an utterance is
+// heard: each 134-byte frame (sequence 2, id 1, predictor 2 big-endian, step
+// index 1, then 256 samples of 4-bit IMA ADPCM, high nibble first) is decoded
+// just far enough to tell speech from quiet. Speech, then V_QUIET frames of
+// quiet, ends it; so does V_WAIT frames with no speech at all.
+const int V_FRAME = 134, V_LOUD = 700, V_QUIET = 40, V_WAIT = 156;      // 32 ms a frame at 8 kHz
+uint8_t v_frame[V_FRAME];
+int v_fill = 0, v_frames = 0, v_quiet = 0;
+volatile bool v_speech = false;
+const int16_t V_STEPS[89] = {
+    7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107,
+    118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963,
+    1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894,
+    6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794,
+    32767};
+const int8_t V_INDEX[8] = {-1, -1, -1, -1, 2, 4, 6, 8};
+
+// How loud one frame is: the mean size of its samples.
+int frame_level(const uint8_t* f) {
+    int pred = (int16_t)((f[3] << 8) | f[4]), index = f[5];
+    if (index > 88) return -1;               // not a frame: a notification was lost and the stream slipped
+    long sum = 0;
+    for (int i = 6; i < V_FRAME; i++) {
+        for (int half = 0; half < 2; half++) {
+            int n = half ? (f[i] & 15) : (f[i] >> 4);
+            int step = V_STEPS[index], diff = step >> 3;
+            if (n & 4) diff += step;
+            if (n & 2) diff += step >> 1;
+            if (n & 1) diff += step >> 2;
+            pred += (n & 8) ? -diff : diff;
+            if (pred > 32767) pred = 32767;
+            if (pred < -32768) pred = -32768;
+            index += V_INDEX[n & 7];
+            if (index < 0) index = 0;
+            if (index > 88) index = 88;
+            sum += pred < 0 ? -pred : pred;
+        }
+    }
+    return (int)(sum / 256);
+}
+
+void on_audio(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool);
+
 void on_audio(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
     if (!v_open) return;
     xSemaphoreTake(mu, portMAX_DELAY);
     if (v_buf.size() + len <= V_BUF_MAX) v_buf.append((const char*)d, len);
     xSemaphoreGive(mu);
+    for (size_t i = 0; i < len; i++) {
+        v_frame[v_fill++] = d[i];
+        if (v_fill < V_FRAME) continue;
+        v_fill = 0;
+        v_frames++;
+        int level = frame_level(v_frame);
+        if (level < 0) continue;
+        if (level >= V_LOUD) {
+            v_speech = true;
+            v_quiet = 0;
+        } else {
+            v_quiet++;
+        }
+        if ((v_speech && v_quiet >= V_QUIET) || (!v_speech && v_frames >= V_WAIT)) v_want_close = true;
+    }
 }
 
 void logf(const char* fmt, ...);
@@ -53,8 +111,11 @@ void on_ctl(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
     if (len && d[0] == 0x0B) v_caps = hex;
     xSemaphoreGive(mu);
     if (!len) return;
-    if (d[0] == 0x08) {                      // START_SEARCH: its Assistant key
-        v_want_open = true;
+    if (d[0] == 0x08) {                      // START_SEARCH: its Assistant key (again: that's enough)
+        if (!v_open) v_want_open = true;
+        else if (millis() - v_opened > 700) v_want_close = true;
+    } else if (d[0] == 0x07 && v_open) {     // DPAD_SELECT: OK ends it
+        v_want_close = true;
     } else if (d[0] == 0x0B && len >= 5) {   // CAPS_RESP: version, codecs
         v_codec = (d[4] & 0x02) ? 2 : 1;
     } else if ((d[0] == 0x00 || d[0] == 0x0C) && v_open) {   // AUDIO_STOP, MIC_OPEN_ERROR
@@ -279,6 +340,8 @@ void task(void*) {
                     v_buf.clear();
                     xSemaphoreGive(mu);
                     const uint8_t open[] = {0x0C, 0x00, v_codec};        // MIC_OPEN, codec
+                    v_fill = v_frames = v_quiet = 0;
+                    v_speech = false;
                     v_done = false;
                     v_opened = millis();
                     v_open = true;                                        // before the write: audio may beat its answer
@@ -434,6 +497,8 @@ void voice_stop() {
 }
 
 int voice_codec() { return v_codec; }
+
+bool voice_spoke() { return v_speech; }
 
 bool voice_take(std::string& out, bool& done, size_t min_bytes) {
     out.clear();

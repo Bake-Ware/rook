@@ -125,6 +125,16 @@ def wav_bytes(pcm: list[int], rate: int) -> bytes:
     return buf.getvalue()
 
 
+def to_16k(pcm: list[int]) -> list[int]:
+    """8 kHz to the 16 kHz the speech engines take: each sample, then the
+    midpoint to the next."""
+    out = []
+    for i, s in enumerate(pcm):
+        out.append(s)
+        out.append((s + pcm[i + 1]) // 2 if i + 1 < len(pcm) else s)
+    return out
+
+
 def pages(text: str, cols: int, rows: int) -> list[str]:
     lines: list[str] = []
     for para in text.split("\n"):
@@ -178,19 +188,26 @@ async def hear(ctx, event):
         (ctx.data / "last.raw").write_bytes(raw)
         if pcm:
             (ctx.data / "last.wav").write_bytes(wav_bytes(pcm, rate))
+            (ctx.data / "last.json").write_text(repr(info))
     except OSError:
         pass
     if len(pcm) < rate // 4:
         await _show(ctx, remote, "Heard nothing", 6)
         return {"heard": "", "audio": info}
+    if rate == 8000:
+        pcm, rate = to_16k(pcm), 16000
     audio = {"data": base64.b64encode(wav_bytes(pcm, rate)).decode(), "mime": "audio/wav"}
     s = await _session(ctx, remote)
     try:
         s["next"] = (await ctx.call("speech.read", stream=s["stream"], after=s["next"], limit=500))["next"]
-        out = await ctx.call("speech.hear", stream=s["stream"], audio=audio, final=True)
-    except ctx.Error:                        # the session was closed, or is someone else's: a new one
+    except ctx.Error:                        # the session is gone (closed, or the hub restarted): a new one
         s = await _session(ctx, remote, fresh=True)
+    try:
         out = await ctx.call("speech.hear", stream=s["stream"], audio=audio, final=True)
+    except ctx.Error as e:
+        no_ears = "voice.stt" in str(e)
+        await _show(ctx, remote, "The hub has no speech-to-text yet" if no_ears else "That didn't work", 8)
+        raise
     heard = (out.get("heard") or "").strip()
     if not heard:
         await _show(ctx, remote, "Didn't catch that", 6)

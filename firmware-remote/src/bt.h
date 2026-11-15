@@ -32,6 +32,10 @@ bool voice_open();                    // its microphone is open now
 void voice_start();
 void voice_stop();
 int voice_codec();                    // 1: ADPCM 8 kHz, 2: ADPCM 16 kHz
+bool voice_spoke();                   // the utterance (open or just ended) had speech in it
+// The remote never says its key was let go: the microphone closes after about
+// 1.3 s of quiet following speech, after 5 s with no speech, on a second press
+// of the key or its OK, or after 12 s.
 // Audio since the last call, once there are min_bytes of it or the utterance
 // ended. done: this was the last of an utterance. False: nothing to take.
 bool voice_take(std::string& out, bool& done, size_t min_bytes);

@@ -8,7 +8,7 @@
 # (remote.display). Code: scripts/voice.py.
 manifest: 1
 plugin: remote-voice
-version: 0.1.0
+version: 0.1.1
 title: Remote voice
 doc: Talk to the house agent with a Rook remote's Assistant key; the answer comes back on its screen.
 package: devices
