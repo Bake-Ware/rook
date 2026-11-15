@@ -188,6 +188,55 @@ void menu_draw(uint32_t ms) {
     }
 }
 
+// The screen at rest (the wide one): a bar with the remote's name and what it
+// is joined to (the band, Wi-Fi, a Bluetooth remote), the device it controls
+// large in a frame, and the last key pressed in a pill.
+void home_draw(uint32_t ms) {
+    const std::string &link = status[0], &target = status[2], &key = status[3];
+    bool bt = status[1].size() > 4, band = link == "band", wifi = band || link == "hub?" || link == "clock";
+    oled.fillRect(0, 0, W, 11, SSD1306_WHITE);
+    for (int cx : {0, W - 1})
+        for (int cy : {0, 10}) oled.drawPixel(cx, cy, SSD1306_BLACK);
+    oled.setTextColor(SSD1306_BLACK);
+    oled.setCursor(3, 2);
+    oled.print(band ? "ROOK" : link.substr(0, 8).c_str());
+    int x = W - 11;
+    if (bt) { oled.drawBitmap(x, 1, IC_BT, 8, 8, SSD1306_BLACK); x -= 11; }
+    if (wifi) { oled.drawBitmap(x, 1, IC_WIFI, 8, 8, SSD1306_BLACK); x -= 10; }
+    if (band) oled.fillCircle(x + 4, 5, 2, SSD1306_BLACK);
+    else if ((ms / 500) & 1) oled.drawCircle(x + 4, 5, 2, SSD1306_BLACK);     // not on the band: it blinks
+    if (!band) anim = true;
+    oled.setTextColor(SSD1306_WHITE);
+    oled.drawRoundRect(0, 15, W, 30, 5, SSD1306_WHITE);
+    int n = (int)target.size();
+    if (n && n * 12 <= W - 8) {
+        oled.setTextSize(2);
+        oled.setCursor((W - n * 12) / 2 + 1, 23);
+        oled.print(target.c_str());
+        oled.setTextSize(1);
+    } else if (n * 6 <= W - 8) {
+        oled.setCursor((W - n * 6) / 2, 26);
+        oled.print(n ? target.c_str() : "no device");
+    } else {
+        oled.setCursor(5, 26);
+        oled.print((target.substr(0, (W - 16) / 6 - 1) + "~").c_str());
+    }
+    if (!key.empty()) {
+        std::string k = key.substr(0, 10);
+        int w = (int)k.size() * 6 + 9;
+        oled.fillRoundRect(0, 50, w, 13, 6, SSD1306_WHITE);
+        oled.setTextColor(SSD1306_BLACK);
+        oled.setCursor(5, 53);
+        oled.print(k.c_str());
+        oled.setTextColor(SSD1306_WHITE);
+    }
+    if (key.size() <= 8) {
+        for (int i = 0; i < 3; i++) oled.drawFastHLine(W - 38, 54 + i * 2, 6, SSD1306_WHITE);     // the input key opens it
+        oled.setCursor(W - 29, 53);
+        oled.print("menu");
+    }
+}
+
 void draw() {
     oled.clearDisplay();
     oled.setTextSize(1);
@@ -222,6 +271,8 @@ void draw() {
             int h = std::max(4, H * ROWS / n);
             oled.drawFastVLine(W - 1, (H - h) * top / (n - ROWS), h, 1);
         }
+    } else if (W >= 100) {
+        home_draw(ms);
     } else {
         static const int Y[4] = {0, 14, 24, 44};
         for (int i = 0; i < 4; i++) {
