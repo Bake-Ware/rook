@@ -18,6 +18,7 @@ agent, or an agent for a person).
                           download, from files an owner put in the data folder (:mod:`..apkfeed`)
     GET  /firmware.json, /firmware/<name>.bin  no token: firmware for the band's small devices, from
                           files an owner put in the data folder (:mod:`..firmware`)
+    GET  /once/<plugin>/<token>  no token: a file a hub plugin hands out once (:mod:`..once`)
 
 Enrollment (spec 8; rook.core2.enroll.hub):
 
@@ -52,6 +53,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 from ..apkfeed import ApkFeed
 from ..firmware import FirmwareFeed
+from ..once import OnceFiles
 from .web import Web
 
 log = logging.getLogger("rook.hub.door.http")
@@ -80,6 +82,7 @@ class HttpDoor:
         self.band = options.get("band")
         self._apk: ApkFeed | None = None
         self._firmware: FirmwareFeed | None = None
+        self._once: OnceFiles | None = None
         self._thread: threading.Thread | None = None
 
     async def start(self) -> None:
@@ -106,6 +109,12 @@ class HttpDoor:
         if self._firmware is None:
             self._firmware = FirmwareFeed(self.hub.data)
         return self._firmware
+
+    @property
+    def once(self) -> OnceFiles:
+        if self._once is None:
+            self._once = OnceFiles(self.hub.data)
+        return self._once
 
     def challenge(self, host: str | None = None) -> str:
         """The ``WWW-Authenticate`` a 401 carries (``host``: the request's Host header)."""
@@ -229,6 +238,12 @@ class _Handler(BaseHTTPRequestHandler):
             if got is None:
                 raise _Error(404, "no such firmware here")
             return 200, _File(got, "application/octet-stream", name)
+        if method == "GET" and path.startswith("/once/") and path.count("/") == 3:   # the address is the key
+            plugin, token = path[len("/once/"):].split("/")
+            got = self.door.once.take(unquote(plugin), unquote(token))
+            if got is None:
+                raise _Error(404, "nothing here")
+            return 200, _File(got, "application/octet-stream", "once.bin", once=True)
         if method == "POST" and path in OPEN:      # a device enrolling has no token yet
             extra = {"address": self._address()} if OPEN[path] == "ask" else {}
             return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body(), **extra))
@@ -276,6 +291,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if f.once:                       # handed out: gone, however the sending goes
+            self.door.once.done(f.path)
         with src:
             self.send_response(200)
             self.send_header("Content-Type", f.type)
@@ -369,8 +386,8 @@ def _encode(body: dict | bytes | None) -> tuple[dict, bytes]:
 class _File:
     """A file a route answers with: streamed, not read into memory."""
 
-    def __init__(self, path: Path, type: str, name: str):
-        self.path, self.type, self.name = path, type, name
+    def __init__(self, path: Path, type: str, name: str, once: bool = False):
+        self.path, self.type, self.name, self.once = path, type, name, once
 
 
 class _Error(Exception):
