@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.6.0
+version: 0.7.0
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -45,7 +45,7 @@ caps:
       buttons: { type: list, items: { type: str } }
     result: { type: map }
   bt:
-    doc: The Bluetooth remote paired to this one (most Android TV remotes). Its keys arrive as remote.button events too, with source bt; a key that means what one of this remote's buttons means has that button's name, any other is bt_c<usage> or bt_k<code>. action pair looks for a remote in pairing mode for 30 seconds and bonds with it; forget drops it; blank answers its state (off, idle, pairing, waiting, connected), name and last raw report.
+    doc: The Bluetooth remote paired to this one (most Android TV remotes). Its keys arrive as remote.button events too, with source bt; a key that means what one of this remote's buttons means has that button's name, any other is bt_c<usage> or bt_k<code>. action pair looks for a remote in pairing mode for 30 seconds and bonds with it; forget drops it; blank answers its state (off, idle, pairing, waiting, connected), name, last raw report, its GATT services and whether it has a microphone the remote can use (voice).
     risk: write
     scope: local
     args:
@@ -102,6 +102,21 @@ caps:
     result: { type: map }
 
 emits:
+  remote.voice:
+    doc: Someone finished saying something into the microphone of the Bluetooth remote paired to this one (its Assistant key). The audio came before it, in parts remote.voice.part events with the same id.
+    payload:
+      id: { type: str, required: true }
+      parts: { type: int, required: true, doc: How many remote.voice.part events carried it. }
+      bytes: { type: int }
+      codec: { type: str, doc: "adpcm8k or adpcm16k: Google's voice-over-BLE frames (ATVV) of IMA ADPCM, mono." }
+      worker: { type: str, doc: This remote's name. }
+      ms: { type: int, doc: How long the microphone was open. }
+  remote.voice.part:
+    doc: A piece of what is being said (see remote.voice).
+    payload:
+      id: { type: str, required: true }
+      seq: { type: int, required: true }
+      data: { type: str, required: true, doc: "Base64 of the audio bytes the remote sent, in order." }
   remote.button:
     doc: A button on the remote was pressed (action press) or held down (action long, once while held). Not sent for the input button (it opens the remote's menu), nor while the menu or the game is up.
     payload:

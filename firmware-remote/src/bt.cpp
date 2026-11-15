@@ -19,8 +19,54 @@ std::function<void(const char*)> logger;
 struct Last { uint16_t handle; uint32_t usage; } lasts[8];
 int nlasts = 0;
 
+// Voice (ATVV 0.4): commands are written to TX, audio arrives on RX, the
+// remote's side of the conversation on CTL.
+const char* const V_SVC = "ab5e0001-5a21-4f05-bc7d-af01f617b664";
+const char* const V_TX = "ab5e0002-5a21-4f05-bc7d-af01f617b664";
+const char* const V_RX = "ab5e0003-5a21-4f05-bc7d-af01f617b664";
+const char* const V_CTL = "ab5e0004-5a21-4f05-bc7d-af01f617b664";
+const uint32_t V_MAX_MS = 12000;            // an utterance is cut off here
+const size_t V_BUF_MAX = 16000;             // nobody is taking the audio: stop keeping it
+NimBLERemoteCharacteristic* v_tx = nullptr;
+volatile bool v_ready = false, v_open = false, v_want_open = false, v_want_close = false, v_done = false;
+volatile uint8_t v_codec = 1;
+uint32_t v_opened = 0;
+std::string v_buf, v_caps, v_ctl, services_text;
+
+void on_audio(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
+    if (!v_open) return;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    if (v_buf.size() + len <= V_BUF_MAX) v_buf.append((const char*)d, len);
+    xSemaphoreGive(mu);
+}
+
+void logf(const char* fmt, ...);
+
+// Runs on the Bluetooth stack's task: only flags here, the writes are the bt task's.
+void on_ctl(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
+    char hex[40];
+    int at = 0;
+    for (size_t i = 0; i < len && i < 16; i++) at += snprintf(hex + at, sizeof hex - at, "%02x", d[i]);
+    logf("bt: voice control %s", hex);
+    xSemaphoreTake(mu, portMAX_DELAY);
+    v_ctl = hex;
+    if (len && d[0] == 0x0B) v_caps = hex;
+    xSemaphoreGive(mu);
+    if (!len) return;
+    if (d[0] == 0x08) {                      // START_SEARCH: its Assistant key
+        v_want_open = true;
+    } else if (d[0] == 0x0B && len >= 5) {   // CAPS_RESP: version, codecs
+        v_codec = (d[4] & 0x02) ? 2 : 1;
+    } else if ((d[0] == 0x00 || d[0] == 0x0C) && v_open) {   // AUDIO_STOP, MIC_OPEN_ERROR
+        v_open = false;
+        v_done = true;
+    }
+}
+
+void logf(const char* fmt, ...);
+
 void logf(const char* fmt, ...) {
-    char b[160];
+    char b[200];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(b, sizeof b, fmt, ap);
@@ -192,16 +238,71 @@ void connect_to(const std::string& addr, uint8_t type) {
         return;
     }
     nlasts = 0;
+    std::string svcs;
+    auto* all = client->getServices(true);
+    if (all)
+        for (auto* s : *all) svcs += (svcs.empty() ? "" : " ") + s->getUUID().toString();
+    v_tx = nullptr;
+    bool voice = false;
+    NimBLERemoteService* vs = client->getService(NimBLEUUID(V_SVC));
+    if (vs) {
+        NimBLERemoteCharacteristic* rx = vs->getCharacteristic(NimBLEUUID(V_RX));
+        NimBLERemoteCharacteristic* ctl = vs->getCharacteristic(NimBLEUUID(V_CTL));
+        v_tx = vs->getCharacteristic(NimBLEUUID(V_TX));
+        if (v_tx && rx && ctl && rx->subscribe(true, on_audio) && ctl->subscribe(true, on_ctl)) {
+            const uint8_t caps[] = {0x0A, 0x00, 0x04, 0x00, 0x03};      // GET_CAPS: 0.4, ADPCM 8 and 16 kHz
+            voice = v_tx->writeValue(caps, sizeof caps, !v_tx->canWriteNoResponse());
+        }
+    }
+    xSemaphoreTake(mu, portMAX_DELAY);
+    services_text = svcs;
+    v_buf.clear();
+    xSemaphoreGive(mu);
+    v_open = v_want_open = v_want_close = v_done = false;
+    v_ready = voice;
     connected = true;
-    logf("bt: connected to %s, %d input reports", addr.c_str(), n);
+    logf("bt: connected to %s, %d input reports, voice %s (mtu %d)", addr.c_str(), n, voice ? "yes" : "no",
+         (int)client->getMTU());
+    logf("bt: services %s", svcs.c_str());
 }
 
 void task(void*) {
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(200));
+        vTaskDelay(pdMS_TO_TICKS(v_ready ? 30 : 200));
         if (!inited) continue;
+        if (connected && v_ready && v_tx && client && client->isConnected()) {
+            bool rsp = !v_tx->canWriteNoResponse();
+            if (v_want_open) {
+                v_want_open = false;
+                if (!v_open) {
+                    xSemaphoreTake(mu, portMAX_DELAY);
+                    v_buf.clear();
+                    xSemaphoreGive(mu);
+                    const uint8_t open[] = {0x0C, 0x00, v_codec};        // MIC_OPEN, codec
+                    v_done = false;
+                    v_opened = millis();
+                    v_open = true;                                        // before the write: audio may beat its answer
+                    if (!v_tx->writeValue(open, sizeof open, rsp)) {
+                        v_open = false;
+                        logf("bt: the remote did not take MIC_OPEN");
+                    }
+                }
+            }
+            if (v_open && (v_want_close || millis() - v_opened > V_MAX_MS)) {
+                const uint8_t close[] = {0x0D};                           // MIC_CLOSE
+                v_tx->writeValue(close, sizeof close, rsp);
+                v_open = false;
+                v_done = true;
+            }
+            v_want_close = false;
+        }
         if (connected && !(client && client->isConnected())) {
             connected = false;
+            v_ready = false;
+            if (v_open) {
+                v_open = false;
+                v_done = true;
+            }
             xSemaphoreTake(mu, portMAX_DELAY);
             held_name.clear();
             xSemaphoreGive(mu);
@@ -318,6 +419,51 @@ std::string held() {
     std::string h = held_name;
     xSemaphoreGive(mu);
     return h;
+}
+
+bool voice_ready() { return connected && v_ready; }
+
+bool voice_open() { return v_open; }
+
+void voice_start() {
+    if (voice_ready() && !v_open) v_want_open = true;
+}
+
+void voice_stop() {
+    if (v_open) v_want_close = true;
+}
+
+int voice_codec() { return v_codec; }
+
+bool voice_take(std::string& out, bool& done, size_t min_bytes) {
+    out.clear();
+    done = false;
+    if (!mu) return false;
+    bool ended = v_done && !v_open;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    if (v_buf.size() >= min_bytes || (ended && !v_buf.empty())) out.swap(v_buf);
+    xSemaphoreGive(mu);
+    if (ended) {
+        v_done = false;
+        done = true;
+    }
+    return done || !out.empty();
+}
+
+std::string services() {
+    if (!mu) return "";
+    xSemaphoreTake(mu, portMAX_DELAY);
+    std::string s = services_text;
+    xSemaphoreGive(mu);
+    return s;
+}
+
+std::string voice_info() {
+    if (!mu) return "";
+    xSemaphoreTake(mu, portMAX_DELAY);
+    std::string s = "caps " + (v_caps.empty() ? std::string("-") : v_caps) + ", last " + (v_ctl.empty() ? std::string("-") : v_ctl);
+    xSemaphoreGive(mu);
+    return s;
 }
 
 bool next_key(std::string& name) {

@@ -23,4 +23,19 @@ std::string last_report();            // the last raw HID report, hex (to map od
 bool next_key(std::string& name);     // a key pressed since the last call
 std::string held();                   // the key held down now (its raw name), or blank
 
+// The paired remote's microphone, when it has Google's voice service (ATVV:
+// most Android TV remotes). The remote asks for it when its Assistant key is
+// pressed; voice_start() asks it. Audio comes out of voice_take() as the
+// remote sent it: ATVV frames of IMA ADPCM, decoded on the hub.
+bool voice_ready();                   // the connected remote has the service
+bool voice_open();                    // its microphone is open now
+void voice_start();
+void voice_stop();
+int voice_codec();                    // 1: ADPCM 8 kHz, 2: ADPCM 16 kHz
+// Audio since the last call, once there are min_bytes of it or the utterance
+// ended. done: this was the last of an utterance. False: nothing to take.
+bool voice_take(std::string& out, bool& done, size_t min_bytes);
+std::string services();               // the connected remote's GATT services
+std::string voice_info();             // its answer about its voice service, and its last control message (hex)
+
 }  // namespace bt

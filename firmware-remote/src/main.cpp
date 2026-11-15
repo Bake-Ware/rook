@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <deque>
 #include <map>
+#include <esp_random.h>
 #include <esp_wifi.h>
 #include <time.h>
 #include "bt.h"
@@ -22,13 +23,14 @@
 #include "osk.h"
 #include "ota.h"
 #include "rc_sig.h"
+#include "rc_util.h"
 #include "rc_worker.h"
 #include "remote_manifest.h"
 #include "settings.h"
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.6.1"
+#define FW_VERSION "0.7.0"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -57,6 +59,10 @@ enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS };
 // A device on this network the buttons drive directly (dev.h), in place of a
 // hub target: its id, and its name for the screen and the events.
 static std::string local_id, local_name;
+// Talking to the home agent through the paired remote's microphone: the audio
+// leaves as remote.voice.part events while it is spoken, then remote.voice.
+static uint32_t voice_id = 0, voice_seq = 0, voice_bytes = 0, voice_started = 0;
+static bool voice_was_open = false, voice_hold = false;
 static bool devs_pending = false;           // the menu waits for a device scan
 static uint32_t devs_scans = 0;
 static MenuKind menu_kind = MENU_MAIN;
@@ -311,6 +317,15 @@ static void on_button(const ButtonEvent& ev) {
         else ui::ask_move(1);
         return;
     }
+    // The Assistant key: talk to the home agent. Tap to start and tap to stop,
+    // or hold it down while talking. (A remote may also ask for its microphone itself.)
+    if (is_name(e.name, {"assistant", "search", "voice"}) && mode != GAME && mode != TYPING) {
+        if (strcmp(e.action, "press")) return;
+        if (!bt::voice_ready()) ui::flash("no\nmic");
+        else if (!bt::voice_open()) bt::voice_start();
+        else if (millis() - voice_started > 700) bt::voice_stop();
+        return;
+    }
     if (swallow || mode == GAME) return;       // the game reads the held buttons itself (loop)
     if (mode == TYPING) {                      // a Wi-Fi password on the on-screen keyboard
         if (strcmp(e.action, "press")) return;
@@ -394,6 +409,11 @@ static std::string bt_name_of(const std::string& raw) {
 
 static void fill_bt(JsonObject o) {
     o["state"] = bt::state();
+    o["voice"] = bt::voice_ready();
+    if (bt::state() == "connected") {
+        o["voice_info"] = bt::voice_info();
+        o["services"] = bt::services();
+    }
     if (bt::saved()) {
         o["name"] = bt::name();
         o["address"] = bt::address();
@@ -1085,6 +1105,56 @@ void loop() {
         wifi_scan_state = 0;
         ui::text("", 0);
         if (mode == REMOTE) open_wifi_menu();
+    }
+    // The microphone: say so on the screen, and send the audio on as it comes.
+    bool voice_open = bt::voice_open();
+    if (voice_open && !voice_was_open) {
+        voice_id = esp_random() | 1;
+        voice_seq = voice_bytes = 0;
+        voice_started = ms;
+        voice_hold = false;
+        ui::text("Listening...", 15);
+    }
+    if (voice_open) {
+        std::string held = bt_name_of(bt::held());
+        bool down = is_name(held, {"assistant", "search", "voice"});
+        if (down && ms - voice_started > 600) voice_hold = true;      // held while talking: letting go ends it
+        if (voice_hold && !down) bt::voice_stop();
+        if (worker_on && worker.events_queued() > 16) bt::voice_stop();   // the hub is not keeping up
+    }
+    voice_was_open = voice_open;
+    {
+        std::string audio;
+        bool done = false;
+        if (voice_id && bt::voice_take(audio, done, 1800)) {
+            char id[12];
+            snprintf(id, sizeof id, "%08x", (unsigned)voice_id);
+            if (!audio.empty() && worker_on) {
+                JsonDocument p;
+                p["id"] = id;
+                p["seq"] = voice_seq++;
+                p["data"] = rc::b64((const uint8_t*)audio.data(), audio.size());
+                worker.emit("remote.voice.part", p.as<JsonObjectConst>());
+                voice_bytes += audio.size();
+            }
+            if (done) {
+                if (voice_bytes && worker_on) {
+                    JsonDocument p;
+                    p["id"] = id;
+                    p["parts"] = voice_seq;
+                    p["bytes"] = voice_bytes;
+                    p["codec"] = bt::voice_codec() == 2 ? "adpcm16k" : "adpcm8k";
+                    p["worker"] = settings::name();
+                    p["ms"] = ms - voice_started;
+                    worker.emit("remote.voice", p.as<JsonObjectConst>());
+                    ui::text("Thinking...", 45);
+                } else {
+                    ui::text("", 0);
+                    ui::flash(worker_on ? "heard\nnothing" : "no hub");
+                }
+                voice_id = 0;
+            }
+        }
     }
     if (devs_pending && lan::scans() != devs_scans) {
         devs_pending = false;
