@@ -30,7 +30,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.7.2"
+#define FW_VERSION "0.7.3"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -1138,7 +1138,7 @@ void loop() {
                 voice_bytes += audio.size();
             }
             if (done) {
-                if (voice_bytes && worker_on && bt::voice_spoke()) {
+                if (voice_bytes && worker_on) {      // even when it heard no speech itself: the hub's ears are better
                     JsonDocument p;
                     p["id"] = id;
                     p["parts"] = voice_seq;

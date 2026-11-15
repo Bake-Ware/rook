@@ -40,8 +40,11 @@ std::string v_buf, v_caps, v_ctl, services_text;
 // quiet, ends it; so does V_WAIT frames with no speech at all.
 // The key's own click is loud: the first V_SKIP frames don't count, and it
 // takes V_SPOKEN loud frames to call it speech.
-const int V_FRAME = 134, V_LOUD = 700, V_QUIET = 40, V_WAIT = 156;      // 32 ms a frame at 8 kHz
-const int V_SKIP = 10, V_SPOKEN = 4;
+// Loud is measured against the room: three times the quietest it has been
+// (v_floor, which creeps up so one dead frame doesn't pin it), plus a little.
+const int V_FRAME = 134, V_QUIET = 40, V_WAIT = 156;      // 32 ms a frame at 8 kHz
+const int V_SKIP = 10, V_SPOKEN = 3;
+int v_floor = 0, v_max = 0, v_run = 0, v_louds = 0;
 uint8_t v_frame[V_FRAME];
 int v_fill = 0, v_frames = 0, v_quiet = 0, v_loud = 0;
 volatile bool v_speech = false;
@@ -91,12 +94,15 @@ void on_audio(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
         v_frames++;
         int level = frame_level(v_frame);
         if (level < 0 || v_frames <= V_SKIP) continue;
-        if (level >= V_LOUD) {
-            if (++v_loud >= V_SPOKEN) v_speech = true;
-            v_quiet = 0;
-        } else {
-            v_quiet++;
-        }
+        if (level < v_floor) v_floor = level;
+        else v_floor += 1;
+        if (level > v_max) v_max = level;
+        bool loud = level > v_floor * 3 + 100;
+        v_run = loud ? v_run + 1 : 0;
+        if (loud) v_louds++;
+        if (v_run >= V_SPOKEN) v_speech = true;         // a few loud frames in a row: someone is talking
+        if (v_run >= 2) v_quiet = 0;                    // one loud frame alone is a knock, not more talking
+        else v_quiet++;
         if ((v_speech && v_quiet >= V_QUIET) || (!v_speech && v_frames >= V_WAIT)) v_want_close = true;
     }
 }
@@ -343,7 +349,8 @@ void task(void*) {
                     v_buf.clear();
                     xSemaphoreGive(mu);
                     const uint8_t open[] = {0x0C, 0x00, v_codec};        // MIC_OPEN, codec
-                    v_fill = v_frames = v_quiet = v_loud = 0;
+                    v_fill = v_frames = v_quiet = v_loud = v_max = v_run = v_louds = 0;
+                    v_floor = 30000;
                     v_speech = false;
                     v_done = false;
                     v_opened = millis();
@@ -529,7 +536,10 @@ std::string services() {
 std::string voice_info() {
     if (!mu) return "";
     xSemaphoreTake(mu, portMAX_DELAY);
-    std::string s = "caps " + (v_caps.empty() ? std::string("-") : v_caps) + ", last " + (v_ctl.empty() ? std::string("-") : v_ctl);
+    std::string s = "caps " + (v_caps.empty() ? std::string("-") : v_caps) + ", last " + (v_ctl.empty() ? std::string("-") : v_ctl) +
+                    "; last utterance: frames " + std::to_string(v_frames) + ", loudest " + std::to_string(v_max) +
+                    ", floor " + std::to_string(v_floor) + ", loud frames " + std::to_string(v_louds) +
+                    (v_speech ? ", speech" : ", no speech");
     xSemaphoreGive(mu);
     return s;
 }
