@@ -20,6 +20,9 @@ void redraw();                                        // something drawn from ou
 void network(const std::string& ssid);                 // the Wi-Fi network in use, for the status screen
 void status_line(int line, const std::string& text);  // lines 0..3 of the status screen
 void text(const std::string& t, uint32_t seconds);    // agent text; 0 s = until replaced
+// Something going on, in its own look: a title, what it says, and a bar
+// (percent 0..100; -2: busy; -1: none). A blank title, or text(), ends it.
+void card(const std::string& title, const std::string& body, int percent);
 // Move a text too long for the screen by delta lines. False: nothing on screen scrolls.
 bool text_scroll(int delta);
 std::string shown();                                  // what the screen says now

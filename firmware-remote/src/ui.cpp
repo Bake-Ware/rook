@@ -111,6 +111,16 @@ void list(int y0, const std::vector<std::string>& opts, int sel, uint32_t ms) {
     }
 }
 
+// fit characters of s: the start, and when s is longer a window that walks
+// along it, resting a moment at each end.
+std::string window(const std::string& s, int fit, uint32_t ms) {
+    int over = (int)s.size() - fit;
+    if (over <= 0 || fit <= 0) return s.substr(0, std::max(0, fit));
+    anim = true;
+    int p = (int)((ms - scroll_t0) / 280) % (over + 10);
+    return s.substr(p < 5 ? 0 : std::min(p - 5, over), fit);
+}
+
 // 8x8 pictures for the menu's rows, picked by what the row says.
 const uint8_t IC_TV[] PROGMEM = {0x7E, 0x81, 0x81, 0x81, 0x81, 0x7E, 0x18, 0x3C};
 const uint8_t IC_GAME[] PROGMEM = {0x00, 0x7E, 0xFF, 0xDB, 0xFF, 0xE7, 0xC3, 0x00};
@@ -120,6 +130,7 @@ const uint8_t IC_FIND[] PROGMEM = {0x38, 0x44, 0x82, 0x82, 0x44, 0x3C, 0x06, 0x0
 const uint8_t IC_CHAT[] PROGMEM = {0x7E, 0x81, 0x81, 0x81, 0x7E, 0x30, 0x20, 0x00};
 const uint8_t IC_X[] PROGMEM = {0x00, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x00};
 const uint8_t IC_DOT[] PROGMEM = {0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00};
+const uint8_t IC_RING[] PROGMEM = {0x00, 0x3C, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00};
 
 const uint8_t* icon_for(const std::string& label) {
     std::string l;
@@ -131,7 +142,8 @@ const uint8_t* icon_for(const std::string& label) {
     if (has(" bt") || has("bluetooth")) return IC_BT;
     if (has("find") || has("scan")) return IC_FIND;
     if (has("assistant")) return IC_CHAT;
-    if (has("tv") || has("roku") || has("cast")) return IC_TV;
+    if (has(" (")) return IC_RING;               // found, but nothing here drives it: name (what it answered as)
+    if (has("tv") || has("roku") || has("cast") || menu_title == "DEVICES") return IC_TV;
     return IC_DOT;
 }
 
@@ -169,7 +181,8 @@ void menu_draw(uint32_t ms) {
         int y = Y0 + r * ROW;
         oled.drawBitmap(3, y + 1, icon_for(item), 8, 8, SSD1306_WHITE);
         oled.setCursor(15, y + 2);
-        oled.print(item.substr(0, (W - 4 - 16) / 6).c_str());
+        int fit = (W - 4 - 16) / 6;
+        oled.print((menu_first + r == menu_sel ? window(item, fit, ms) : item.substr(0, fit)).c_str());
     }
     int target = Y0 + (menu_sel - menu_first) * ROW;
     if (menu_hl < 0 || menu_first != menu_was_first) menu_hl = target;     // the list itself moved: no slide
@@ -196,8 +209,8 @@ const uint8_t IC_ROOK[] PROGMEM = {0xDB, 0xFF, 0x7E, 0x3C, 0x3C, 0x3C, 0x7E, 0xF
 // device it controls large in a frame, and the last key pressed in a pill.
 // A note (a key just pressed, something that happened) takes the frame for
 // its moment, and the device moves to the bottom row.
-void home_draw(uint32_t ms, bool noted) {
-    const std::string &link = status[0], &target = status[2], &key = status[3];
+void home_bar(uint32_t ms) {
+    const std::string& link = status[0];
     bool bt = status[1].size() > 4, band = link == "band", wifi = band || link == "hub?" || link == "clock";
     oled.fillRect(0, 0, W, 11, SSD1306_WHITE);
     for (int cx : {0, W - 1})
@@ -210,12 +223,56 @@ void home_draw(uint32_t ms, bool noted) {
     else if (wifi) x -= 11;
     if (!band) anim = true;
     std::string name = wifi && !net_name.empty() ? net_name : link == "wifi-" ? "no Wi-Fi" : link == "wifi?" ? "set up Wi-Fi" : link;
-    int room = (x + 8 - 3) / 6;
-    if ((int)name.size() > room) name = name.substr(0, std::max(0, room - 1)) + "~";
     oled.setTextColor(SSD1306_BLACK);
     oled.setCursor(3, 2);
-    oled.print(name.c_str());
+    oled.print(window(name, (x + 8 - 3) / 6, ms).c_str());
     oled.setTextColor(SSD1306_WHITE);
+}
+
+// Something going on (an update, a look around the network): its name between
+// rules, what it says large, and how far along it is.
+bool card_on = false;
+std::string card_title, card_body;
+uint32_t card_until = 0;       // a busy card nobody ended goes away by itself
+int card_pct = -1;             // 0..100: that far; -2: busy, no telling how far; -1: no bar
+
+void card_draw(uint32_t ms) {
+    home_bar(ms);
+    int tw = (int)card_title.size() * 6, side = (W - tw) / 2 - 10;
+    oled.setCursor((W - tw) / 2, 15);
+    oled.print(card_title.c_str());
+    if (side > 0) {
+        oled.drawFastHLine(4, 18, side, SSD1306_WHITE);
+        oled.drawFastHLine(W - 4 - side, 18, side, SSD1306_WHITE);
+    }
+    int n = (int)card_body.size(), y = card_pct == -1 ? 34 : 29;
+    if (n * 12 <= W - 8) {
+        oled.setTextSize(2);
+        oled.setCursor((W - n * 12) / 2 + 1, y);
+        oled.print(card_body.c_str());
+        oled.setTextSize(1);
+    } else {
+        auto ls = wrap(card_body, 2);
+        for (size_t i = 0; i < ls.size(); i++) {
+            oled.setCursor(std::max(1, (W - (int)ls[i].size() * 6) / 2), y + (ls.size() > 1 ? 0 : 4) + (int)i * 9);
+            oled.print(ls[i].c_str());
+        }
+    }
+    if (card_pct == -1) return;
+    oled.drawRoundRect(4, 51, W - 8, 10, 4, SSD1306_WHITE);
+    if (card_pct >= 0) {
+        int w = (W - 14) * std::min(card_pct, 100) / 100;
+        if (w > 2) oled.fillRoundRect(7, 54, w, 4, 1, SSD1306_WHITE);
+    } else {                                  // a block going back and forth
+        int span = W - 14 - 26, p = (int)(ms / 25) % (2 * span);
+        oled.fillRoundRect(7 + (p < span ? p : 2 * span - p), 54, 26, 4, 1, SSD1306_WHITE);
+        anim = true;
+    }
+}
+
+void home_draw(uint32_t ms, bool noted) {
+    const std::string &target = status[2], &key = status[3];
+    home_bar(ms);
     oled.drawRoundRect(0, 15, W, 30, 5, SSD1306_WHITE);
     auto big = [&](const std::string& t) {
         int n = (int)t.size();
@@ -278,6 +335,8 @@ void draw() {
         tetris::draw(oled);
     } else if (menu_on) {
         menu_draw(ms);
+    } else if (card_on && W >= 100) {
+        card_draw(ms);
     } else if (W >= 100 && note_until && (int32_t)(note_until - ms) > 0) {
         home_draw(ms, true);
     } else if (note_until && (int32_t)(note_until - ms) > 0) {
@@ -335,6 +394,7 @@ void tick() {
     uint32_t ms = millis();
     if (agent_on && agent_until && (int32_t)(ms - agent_until) >= 0) { agent_on = false; dirty = true; }
     if (note_until && (int32_t)(ms - note_until) >= 0) { note_until = 0; dirty = true; }
+    if (card_on && card_until && (int32_t)(ms - card_until) >= 0) { card_on = false; dirty = true; }
     if (anim && ms - last_draw >= 40) dirty = true;
     if (dirty && !dark) {
         dirty = false;
@@ -359,8 +419,24 @@ void status_line(int line, const std::string& t) {
     xSemaphoreGive(mu);
 }
 
+void card(const std::string& title, const std::string& body, int percent) {
+    if (W < 100) {                   // the narrow screen says it in plain text
+        text(title.empty() ? std::string() : title + "\n" + body, 0);
+        return;
+    }
+    xSemaphoreTake(mu, portMAX_DELAY);
+    card_on = !title.empty();
+    card_title = title;
+    card_body = body;
+    card_pct = percent;
+    card_until = percent == -2 ? (millis() + 40000) | 1 : 0;
+    dirty = true;
+    xSemaphoreGive(mu);
+}
+
 void text(const std::string& t, uint32_t seconds) {
     xSemaphoreTake(mu, portMAX_DELAY);
+    card_on = false;
     agent_text = t;
     agent_top = 0;
     agent_on = !t.empty();
@@ -391,6 +467,7 @@ std::string shown() {
     if (ask_on) s = ask_prompt;
     else if (canvas_fn) s = canvas_name;
     else if (game_on) s = "Tetris";
+    else if (card_on && !menu_on) s = card_title + "\n" + card_body;
     else if (menu_on) {
         s = menu_title;
         for (size_t i = 0; i < menu_items.size(); i++) s += std::string((int)i == menu_sel ? "\n> " : "\n  ") + menu_items[i];
@@ -454,6 +531,7 @@ bool asking() { return ask_on; }
 
 void menu_begin(const std::string& title, const std::vector<std::string>& items, int selected) {
     xSemaphoreTake(mu, portMAX_DELAY);
+    card_on = false;
     menu_on = true;
     menu_title = title;
     menu_items = items;

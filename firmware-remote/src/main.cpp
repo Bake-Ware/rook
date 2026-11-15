@@ -31,7 +31,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.9.4"
+#define FW_VERSION "0.9.5"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -222,7 +222,7 @@ static void start_dev_scan() {
     }
     devs_pending = true;
     mode = REMOTE;
-    ui::text("Looking for devices", 30);
+    ui::card("DEVICES", "scanning", -2);
 }
 
 // The buttons are this device's from now on; an LG TV not yet paired asks its
@@ -266,7 +266,7 @@ static void start_wifi_scan() {
     wifi_scan_state = 1;
     wifi_pending = true;
     mode = REMOTE;
-    ui::text("Wi-Fi:\nlooking for networks", 25);
+    ui::card("WI-FI", "scanning", -2);
 }
 
 static void save_wifi(const std::string& ssid, const std::string& pass) {
@@ -1165,7 +1165,14 @@ void setup() {
     load_sleep();
     cpu_full = getCpuFrequencyMhz();
     active();
-    ota::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) { active(); ui::text(t, 0); });
+    ota::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) {
+        active();
+        if (t.empty()) { ui::text("", 0); return; }
+        size_t nl = t.find('\n');
+        std::string body = nl == std::string::npos ? t : t.substr(nl + 1);
+        std::replace(body.begin(), body.end(), '\n', ' ');
+        ui::card("UPDATE", body, !body.empty() && body.back() == '%' ? atoi(body.c_str()) : -1);
+    });
     lan::begin([](const char* m) { logf("%s", m); });
     dev::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) { ui::flash(t); });
     set_local(settings::kv("local"));
