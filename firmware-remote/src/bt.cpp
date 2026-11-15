@@ -38,9 +38,12 @@ std::string v_buf, v_caps, v_ctl, services_text;
 // index 1, then 256 samples of 4-bit IMA ADPCM, high nibble first) is decoded
 // just far enough to tell speech from quiet. Speech, then V_QUIET frames of
 // quiet, ends it; so does V_WAIT frames with no speech at all.
+// The key's own click is loud: the first V_SKIP frames don't count, and it
+// takes V_SPOKEN loud frames to call it speech.
 const int V_FRAME = 134, V_LOUD = 700, V_QUIET = 40, V_WAIT = 156;      // 32 ms a frame at 8 kHz
+const int V_SKIP = 10, V_SPOKEN = 4;
 uint8_t v_frame[V_FRAME];
-int v_fill = 0, v_frames = 0, v_quiet = 0;
+int v_fill = 0, v_frames = 0, v_quiet = 0, v_loud = 0;
 volatile bool v_speech = false;
 const int16_t V_STEPS[89] = {
     7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107,
@@ -87,9 +90,9 @@ void on_audio(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
         v_fill = 0;
         v_frames++;
         int level = frame_level(v_frame);
-        if (level < 0) continue;
+        if (level < 0 || v_frames <= V_SKIP) continue;
         if (level >= V_LOUD) {
-            v_speech = true;
+            if (++v_loud >= V_SPOKEN) v_speech = true;
             v_quiet = 0;
         } else {
             v_quiet++;
@@ -340,7 +343,7 @@ void task(void*) {
                     v_buf.clear();
                     xSemaphoreGive(mu);
                     const uint8_t open[] = {0x0C, 0x00, v_codec};        // MIC_OPEN, codec
-                    v_fill = v_frames = v_quiet = 0;
+                    v_fill = v_frames = v_quiet = v_loud = 0;
                     v_speech = false;
                     v_done = false;
                     v_opened = millis();
