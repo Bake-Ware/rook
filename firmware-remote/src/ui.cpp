@@ -138,7 +138,7 @@ const uint8_t* icon_for(const std::string& label) {
     std::string l;
     for (char c : label) l += (char)tolower((unsigned char)c);
     auto has = [&](const char* w) { return l.find(w) != std::string::npos; };
-    if (has("tetris") || has("game")) return IC_GAME;
+    if (has("tetris") || has("swarm") || has("game")) return IC_GAME;
     if (has("wi-fi") || has("wifi")) return IC_WIFI;
     if (has("forget")) return IC_X;
     if (has(" bt") || has("bluetooth")) return IC_BT;

@@ -24,6 +24,7 @@
 #include "osk.h"
 #include "ota.h"
 #include "rc_sig.h"
+#include "swarm.h"
 #include "rc_util.h"
 #include "rc_worker.h"
 #include "remote_manifest.h"
@@ -31,7 +32,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.9.8"
+#define FW_VERSION "0.9.9"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -92,6 +93,7 @@ static volatile bool wifi_kick = false;     // drop the network in use and join 
 static bool wifi_pending = false;           // the menu waits for the scan
 static volatile Mode mode = REMOTE;
 static uint32_t menu_until = 0;             // the menu closes itself when left alone
+static int game_kind = 0;                   // which game has the screen: 0 Tetris, 1 Swarm
 static bool swallow = false;                // drop the release of the press that left the game
 static const uint32_t MENU_IDLE_MS = 20000;
 static uint32_t seq_all = 0;                // one count over the handheld's buttons and a paired remote's keys
@@ -185,7 +187,11 @@ static void open_menu() {
         labels.push_back(d.name);
         values.push_back("lan:" + d.id);
     }
+#ifdef ROOK_BRIDGE
+    for (const char* s : {"Assistant", "Find devs", "Tetris", "Swarm", "Wi-Fi", "Update", "Pair BT"}) {
+#else
     for (const char* s : {"Assistant", "Find devs", "Tetris", "Wi-Fi", "Update", "Pair BT"}) {
+#endif
         labels.push_back(s);
         values.push_back(s);
     }
@@ -350,9 +356,15 @@ static void menu_pick(int i) {
             mode = REMOTE;
             ui::card("UPDATE", "checking", -2);
         }
+    } else if (label == "Swarm") {
+        swarm::start(millis());
+        ui::canvas(swarm::draw, "Swarm");
+        game_kind = 1;
+        mode = GAME;
     } else if (label == "Tetris") {
         tetris::start(millis());
         ui::game(true);
+        game_kind = 0;
         mode = GAME;
     } else if (label == "Wi-Fi") {
         start_wifi_scan();
@@ -1291,12 +1303,14 @@ void loop() {
             std::string bt_held = bt::held();
             if (!bt_held.empty()) keys |= game_key(bt_name_of(bt_held));
             if (!inject_held.empty() && (int32_t)(ms - inject_until) < 0) keys |= game_key(inject_held);
-            if (tetris::tick(ms, keys)) ui::redraw();
-            if (tetris::quit()) {
-                ui::game(false);
+            bool sw = game_kind == 1;
+            if (sw ? swarm::tick(ms, keys) : tetris::tick(ms, keys)) ui::redraw();
+            if (sw ? swarm::quit() : tetris::quit()) {
+                if (sw) ui::canvas(nullptr);
+                else ui::game(false);
                 mode = REMOTE;
                 swallow = true;
-                ui::flash("score\n" + std::to_string(tetris::score()));
+                ui::flash("score\n" + std::to_string(sw ? swarm::score() : tetris::score()));
             }
         }
     }
