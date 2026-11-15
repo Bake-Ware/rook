@@ -8,20 +8,20 @@
 # (remote.display). Code: scripts/voice.py.
 manifest: 1
 plugin: remote-voice
-version: 0.2.0
+version: 0.3.0
 title: Remote voice
 doc: Talk to the house agent with a Rook remote's Assistant key; the answer comes back on its screen.
 package: devices
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-uses: [speech.open, speech.hear, speech.read, remote.display, net.open, stream.read, stream.write, stream.close]
+uses: [speech.open, speech.hear, speech.read, remote.display, file.write, shell.exec]
 
 settings:
   agent: { type: str, default: "", doc: "The agent the remote talks to; blank: the speech plugin's own default." }
   voice_url: { type: str, default: "", doc: "A voice server to do the hearing (its POST /api/transcribe, as the phone app uses it), e.g. https://kaiju:8900. Blank: the band's own speech-to-text (voice.stt)." }
   voice_token: { type: str, default: "", secret: true, doc: "That server's key, when it wants one." }
-  voice_via: { type: str, default: "", doc: "A worker on the voice server's network to make the request from (its net.open), when the hub itself can't reach it. Blank: straight from the hub." }
+  voice_via: { type: str, default: "", doc: "A worker on the voice server's network to ask it from, when the hub itself can't reach it: the audio is handed to it small (file.write) and it decodes and posts it (shell.exec, python3). Blank: straight from the hub." }
 
 caps:
   hear:

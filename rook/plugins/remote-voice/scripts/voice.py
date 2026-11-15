@@ -12,6 +12,7 @@ import asyncio
 import base64
 import io
 import json
+import os
 import ssl
 import struct
 import time
@@ -19,8 +20,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import wave
-
-from rook.kit.net import Stream
 
 FRAME, HEAD = 134, 6
 KEEP = 120.0                 # seconds a half-arrived utterance is kept
@@ -148,33 +147,74 @@ def _direct(u: urllib.parse.SplitResult, headers: dict, data: bytes) -> str:
         return str(json.loads(r.read()).get("text") or "")
 
 
-async def transcribe(ctx, pcm: list[int]) -> str:
-    """What the voice server hears in 16 kHz samples: its POST /api/transcribe,
-    the way the phone app asks it (audio/L16, a bearer key when it wants one).
-    The server signs its own certificate, so it is not checked. With voice_via,
-    the request goes out from that worker (one on the server's network), as
-    the TV plugins reach their TVs."""
+# Run on the voice_via worker: decode the frames it was handed, ask the voice
+# server, print what it heard. (The same decoding as decode() above.)
+AWAY = r'''
+import json, os, ssl, struct, sys, urllib.request
+path, url, token = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""
+raw = open(path, "rb").read()
+os.unlink(path)
+S = (7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,
+     230,253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,2272,2499,
+     2749,3024,3327,3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,15289,16818,18500,
+     20350,22385,24623,27086,29794,32767)
+I = (-1, -1, -1, -1, 2, 4, 6, 8)
+pcm = []
+for at in range(0, len(raw) - 133, 134):
+    f = raw[at:at + 134]
+    pred, idx = struct.unpack_from(">h", f, 3)[0], min(f[5], 88)
+    for b in f[6:]:
+        for n in (b >> 4, b & 15):
+            st = S[idx]
+            d = (st >> 3) + (st if n & 4 else 0) + (st >> 1 if n & 2 else 0) + (st >> 2 if n & 1 else 0)
+            pred = max(-32768, min(32767, pred - d if n & 8 else pred + d))
+            idx = max(0, min(88, idx + I[n & 7]))
+            pcm.append(pred)
+wide = []
+for i, x in enumerate(pcm):
+    wide += [x, (x + pcm[i + 1]) // 2 if i + 1 < len(pcm) else x]
+wide = wide[:30 * 16000]
+headers = {"Content-Type": "audio/L16"}
+if token:
+    headers["Authorization"] = "Bearer " + token
+tls = ssl.create_default_context()
+tls.check_hostname = False
+tls.verify_mode = ssl.CERT_NONE
+req = urllib.request.Request(url, data=struct.pack("<%dh" % len(wide), *wide), method="POST", headers=headers)
+with urllib.request.urlopen(req, timeout=40, context=tls) as r:
+    print(json.dumps({"text": json.loads(r.read()).get("text") or ""}))
+'''
+PIECE = 6000                 # bytes of audio a call to the worker carries: big band messages get lost
+
+
+async def transcribe(ctx, frames: bytes, pcm: list[int]) -> str:
+    """What the voice server hears: its POST /api/transcribe, the way the
+    phone app asks it (audio/L16 at 16 kHz, a bearer key when it wants one).
+    The server signs its own certificate, so it is not checked. With
+    voice_via the hub hands the frames as they are (an eighth the size of the
+    sound) to that worker, one on the server's network, which decodes them
+    and asks: the hub often cannot reach a voice server at home, and a few
+    hundred KB over the band does not arrive."""
     st = ctx.settings
     u, token, via = _server(st["voice_url"]), st["voice_token"] or "", st["voice_via"]
-    data = struct.pack(f"<{len(pcm)}h", *pcm)
-    headers = {"Content-Type": "audio/L16", **({"Authorization": f"Bearer {token}"} if token else {})}
     if not via:
-        return await asyncio.to_thread(_direct, u, headers, data)
-    tls = u.scheme == "https"
-    host, port = u.hostname, u.port or (443 if tls else 80)
-    head = "\r\n".join([f"POST {u.path.rstrip('/')}/api/transcribe HTTP/1.1", f"Host: {host}:{port}", "Connection: close",
-                         f"Content-Length: {len(data)}", *(f"{k}: {v}" for k, v in headers.items())]) + "\r\n\r\n"
-    async with await Stream.tcp(ctx, via, host, port, tls=tls, verify=False) as s:
-        await s.send(head.encode())
-        for i in range(0, len(data), 48000):      # a few seconds of sound is too much for one write
-            await s.send(data[i:i + 48000])
-        got = (await s.read_until(b"\r\n\r\n", 45)).decode("latin-1")
-        status = int(got.split()[1])
-        length = [h.partition(":")[2].strip() for h in got.split("\r\n") if h.lower().startswith("content-length:")]
-        body = await s.read_exactly(int(length[0]), 20) if length else await s.read_to_close(20)
-    if status != 200:
-        raise ValueError(f"http {status}: {body[:120].decode('latin-1')}")
-    return str(json.loads(body).get("text") or "")
+        headers = {"Content-Type": "audio/L16", **({"Authorization": f"Bearer {token}"} if token else {})}
+        return await asyncio.to_thread(_direct, u, headers, struct.pack(f"<{len(pcm)}h", *pcm))
+    last: Exception | None = None
+    for attempt in range(2):                 # a lost call spoils the file: start a new one
+        path = f"/tmp/rook-remote-voice-{os.urandom(6).hex()}.raw"
+        try:
+            for i in range(0, len(frames), PIECE):
+                await asyncio.wait_for(ctx.call_on(via, "file.write", path=path, encoding="base64", append=i > 0,
+                                                   content=base64.b64encode(frames[i:i + PIECE]).decode()), 6)
+            got = await asyncio.wait_for(ctx.call_on(via, "shell.exec", timeout=50, argv=[
+                "python3", "-c", AWAY, path, u.geturl() + "/api/transcribe", token]), 55)
+            if got.get("code") != 0:
+                raise ValueError((got.get("stderr") or "").strip()[-200:] or f"exit {got.get('code')}")
+            return str(json.loads(got.get("stdout") or "{}").get("text") or "")
+        except (asyncio.TimeoutError, ctx.Error, ValueError) as e:
+            last = e
+    raise ValueError(f"{type(last).__name__}: {last}")
 
 
 async def _show(ctx, remote: str, text: str, hold: int = 60) -> None:
@@ -207,6 +247,8 @@ async def hear(ctx, event):
     while len((PARTS.get(uid) or {}).get("parts", {})) < n and time.monotonic() < deadline:
         await asyncio.sleep(0.05)
     u = PARTS.pop(uid, None)
+    if p.get("replay") and (ctx.data / "last.raw").is_file():      # the utterance before, again (to test with)
+        u = {"parts": {0: (ctx.data / "last.raw").read_bytes()}}
     t_start = time.monotonic()
     if not u or not u["parts"]:
         await _show(ctx, remote, "The audio didn't arrive", 6)
@@ -233,7 +275,7 @@ async def hear(ctx, event):
     if ctx.settings["voice_url"]:            # a voice server hears it (as the phone app does), the session gets the words
         try:
             t0 = time.monotonic()
-            text = await transcribe(ctx, pcm)
+            text = await transcribe(ctx, raw, pcm)
             info["stt_seconds"] = round(time.monotonic() - t0, 1)
         except (OSError, ValueError, IndexError, urllib.error.URLError, ctx.Error) as e:
             await _show(ctx, remote, "The voice server didn't answer", 8)
