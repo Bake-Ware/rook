@@ -148,9 +148,10 @@ void draw(Adafruit_GFX& d) {
         d.setCursor(W - (int)strlen(clock) * 6 - 1, 2);
         d.print(clock);
         if ((ms / 400) & 1) d.fillCircle(W - (int)strlen(clock) * 6 - 8, 5, 2, 1);      // recording
-        const int MID = 31, X0 = (W - HIST * 5 + 2) / 2;
+        // The bars between the heading and the hint (31 down the middle of the whole screen).
+        const int MID = H >= 64 ? 31 : (12 + H - 10) / 2, TALL = std::min(26, std::max(4, H - 26)), X0 = (W - HIST * 5 + 2) / 2;
         for (int i = 0; i < HIST; i++) {
-            int h = 2 + hist[i] * 26 / 100;
+            int h = 2 + hist[i] * TALL / 100;
             d.fillRoundRect(X0 + i * 5, MID - h / 2, 3, h, 1, 1);
         }
         const char* hint = "any key to send";

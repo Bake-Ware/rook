@@ -39,6 +39,11 @@ void (*canvas_fn)(Adafruit_GFX&) = nullptr;
 std::string canvas_name;
 bool dark = false;             // the panel is switched off (the remote was left alone)
 int menu_first = 0, menu_hl = -1, menu_was_first = 0;   // the menu's first row on screen; where its highlight is, sliding
+std::vector<std::string> tab_names;   // the menu's tabs (none: a plain menu with a title)
+int tab_on = 0;                       // the tab open
+int tab_hl_x = -1, tab_hl_w = 0;      // where the strip's highlight is, sliding
+void (*tab_body)(Adafruit_GFX&) = nullptr;   // the open tab draws itself (under the strip)
+GFXcanvas1* body_cv = nullptr;
 #ifdef ROOK_BRIDGE
 const int W = 128, H = 64, COLS = 21, ROWS = 8, PITCH = 10;     // 0.96" 128x64, landscape
 #else
@@ -134,6 +139,16 @@ const uint8_t IC_X[] PROGMEM = {0x00, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x00};
 const uint8_t IC_DOT[] PROGMEM = {0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00};
 const uint8_t IC_UPD[] PROGMEM = {0x18, 0x18, 0x18, 0x7E, 0x3C, 0x18, 0x00, 0x7E};
 const uint8_t IC_RING[] PROGMEM = {0x00, 0x3C, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00};
+const uint8_t IC_GEAR[] PROGMEM = {0x18, 0x7E, 0x66, 0xC3, 0xC3, 0x66, 0x7E, 0x18};
+
+// The tabs' pictures: Devices, Assistant, Games, Settings.
+const uint8_t* tab_icon(const std::string& name) {
+    if (name == "Devices") return IC_TV;
+    if (name == "Assistant") return IC_CHAT;
+    if (name == "Games") return IC_GAME;
+    if (name == "Settings") return IC_GEAR;
+    return IC_DOT;
+}
 
 const uint8_t* icon_for(const std::string& label) {
     std::string l;
@@ -147,17 +162,88 @@ const uint8_t* icon_for(const std::string& label) {
     if (has("find") || has("scan")) return IC_FIND;
     if (has("assistant")) return IC_CHAT;
     if (has(" (")) return IC_RING;               // found, but nothing here drives it: name (what it answered as)
-    if (has("tv") || has("roku") || has("cast") || menu_title == "DEVICES") return IC_TV;
+    bool devices_tab = !tab_names.empty() && tab_names[tab_on] == "Devices";
+    if (has("tv") || has("roku") || has("cast") || menu_title == "DEVICES" || devices_tab) return IC_TV;
     return IC_DOT;
+}
+
+// Moves v a step towards to, halfway each frame (one pixel at the end).
+void slide(int& v, int to) {
+    if (v == to) return;
+    int step = (to - v) / 2;
+    v += step ? step : (to > v ? 1 : -1);
+    anim = true;
+}
+
+// The strip of tabs along the top: on the wide screen the open tab has its
+// picture and its name, the others their picture; on the narrow one, pictures
+// only, 8 pixels each. The highlight inverts the open one and slides between
+// them. Answers the strip's height (the rule under it included).
+int tab_strip() {
+    int n = (int)tab_names.size();
+    if (W < 100) {
+        int cell = W / n;
+        for (int i = 0; i < n; i++) oled.drawBitmap(i * cell + (cell - 8) / 2, 1, tab_icon(tab_names[i]), 8, 8, SSD1306_WHITE);
+        if (tab_hl_x < 0) tab_hl_x = tab_on * cell;
+        slide(tab_hl_x, tab_on * cell);
+        oled.fillRect(tab_hl_x, 0, cell, 10, SSD1306_INVERSE);
+        oled.drawFastHLine(0, 10, W, SSD1306_WHITE);
+        return 12;
+    }
+    std::vector<int> w(n), x(n);
+    int used = 0;
+    for (int i = 0; i < n; i++) {
+        w[i] = 8 + 8 + (i == tab_on ? 3 + (int)tab_names[i].size() * 6 : 0);
+        used += w[i];
+    }
+    int gap = n > 1 ? std::max(0, (W - used) / (n - 1)) : 0, cx = std::max(0, (W - used - gap * (n - 1)) / 2);
+    for (int i = 0; i < n; i++) {
+        x[i] = cx;
+        oled.drawBitmap(cx + 4, 1, tab_icon(tab_names[i]), 8, 8, SSD1306_WHITE);
+        if (i == tab_on) {
+            oled.setCursor(cx + 15, 2);
+            oled.print(tab_names[i].c_str());
+        }
+        cx += w[i] + gap;
+    }
+    if (tab_hl_x < 0) { tab_hl_x = x[tab_on]; tab_hl_w = w[tab_on]; }
+    slide(tab_hl_x, x[tab_on]);
+    slide(tab_hl_w, w[tab_on]);
+    // The highlight inverts what is under it; its corners are put back, to round it.
+    oled.fillRect(tab_hl_x, 0, tab_hl_w, 11, SSD1306_INVERSE);
+    for (int px : {tab_hl_x, tab_hl_x + tab_hl_w - 1})
+        for (int py : {0, 10}) oled.drawPixel(px, py, SSD1306_INVERSE);
+    oled.drawFastHLine(0, 12, W, SSD1306_WHITE);
+    return 13;
+}
+
+// A tab that draws itself (the conversation) gets the screen under the strip.
+void tab_body_draw(int y0) {
+    int h = H - y0;
+    if (!body_cv || body_cv->width() != W || body_cv->height() != h) {
+        delete body_cv;
+        body_cv = new GFXcanvas1(W, h);
+    }
+    if (!body_cv->getBuffer()) return;
+    body_cv->fillScreen(0);
+    tab_body(*body_cv);
+    oled.drawBitmap(0, y0, body_cv->getBuffer(), W, h, SSD1306_WHITE, SSD1306_BLACK);
 }
 
 // The menu: a title bar with where you are in the list, rows with a picture
 // each, a highlight that slides to the row chosen, and a mark down the right
 // edge when there is more than fits. (The narrow screen keeps the plain list.)
 void menu_draw(uint32_t ms) {
+    if (!tab_names.empty() && tab_body) {
+        int y0 = tab_strip() + (W < 100 ? 0 : 1);
+        tab_body_draw(y0);
+        return;
+    }
     if (W < 100) {
         int y = 0;
-        if (!menu_title.empty()) {
+        if (!tab_names.empty()) {
+            y = tab_strip();
+        } else if (!menu_title.empty()) {
             oled.setCursor(1, 0);
             oled.print(menu_title.substr(0, COLS).c_str());
             oled.drawFastHLine(0, 9, W, SSD1306_WHITE);
@@ -171,15 +257,19 @@ void menu_draw(uint32_t ms) {
     if (menu_sel < menu_first) menu_first = menu_sel;
     if (menu_sel >= menu_first + rows) menu_first = menu_sel - rows + 1;
     menu_first = std::max(0, std::min(menu_first, n - rows));
-    oled.fillRect(0, 0, W, BAR, SSD1306_WHITE);
-    oled.setTextColor(SSD1306_BLACK);
-    oled.setCursor(3, 2);
-    oled.print(menu_title.substr(0, 12).c_str());
-    char where[12];
-    snprintf(where, sizeof where, "%d/%d", menu_sel + 1, n);
-    oled.setCursor(W - 3 - (int)strlen(where) * 6, 2);
-    oled.print(where);
-    oled.setTextColor(SSD1306_WHITE);
+    if (!tab_names.empty()) {
+        tab_strip();
+    } else {
+        oled.fillRect(0, 0, W, BAR, SSD1306_WHITE);
+        oled.setTextColor(SSD1306_BLACK);
+        oled.setCursor(3, 2);
+        oled.print(menu_title.substr(0, 12).c_str());
+        char where[12];
+        snprintf(where, sizeof where, "%d/%d", menu_sel + 1, n);
+        oled.setCursor(W - 3 - (int)strlen(where) * 6, 2);
+        oled.print(where);
+        oled.setTextColor(SSD1306_WHITE);
+    }
     for (int r = 0; r < rows && menu_first + r < n; r++) {
         const std::string& item = menu_items[menu_first + r];
         int y = Y0 + r * ROW;
@@ -191,11 +281,7 @@ void menu_draw(uint32_t ms) {
     int target = Y0 + (menu_sel - menu_first) * ROW;
     if (menu_hl < 0 || menu_first != menu_was_first) menu_hl = target;     // the list itself moved: no slide
     menu_was_first = menu_first;
-    if (menu_hl != target) {
-        int step = (target - menu_hl) / 2;
-        menu_hl += step ? step : (target > menu_hl ? 1 : -1);
-        anim = true;
-    }
+    slide(menu_hl, target);
     // The highlight inverts what is under it; its corners are put back, to round it.
     oled.fillRect(0, menu_hl, W - 4, ROW - 1, SSD1306_INVERSE);
     for (int cx : {0, W - 5})
@@ -504,6 +590,13 @@ std::string shown() {
     else if (canvas_fn) s = canvas_name;
     else if (game_on) s = "Tetris";
     else if (card_on && !menu_on) s = card_title + "\n" + card_body;
+    else if (menu_on && !tab_names.empty()) {
+        for (size_t i = 0; i < tab_names.size(); i++)
+            s += (i ? " | " : "") + ((int)i == tab_on ? "[" + tab_names[i] + "]" : tab_names[i]);
+        if (tab_body) s += "\nchat";
+        for (size_t i = 0; !tab_body && i < menu_items.size(); i++)
+            s += std::string((int)i == menu_sel ? "\n> " : "\n  ") + menu_items[i];
+    }
     else if (menu_on) {
         s = menu_title;
         for (size_t i = 0; i < menu_items.size(); i++) s += std::string((int)i == menu_sel ? "\n> " : "\n  ") + menu_items[i];
@@ -573,6 +666,27 @@ void menu_begin(const std::string& title, const std::vector<std::string>& items,
     card_on = false;
     menu_on = true;
     menu_title = title;
+    menu_items = items;
+    menu_sel = selected >= 0 && selected < (int)items.size() ? selected : 0;
+    menu_first = 0;
+    menu_hl = -1;
+    tab_names.clear();
+    tab_body = nullptr;
+    scroll_t0 = millis();
+    dirty = true;
+    xSemaphoreGive(mu);
+}
+
+void menu_tabs(const std::vector<std::string>& names, int active, const std::vector<std::string>& items,
+               int selected, void (*body)(Adafruit_GFX&)) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    card_on = false;
+    if (!menu_on || tab_names != names) tab_hl_x = -1;    // the strip just came up: no slide
+    menu_on = true;
+    menu_title = active >= 0 && active < (int)names.size() ? names[active] : "";
+    tab_names = names;
+    tab_on = active >= 0 && active < (int)names.size() ? active : 0;
+    tab_body = body;
     menu_items = items;
     menu_sel = selected >= 0 && selected < (int)items.size() ? selected : 0;
     menu_first = 0;

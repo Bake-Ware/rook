@@ -43,6 +43,11 @@ void menu_begin(const std::string& title, const std::vector<std::string>& items,
 void menu_move(int delta);
 int menu_selected();
 void menu_end();
+// The menu with tabs along the top (names; the one open is highlighted, and the
+// highlight slides when it changes): the open tab's rows, or body, which draws
+// the tab itself under the strip. menu_begin() is the plain menu, no tabs.
+void menu_tabs(const std::vector<std::string>& names, int active, const std::vector<std::string>& items,
+               int selected, void (*body)(Adafruit_GFX&));
 
 void game(bool on);                                   // the screen is the game's (tetris::draw)
 // The screen is this function's (nullptr: no longer); name is what ui::shown() calls it.

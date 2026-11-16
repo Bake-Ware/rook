@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.10.1
+version: 0.10.2
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -14,7 +14,7 @@ source: https://github.com/Bake-Ware/rook
 
 caps:
   state:
-    doc: The remote's buttons (names, which are held), the last presses, the device its buttons are for (target, of targets), its mode (remote, menu or game), what the screen shows, Wi-Fi and hub status, the device on its own network it is driving (local), free memory and the firmware update's state.
+    doc: The remote's buttons (names, which are held), the last presses, the device its buttons are for (target, of targets), its mode (remote, menu, chat or game) and the menu tab open (tab, of Devices, Assistant, Games, Settings), what the screen shows, Wi-Fi and hub status, the device on its own network it is driving (local), free memory and the firmware update's state.
     risk: read
     scope: local
     idempotent: true
@@ -28,7 +28,7 @@ caps:
       seconds: { type: int, default: 0, min: 0, max: 86400 }
     result: { type: map }
   chat:
-    doc: "The conversation with the house agent on the remote's screen: the last dozen things said, in bubbles (the person's on the right, the agent's on the left, notes bare), scrolled with up and down; the remote's menu has it under Assistant. text adds one, said by who (you: the person, agent, or note), and brings the conversation up; status sets the line under it (Thinking...; blank: none); clear empties it. Answers the conversation as it stands: {messages: [{who, text}]}."
+    doc: "The conversation with the house agent on the remote's screen: the last dozen things said, in bubbles (the person's on the right, the agent's on the left, notes bare), scrolled with up and down; it is the remote's menu's Assistant tab, where OK opens the paired remote's microphone like its Assistant key. text adds one, said by who (you: the person, agent, or note), and brings the conversation up; status sets the line under it (Thinking...; blank: none); clear empties it. Answers the conversation as it stands: {messages: [{who, text}]}."
     risk: write
     scope: local
     args:

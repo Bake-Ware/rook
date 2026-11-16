@@ -1,6 +1,7 @@
 // Rook remote: a XIAO ESP32-S3 handheld with 11 buttons (on a PCF8574 and
 // GPIOs) and a 128x32 OLED held upright, joining the band as a core v2 worker.
-// The input button (the bridge: Guide) opens its own menu: which device the buttons are for, or a game.
+// The input button (the bridge: Guide) opens its own menu, in tabs: Devices
+// (which device the buttons are for), Assistant (the conversation), Games, Settings.
 //   I2C: SDA GPIO5, SCL GPIO6. PCF8574 0x20, SSD1306 0x3C.
 // Button presses go to the hub as remote.button events; caps let agents show
 // text, ask a question, wait for a press, read state and name the buttons.
@@ -34,7 +35,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.10.1"
+#define FW_VERSION "0.10.2"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -57,7 +58,8 @@ static std::string last_note;
 static volatile bool wifi_hold = false;     // the scan command has the radio: no joining meanwhile
 // What the buttons do now: the TV's (events to the hub), the menu's (the input
 // button opens it: pick the device the events are for, or the game), the game's.
-enum Mode { REMOTE, MENU, GAME, TYPING, CHAT };
+// (The conversation is the menu's Assistant tab.)
+enum Mode { REMOTE, MENU, GAME, TYPING };
 // Left alone, the remote goes dark (DIM: the screen off) and then to sleep
 // (ASLEEP: Wi-Fi off and the processor slowed too; Bluetooth stays, so a key
 // of the paired remote still arrives). Any key wakes it, and still counts:
@@ -68,11 +70,18 @@ static volatile uint32_t last_active = 0;
 static volatile bool wifi_sleep = false;    // the Wi-Fi task keeps the radio off while this is set
 static uint32_t screen_off_s = 30, sleep_s = 300, cpu_full = 160;   // seconds left alone before each (0: never)
 static volatile bool chat_show = false;     // a cap put something in the conversation: show it
-static uint32_t chat_until = 0, thinking_until = 0;
+static uint32_t thinking_until = 0;
 
 static void active() { last_active = millis(); }
-// The menu on screen: the main one, the Wi-Fi networks heard, or the saved ones to forget.
+// The menu on screen: the main one (in tabs), the Wi-Fi networks heard, the
+// saved ones to forget, or everything a device scan found.
 enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS };
+// The main menu's tabs, left to right (left and right step through them, round).
+enum Tab { TAB_DEVICES, TAB_ASSIST, TAB_GAMES, TAB_SETTINGS, TAB_COUNT };
+static const char* const TAB_NAMES[TAB_COUNT] = {"Devices", "Assistant", "Games", "Settings"};
+static int menu_tab = TAB_DEVICES;          // the tab open
+static int last_tab = -1;                   // the tab the person last went to (settings "tab"); -1: not read yet
+static const uint32_t CHAT_IDLE_MS = 120000;   // the Assistant tab stays up longer than the rest
 // A device on this network the buttons drive directly (dev.h), in place of a
 // hub target: its id, and its name for the screen and the events.
 static std::string local_id, local_name;
@@ -115,6 +124,7 @@ static const GameDef GAMES[] = {
 };
 static bool swallow = false;                // drop the release of the press that left the game
 static const uint32_t MENU_IDLE_MS = 20000;
+static bool chat_up() { return mode == MENU && menu_kind == MENU_MAIN && menu_tab == TAB_ASSIST; }
 static const uint32_t HOLD_MS = 600;        // a key down this long is held (the paired remote only says when it goes down)
 // A paired remote's key going down that means one thing tapped and another
 // held: the loop watches it (bt::held) until it is let go or HOLD_MS passes.
@@ -164,23 +174,19 @@ static void load_sleep() {
     sleep_s = b.empty() ? 300 : (uint32_t)atoi(b.c_str());
 }
 
-// The conversation with the house agent takes the screen (chat.h).
-static void open_chat() {
-    ui::menu_end();
-    ui::canvas(chat::draw, "chat");
-    mode = CHAT;
-    chat_until = millis() + 120000;
-}
+static void show_tab(int tab);
+
+// The conversation with the house agent takes the screen (chat.h): the menu, open at its Assistant tab.
+static void open_chat() { show_tab(TAB_ASSIST); }
 
 static void close_chat() {
-    if (mode != CHAT) return;
-    ui::canvas(nullptr);
+    if (!chat_up()) return;
+    ui::menu_end();
     mode = REMOTE;
 }
 
 static void show_menu(MenuKind kind, const char* title, const std::vector<std::string>& labels,
                       const std::vector<std::string>& values, int selected) {
-    if (mode == CHAT) ui::canvas(nullptr);
     menu_kind = kind;
     menu_labels = labels;
     menu_values = values;
@@ -215,30 +221,88 @@ static bool start_game(const std::string& label) {
     return false;
 }
 
-// The hub's targets, then the devices found on this network that the remote
-// can drive itself, then the rest.
-static void open_menu() {
-    std::vector<std::string> labels = settings::targets(), values = labels;
-    int selected = settings::target();
-    for (auto& d : lan::devices()) {
-        if (d.driver.empty()) continue;
-        if (d.id == local_id) selected = (int)labels.size();
-        labels.push_back(d.name);
-        values.push_back("lan:" + d.id);
-    }
-#ifdef ROOK_BRIDGE
-    for (const char* s : {"Assistant", "Find devs", "Tetris", "Swarm", "2048", "Towers", "Wi-Fi", "Update", "Pair BT"}) {
-#else
-    for (const char* s : {"Assistant", "Find devs", "Tetris", "Wi-Fi", "Update", "Pair BT"}) {
+// A tab's rows. Devices: the hub's targets (values t:<index>), then the
+// devices found on this network that the remote can drive itself (lan:<id>).
+// Games: the games (the handheld's narrow screen has Tetris only). Settings:
+// Wi-Fi, a device scan, Update, Bluetooth.
+static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std::string>& values, int& selected) {
+    selected = 0;
+    if (tab == TAB_DEVICES) {
+        auto ts = settings::targets();
+        for (size_t i = 0; i < ts.size(); i++) {
+            labels.push_back(ts[i]);
+            values.push_back("t:" + std::to_string(i));
+        }
+        selected = settings::target();
+        for (auto& d : lan::devices()) {
+            if (d.driver.empty()) continue;
+            if (d.id == local_id) selected = (int)labels.size();
+            labels.push_back(d.name);
+            values.push_back("lan:" + d.id);
+        }
+        if (labels.empty()) {                // nothing yet: look for some
+            labels.push_back("Find devs");
+            values.push_back("Find devs");
+        }
+    } else if (tab == TAB_GAMES) {
+        for (auto& g : GAMES) {
+#ifndef ROOK_BRIDGE
+            if (strcmp(g.label, "Tetris")) continue;      // the others are drawn for the bridge's wide screen
 #endif
-        labels.push_back(s);
-        values.push_back(s);
+            labels.push_back(g.label);
+            values.push_back(g.label);
+        }
+    } else if (tab == TAB_SETTINGS) {
+        for (const char* s : {"Wi-Fi", "Find devs", "Update", "Pair BT"}) {
+            labels.push_back(s);
+            values.push_back(s);
+        }
+        if (bt::saved()) {
+            labels.push_back("Forget BT");
+            values.push_back("Forget BT");
+        }
     }
-    if (bt::saved()) {
-        labels.push_back("Forget BT");
-        values.push_back("Forget BT");
+}
+
+// The main menu, open at tab. The Assistant tab is the conversation itself.
+static void show_tab(int tab) {
+    std::vector<std::string> labels, values;
+    std::vector<std::string> names(TAB_NAMES, TAB_NAMES + TAB_COUNT);
+    int selected = 0;
+    menu_tab = tab;
+    menu_kind = MENU_MAIN;
+    if (tab != TAB_ASSIST) tab_rows(tab, labels, values, selected);
+    menu_labels = labels;
+    menu_values = values;
+    ui::menu_tabs(names, tab, labels, selected, tab == TAB_ASSIST ? chat::draw : nullptr);
+    menu_until = millis() + (tab == TAB_ASSIST ? CHAT_IDLE_MS : MENU_IDLE_MS);
+    mode = MENU;
+}
+
+static int saved_tab() {
+    if (last_tab < 0) {
+        std::string t = settings::kv("tab");
+        last_tab = t.empty() ? TAB_DEVICES : std::max(0, std::min((int)TAB_COUNT - 1, atoi(t.c_str())));
     }
-    show_menu(MENU_MAIN, "MENU", labels, values, selected);
+    return last_tab;
+}
+
+// The person went to tab: the menu opens there next time.
+static void remember_tab(int tab) {
+    if (saved_tab() == tab) return;
+    last_tab = tab;
+    settings::set_kv("tab", std::to_string(tab));
+}
+
+// The menu key: the menu, at the tab last used.
+static void open_menu() { show_tab(saved_tab()); }
+
+// The Assistant key, or OK on the Assistant tab: the paired remote's
+// microphone opens (tap to start, tap again to stop).
+static void assistant_key() {
+    if (!bt::voice_ready()) ui::flash("no\nmic", 1500, mode == MENU);
+    else if (!bt::voice_open()) bt::voice_start();
+    else if (millis() - voice_started > 700) bt::voice_stop();
 }
 
 // Everything the last scan found: what the remote can drive first, the rest
@@ -423,12 +487,12 @@ static void menu_pick(int i) {
         return;
     }
     auto ts = settings::targets();
-    if (i < (int)ts.size()) {
-        settings::set_target(i);
+    if (value.rfind("t:", 0) == 0) {
+        int t = atoi(value.c_str() + 2);
+        if (t < 0 || t >= (int)ts.size()) return;
+        settings::set_target(t);
         set_local("");
-        ui::flash(ts[i]);
-    } else if (label == "Assistant") {
-        open_chat();
+        ui::flash(ts[t]);
     } else if (label == "Find devs") {
         start_dev_scan();
     } else if (label == "Update") {
@@ -489,10 +553,7 @@ static void on_button(const ButtonEvent& ev) {
     // The Assistant key: talk to the home agent. Tap to start and tap to stop,
     // or hold it down while talking. (A remote may also ask for its microphone itself.)
     if (is_name(e.name, {"assistant", "search", "voice"}) && mode != GAME && mode != TYPING) {
-        if (strcmp(e.action, "press")) return;
-        if (!bt::voice_ready()) ui::flash("no\nmic");
-        else if (!bt::voice_open()) bt::voice_start();
-        else if (millis() - voice_started > 700) bt::voice_stop();
+        if (!strcmp(e.action, "press")) assistant_key();
         return;
     }
     // While it listens, any key says "that's it" (some remotes don't report the Assistant key again).
@@ -515,7 +576,7 @@ static void on_button(const ButtonEvent& ev) {
         return;
     }
     if (mode == MENU) {
-        menu_until = millis() + MENU_IDLE_MS;
+        menu_until = millis() + (chat_up() ? CHAT_IDLE_MS : MENU_IDLE_MS);
         int sel = ui::menu_selected();
         if (e.name == "ok" && menu_kind == MENU_WIFI && sel < (int)menu_values.size() &&
             !menu_values[sel].empty() && wifi_saved(menu_values[sel])) {
@@ -531,7 +592,26 @@ static void on_button(const ButtonEvent& ev) {
             }
         }
         if (strcmp(e.action, "press")) return;
-        if (e.name == "up") ui::menu_move(-1);
+        // The profile key steps to the next device from the menu too (the menu goes away).
+        if (is_profile_key(e) && !buttons::learning()) {
+            ui::menu_end();
+            mode = REMOTE;
+            next_device();
+            return;
+        }
+        bool tabs = menu_kind == MENU_MAIN;
+        if (tabs && (e.name == "left" || e.name == "right")) {
+            int t = (menu_tab + (e.name == "left" ? TAB_COUNT - 1 : 1)) % TAB_COUNT;
+            remember_tab(t);
+            show_tab(t);
+        } else if (chat_up() && (e.name == "up" || e.name == "down")) {
+            // The conversation: up and down read back through it.
+            chat::scroll(e.name == "up" ? -24 : 24);
+            ui::redraw();
+        } else if (chat_up() && e.name == "ok") {
+            assistant_key();
+        }
+        else if (e.name == "up") ui::menu_move(-1);
         else if (e.name == "down") ui::menu_move(1);
         else if (e.name == "ok") menu_pick(sel);
 #ifdef ROOK_BRIDGE
@@ -539,18 +619,6 @@ static void on_button(const ButtonEvent& ev) {
 #else
         else if (is_name(e.name, {"back", "input", "home"})) { ui::menu_end(); mode = REMOTE; }
 #endif
-        return;
-    }
-    // The conversation is up: up and down read back through it, back or home puts it away.
-    if (mode == CHAT && is_name(e.name, {"up", "down", "back", "home"})) {
-        if (strcmp(e.action, "press")) return;
-        chat_until = millis() + 120000;
-        if (e.name == "up" || e.name == "down") {
-            chat::scroll(e.name == "up" ? -24 : 24);
-            ui::redraw();
-        } else {
-            close_chat();
-        }
         return;
     }
     // A text too long for the screen (an agent's answer): up and down read it, back puts it away.
@@ -565,10 +633,10 @@ static void on_button(const ButtonEvent& ev) {
         return;
     }
 #ifdef ROOK_BRIDGE
-    // Guide tapped opens the menu; held, the conversation with the house agent.
+    // Guide tapped opens the menu; held, the menu at its Assistant tab (the conversation).
     // (Input and the remote's menu key go to the TV.)
     if (e.name == "guide" && !buttons::learning()) {
-        if (!strcmp(e.action, "long")) open_chat();
+        if (!strcmp(e.action, "long")) { remember_tab(TAB_ASSIST); open_chat(); }
         else if (strcmp(e.action, "press")) return;
         else if (e.lines.rfind("bt:", 0) == 0) {
             guide_key = e.lines.substr(3);
@@ -661,7 +729,8 @@ static void fill_bt(JsonObject o) {
 static void fill_state(JsonObject r) {
     r["name"] = settings::name();
     r["version"] = FW_VERSION;
-    r["mode"] = mode == GAME ? "game" : mode == MENU ? "menu" : mode == TYPING ? "typing" : mode == CHAT ? "chat" : "remote";
+    r["mode"] = mode == GAME ? "game" : chat_up() ? "chat" : mode == MENU ? "menu" : mode == TYPING ? "typing" : "remote";
+    if (mode == MENU && menu_kind == MENU_MAIN) r["tab"] = TAB_NAMES[menu_tab];
     r["power"] = power_state == ASLEEP ? "asleep" : power_state == DIM ? "dim" : "awake";
     r["screen_off"] = screen_off_s;
     r["sleep"] = sleep_s;
@@ -1477,13 +1546,14 @@ void loop() {
     }
     // A key of the paired remote that means more when held: let go, or still down after HOLD_MS?
     if (guide_at) {
-        if (mode != REMOTE && mode != CHAT) {
+        if (mode != REMOTE) {
             guide_at = 0;
         } else if (bt::held() != guide_key) {
             guide_at = 0;
             open_menu();
         } else if ((int32_t)(millis() - guide_at) >= (int32_t)HOLD_MS) {
             guide_at = 0;
+            remember_tab(TAB_ASSIST);
             open_chat();
         }
     }
@@ -1531,8 +1601,10 @@ void loop() {
         voice_started = ms;
         voice_hold = false;
         active();
-        if (mode == REMOTE || mode == CHAT) {
-            open_chat();
+        // The conversation comes up (the menu's Assistant tab), unless a game,
+        // the keyboard or a Wi-Fi or device list has the screen.
+        if (mode == REMOTE || (mode == MENU && menu_kind == MENU_MAIN)) {
+            if (!chat_up()) open_chat();
             chat::status("Listening (any key)");
             ui::redraw();
         } else {
@@ -1549,7 +1621,8 @@ void loop() {
     voice_was_open = voice_open;
     // Listening and thinking move on the screen: the meter, the dots, the clock.
     static uint32_t voice_frame = 0;
-    if (mode == CHAT && (voice_open || thinking_until) && ms - voice_frame >= 70) {
+    if (chat_up() && (voice_open || thinking_until)) menu_until = ms + CHAT_IDLE_MS;      // not while it is going on
+    if (chat_up() && (voice_open || thinking_until) && ms - voice_frame >= 70) {
         voice_frame = ms;
         if (voice_open) chat::level(bt::voice_level());
         ui::redraw();
@@ -1578,10 +1651,10 @@ void loop() {
                     p["worker"] = settings::name();
                     p["ms"] = ms - voice_started;
                     worker.emit("remote.voice", p.as<JsonObjectConst>());
-                    if (mode == CHAT) {
+                    if (chat_up()) {
                         chat::status("Thinking...");
                         thinking_until = ms + 75000;
-                        chat_until = ms + 180000;
+                        menu_until = ms + CHAT_IDLE_MS;
                         ui::redraw();
                     } else {
                         ui::text("Thinking...", 45);
@@ -1600,7 +1673,8 @@ void loop() {
     if (chat_show) {
         chat_show = false;
         thinking_until = 0;
-        if (mode == REMOTE || mode == CHAT) open_chat();
+        if (mode == REMOTE) open_chat();
+        if (chat_up()) menu_until = ms + CHAT_IDLE_MS;
         ui::redraw();
     }
     if (thinking_until && (int32_t)(ms - thinking_until) >= 0) {       // no answer came
@@ -1608,7 +1682,6 @@ void loop() {
         chat::status("");
         ui::redraw();
     }
-    if (mode == CHAT && (int32_t)(ms - chat_until) >= 0) close_chat();
     if (devs_pending && lan::scans() != devs_scans) {
         devs_pending = false;
         ui::text("", 0);
