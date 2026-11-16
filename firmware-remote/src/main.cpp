@@ -24,6 +24,12 @@
 #include "lan.h"
 #include "osk.h"
 #include "ota.h"
+#ifdef ROOK_GAMEPAD
+#include <Preferences.h>
+#include <Update.h>
+#include <WebServer.h>
+#include "pad.h"
+#endif
 #include "rc_sig.h"
 #include "swarm.h"
 #include "g2048.h"
@@ -35,7 +41,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.10.2"
+#define FW_VERSION "0.11.1"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -138,6 +144,31 @@ static const char* const BT_PAIR_TEXT = "Pair a remote:\n\nhold Back + Home on i
 static const char* const BT_PAIR_TEXT = "BT\npair:\n\nput\nthe\nother\nremote\nin\npair\nmode";
 #endif
 
+#ifdef ROOK_GAMEPAD
+// The gamepad build has no USB serial (its one port is the host for the pad):
+// what would be said and typed there goes over a small web server on the
+// device instead.  GET /log: what was logged.  POST /cmd: a serial command (a
+// JSON line), answered as serial would.  POST /ota (a file upload): a build,
+// for when the hub is not reached yet.  For the home network only: it asks
+// for no password, as the serial port asks for none.
+static WebServer devweb(80);
+static std::string devweb_text, devweb_reply;
+static bool devweb_capture = false;
+static SemaphoreHandle_t devweb_mu;
+
+static void devweb_log(const char* line) {
+    if (!devweb_mu) return;
+    xSemaphoreTake(devweb_mu, portMAX_DELAY);
+    char t[16];
+    snprintf(t, sizeof t, "%.1f ", millis() / 1000.0);
+    devweb_text += t;
+    devweb_text += line;
+    devweb_text += '\n';
+    if (devweb_text.size() > 12000) devweb_text.erase(0, devweb_text.size() - 10000);
+    xSemaphoreGive(devweb_mu);
+}
+#endif
+
 static void logf(const char* fmt, ...) {
     char b[200];
     va_list ap;
@@ -145,6 +176,9 @@ static void logf(const char* fmt, ...) {
     vsnprintf(b, sizeof b, fmt, ap);
     va_end(ap);
     Serial.printf("# %s\n", b);
+#ifdef ROOK_GAMEPAD
+    devweb_log(b);
+#endif
 }
 
 // ---- buttons ----------------------------------------------------------------
@@ -1032,6 +1066,13 @@ static bool cap_map(JsonObjectConst a, JsonObject r, std::string&) {
 // ---- serial setup (scripts/remote-enroll.py) ---------------------------------
 
 static void reply(JsonDocument& d) {
+#ifdef ROOK_GAMEPAD
+    if (devweb_capture) {
+        std::string one;
+        serializeJson(d, one);
+        devweb_reply += one + "\n";
+    }
+#endif
     Serial.print("@ ");
     serializeJson(d, Serial);
     Serial.println();
@@ -1193,6 +1234,54 @@ static void poll_serial() {
         }
     }
 }
+
+#ifdef ROOK_GAMEPAD
+static void devweb_begin() {
+    devweb.on("/", [] { devweb.send(200, "text/plain", "rook remote (gamepad) " FW_VERSION ": GET /log, POST /cmd, POST /ota\n"); });
+    devweb.on("/log", [] {
+        xSemaphoreTake(devweb_mu, portMAX_DELAY);
+        std::string s = devweb_text;
+        xSemaphoreGive(devweb_mu);
+        devweb.send(200, "text/plain", s.c_str());
+    });
+    devweb.on("/cmd", HTTP_POST, [] {
+        devweb_reply.clear();
+        devweb_capture = true;
+        handle_line(std::string(devweb.arg("plain").c_str()));
+        devweb_capture = false;
+        devweb.send(200, "application/json", devweb_reply.c_str());
+    });
+    devweb.on("/ota", HTTP_POST, [] {
+        bool ok = !Update.hasError();
+        devweb.send(ok ? 200 : 500, "text/plain", ok ? "ok, restarting\n" : "failed\n");
+        if (ok) { delay(400); ESP.restart(); }
+    }, [] {
+        HTTPUpload& up = devweb.upload();
+        if (up.status == UPLOAD_FILE_START) Update.begin(UPDATE_SIZE_UNKNOWN);
+        else if (up.status == UPLOAD_FILE_WRITE) Update.write(up.buf, up.currentSize);
+        else if (up.status == UPLOAD_FILE_END) Update.end(true);
+    });
+    devweb.begin();
+}
+
+// The first time: the Wi-Fi networks the Rook dongle firmware kept on this device (NVS rook/wifi_nets).
+static void seed_wifi() {
+    if (!settings::wifi().empty()) return;
+    Preferences p;
+    p.begin("rook", true);
+    String json = p.getString("wifi_nets", "");
+    p.end();
+    JsonDocument d;
+    if (!json.length() || deserializeJson(d, json)) return;
+    std::vector<std::pair<int, std::pair<std::string, std::string>>> nets;
+    for (JsonObject o : d.as<JsonArray>()) {
+        std::string ssid = o["ssid"] | "", pass = o["pass"] | "";
+        if (!ssid.empty()) nets.push_back({o["priority"] | 100, {ssid, pass}});
+    }
+    std::stable_sort(nets.begin(), nets.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (auto& n : nets) settings::wifi_add(n.second.first, n.second.second);
+}
+#endif
 
 // ---- tasks ------------------------------------------------------------------
 
@@ -1381,8 +1470,14 @@ void setup() {
     ev_mu = xSemaphoreCreateMutex();
     wifi_mu = xSemaphoreCreateMutex();
     settings::begin();
+#ifdef ROOK_GAMEPAD
+    devweb_mu = xSemaphoreCreateMutex();
+    seed_wifi();
+#endif
     settings::wifi_dedupe();
+#ifndef ROOK_GAMEPAD
     Wire.begin(PIN_SDA, PIN_SCL, 100000);
+#endif
     ui::begin(OLED_ADDR, settings::rotation());
     if (!buttons::begin(PCF_ADDR)) logf("PCF8574 not answering at 0x%02x", PCF_ADDR);
     buttons::on_event() = on_button;
@@ -1399,6 +1494,9 @@ void setup() {
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(false);     // wifi_task rejoins: it picks the strongest network each time
     WiFi.setHostname(settings::name().c_str());
+#ifdef ROOK_GAMEPAD
+    devweb_begin();
+#endif
     for (auto& n : settings::wifi()) wifi.addAP(n.first.c_str(), n.second.c_str());
     configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
     {
@@ -1428,7 +1526,9 @@ void setup() {
         rc::WorkerConfig c;
         c.worker_id = e.worker_id;
         c.name = settings::name();
-#ifdef ROOK_BRIDGE
+#ifdef ROOK_GAMEPAD
+        c.description = "Rook remote in a game controller: its keys on the band, a small screen, games";
+#elif defined(ROOK_BRIDGE)
         c.description = "Rook remote bridge: puts a Bluetooth remote's keys on the band, with a small screen";
 #else
         c.description = "Rook remote: a handheld with 11 buttons and a small screen";
@@ -1508,8 +1608,12 @@ void loop() {
                 std::string n = buttons::name(i);
                 keys |= game_key(n);
             }
+#ifdef ROOK_GAMEPAD
+            keys |= pad::game_keys(GAMES[game_kind].flat);       // a pad holds several at once
+#else
             std::string bt_held = bt::held();
             if (!bt_held.empty()) keys |= game_key(bt_name_of(bt_held));
+#endif
             if (!inject_held.empty() && (int32_t)(ms - inject_until) < 0) keys |= game_key(inject_held);
             const GameDef& gd = GAMES[game_kind];
             if (gd.tick(ms, keys)) ui::redraw();
@@ -1709,6 +1813,10 @@ void loop() {
         mode = REMOTE;
     }
     poll_serial();
+#ifdef ROOK_GAMEPAD
+    devweb.handleClient();
+    pad::tick();
+#endif
     if ((int32_t)(ms - next_status) >= 0) {
         next_status = ms + 500;
         bool up = WiFi.status() == WL_CONNECTED;
@@ -1718,6 +1826,10 @@ void loop() {
         else if (!worker.clock_ok()) s0 = "clock";
         else s0 = worker.hub_ok() ? "band" : "hub?";
         ui::status_line(0, s0);
+#ifdef ROOK_GAMEPAD
+        if (s0 == "band") pad::light(0, 0, 28);              // the light bar: on the band, or not
+        else pad::light(40, 12, 0);
+#endif
         ui::network(up ? std::string(WiFi.SSID().c_str()) : std::string());
         ui::status_line(1, bt::state() == "connected" ? "TV: B" : "TV:");
         ui::status_line(2, local_id.empty() ? settings::target_name() : local_name);

@@ -1,6 +1,7 @@
 #include "tetris.h"
 #include <Adafruit_GFX.h>
 #include <esp_random.h>
+#include "ink.h"
 
 namespace {
 
@@ -24,6 +25,11 @@ const uint16_t SHAPES[7][4] = {
 const uint32_t FIRST_REPEAT[3] = {180, 180, 60}, REPEAT[3] = {60, 60, 40};   // left, right, down (ms)
 
 uint16_t board[ROWS];
+uint8_t tint[ROWS][COLS];        // which piece each settled cell came from
+// I, J, L, O, S, T, Z
+const uint16_t COLOUR[7] = {INK(0, 220, 255), INK(70, 100, 255), INK(255, 150, 0), INK(255, 225, 0),
+                            INK(40, 220, 60), INK(190, 80, 255), INK(255, 55, 55)};
+const uint16_t EDGE = INK(90, 95, 130), FAINT = INK(120, 120, 120);
 int kind, rot, px, py, next_kind, held_kind;
 uint32_t points;
 int cleared;
@@ -80,12 +86,18 @@ void lock() {
     uint16_t m = SHAPES[kind][rot];
     for (int i = 0; i < 16; i++) {
         int by = py + i / 4;
-        if ((m & (0x8000 >> i)) && by >= 0 && by < ROWS) board[by] |= 1u << (px + i % 4);
+        if ((m & (0x8000 >> i)) && by >= 0 && by < ROWS) {
+            board[by] |= 1u << (px + i % 4);
+            tint[by][px + i % 4] = (uint8_t)kind;
+        }
     }
     int n = 0;
     for (int y = ROWS - 1; y >= 0;) {
         if (board[y] == FULL) {
-            for (int k = y; k > 0; k--) board[k] = board[k - 1];
+            for (int k = y; k > 0; k--) {
+                board[k] = board[k - 1];
+                memcpy(tint[k], tint[k - 1], COLS);
+            }
             board[0] = 0;
             n++;
         } else {
@@ -119,12 +131,12 @@ bool turn(int by) {
     return false;
 }
 
-void cell(Adafruit_GFX& d, int x, int y) { d.fillRect(X0 + 1 + x * CELL, TOP + y * CELL, CELL - 1, CELL - 1, 1); }
+void cell(Adafruit_GFX& d, int x, int y, uint16_t c) { d.fillRect(X0 + 1 + x * CELL, TOP + y * CELL, CELL - 1, CELL - 1, c); }
 
 // Where the piece would land: its cells in outline (a dot when they are too small for one).
 void ghost_cell(Adafruit_GFX& d, int x, int y) {
-    if (CELL >= 4) d.drawRect(X0 + 1 + x * CELL, TOP + y * CELL, CELL - 1, CELL - 1, 1);
-    else d.drawPixel(X0 + 1 + x * CELL + CELL / 2 - 1, TOP + y * CELL + CELL / 2 - 1, 1);
+    if (CELL >= 4) d.drawRect(X0 + 1 + x * CELL, TOP + y * CELL, CELL - 1, CELL - 1, FAINT);
+    else d.drawPixel(X0 + 1 + x * CELL + CELL / 2 - 1, TOP + y * CELL + CELL / 2 - 1, FAINT);
 }
 
 // A piece in small, for the next one and the one held.
@@ -132,7 +144,7 @@ void mini(Adafruit_GFX& d, int k, int x, int y, int size) {
     if (k < 0) return;
     uint16_t m = SHAPES[k][0];
     for (int i = 0; i < 16; i++)
-        if (m & (0x8000 >> i)) d.fillRect(x + (i % 4) * size, y + (i / 4) * size, size, size, 1);
+        if (m & (0x8000 >> i)) d.fillRect(x + (i % 4) * size, y + (i / 4) * size, size, size, COLOUR[k]);
 }
 
 }  // namespace
@@ -254,18 +266,18 @@ void draw(Adafruit_GFX& d) {
     d.setCursor(32 - (int)strlen(lv) * 3, 12);
     d.print(lv);
     if (hold_used) d.drawFastHLine(1, 23, 12, 1);     // the held piece can't be taken back yet
-    d.drawFastHLine(X0, TOP + ROWS * CELL, COLS * CELL + 2, 1);
+    d.drawFastHLine(X0, TOP + ROWS * CELL, COLS * CELL + 2, EDGE);
 #else
     d.setCursor(1, 0);
     d.print(b);
     mini(d, next_kind, 12, 10, 2);
     d.drawFastHLine(0, TOP - 1, 32, 1);
 #endif
-    d.drawFastVLine(X0, TOP, ROWS * CELL, 1);
-    d.drawFastVLine(X0 + COLS * CELL + 1, TOP, ROWS * CELL, 1);
+    d.drawFastVLine(X0, TOP, ROWS * CELL, EDGE);
+    d.drawFastVLine(X0 + COLS * CELL + 1, TOP, ROWS * CELL, EDGE);
     for (int y = 0; y < ROWS; y++)
         for (int x = 0; x < COLS; x++)
-            if (board[y] >> x & 1) cell(d, x, y);
+            if (board[y] >> x & 1) cell(d, x, y, COLOUR[tint[y][x] % 7]);
     if (!over) {
         uint16_t m = SHAPES[kind][rot];
         int gy = py;
@@ -275,7 +287,7 @@ void draw(Adafruit_GFX& d) {
             if (gy != py && gy + i / 4 >= 0) ghost_cell(d, px + i % 4, gy + i / 4);
         }
         for (int i = 0; i < 16; i++)
-            if ((m & (0x8000 >> i)) && py + i / 4 >= 0) cell(d, px + i % 4, py + i / 4);
+            if ((m & (0x8000 >> i)) && py + i / 4 >= 0) cell(d, px + i % 4, py + i / 4, COLOUR[kind]);
     }
 #ifdef ROOK_BRIDGE
     if (over) {

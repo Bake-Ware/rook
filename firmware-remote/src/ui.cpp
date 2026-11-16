@@ -1,6 +1,10 @@
 #include "ui.h"
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#ifdef ROOK_GAMEPAD
+#include <Adafruit_ST7735.h>
+#include <SPI.h>
+#endif
 #include <Wire.h>
 #include <algorithm>
 #include <time.h>
@@ -8,7 +12,58 @@
 
 namespace {
 
-#ifdef ROOK_BRIDGE
+#ifdef ROOK_GAMEPAD
+// The gamepad build's screen is a 0.96" 160 x 80 colour LCD (ST7735, the
+// T-Dongle-S3's). It is drawn as the bridge's 128 x 64 one-bit picture, kept
+// here, and shown one pixel for one in the middle of the LCD. It answers what
+// the rest of this file asks of the OLED, and keeps colours for what draws
+// with them (the games).
+class PadScreen : public GFXcanvas16 {
+  public:
+    PadScreen() : GFXcanvas16(128, 64), spi(FSPI), tft(&spi, 4, 2, 1) {}
+    bool begin(int, int) {
+        spi.begin(5, -1, 3);
+        tft.initR(INITR_MINI160x80_PLUGIN);
+        tft.setRotation(1);
+        tft.invertDisplay(false);
+        tft.fillScreen(0);
+        pinMode(38, OUTPUT);
+        digitalWrite(38, LOW);       // the backlight: lit when low
+        return getBuffer() != nullptr;
+    }
+    void clearDisplay() { GFXcanvas16::fillScreen(0); }
+    void display() { tft.drawRGBBitmap(16, 8, getBuffer(), 128, 64); }
+    void ssd1306_command(uint8_t c) { digitalWrite(38, c == SSD1306_DISPLAYOFF ? HIGH : LOW); }
+    // What is drawn says 0 (off), 1 (lit: white here), SSD1306_INVERSE (the pixel
+    // turned over: the menu's highlight), or a colour of its own (ink.h).
+    static uint16_t ink(uint16_t c) { return c == 1 ? 0xFFFF : c; }
+    void drawPixel(int16_t x, int16_t y, uint16_t color) override {
+        GFXcanvas16::drawPixel(x, y, color == SSD1306_INVERSE ? (uint16_t)~getPixel(x, y) : ink(color));
+    }
+    void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) override {
+        if (color != SSD1306_INVERSE) return GFXcanvas16::drawFastHLine(x, y, w, ink(color));
+        for (int16_t i = 0; i < w; i++) drawPixel(x + i, y, color);
+    }
+    void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) override {
+        if (color != SSD1306_INVERSE) return GFXcanvas16::drawFastVLine(x, y, h, ink(color));
+        for (int16_t i = 0; i < h; i++) drawPixel(x, y + i, color);
+    }
+    void fillScreen(uint16_t color) override { GFXcanvas16::fillScreen(ink(color)); }
+    // The picture as an SSD1306 holds it, lit or not (what ui::snapshot hands out).
+    void pages(std::string& out) {
+        out.assign(128 * 64 / 8, '\0');
+        const uint16_t* b = getBuffer();
+        for (int y = 0; y < 64; y++)
+            for (int x = 0; x < 128; x++)
+                if (b[y * 128 + x]) out[x + (y / 8) * 128] |= (char)(1 << (y & 7));
+    }
+
+  private:
+    SPIClass spi;
+    Adafruit_ST7735 tft;
+};
+PadScreen oled;
+#elif defined(ROOK_BRIDGE)
 Adafruit_SSD1306 oled(128, 64, &Wire, -1);
 #else
 Adafruit_SSD1306 oled(128, 32, &Wire, -1);
@@ -732,7 +787,11 @@ bool snapshot(std::string& out, int& w, int& h, int& rotation, bool& is_dark) {
 #endif
     rotation = oled.getRotation();
     is_dark = dark;
+#ifdef ROOK_GAMEPAD
+    oled.pages(out);
+#else
     out.assign((const char*)oled.getBuffer(), (size_t)w * h / 8);
+#endif
     xSemaphoreGive(mu);
     return true;
 }

@@ -1,6 +1,7 @@
 #include "swarm.h"
 #include <Adafruit_GFX.h>
 #include <esp_random.h>
+#include "ink.h"
 #include "tetris.h"
 
 namespace {
@@ -250,7 +251,7 @@ void draw(Adafruit_GFX& d) {
     d.setTextWrap(false);
     d.setTextColor(1);
     uint32_t ms = millis();
-    for (int i = 0; i < 12; i++) d.drawPixel(star_x[i], star_y[i], 1);
+    for (int i = 0; i < 12; i++) d.drawPixel(star_x[i], star_y[i], i < 4 ? INK(150, 160, 200) : INK(70, 80, 120));
     d.fillRect(0, 0, W, 9, 0);
     d.setCursor(0, 0);
     d.print((unsigned long)points);
@@ -264,23 +265,26 @@ void draw(Adafruit_GFX& d) {
     for (int i = 0; i < N; i++) {
         if (foes[i].state == GONE) continue;
         int wing = foes[i].state == FORM ? f2 : (frame / 3) & 1;      // diving: wings faster
-        d.drawBitmap(foe_x(i), foe_y(i), foes[i].boss ? BOSS[wing] : BUG[wing], FOE_W, FOE_H, 1);
+        static const uint16_t ROW[ROWS] = {INK(255, 70, 100), INK(255, 200, 60), INK(70, 230, 100), INK(70, 200, 255)};
+        uint16_t c = foes[i].boss && foes[i].hp < 2 ? INK(255, 150, 60) : ROW[(i / COLS) % ROWS];      // hit once: it shows
+        d.drawBitmap(foe_x(i), foe_y(i), foes[i].boss ? BOSS[wing] : BUG[wing], FOE_W, FOE_H, c);
         if (foes[i].boss && foes[i].hp < 2) d.drawPixel(foe_x(i) + 3, foe_y(i) + 2, 0);      // hit once: it shows
     }
     bool alive = (int32_t)(ms - dead_until) >= 0, safe = (int32_t)(ms - safe_until) < 0;
-    if (!over && alive && !(safe && (frame & 2))) d.drawBitmap(ship_x, SHIP_Y, SHIP, SHIP_W, SHIP_H, 1);
+    if (!over && alive && !(safe && (frame & 2))) d.drawBitmap(ship_x, SHIP_Y, SHIP, SHIP_W, SHIP_H, INK(130, 225, 255));
     for (auto& s : shots)
-        if (s.on) d.drawFastVLine(s.x, s.y, 4, 1);
+        if (s.on) d.drawFastVLine(s.x, s.y, 4, INK(255, 255, 130));
     for (auto& b : bombs)
         if (b.on) {
-            d.drawPixel(b.x + ((b.y / 2) & 1), b.y, 1);
-            d.drawPixel(b.x + (((b.y / 2) + 1) & 1), b.y + 1, 1);
-            d.drawPixel(b.x + ((b.y / 2) & 1), b.y + 2, 1);
+            const uint16_t hot = INK(255, 90, 50);
+            d.drawPixel(b.x + ((b.y / 2) & 1), b.y, hot);
+            d.drawPixel(b.x + (((b.y / 2) + 1) & 1), b.y + 1, hot);
+            d.drawPixel(b.x + ((b.y / 2) & 1), b.y + 2, hot);
         }
     for (auto& b : booms)
         if (b.t) {
             int r = (8 - b.t) / 2 + 1;
-            d.drawCircle(b.x, b.y, r, 1);
+            d.drawCircle(b.x, b.y, r, b.t > 4 ? INK(255, 240, 150) : INK(255, 140, 40));
             if (b.t > 4) d.drawPixel(b.x, b.y, 1);
         }
     if (over) {

@@ -1,6 +1,7 @@
 #include "g2048.h"
 #include <Adafruit_GFX.h>
 #include <esp_random.h>
+#include "ink.h"
 #include "tetris.h"
 
 namespace {
@@ -138,14 +139,26 @@ void draw(Adafruit_GFX& d) {
     for (int i = 0; i < 16; i++) {
         int x = (i % 4) * CW, y = (i / 4) * CH, e = g[i];
         if (!e) {
-            d.drawPixel(x + CW / 2, y + CH / 2, 1);
+            d.drawPixel(x + CW / 2, y + CH / 2, INK(90, 90, 90));
             continue;
         }
         if (i == pop_at) {                   // just arrived: small for a moment
-            d.drawRoundRect(x + 6, y + 4, CW - 12, CH - 8, 2, 1);
+            d.drawRoundRect(x + 6, y + 4, CW - 12, CH - 8, 2, INK(238, 228, 218));
             continue;
         }
         // The bigger the tile, the heavier it is drawn: an outline, a double outline, then solid.
+#ifdef ROOK_GAMEPAD
+        // In colour: every tile solid, warmer as it grows, gold from 128.
+        static const uint16_t TILE[12] = {0, INK(238, 228, 218), INK(237, 224, 200), INK(242, 177, 121), INK(245, 149, 99),
+                                          INK(246, 124, 95), INK(246, 94, 59), INK(237, 207, 114), INK(237, 204, 97),
+                                          INK(237, 200, 80), INK(237, 197, 63), INK(237, 194, 46)};
+        d.fillRoundRect(x + 1, y + 1, CW - 2, CH - 2, 3, e < 12 ? TILE[e] : INK(120, 80, 200));
+        number(t, sizeof t, 1ul << e);
+        d.setTextColor(e < 12 ? 0 : 1);
+        d.setCursor(x + (CW - (int)strlen(t) * 6 + 1) / 2, y + 4);
+        d.print(t);
+        continue;
+#endif
         bool solid = e >= 7;
         if (solid) d.fillRoundRect(x + 1, y + 1, CW - 2, CH - 2, 3, 1);
         else d.drawRoundRect(x + 1, y + 1, CW - 2, CH - 2, 3, 1);

@@ -2,6 +2,7 @@
 #include <Adafruit_GFX.h>
 #include <algorithm>
 #include <esp_random.h>
+#include "ink.h"
 #include "tetris.h"
 
 namespace {
@@ -269,10 +270,13 @@ void draw(Adafruit_GFX& d) {
     int here = cell[cy * GW + cx];
     snprintf(t, sizeof t, "$%d", gold);
     d.setCursor(0, 0);
+    d.setTextColor(INK(255, 215, 0));
     d.print(t);
-    d.fillTriangle(31, 2, 37, 2, 34, 6, 1);          // a heart, near enough
-    d.fillRect(31, 1, 3, 2, 1);
-    d.fillRect(35, 1, 3, 2, 1);
+    d.setTextColor(1);
+    const uint16_t red = INK(255, 60, 90);
+    d.fillTriangle(31, 2, 37, 2, 34, 6, red);        // a heart, near enough
+    d.fillRect(31, 1, 3, 2, red);
+    d.fillRect(35, 1, 3, 2, red);
     snprintf(t, sizeof t, "%d", lives);
     d.setCursor(40, 0);
     d.print(t);
@@ -293,7 +297,7 @@ void draw(Adafruit_GFX& d) {
     for (int i = 0; i + 1 < NWP; i++) {              // the road: a dotted line down its middle
         int x = wp_x(i), y = wp_y(i), bx = wp_x(i + 1), by = wp_y(i + 1), n = 0;
         while (x != bx || y != by) {
-            if (!(n++ & 3) && x >= 0 && x < 128) d.drawPixel(x, y, 1);
+            if (!(n++ & 3) && x >= 0 && x < 128) d.drawPixel(x, y, INK(110, 100, 80));
             x += (bx > x) - (bx < x);
             y += (by > y) - (by < y);
         }
@@ -302,39 +306,43 @@ void draw(Adafruit_GFX& d) {
         if (cell[i] < GUN || cell[i] > FROST) continue;
         int x = (i % GW) * T, y = TOP + (i / GW) * T;
         if (cell[i] == GUN) {
-            d.drawCircle(x + 4, y + 4, 3, 1);
-            d.drawPixel(x + 4, y + 4, 1);
+            const uint16_t c = INK(80, 220, 255);
+            d.drawCircle(x + 4, y + 4, 3, c);
+            d.drawPixel(x + 4, y + 4, c);
         } else if (cell[i] == BLAST) {
-            d.drawRect(x + 1, y + 1, 7, 7, 1);
-            d.fillRect(x + 3, y + 3, 3, 3, 1);
+            const uint16_t c = INK(255, 150, 40);
+            d.drawRect(x + 1, y + 1, 7, 7, c);
+            d.fillRect(x + 3, y + 3, 3, 3, c);
         } else {
-            d.drawFastHLine(x + 1, y + 4, 7, 1);
-            d.drawFastVLine(x + 4, y + 1, 7, 1);
-            d.drawLine(x + 2, y + 2, x + 6, y + 6, 1);
-            d.drawLine(x + 6, y + 2, x + 2, y + 6, 1);
+            const uint16_t c = INK(170, 205, 255);
+            d.drawFastHLine(x + 1, y + 4, 7, c);
+            d.drawFastVLine(x + 4, y + 1, 7, c);
+            d.drawLine(x + 2, y + 2, x + 6, y + 6, c);
+            d.drawLine(x + 6, y + 2, x + 2, y + 6, c);
         }
         for (int p = 1; p < lvl[i]; p++) d.drawPixel(x + (p == 1 ? 0 : 7), y, 1);     // its level: a dot a corner
     }
     for (auto& f : foes) {
         if (!f.on) continue;
+        const uint16_t fc = f.slow ? INK(150, 190, 255) : f.kind == 2 ? INK(255, 70, 70) : f.kind == 1 ? INK(255, 230, 70) : INK(90, 230, 90);
         if (f.kind == 2) {
-            d.fillRect(f.x - 3, f.y - 3, 7, 7, 1);
+            d.fillRect(f.x - 3, f.y - 3, 7, 7, fc);
             d.drawPixel(f.x - 1, f.y - 1, 0);
             d.drawPixel(f.x + 1, f.y - 1, 0);
             d.drawFastHLine(f.x - 3, f.y - 5, std::max(1, 7 * f.hp / f.full), 1);
         } else if (f.kind == 1) {
-            d.drawFastHLine(f.x - 2, f.y, 5, 1);
-            d.drawFastVLine(f.x, f.y - 2, 5, 1);
-            d.drawRect(f.x - 1, f.y - 1, 3, 3, 1);
+            d.drawFastHLine(f.x - 2, f.y, 5, fc);
+            d.drawFastVLine(f.x, f.y - 2, 5, fc);
+            d.drawRect(f.x - 1, f.y - 1, 3, 3, fc);
         } else {
-            d.drawRect(f.x - 2, f.y - 2, 5, 5, 1);
-            if (f.hp * 2 > f.full) d.drawPixel(f.x, f.y, 1);       // hollow once half gone
+            d.drawRect(f.x - 2, f.y - 2, 5, 5, fc);
+            if (f.hp * 2 > f.full) d.drawPixel(f.x, f.y, fc);       // hollow once half gone
         }
     }
     for (auto& f : flashes) {
         if (!f.t) continue;
-        if (f.r) d.drawCircle(f.x1, f.y1, f.r - f.t * 2, 1);
-        else d.drawLine(f.x0, f.y0, f.x1, f.y1, 1);
+        if (f.r) d.drawCircle(f.x1, f.y1, f.r - f.t * 2, INK(255, 170, 50));
+        else d.drawLine(f.x0, f.y0, f.x1, f.y1, INK(255, 255, 170));
     }
     // The cursor: corners always, the whole square on the beat.
     int x = cx * T, y = TOP + cy * T;

@@ -2,7 +2,7 @@
 """Set up a Rook remote over USB: Wi-Fi, then enroll it with the hub.
 
     python3 firmware-remote/scripts/remote-enroll.py --hub https://rook.example.com \\
-        [--port /dev/ttyACM0] [--name remote] [--ssid NAME --password PASS]
+        [--port /dev/ttyACM0 | --http http://192.168.1.50] [--name remote] [--ssid NAME --password PASS]
 
 Reads the remote's public key over serial and asks the hub to join
 (POST /enroll/ask); the remote then waits on the hub's Workers page until a
@@ -20,7 +20,6 @@ import time
 import urllib.error
 import urllib.request
 
-import serial
 
 UA = "rook-remote-enroll/0.1"      # a hub behind Cloudflare refuses urllib's default
 
@@ -32,8 +31,32 @@ def port_default():
     return found[0]
 
 
+class HttpRemote:
+    """A remote with no USB serial (the gamepad build): its commands go to its own
+    web server (POST /cmd). The bundle then crosses the local network in the
+    clear, so only on a network you trust."""
+
+    def __init__(self, base):
+        self.base = base.rstrip("/")
+
+    def cmd(self, obj, wait=15.0):
+        req = urllib.request.Request(self.base + "/cmd", data=json.dumps(obj).encode(), method="POST",
+                                     headers={"Content-Type": "text/plain"})
+        try:
+            with urllib.request.urlopen(req, timeout=wait) as r:
+                lines = [l for l in r.read().decode(errors="replace").splitlines() if l.strip()]
+        except OSError:
+            if obj.get("cmd") == "reboot":      # it went before it answered
+                return {"ok": True}
+            raise SystemExit(f"the remote didn't answer {obj.get('cmd')}")
+        if not lines:
+            raise SystemExit(f"the remote didn't answer {obj.get('cmd')}")
+        return json.loads(lines[-1])
+
+
 class Remote:
     def __init__(self, port):
+        import serial
         self.s = serial.Serial(port, 115200, timeout=0.5)
         self.s.dtr = True
         time.sleep(0.3)
@@ -75,6 +98,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hub", required=True, help="the hub's https address")
     ap.add_argument("--port")
+    ap.add_argument("--http", help="the remote's own address (http://...), for a build with no USB serial")
     ap.add_argument("--name", help="worker name (default: what the remote has, else 'remote')")
     ap.add_argument("--ssid")
     ap.add_argument("--password", default="")
@@ -85,7 +109,7 @@ def main():
     if not url.startswith("https://"):
         sys.exit("--hub must be https: the band key travels in the answer")
 
-    r = Remote(a.port or port_default())
+    r = HttpRemote(a.http) if a.http else Remote(a.port or port_default())
     if a.ssid:
         r.cmd({"cmd": "wifi", "ssid": a.ssid, "pass": a.password})
         print(f"wifi: {a.ssid} saved")
