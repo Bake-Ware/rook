@@ -25,6 +25,7 @@ int agent_top = 0;             // the first line of agent_text on screen (it scr
 bool agent_on = false, agent_big = false;
 std::string note;
 uint32_t note_until = 0;
+bool note_over = false;        // the note is drawn over the menu as well
 bool ask_on = false;
 std::string ask_prompt;
 std::vector<std::string> ask_opts;
@@ -357,6 +358,19 @@ void draw() {
         tetris::draw(oled);
     } else if (menu_on) {
         menu_draw(ms);
+        if (note_over && note_until && (int32_t)(note_until - ms) > 0) {
+            // A word about what was just done in it, in a box over the menu.
+            auto ls = wrap(note, W < 100 ? 4 : 2);
+            int h = (int)ls.size() * 9 + 6, y = (H - h) / 2;
+            oled.fillRect(0, y, W, h, SSD1306_BLACK);
+            oled.drawRect(0, y, W, h, SSD1306_WHITE);
+            int ly = y + 4;
+            for (auto& l : ls) {
+                oled.setCursor(std::max(1, (W - (int)l.size() * 6) / 2), ly);
+                oled.print(l.substr(0, COLS).c_str());
+                ly += 9;
+            }
+        }
     } else if (card_on && W >= 100) {
         card_draw(ms);
     } else if (W >= 100 && note_until && (int32_t)(note_until - ms) > 0) {
@@ -511,11 +525,14 @@ void big(const std::string& t) {
     xSemaphoreGive(mu);
 }
 
-void flash(const std::string& t) {
+void flash(const std::string& t) { flash(t, 1500, false); }
+
+void flash(const std::string& t, uint32_t ms, bool over_menu) {
     xSemaphoreTake(mu, portMAX_DELAY);
     note = t;
-    note_until = millis() + 1500;
+    note_until = millis() + ms;
     if (!note_until) note_until = 1;
+    note_over = over_menu;
     dirty = true;
     xSemaphoreGive(mu);
 }

@@ -27,6 +27,8 @@ void card(const std::string& title, const std::string& body, int percent);
 bool text_scroll(int delta);
 std::string shown();                                  // what the screen says now
 void flash(const std::string& t);                     // a brief note (1.5 s) over the status screen
+// The same, for ms milliseconds; over_menu: drawn over an open menu too (a box on top of it).
+void flash(const std::string& t, uint32_t ms, bool over_menu);
 void big(const std::string& t);                       // a few characters, large, until replaced
 
 // Question screen: prompt and options with a cursor.

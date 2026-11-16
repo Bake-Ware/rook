@@ -1,6 +1,6 @@
 // Rook remote: a XIAO ESP32-S3 handheld with 11 buttons (on a PCF8574 and
 // GPIOs) and a 128x32 OLED held upright, joining the band as a core v2 worker.
-// The input button opens its own menu: which device the buttons are for, or Tetris.
+// The input button (the bridge: Guide) opens its own menu: which device the buttons are for, or a game.
 //   I2C: SDA GPIO5, SCL GPIO6. PCF8574 0x20, SSD1306 0x3C.
 // Button presses go to the hub as remote.button events; caps let agents show
 // text, ask a question, wait for a press, read state and name the buttons.
@@ -34,7 +34,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.10.0"
+#define FW_VERSION "0.10.1"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -115,6 +115,12 @@ static const GameDef GAMES[] = {
 };
 static bool swallow = false;                // drop the release of the press that left the game
 static const uint32_t MENU_IDLE_MS = 20000;
+static const uint32_t HOLD_MS = 600;        // a key down this long is held (the paired remote only says when it goes down)
+// A paired remote's key going down that means one thing tapped and another
+// held: the loop watches it (bt::held) until it is let go or HOLD_MS passes.
+static std::string guide_key, ok_key;       // its raw name
+static uint32_t guide_at = 0, ok_at = 0;    // when it went down (0: not watching)
+static int ok_index = -1;                   // the menu row OK went down on
 static uint32_t seq_all = 0;                // one count over the handheld's buttons and a paired remote's keys
 #ifdef ROOK_BRIDGE
 static const char* const BT_PAIR_TEXT = "Pair a remote:\n\nhold Back + Home on it\nuntil its light blinks";
@@ -287,7 +293,7 @@ static void open_wifi_menu() {
     xSemaphoreTake(wifi_mu, portMAX_DELAY);
     for (auto& h : wifi_heard) {
         bool known = false;
-        for (auto& n : saved) known = known || n.first == h.ssid;
+        for (auto& n : saved) known = known || settings::wifi_same(n.first, h.ssid);
         labels.push_back((known ? "*" : "") + h.ssid);
         values.push_back(h.ssid);
     }
@@ -309,10 +315,65 @@ static void start_wifi_scan() {
 }
 
 static void save_wifi(const std::string& ssid, const std::string& pass) {
-    settings::wifi_add(ssid, pass);
-    settings::set_wifi_last(ssid);          // tried first from now on
+    settings::wifi_add(ssid, pass);         // at the top: joined first from now on
     wifi_kick = true;
     ui::flash("joining\n" + ssid);
+}
+
+static bool wifi_saved(const std::string& ssid) {
+    for (auto& n : settings::wifi())
+        if (settings::wifi_same(n.first, ssid)) return true;
+    return false;
+}
+
+// OK held on a saved network in the Wi-Fi menu: it goes to the top of the list (joined first).
+static void wifi_prefer_row(int i) {
+    if (i < 0 || i >= (int)menu_values.size() || !settings::wifi_prefer(menu_values[i])) return;
+    menu_until = millis() + MENU_IDLE_MS;
+    ui::flash("Preferred", 900, true);
+}
+
+// The devices the menu offers the buttons to: the hub's targets, then those on
+// this network the remote drives itself. The profile key steps to the next.
+static void next_device() {
+    auto ts = settings::targets();
+    std::vector<std::string> lans, names;
+    for (auto& d : lan::devices()) {
+        if (d.driver.empty()) continue;
+        lans.push_back(d.id);
+        names.push_back(d.name);
+    }
+    int n = (int)(ts.size() + lans.size());
+    if (!n) {
+        ui::flash("no devices", 1000, false);
+        return;
+    }
+    int cur = settings::target();
+    if (!local_id.empty())
+        for (size_t i = 0; i < lans.size(); i++)
+            if (lans[i] == local_id) cur = (int)(ts.size() + i);
+    int next = ((cur < 0 ? -1 : cur) + 1) % n;
+    close_chat();
+    if (next < (int)ts.size()) {
+        settings::set_target(next);
+        set_local("");
+        ui::flash(ts[next], 1000, false);
+        return;
+    }
+    lan::Device d;
+    if (!lan::find(lans[next - ts.size()], d)) return;
+    lan::keep(d.id);
+    set_local(d.id);
+    std::string err;
+    if (!dev::paired(d)) dev::run("pair", d.id, "", 0, err);
+    else ui::flash(d.name, 1000, false);
+}
+
+static bool is_profile_key(const ButtonEvent& e) {
+    std::string raw = e.lines.rfind("bt:", 0) == 0 ? e.lines.substr(3) : e.name;
+    for (const char* n : {raw.c_str(), e.name.c_str()})
+        if (!strcasecmp(n, "bt_c19c") || !strcasecmp(n, "bt_cc19c")) return true;
+    return false;
 }
 
 static void menu_pick(int i) {
@@ -454,12 +515,30 @@ static void on_button(const ButtonEvent& ev) {
         return;
     }
     if (mode == MENU) {
-        if (strcmp(e.action, "press")) return;
         menu_until = millis() + MENU_IDLE_MS;
+        int sel = ui::menu_selected();
+        if (e.name == "ok" && menu_kind == MENU_WIFI && sel < (int)menu_values.size() &&
+            !menu_values[sel].empty() && wifi_saved(menu_values[sel])) {
+            // A saved network: OK tapped joins it, held puts it first. The
+            // handheld's buttons say "long" themselves; the paired remote's
+            // only go down, so the loop times those.
+            if (!strcmp(e.action, "long")) { wifi_prefer_row(sel); return; }
+            if (!strcmp(e.action, "press") && e.lines.rfind("bt:", 0) == 0) {
+                ok_key = e.lines.substr(3);
+                ok_index = sel;
+                ok_at = millis() | 1;
+                return;
+            }
+        }
+        if (strcmp(e.action, "press")) return;
         if (e.name == "up") ui::menu_move(-1);
         else if (e.name == "down") ui::menu_move(1);
-        else if (e.name == "ok") menu_pick(ui::menu_selected());
+        else if (e.name == "ok") menu_pick(sel);
+#ifdef ROOK_BRIDGE
+        else if (is_name(e.name, {"back", "home", "guide"})) { ui::menu_end(); mode = REMOTE; }
+#else
         else if (is_name(e.name, {"back", "input", "home"})) { ui::menu_end(); mode = REMOTE; }
+#endif
         return;
     }
     // The conversation is up: up and down read back through it, back or home puts it away.
@@ -480,10 +559,31 @@ static void on_button(const ButtonEvent& ev) {
         else ui::text_scroll(e.name == "up" ? -4 : 4);
         return;
     }
+    // The profile key: the buttons go to the next device the menu offers.
+    if (is_profile_key(e) && !buttons::learning()) {
+        if (!strcmp(e.action, "press")) next_device();
+        return;
+    }
+#ifdef ROOK_BRIDGE
+    // Guide tapped opens the menu; held, the conversation with the house agent.
+    // (Input and the remote's menu key go to the TV.)
+    if (e.name == "guide" && !buttons::learning()) {
+        if (!strcmp(e.action, "long")) open_chat();
+        else if (strcmp(e.action, "press")) return;
+        else if (e.lines.rfind("bt:", 0) == 0) {
+            guide_key = e.lines.substr(3);
+            guide_at = millis() | 1;
+        } else {
+            open_menu();
+        }
+        return;
+    }
+#else
     if ((e.name == "input" || e.name == "bt_menu") && !buttons::learning()) {
         if (!strcmp(e.action, "press")) open_menu();
         return;
     }
+#endif
     if (buttons::learning()) {
         char b[24];
         snprintf(b, sizeof b, "%s = %s", e.name.c_str(), e.lines.c_str());
@@ -751,6 +851,11 @@ static bool cap_wifi(JsonObjectConst a, JsonObject r, std::string& err) {
         if (ssid.empty()) { err = "bad args: ssid is needed"; return false; }
         if (action == "add") settings::wifi_add(ssid, a["password"] | "");
         else settings::wifi_remove(ssid);
+    }
+    std::string prefer = a["prefer"] | "";
+    if (!prefer.empty() && !settings::wifi_prefer(prefer)) {
+        err = "not saved: prefer names one of the saved networks (" + prefer + ")";
+        return false;
     }
     JsonArray saved = r["saved"].to<JsonArray>();
     for (auto& n : settings::wifi()) saved.add(n.first);
@@ -1030,18 +1135,17 @@ static void rook_task(void*) {
 }
 
 // Joining Wi-Fi blocks for seconds; keep it off the button/serial loop.
-// One join: drop whatever the radio was trying (a scan fails while it is still
+// One round: drop whatever the radio was trying (a scan fails while it is still
 // connecting, which is how WiFiMulti went deaf away from the last network),
-// scan, and connect to the saved network that last let us in, else the
-// strongest (its strongest access point); each
-// failed attempt moves on to the next saved network heard, so one that won't
-// have us doesn't shadow a weaker one that will.
+// scan once, then try each saved network heard, in the saved list's order (the
+// person's order: the first is preferred), at its strongest access point,
+// moving on when one won't have us. All failed: the next round does it again.
 // - A WPA2/WPA3 network is joined as WPA2 (no PMF): the WPA3 handshake to the
 //   house mesh never completes on this radio, and says nothing while it fails.
 // - Transmit power: full power fails to authenticate right next to an AP
 //   (reasons 2/202 at -25 dBm) and its bursts upset the PCF8574 lines, so a
-//   strong network is joined at 8.5 dBm and a weaker one at full power; a
-//   second round over the networks tries the other power.
+//   strong network is joined at 8.5 dBm and a weaker one at full power; every
+//   other round tries the other power.
 struct WifiCandidate {
     std::string ssid, pass;
     int ch, rssi;
@@ -1050,6 +1154,7 @@ struct WifiCandidate {
 
 static WifiCandidate wifi_quick;            // the access point that last let us in
 static bool wifi_have_quick = false, wifi_quick_low = false;
+static bool wifi_woke = false;              // the radio was off (asleep): a quick rejoin may do
 
 static bool wifi_connect(const WifiCandidate& c, bool low, int tenths) {
     WiFi.begin(c.ssid.c_str(), c.pass.c_str(), c.ch, c.bssid, false);
@@ -1065,34 +1170,37 @@ static bool wifi_connect(const WifiCandidate& c, bool low, int tenths) {
     return WiFi.status() == WL_CONNECTED;
 }
 
-static bool wifi_join(unsigned attempt) {
+// Something else wants the radio: leave the round.
+static bool wifi_interrupted() { return wifi_kick || wifi_sleep || wifi_hold || wifi_scan_state == 1; }
+
+static bool wifi_join(unsigned round) {
     if (WiFi.getMode() == WIFI_OFF) WiFi.mode(WIFI_STA);      // it was asleep
     WiFi.disconnect();
     vTaskDelay(pdMS_TO_TICKS(200));
-    // Waking up where it fell asleep: straight back to the same access point, no scan.
-    if (attempt == 0 && wifi_have_quick) {
-        bool saved = false;
-        for (auto& net : settings::wifi()) saved = saved || net.first == wifi_quick.ssid;
-        if (saved) {
-            logf("wifi: back to %s (ch %d)", wifi_quick.ssid.c_str(), wifi_quick.ch);
-            if (wifi_connect(wifi_quick, wifi_quick_low, 50)) return true;
-            WiFi.disconnect();
-            vTaskDelay(pdMS_TO_TICKS(200));
-        }
-        wifi_have_quick = false;
+    auto saved = settings::wifi();
+    // Waking up where it fell asleep: straight back to the same access point,
+    // no scan, when that network is still the first on the list.
+    if (wifi_woke && wifi_have_quick && !saved.empty() && settings::wifi_same(saved[0].first, wifi_quick.ssid)) {
+        wifi_woke = false;
+        wifi_quick.pass = saved[0].second;
+        logf("wifi: back to %s (ch %d)", wifi_quick.ssid.c_str(), wifi_quick.ch);
+        if (wifi_connect(wifi_quick, wifi_quick_low, 50)) return true;
+        WiFi.disconnect();
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
+    wifi_woke = false;
     int n = WiFi.scanNetworks(false, true, false, 300);
     if (n < 0) {
         logf("wifi: scan failed (%d)", n);
         return false;
     }
     std::vector<WifiCandidate> heard;
-    for (auto& net : settings::wifi()) {
+    for (auto& net : saved) {
         int best = -1;
         for (int i = 0; i < n; i++)
-            if (net.first == WiFi.SSID(i).c_str() && (best < 0 || WiFi.RSSI(i) > WiFi.RSSI(best))) best = i;
+            if (settings::wifi_same(net.first, WiFi.SSID(i).c_str()) && (best < 0 || WiFi.RSSI(i) > WiFi.RSSI(best))) best = i;
         if (best < 0) continue;
-        WifiCandidate c{net.first, net.second, (int)WiFi.channel(best), (int)WiFi.RSSI(best), {}};
+        WifiCandidate c{WiFi.SSID(best).c_str(), net.second, (int)WiFi.channel(best), (int)WiFi.RSSI(best), {}};
         memcpy(c.bssid, WiFi.BSSID(best), 6);
         heard.push_back(c);
     }
@@ -1101,21 +1209,21 @@ static bool wifi_join(unsigned attempt) {
         logf("wifi: heard %d networks, none of them saved", n);
         return false;
     }
-    // The network that last let us in first, then the strongest.
-    std::string last = settings::wifi_last();
-    std::sort(heard.begin(), heard.end(), [&](const WifiCandidate& x, const WifiCandidate& y) {
-        if ((x.ssid == last) != (y.ssid == last)) return x.ssid == last;
-        return x.rssi > y.rssi;
-    });
-    const WifiCandidate& c = heard[attempt % heard.size()];
-    bool low = (c.rssi > -45) != (((attempt / heard.size()) & 1) != 0);
-    logf("wifi: joining %s (ch %d, %d dBm) at %s power", c.ssid.c_str(), c.ch, c.rssi, low ? "low" : "full");
-    if (!wifi_connect(c, low, 150)) return false;
-    settings::set_wifi_last(c.ssid);
-    wifi_quick = c;
-    wifi_quick_low = low;
-    wifi_have_quick = true;
-    return true;
+    for (auto& c : heard) {
+        if (wifi_interrupted()) return false;
+        bool low = (c.rssi > -45) != ((round & 1) != 0);
+        logf("wifi: joining %s (ch %d, %d dBm) at %s power", c.ssid.c_str(), c.ch, c.rssi, low ? "low" : "full");
+        if (wifi_connect(c, low, 150)) {
+            wifi_quick = c;
+            wifi_quick_low = low;
+            wifi_have_quick = true;
+            return true;
+        }
+        logf("wifi: %s failed (status %d)", c.ssid.c_str(), (int)WiFi.status());
+        WiFi.disconnect();
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    return false;
 }
 
 static void wifi_scan() {
@@ -1147,7 +1255,7 @@ static void wifi_scan() {
 }
 
 static void wifi_task(void*) {
-    unsigned attempt = 0;
+    unsigned round = 0;
     for (;;) {
         if (wifi_scan_state == 1) {
             wifi_scan();
@@ -1156,6 +1264,7 @@ static void wifi_task(void*) {
         if (wifi_sleep) {                 // asleep: the radio stays off until a key wakes the remote
             if (WiFi.getMode() != WIFI_OFF) {
                 WiFi.disconnect(true);
+                wifi_woke = true;
                 logf("wifi: off");
             }
             vTaskDelay(pdMS_TO_TICKS(200));
@@ -1165,14 +1274,14 @@ static void wifi_task(void*) {
             wifi_kick = false;
             WiFi.disconnect();
             vTaskDelay(pdMS_TO_TICKS(300));
-            attempt = 0;
+            round = 0;
         }
         if (!wifi_hold && WiFi.status() != WL_CONNECTED && !settings::wifi().empty()) {
-            if (wifi_join(attempt)) {
-                attempt = 0;
+            if (wifi_join(round)) {
+                round = 0;
             } else {
-                attempt++;
-                logf("wifi: join failed (status %d)", (int)WiFi.status());
+                round++;
+                logf("wifi: no saved network let us in (round %u)", round);
             }
         }
         for (int t = 0; t < 10 && wifi_scan_state != 1 && !wifi_kick; t++) vTaskDelay(pdMS_TO_TICKS(500));
@@ -1203,6 +1312,7 @@ void setup() {
     ev_mu = xSemaphoreCreateMutex();
     wifi_mu = xSemaphoreCreateMutex();
     settings::begin();
+    settings::wifi_dedupe();
     Wire.begin(PIN_SDA, PIN_SCL, 100000);
     ui::begin(OLED_ADDR, settings::rotation());
     if (!buttons::begin(PCF_ADDR)) logf("PCF8574 not answering at 0x%02x", PCF_ADDR);
@@ -1364,6 +1474,29 @@ void loop() {
     while (bt::next_key(bt_key)) {
         ButtonEvent e{0, -1, bt_name_of(bt_key), "bt:" + bt_key, "press", 0, ms};
         on_button(e);
+    }
+    // A key of the paired remote that means more when held: let go, or still down after HOLD_MS?
+    if (guide_at) {
+        if (mode != REMOTE && mode != CHAT) {
+            guide_at = 0;
+        } else if (bt::held() != guide_key) {
+            guide_at = 0;
+            open_menu();
+        } else if ((int32_t)(millis() - guide_at) >= (int32_t)HOLD_MS) {
+            guide_at = 0;
+            open_chat();
+        }
+    }
+    if (ok_at) {
+        if (mode != MENU || menu_kind != MENU_WIFI) {
+            ok_at = 0;
+        } else if (bt::held() != ok_key) {
+            ok_at = 0;
+            menu_pick(ok_index);
+        } else if ((int32_t)(millis() - ok_at) >= (int32_t)HOLD_MS) {
+            ok_at = 0;
+            wifi_prefer_row(ok_index);
+        }
     }
     static std::string bt_was = "off";
     std::string bt_now = bt::state();

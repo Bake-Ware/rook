@@ -1,6 +1,7 @@
 #include "settings.h"
 #include <Preferences.h>
 #include <esp_random.h>
+#include <strings.h>
 #include "rc_sig.h"
 #include "rc_util.h"
 
@@ -119,15 +120,15 @@ std::vector<std::pair<std::string, std::string>> wifi() {
     return out;
 }
 
-void wifi_add(const std::string& ssid, const std::string& pass) {
-    auto nets = wifi();
+namespace {
+bool same_ssid(const std::string& a, const std::string& b) {
+    return a.size() == b.size() && strcasecmp(a.c_str(), b.c_str()) == 0;
+}
+
+void put_wifi(const std::vector<std::pair<std::string, std::string>>& nets) {
     JsonDocument d;
     JsonArray a = d.to<JsonArray>();
-    JsonObject first = a.add<JsonObject>();
-    first["ssid"] = ssid;
-    first["pass"] = pass;
     for (auto& n : nets) {
-        if (n.first == ssid) continue;
         JsonObject o = a.add<JsonObject>();
         o["ssid"] = n.first;
         o["pass"] = n.second;
@@ -136,22 +137,51 @@ void wifi_add(const std::string& ssid, const std::string& pass) {
     serializeJson(d, j);
     put("wifi", j);
 }
+}  // namespace
+
+bool wifi_same(const std::string& a, const std::string& b) { return same_ssid(a, b); }
+
+// A new network goes to the top (it is joined first), replacing any saved one by that name.
+void wifi_add(const std::string& ssid, const std::string& pass) {
+    std::vector<std::pair<std::string, std::string>> out{{ssid, pass}};
+    for (auto& n : wifi())
+        if (!same_ssid(n.first, ssid)) out.push_back(n);
+    put_wifi(out);
+}
 
 void wifi_clear() { prefs.remove("wifi"); }
 
 void wifi_remove(const std::string& ssid) {
-    JsonDocument d;
-    JsonArray a = d.to<JsonArray>();
-    for (auto& n : wifi()) {
-        if (n.first == ssid) continue;
-        JsonObject o = a.add<JsonObject>();
-        o["ssid"] = n.first;
-        o["pass"] = n.second;
+    std::vector<std::pair<std::string, std::string>> out;
+    for (auto& n : wifi())
+        if (!same_ssid(n.first, ssid)) out.push_back(n);
+    put_wifi(out);
+}
+
+bool wifi_prefer(const std::string& ssid) {
+    auto nets = wifi();
+    for (size_t i = 0; i < nets.size(); i++) {
+        if (!same_ssid(nets[i].first, ssid)) continue;
+        if (i == 0) return true;
+        auto n = nets[i];
+        nets.erase(nets.begin() + i);
+        nets.insert(nets.begin(), n);
+        put_wifi(nets);
+        return true;
     }
-    std::string j;
-    serializeJson(d, j);
-    put("wifi", j);
-    if (get("wifi_last") == ssid) prefs.remove("wifi_last");
+    return false;
+}
+
+void wifi_dedupe() {
+    auto nets = wifi();
+    std::vector<std::pair<std::string, std::string>> out;
+    for (auto& n : nets) {
+        bool dup = false;
+        for (auto& o : out) dup = dup || same_ssid(o.first, n.first);
+        if (!dup) out.push_back(n);
+    }
+    if (out.size() != nets.size()) put_wifi(out);
+    if (prefs.isKey("wifi_last")) prefs.remove("wifi_last");     // the old try-first rule is gone
 }
 
 void seed(uint8_t out[32]) {
@@ -219,12 +249,6 @@ int rotation() { return prefs.getInt("rot", 3) & 3; }
 #endif
 
 void set_rotation(int r) { prefs.putInt("rot", r & 3); }
-
-std::string wifi_last() { return get("wifi_last"); }
-
-void set_wifi_last(const std::string& ssid) {
-    if (get("wifi_last") != ssid) put("wifi_last", ssid);
-}
 
 std::string kv(const char* key) { return get(key); }
 
