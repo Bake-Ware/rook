@@ -375,6 +375,19 @@ def test_revoke_stops_the_worker_and_a_rekey_through_attach_takes_its_place(tmp_
     asyncio.run(go())
 
 
+def test_a_cap_named_with_hyphens_is_served_over_the_real_carrier(tmp_path):
+    # W3: hyphens inside a segment. The real worker announces it, and a call reaches it.
+    async def go():
+        async with Rig(tmp_path) as rig:
+            worker = rig.worker()
+            worker.caps["wake-on-lan.send"] = Cap("Wake a machine on the LAN.", {"type": "object"}, echo)
+            await rig.approved(worker)
+            assert "wake-on-lan.send" in {c["name"] for c in rig.hub.get_worker(rig.guid)["caps"]}
+            assert (await rig.call("wake-on-lan.send", {"mac": "02:00:00:00:00:01"}))["result"] == {
+                "mac": "02:00:00:00:00:01"}
+    asyncio.run(go())
+
+
 def test_revoke_without_rekey_tells_the_linked_worker_at_once(tmp_path):
     # R5: the hub cap worker.revoke, on a worker linked over the real carrier. It is told over its link and
     # stops with a reason and a next step (C3); its sessions are gone; started again, its link_open is

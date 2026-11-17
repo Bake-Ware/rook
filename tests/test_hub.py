@@ -159,6 +159,24 @@ def test_bad_message_is_answered_and_the_link_stays(hub):
     asyncio.run(go())
 
 
+def test_caps_are_named_and_described_as_w3_says(hub):
+    # W3: a heartbeat whose cap has a two-line description is refused with a next step, and the link stays;
+    # a cap named with hyphens inside a segment, or in upper case, is accepted.
+    async def go():
+        key, record = approved(hub)
+        link, reply = await connected(hub, key)
+        bad = dict(ECHO, description="Echo.\nIt returns the arguments unchanged.")
+        await link.send(json.dumps(heartbeat(key, caps=[bad])).encode())
+        refused = decode(await link.recv())
+        assert refused["code"] == "bad_message" and "description must be one line" in refused["message"]
+        assert refused["next"] == "Send messages as docs/protocol.md defines them."
+        named = [dict(ECHO, name="wake-on-lan.send"), dict(ECHO, name="Lamp.on")]
+        await link.send(encode(heartbeat(key, caps=named)))
+        assert decode(await link.recv())["type"] == "heartbeat_reply"
+        assert [c["name"] for c in hub.get_worker(record["guid"])["caps"]] == ["wake-on-lan.send", "Lamp.on"]
+    asyncio.run(go())
+
+
 def test_newer_worker_fields_are_accepted_and_kept_raw(hub):
     # U8: the hub records the worker's version and ignores fields it does not know.
     async def go():
@@ -232,5 +250,12 @@ async def knock_endpoint(hub):
         assert status == 400 and "expected a knock" in reply["message"]
         status, reply = await post(encode(knock(new_key())))
         assert status == 200 and reply["status"] == "pending"
+        # W3, C3: a cap's description is one line, as a plugin's cap's is; refused with what to do.
+        two_lines = dict(ECHO, description="Echo.\nIt returns the arguments unchanged.")
+        status, reply = await post(json.dumps(knock(new_key(), name="two-lines", caps=[two_lines])).encode())
+        assert status == 400 and reply == {
+            "type": "error", "code": "bad_message", "next": "Send a knock as docs/protocol.md defines it.",
+            "message": "knock.caps[0].description must be one line of text, not empty and with no line break"}
+        assert not any(k["name"] == "two-lines" for k in hub.list_pending())
     finally:
         await hub.stop_serving()
