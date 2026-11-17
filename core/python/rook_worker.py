@@ -11,6 +11,14 @@ drops what is gone, with no restart, and announces the caps they add like its
 own (W5). A part is a Python module defining `CAPS`, a dict of `Cap`, as below
 and in docs/plugins.md.
 
+Config (CF2, CF3): the hub sends a `config` message with this worker's config, its
+`values` with every secret already put in, and a `version`, when the worker links and
+whenever the config changes. The worker applies it: `config` holds the values and
+`config_version` their version, and the next heartbeat, sent at once, reports that
+version, which is how the hub learns it was applied. The config is kept in memory only,
+never written to the state directory: the hub is the source of truth and sends it again
+at every link, and secrets are never kept on a worker (X5).
+
 The worker never sees a transport. Each time it connects it first makes a key for
 that connection with the hub over HTTPS (`link_open`, docs/link-design.md 2), then
 calls `connect(session)` with the result, a `Session`: its identity key, the PSK the
@@ -194,6 +202,8 @@ class Worker:
         self.interval = None
         self.streams = {}                 # handle -> Stream, while open
         self.plugins = {}                 # plugin name -> Part, as the hub's last plugins message left them
+        self.config = {}                  # the config the hub last sent, secrets put in (CF2); memory only
+        self.config_version = None        # its version, reported in every heartbeat once there is one
         self._loads = 0
         self._link = None
         self._stopped = asyncio.Event()
@@ -409,6 +419,9 @@ class Worker:
                 self.streams[message["stream"]]._closed()
             elif message["type"] == "plugins":
                 await self._plugins(message["plugins"])
+            elif message["type"] == "config":           # applied, then acknowledged by a heartbeat (CF2)
+                self.config, self.config_version = message["values"], message["version"]
+                self.changed()
             elif message["type"] == "error" and message["code"] in ("unknown_key", "key_revoked"):
                 raise Refused(message)
 
@@ -523,7 +536,7 @@ class Worker:
 
     def heartbeat(self):
         """The full state, as one heartbeat (H1)."""
-        return {
+        beat = {
             "type": "heartbeat", "protocol": PROTOCOL,
             "identity": {"name": self.name, "key": self.key},
             "facts": {"os": platform.system().lower(), "arch": platform.machine(),
@@ -539,6 +552,9 @@ class Worker:
             "plugins": [dict(name=name, version=part.version, **({"error": part.error} if part.error else {}))
                         for name, part in sorted(self.plugins.items())],
         }
+        if self.config_version is not None:
+            beat["config_version"] = self.config_version      # the config it applied (CF2)
+        return beat
 
     def health(self):
         """Health, as far as this machine can tell without extra packages (H4)."""
