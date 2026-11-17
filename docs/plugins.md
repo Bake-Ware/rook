@@ -240,20 +240,23 @@ export default {
 
 ## Core's own caps: plugins installed by default (PL7)
 
-Core's own caps ship as plugins in the one format above, in `hub/rook_hub/defaults/`. Both have a worker part for Python workers and nothing at the hub or on the site.
+Core's own caps ship as plugins in the one format above, in `hub/rook_hub/defaults/`. Each has a worker part for Python workers and nothing at the hub or on the site.
 
 | Plugin | Caps | From |
 |---|---|---|
 | `net` | `net.http`, `net.tcp`, `net.udp`: the network primitives every worker serves as a jump box for devices (D3). The functions are `rook_net`'s, which the hub also runs for a device on a direct route (D4). | D3 |
-| `shell` | `shell.exec` (run a command and wait for it: `argv`, or `cmd` in `sh`, `bash` or `powershell`; gives `ok`, `code`, `stdout`, `stderr`, and `shell` when it was not `sh`), `shell.which` (a program's path on PATH, or null), `shell.open` (a command, a login shell unless given, as a stream: on a terminal of `cols` by `rows`, resized by `stream_resize`, or on pipes with `pty` false; it closes when the command ends, and closing it ends the command). | docs/inventory.md CAP-01, CAP-03, WRK4-070 |
+| `shell` | `shell.exec` (run a command and wait for it: `argv`, or `cmd` in `sh`, `bash` or `powershell`; gives `ok`, `code`, `stdout`, `stderr`, and `shell` when it was not `sh`), `shell.which` (a program's path on PATH, or null), `shell.env` (one variable by `name`, its value or `default`, or every variable whose name starts with `prefix`, as an object; values as they are), `shell.open` (a command, a login shell unless given, as a stream: on a terminal of `cols` by `rows`, resized by `stream_resize`, or on pipes with `pty` false; it closes when the command ends, and closing it ends the command). | docs/inventory.md CAP-01, CAP-02 (0.5's), CAP-03, WRK4-070 |
+| `file` | `file.read` (`path`, `encoding`: a codec or `base64`, `max_bytes`; gives `content`, `size`, `encoding`, and `truncated` when `max_bytes` cut it; a regular file only), `file.write` (`path`, `content`, `encoding`, `append`, `create_parents`; gives `path`, `written`), `file.list` (`path`, `recursive`, `hidden`, `limit`; gives `entries` of `name`, `type`, `size`, `modified`, `mode`, and `path` when recursive), `file.search` (`pattern`, a regex, in the files under `path`, with `recursive`, `glob`, `ignore_case`, `limit`; gives `matches` of `path`, `line`, `text`; binary files skipped; the pattern runs in a child Python, so a slow one never stops the worker), `file.stat` (`path`; gives `exists`, and `type`, `size`, `modified`, `mode`). | docs/inventory.md CAP-04 (0.5's) |
+| `worker` | `worker.ping`: no arguments; gives `pong: true` and `at`, the worker's clock. | docs/inventory.md CAP-05 (0.5's) |
+| `battery` | `battery.status`: no arguments; gives `percent` and `status`, from upower or else `/sys/class/power_supply/BAT*`, on Linux. A machine with no battery answers so, with what to try. | docs/inventory.md CAP-07 (0.5's), H4 |
 
-None of these caps has a timeout, a size cap or a list of what may run (Build rules). A call with an argument the cap does not take is refused, saying which it takes. The shell caps are built for Linux and macOS (the same POSIX calls; only Linux has been run); on Windows each answers that it is not built there yet (W5).
+None of these caps has a timeout, a size cap or a list of what may run (Build rules; Bake, 14 and 17 November). `max_bytes` and `limit` are there for a caller who wants to bound a call, and have no default: with nothing passed, a cap gives everything. A call with an argument the cap does not take is refused, saying which it takes. The shell caps are built for Linux and macOS (the same POSIX calls; only Linux has been run); on Windows each but `shell.env` answers that it is not built there yet (W5). `battery.status` is built for Linux only. The file caps use the standard library only; only Linux has been run.
 
 What a hub does at start:
 
-- **A data directory it has just made** (no `hub.db` before this start): it installs `net` and then `shell`, as any plugin is installed. They are not journaled: no person or agent installed them. From then on they are installed plugins like any other.
+- **A data directory it has just made** (no `hub.db` before this start): it installs them in name order (`battery`, `file`, `net`, `shell`, `worker`), as any plugin is installed. They are not journaled: no person or agent installed them. From then on they are installed plugins like any other.
 - **The default plugins present**: it loads them as it loads every installed plugin, and installs nothing.
-- **Replaced by a person** (an install of a plugin named `net` or `shell`): the person's plugin is what is installed, and a start leaves it.
+- **Replaced by a person** (an install of a plugin with one of those names): the person's plugin is what is installed, and a start leaves it.
 - **A data directory the hub did not just make** (one made before this slice, or one whose default plugins are gone): it installs nothing. Rook has no uninstall, so a default plugin is gone only if someone removed it from the data directory by hand; the hub logs that it could not load it and carries on.
 
 Workers get the worker parts as they get any plugin's, so a worker opted out of plugins (P4) serves none of these caps, and a worker's knock offers only its own caps: the default plugins arrive after approval.
