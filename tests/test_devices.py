@@ -43,8 +43,8 @@ class Box(Worker):
             self.caps["net.http"] = Cap(real.description, real.schema, tagged)
         return loaded
 
-    def heartbeat(self):
-        return dict(super().heartbeat(), band={"gateway_mac": self.gateway})
+    def heartbeat(self, health=None):
+        return dict(super().heartbeat(health), band={"gateway_mac": self.gateway})
 
 
 class Lamp:
@@ -125,6 +125,9 @@ async def scenario(tmp_path):
             hub.approve(box.key, user=alice["guid"])
         await eventually(lambda: box.identity and box.identity["guid"] in hub._links)
         await eventually(lambda: hub.get_worker(box.identity["guid"])["online"])
+        # The jump-box primitive arrives with the default plugin `net`, after the link (PL7): wait until the
+        # worker's heartbeat announces it, which its health reading (H4, off the loop) may delay a moment.
+        await eventually(lambda: any(c["name"] == "net.http" for c in hub.get_worker(box.identity["guid"])["caps"]))
         return box.identity
 
     async def stop(name):

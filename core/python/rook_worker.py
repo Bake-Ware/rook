@@ -58,6 +58,7 @@ import platform
 import random
 import shutil
 import socket
+import subprocess
 import sys
 import types
 import urllib.error
@@ -76,6 +77,7 @@ from rook_protocol import (MAX_MESSAGE, MAX_STREAM_DATA, PROTOCOL, ProtocolError
 VERSION = "0.1.0"
 RETRY_FIRST, RETRY_MOST, RETRY_JITTER = 0.5, 30.0, 0.2   # a failed attempt: 0.5 s doubling to 30 s, ±20 % (link design 3.2)
 HTTP_TIMEOUT = 10.0      # seconds a knock or link_open waits on the hub: Telesthete's WebSocket open timeout (Bake 13 Nov)
+SYS = pathlib.Path("/sys")    # where Linux exposes battery, temperature and GPU (H4); a test points it elsewhere
 log = logging.getLogger("rook_worker")      # what happens, in plain words (rook_start.py prints it)
 
 # What a cap's handler, or a plugin part as it loads, may raise and only fail that call or
@@ -558,7 +560,9 @@ class Worker:
         return beat
 
     def health(self):
-        """Health, as far as this machine can tell without extra packages (H4)."""
+        """Health, as far as this machine can tell without extra packages (H4). Each field is read, never
+        set, and left out where the machine does not expose it: battery, temperature and GPU as
+        `battery()`, `temperature()` and `gpus()` say."""
         health = {}
         disk = shutil.disk_usage(self.state_dir)
         health["disk"] = {"total": disk.total, "free": disk.free}
@@ -574,7 +578,81 @@ class Worker:
             self._cpu = (idle, total)
         except (OSError, KeyError, ValueError, IndexError):
             pass
+        found = {"battery": battery(), "temperature": temperature()}
+        found["gpu"], found["vram"] = gpus()
+        health.update((name, value) for name, value in found.items() if value is not None)
         return health
+
+
+def _read(path):
+    return path.read_text().strip()
+
+
+def battery():
+    """Charge, percent: the mean `capacity` of the machine's batteries, the power supplies Linux lists
+    under /sys/class/power_supply with type Battery. A device's own battery (scope Device: a mouse, a
+    headset) is not the machine's. None without one."""
+    charges = []
+    for supply in sorted((SYS / "class" / "power_supply").glob("*")):
+        try:
+            if _read(supply / "type") == "Battery" and not (
+                    (supply / "scope").exists() and _read(supply / "scope") == "Device"):
+                charges.append(float(_read(supply / "capacity")))
+        except (OSError, ValueError):
+            continue
+    return round(sum(charges) / len(charges), 1) if charges else None
+
+
+def temperature():
+    """Degrees Celsius: the hottest sensor Linux exposes under /sys/class/hwmon (`temp*_input`, in
+    thousandths of a degree): the CPU's, a disk's, a GPU's, whichever runs hottest. None without one."""
+    readings = []
+    for sensor in sorted((SYS / "class" / "hwmon").glob("hwmon*/temp*_input")):
+        try:
+            readings.append(int(_read(sensor)) / 1000)
+        except (OSError, ValueError):
+            continue
+    return round(max(readings), 1) if readings else None
+
+
+def gpus():
+    """(busy percent, VRAM size) over the machine's GPUs: the mean busy and the summed VRAM. AMD's are
+    read from /sys/class/drm/card*/device (gpu_busy_percent, mem_info_vram_total, mem_info_vram_used);
+    NVIDIA's do not show there, so they are asked of `nvidia-smi` when it is installed. Either part is
+    None when no GPU gives it."""
+    busy, total, free = [], [], []
+    for device in sorted((SYS / "class" / "drm").glob("card*/device")):
+        if not device.parent.name[4:].isdigit():          # card1-DP-1 and the like are its outputs
+            continue
+        try:
+            busy.append(float(_read(device / "gpu_busy_percent")))
+        except (OSError, ValueError):
+            pass
+        try:
+            size, used = int(_read(device / "mem_info_vram_total")), int(_read(device / "mem_info_vram_used"))
+            total.append(size)
+            free.append(size - used)
+        except (OSError, ValueError):
+            pass
+    if shutil.which("nvidia-smi"):
+        try:
+            out = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu,memory.total,memory.free",
+                                  "--format=csv,noheader,nounits"], capture_output=True, text=True).stdout
+        except OSError:
+            out = ""
+        for line in out.splitlines():
+            fields = [f.strip() for f in line.split(",")]
+            try:
+                busy.append(float(fields[0]))
+            except (ValueError, IndexError):
+                pass
+            try:
+                total.append(int(fields[1]) * 1024 * 1024)            # MiB
+                free.append(int(fields[2]) * 1024 * 1024)
+            except (ValueError, IndexError):
+                pass
+    return (round(sum(busy) / len(busy), 1) if busy else None,
+            {"total": sum(total), "free": sum(free)} if total else None)
 
 
 def unreachable(e):
