@@ -15,7 +15,7 @@ from rook_hub import Hub
 from rook_hub.plugins import DEFAULTS
 from rook_worker import Worker
 
-SHELL_CAPS = ["shell.exec", "shell.open", "shell.which"]
+SHELL_CAPS = ["shell.env", "shell.exec", "shell.open", "shell.which"]
 NET_CAPS = ["net.http", "net.tcp", "net.udp"]
 
 
@@ -88,14 +88,14 @@ class Rig:
 def test_a_new_hub_has_the_default_plugins_and_a_restart_keeps_them(tmp_path):
     hub = Hub(tmp_path / "hub")
     listed = hub.plugins.list()
-    assert [p["name"] for p in listed] == ["net", "shell"]
+    assert [p["name"] for p in listed] == ["battery", "file", "net", "shell", "worker"]
     assert all(p["worker"] and p["caps"] == [] and not p["site"] for p in listed)   # worker parts only
     first = {p["name"]: p["guid"] for p in listed}
     hub.close()
 
     again = Hub(tmp_path / "hub")                       # present: loaded as installed, nothing reinstalled
     assert {p["name"]: p["guid"] for p in again.plugins.list()} == first
-    assert len(list((tmp_path / "hub" / "plugins").iterdir())) == 2
+    assert len(list((tmp_path / "hub" / "plugins").iterdir())) == 5
     again.close()
 
 
@@ -107,7 +107,8 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     hub.plugins.install(replacement, {"user": hub.auth.create_user("Alice", "a password")["guid"], "token": None})
     hub.close()
     again = Hub(tmp_path / "hub")
-    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"net": "0.1.0", "shell": "9.0.0"}
+    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"battery": "0.1.0", "file": "0.1.0", "net": "0.1.0",
+                                                                     "shell": "9.0.0", "worker": "0.1.0"}
     again.close()
 
 
@@ -144,7 +145,7 @@ async def serves(tmp_path):
                 assert record[cap_name]["description"] == cap.description
                 assert record[cap_name]["schema"] == cap.schema
                 assert record[cap_name]["returns"] == ("stream" if cap.opens_stream else "result")
-        assert {p["name"] for p in rig.hub.get_worker(rig.guid)["plugins"]} == {"net", "shell"}
+        assert {p["name"] for p in rig.hub.get_worker(rig.guid)["plugins"]} == {"battery", "file", "net", "shell", "worker"}
 
         # shell.exec: argv with no shell; cmd in sh, with a pipe; the code; stdin; env; cwd.
         assert await rig.ok("shell.exec", argv=["echo", "a b", "$HOME"]) == \
