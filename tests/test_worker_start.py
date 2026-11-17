@@ -217,6 +217,49 @@ async def before_approval(tmp_path):
             worker.kill()
 
 
+def test_a_worker_revoked_on_the_workers_page_is_told_at_once(tmp_path):
+    asyncio.run(revoked_on_the_page(tmp_path))
+
+
+async def revoked_on_the_page(tmp_path):
+    # R5, C3: revoked through the site's API, the action on the worker's row. The real hub and the real
+    # worker as processes, over the real carrier.
+    async with Started(tmp_path / "data", tmp_path / "vault.key") as hub:
+        client = await set_up(hub)
+        workers = []
+        try:
+            worker = await WorkerStarted(tmp_path / "home", hub.base).start()
+            workers.append(worker)
+            await worker.said("Waiting for approval")
+            knock, moniker = await approve(client, hub, worker)
+            assert not (await worker_row(client, hub.base, moniker))["key_revoked"]
+
+            status, reply = await ask(client, "POST", f"{hub.base}/api/workers/{moniker}/revoke")
+            assert status == 200 and reply["revoked_from"]["moniker"] == moniker, reply
+            refused = (f"rook worker: the hub refused this worker's key. This key was revoked from {moniker}. "
+                       "Generate a new key, knock with it, and ask a person or agent to attach it. "
+                       f"This worker's keys and identity are in {tmp_path / 'home' / '.rook-worker'}.")
+            code, errors = await worker.ended()             # told at once over its link: it stops
+            assert code == 1 and errors == refused + "\n", errors
+            row = await worker_row(client, hub.base, moniker)
+            assert row["key_revoked"] and row["owner"]["name"] == "Alice"     # the identity stays (W7)
+            status, journal = await ask(client, "GET", hub.base + "/api/journal?kind=call")
+            assert status == 200 and any(e["cap"] == "worker.revoke" and e["why"] == "Revoked on the Workers page."
+                                         for e in journal["entries"]), journal
+
+            # Started again: refused at its link_open with the same line, and no knock.
+            again = await WorkerStarted(tmp_path / "home", hub.base).start()
+            workers.append(again)
+            code, errors = await again.ended()
+            assert code == 1 and errors == refused + "\n" and await pending(client, hub.base) == []
+            status, reply = await ask(client, "POST", f"{hub.base}/api/workers/no-such-worker/revoke")
+            assert status != 200 and reply["code"] == "unknown_worker" and reply["next"], reply
+        finally:
+            await client.close()
+            for worker in workers:
+                worker.kill()
+
+
 class HubOnPort:
     """The hub start command on a fixed port, so a stopped hub comes back at the same address."""
 
@@ -281,9 +324,8 @@ async def lost_and_revoked(tmp_path):
         refused = (f"rook worker: the hub refused this worker's key. This key was revoked from {moniker}. "
                    "Generate a new key, knock with it, and ask a person or agent to attach it. "
                    f"This worker's keys and identity are in {tmp_path / 'first' / '.rook-worker'}.")
-        # The hub drops the revoked key's session without a GOODBYE, so the worker finds the link lost
-        # after its PEER_TIMEOUT (15 s, rook_link.py), then link_open is refused.
-        code, errors = await first.ended(timeout=30)
+        # The hub tells the worker over its link that its key was revoked (R5), and it ends at once.
+        code, errors = await first.ended()
         assert code == 1 and errors == refused + "\n", errors
         await second.said(f"Linked to {hub.base} as {moniker}.")       # the new key carries on the identity
 

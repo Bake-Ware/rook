@@ -210,6 +210,7 @@ class Hub:
         self._runner = None  # the HTTP server, while serving
         self._serving_dir = None  # the open hub.lock while this hub holds its data directory (serve)
         self._stopping = None     # while serving: an event set when stop_serving begins
+        self._telling = set()     # the tasks telling linked workers their key was revoked (R5)
         self.plugins = plugins.Plugins(self)
         self.plugins.load_all()  # every installed plugin, at start (PL3)
         if new:
@@ -421,12 +422,51 @@ class Hub:
             self._see(guid, "mac", json.loads(knock["macs"]), now)
             self._db.execute("DELETE FROM knocks WHERE key = ?", (key,))
             self._journal("auth", actor, guid, {"attached": key, "revoked": revoked})
-        for old_key in revoked:
-            self.sessions.remove(old_key)     # a revoked key's sessions go at once (link design 3.3)
-        link = self._links.get(guid)
-        if link is not None and link.key != key:
-            link.close()  # the old key's link ends; the old key is refused from now on
+        self._end_revoked(guid, revoked)  # the old key's link ends; the old key is refused from now on
         return self.get_worker(guid)
+
+    def revoke(self, worker, *, user=None, token=None):
+        """Revoke a worker's key, with no new key in its place (R5). The identity stays, with its
+        owner, config and journal history (W7); its key is refused from now on (`key_revoked`) until
+        a new key is attached to it. A linked worker is told at once over its link, with what to do
+        next (C3), and its link and sessions end. Returns the worker's record."""
+        with self._lock, self._db:
+            actor = self.auth.actor(user, token)
+            guid = self._resolve(worker)["guid"]
+            revoked = [r[0] for r in self._db.execute(
+                "SELECT key FROM keys WHERE worker = ? AND revoked_at IS NULL ORDER BY attached_at", (guid,))]
+            self._db.execute("UPDATE keys SET revoked_at = ? WHERE worker = ? AND revoked_at IS NULL",
+                             (self.clock(), guid))
+            self._journal("auth", actor, guid, {"revoked": revoked})
+        self._end_revoked(guid, revoked)
+        return self.get_worker(guid)
+
+    def _end_revoked(self, guid, revoked):
+        """Keys of `guid` were just revoked (R5, W7): their sessions go at once (link design 3.3). A
+        worker linked under one of them is first told over its link (docs/protocol.md, `error`), so it
+        stops at once with what to do next (C3); then its link ends."""
+        link = self._links.get(guid)
+        if link is None or link.key not in revoked:
+            for key in revoked:
+                self.sessions.remove(key)
+            return
+        moniker = self.get_worker(guid)["moniker"]
+        told = error("key_revoked", f"This key was revoked from {moniker}.",
+                     "Generate a new key, knock with it, and ask a person or agent to attach it.")
+        task = asyncio.get_running_loop().create_task(self._tell_revoked(link, told, revoked))
+        self._telling.add(task)
+        task.add_done_callback(self._telling.discard)
+
+    async def _tell_revoked(self, link, told, revoked):
+        """Hand the worker `told` on its link, then end the link and the revoked keys' sessions. The
+        message goes before the key does, so the worker can still read it."""
+        try:
+            await link.send(encode(told))
+        except EOFError:
+            pass                              # the link closed first: its next link_open is refused
+        link.close()
+        for key in revoked:
+            self.sessions.remove(key)
 
     def _journal(self, kind, actor, worker, result, cap=None, why=None, job=None, run=None):
         """One journal entry (L1), scrubbed of secrets as it is written (L4).

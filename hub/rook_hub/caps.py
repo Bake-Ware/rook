@@ -2,11 +2,11 @@
 
 Only what the plan requires an agent to be able to do: approve a knocking
 worker (R2), attach a knock to a known identity (W7), change a worker's owner
-(W6), mint a join token (R3), manage jobs and emit events (J7, J2; jobs.py),
-keep and list secrets (X3; vault.py), redact the journal (L5; scrub.py),
-install and list plugins (PL4; plugins.py), add a device (D1; devices.py), and
-read and set a worker's config (CF1 to CF3; config.py). Installed plugins add
-caps of their own, served the same way (PL1).
+(W6), revoke a worker's key (R5), mint a join token (R3), manage jobs and emit
+events (J7, J2; jobs.py), keep and list secrets (X3; vault.py), redact the
+journal (L5; scrub.py), install and list plugins (PL4; plugins.py), add a
+device (D1; devices.py), and read and set a worker's config (CF1 to CF3;
+config.py). Installed plugins add caps of their own, served the same way (PL1).
 """
 
 import datetime
@@ -51,6 +51,11 @@ def reassign(hub, args, actor):
     return {"worker": _worker(record), "owner": {"moniker": owner["moniker"], "name": owner["name"]}}
 
 
+def revoke(hub, args, actor):
+    record = hub.revoke(_text(args, "worker"), **actor)
+    return {"revoked_from": _worker(record)}
+
+
 def join_token(hub, args, actor):
     jwt = hub.auth.mint("join", **actor)
     record = hub.auth.verify(jwt)
@@ -82,6 +87,11 @@ CAPS = {
                    "properties": {
                        "worker": {"type": "string", "description": "The worker's moniker or GUID."},
                        "owner": {"type": "string", "description": "The new owner: a user's moniker or GUID."}}},
+    }),
+    "worker.revoke": (revoke, {
+        "description": "Revoke a worker's key: it is told at once and stops; attach a new key to bring it back.",
+        "schema": {"type": "object", "required": ["worker"], "additionalProperties": False, "properties": {
+            "worker": {"type": "string", "description": "The worker's moniker or GUID."}}},
     }),
     "worker.join-token": (join_token, {
         "description": "Mint a one-use join token: a new worker that knocks with it is approved at once.",

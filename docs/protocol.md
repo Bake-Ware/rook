@@ -203,7 +203,7 @@ The hub hands the same message back to whoever made the call. Codes in use:
 | `worker_offline` | hub | The worker is not connected. |
 | `worker_disconnected` | hub | The worker's link closed before it answered. |
 | `unknown_key` | hub | The key was never approved or attached, on a knock or a `link_open`. |
-| `key_revoked` | hub | The key was revoked, for example by a rekey (W7), on a knock or a `link_open`. |
+| `key_revoked` | hub | The key was revoked, by a rekey (W7) or outright (R5), on a knock or a `link_open`; and over the link, at once, to a worker linked under the key (below). |
 | `bad_message` | either | The message could not be decoded or validated. |
 | `bad_signature` | hub | A knock's `link_signature` or a `link_open`'s `signature` does not verify. |
 | `message_too_large` | hub | A message would exceed the size limit (see "Sizes"). |
@@ -214,6 +214,8 @@ The hub hands the same message back to whoever made the call. Codes in use:
 | `token_scope` | hub | The knock's token is not a join token. |
 
 New codes may be added without a version change; receivers treat an unknown code like any other error.
+
+**A revoked key, told over the link (R5, C3).** When the hub revokes a key, outright or by attaching a new key to the identity (W7), and a worker is linked under that key, the hub sends it an `error` with code `key_revoked` and no `id`, then ends the link. The worker stops at once and says the message and its next step. Nothing new for a worker to implement: it already reads `error`, and one that ignores this learns when its next `link_open` is refused with `key_revoked`.
 
 ## Sizes
 

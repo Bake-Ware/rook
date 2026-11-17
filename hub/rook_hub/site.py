@@ -10,8 +10,9 @@ all, the login gives way to setup, which makes the first user.
 Pages are installed into segments of the navigation (P2). Core's own Workers
 page is installed by `install_page`, the same way a plugin's page will be (P1).
 The data requests are only what the pages need, as the logged-in user.
-Approving a worker goes through the `worker.approve` hub cap, and a redact
-through `journal.redact`, so each is a call in the journal (L1).
+Approving a worker goes through the `worker.approve` hub cap, revoking its key
+through `worker.revoke` (R5), and a redact through `journal.redact`, so each is
+a call in the journal (L1).
 """
 
 import json
@@ -84,6 +85,9 @@ def workers_view(hub):
     in the band they are on (D1, D4, D6), each worker's opt-outs (D8, P4) and the plugin
     worker parts it reports (PL3)."""
     members, owners, out = bands.membership(hub), {}, devices.opted_out(hub)
+    with hub._lock:     # workers whose every key was revoked (R5): no key to link with
+        keyless = {r[0] for r in hub._db.execute(
+            "SELECT worker FROM keys GROUP BY worker HAVING count(*) = count(revoked_at)")}
     no_plugins = hub.plugins.opted_out()
     open_streams = {}
     for stream in hub.streams.list(open=True):
@@ -103,7 +107,8 @@ def workers_view(hub):
                 "owner": owner(w["owner"]), "last_heartbeat": iso(w["last_heartbeat"]),
                 "facts": w["facts"] or {}, "health": w["health"] or {}, "caps": cap_list(w["caps"]),
                 "streams": open_streams.get(w["moniker"], []), "serves_devices": w["guid"] not in out,
-                "receives_plugins": w["guid"] not in no_plugins, "plugins": w["plugins"] or []}
+                "receives_plugins": w["guid"] not in no_plugins, "plugins": w["plugins"] or [],
+                "key_revoked": w["guid"] in keyless}
 
     def device(d):
         return {"guid": d["guid"], "moniker": d["moniker"], "name": d["name"], "device": True,
@@ -319,6 +324,12 @@ def add_routes(app, hub):
                               "Owner changed on the Workers page.", token)
 
     @logged_in
+    async def revoke(request, token, user):
+        """A worker's key revoked on its row (R5, P3), through the worker.revoke hub cap (L1)."""
+        return await _hub_cap(hub, "worker.revoke", {"worker": request.match_info["worker"]},
+                              "Revoked on the Workers page.", token)
+
+    @logged_in
     async def name_band(request, token, user):
         body = await _body(request)
         return bands.create(hub, _text(body, "name"), _text(body, "gateway_mac"), token=token)
@@ -525,6 +536,7 @@ def add_routes(app, hub):
     app.router.add_get("/api/session", me)
     app.router.add_get("/api/workers", workers)
     app.router.add_post("/api/approve", approve)
+    app.router.add_post("/api/workers/{worker}/revoke", revoke)
     app.router.add_post("/api/bands", name_band)
     app.router.add_post("/api/bands/{band}/gateways", add_gateway)
     app.router.add_post("/api/bands/{band}/name", rename_band)

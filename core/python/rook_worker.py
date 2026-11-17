@@ -39,7 +39,8 @@ attempt (the exchange failed, or the link was lost before any heartbeat_reply) i
 followed by a wait of 0.5 s, doubling to 30 s, each with 20 % jitter either way, as
 Telesthete's WebSocket client backs off; the wait resets only after a session that
 worked. A request to the hub waits at most HTTP_TIMEOUT seconds. A hub that refuses
-the key (`unknown_key`, `key_revoked`) stops the worker.
+the key (`unknown_key`, `key_revoked`), or tells it over the link that its key was revoked
+(R5), stops the worker.
 
 What happens is said in plain words on the `rook_worker` logger (info, and a warning while it
 cannot link): waiting for approval, approved, linked, the link lost, why linking fails. Each is
