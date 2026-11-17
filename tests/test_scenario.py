@@ -85,7 +85,8 @@ async def lifecycle(tmp_path):
         await eventually(lambda: hub.get_worker(guid)["online"])
         await eventually(lambda: first.interval)
         assert first.interval == DEFAULT_INTERVAL
-        ALL = ["demo.echo", "demo.fail", "net.http", "net.tcp", "net.udp", "shell.exec", "shell.open", "shell.which"]
+        ALL = ["battery.status", "demo.echo", "demo.fail", "file.list", "file.read", "file.search", "file.stat",
+               "file.write", "net.http", "net.tcp", "net.udp", "shell.env", "shell.exec", "shell.open", "shell.which", "worker.ping"]
         await eventually(lambda: [c["name"] for c in hub.get_worker(guid)["caps"]] == ALL)   # with the default plugins (PL7)
         record = hub.get_worker(guid)
         assert [c["name"] for c in record["caps"]] == ALL
@@ -170,7 +171,8 @@ async def lifecycle(tmp_path):
         assert record["guid"] == guid and record["owner"] == bake
         await eventually(lambda: fresh.identity)
         assert fresh.identity["guid"] == guid and fresh.identity["moniker"] == moniker
-        await eventually(lambda: hub.get_worker(guid)["online"])
+        # Linked under the new key: `online` alone may still be the stopped worker's (H3).
+        await eventually(lambda: getattr(hub._links.get(guid), "key", None) == fresh.key)
         reply = await hub.call(guid, "demo.echo", {"n": 2}, "call with the new key", user=bake)
         assert reply["result"] == {"n": 2}
         assert journal(hub)[:len(history)] == history
