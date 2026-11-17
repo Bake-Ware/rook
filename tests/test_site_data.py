@@ -170,7 +170,7 @@ async def scenario(tmp_path):
 
             # What the filters offer: kinds, users, workers and devices, caps, jobs.
             status, choices = await ask(client, "GET", base + "/api/journal/choices")
-            assert choices["kinds"] == ["call", "auth", "band", "event", "job", "stream"]
+            assert choices["kinds"] == ["call", "auth", "band", "event", "job", "stream", "config"]
             assert {u["name"] for u in choices["users"]} == {"Alice", "Bob"}
             assert {(w["moniker"], w["device"]) for w in choices["workers"]} >= {
                 ("hub", False), (desk.moniker, False), (added["moniker"], True), (tv["moniker"], True)}

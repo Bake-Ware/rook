@@ -77,6 +77,13 @@ async def scenario(tmp_path):
     await asyncio.sleep(0.2)
     assert rig.worker.config == {} and rig.worker.config_version is None and rig.applied() is None
 
+    # The record's owner follows the worker's when it is reassigned (W6); its creator stays.
+    bob = hub.auth.create_user("Bob", "another password")["guid"]
+    hub.reassign(moniker, bob, user=rig.alice)
+    [moved] = records.search(hub, type=config.TYPE)
+    assert moved["owner"] == bob and moved["creator"] == rig.alice
+    hub.reassign(moniker, rig.alice, user=rig.alice)
+
     # CF2 on change, CF3: a value set as secret:<name> reaches the worker as the secret's value.
     await rig.cap("secret.create", scope=f"worker:{moniker}", name="api-key", value=SECRET)
     answer = await rig.cap("config.set", worker=moniker, set={"greeting": "hello", "api_key": "secret:api-key",
