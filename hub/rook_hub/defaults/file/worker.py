@@ -89,15 +89,10 @@ def read(args):
     _check(args, "file.read", ("path", "encoding", "max_bytes"), ("path",))
     path, encoding, most = _text(args, "path"), _text(args, "encoding", "utf-8"), _count(args, "max_bytes", 0)
     try:
-        # Opened without waiting, then only a regular file is read, as 0.5 does: a FIFO, a device
-        # or a folder is refused, saying so.
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
-        with os.fdopen(fd, "rb") as f:
-            info = os.fstat(fd)
-            if not st.S_ISREG(info.st_mode):
-                raise ValueError(f"not a regular file: {path}; file.read reads files, describe it with file.stat")
-            if getattr(os, "O_NONBLOCK", 0):
-                os.set_blocking(fd, True)
+        # Anything that opens is read, a FIFO or a device too, for as long as it takes (Bake, 17 November:
+        # a call that can wait for ever is allowed to). 0.5 refused all but regular files; not here.
+        with open(path, "rb") as f:
+            info = os.fstat(f.fileno())
             raw = f.read() if most is None else f.read(most + 1)
     except OSError as e:
         raise _failed(e, path) from None

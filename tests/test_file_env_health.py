@@ -109,13 +109,23 @@ async def files(tmp_path):
         assert (await rig.ok("file.stat", path=str(top / "link")))["type"] == "symlink"
         assert await rig.ok("file.stat", path=str(top / "missing")) == {"exists": False}
 
-        # Refusals, each with a reason and a next step (C3).
+        # Anything that opens is read, waiting as long as it takes: a FIFO, until its writer is done.
         fifo = tmp_path / "fifo"
         os.mkfifo(fifo)
+        reading = asyncio.create_task(rig.ok("file.read", path=str(fifo)))
+        await asyncio.sleep(0.3)
+        assert not reading.done()                       # waiting for a writer
+
+        def writer():
+            with open(fifo, "w") as f:
+                f.write("through a fifo\n")
+        await asyncio.to_thread(writer)
+        assert await reading == {"content": "through a fifo\n", "size": 0, "encoding": "utf-8"}
+
+        # Refusals, each with a reason and a next step (C3).
         for cap, args, said in [
                 ("file.read", {"path": str(top / "missing")}, "not found"),
                 ("file.read", {"path": str(top)}, "is a folder"),
-                ("file.read", {"path": str(fifo)}, "not a regular file"),
                 ("file.read", {"path": str(note), "lines": 3}, "file.read takes no argument lines"),
                 ("file.read", {"path": str(note), "encoding": "no-such-codec"}, "unknown encoding"),
                 ("file.read", {}, "file.read needs path"),
