@@ -34,7 +34,8 @@ def test_records(tmp_path):
         with pytest.raises(HubError) as taken:
             records.declare_type(hub, "note", "other")
         assert taken.value.message["code"] == "type_taken" and taken.value.message["next"]
-        assert records.list_types(hub) == [{"type": "blob", "plugin": "core"}, {"type": "note", "plugin": "notes"}]
+        assert records.list_types(hub) == [{"type": "blob", "plugin": "core"}, {"type": "config", "plugin": "core"},
+                                           {"type": "note", "plugin": "notes"}]
 
         # 2. Alice directly and an agent holding Alice's token each create a note (K1, G1).
         shopping = records.create(hub, "note", "Shopping", "for the weekend",
@@ -118,7 +119,8 @@ def test_records(tmp_path):
         assert [r["guid"] for r in records.search(hub, text="coast")] == [trip["guid"]]
         records.link(hub, trip["guid"], again["guid"])
         assert [r["guid"] for r in records.unlinked_blobs(hub)] == [photo["guid"], manual["guid"]]
-        assert records.list_types(hub) == [{"type": "blob", "plugin": "core"}, {"type": "note", "plugin": "notes"}]
+        assert records.list_types(hub) == [{"type": "blob", "plugin": "core"}, {"type": "config", "plugin": "core"},
+                                           {"type": "note", "plugin": "notes"}]
     finally:
         hub.close()
 

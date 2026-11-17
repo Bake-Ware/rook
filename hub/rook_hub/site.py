@@ -160,7 +160,7 @@ def is_terminal(hub, stream):
 
 # ----------------------------------------------------------- the Data page
 
-KINDS = ("call", "auth", "band", "event", "job", "stream")   # what the journal holds (L1)
+KINDS = ("call", "auth", "band", "event", "job", "stream", "config")   # what the journal holds (L1)
 JOURNAL_FILTERS = ("kind", "worker", "cap", "user", "text", "since", "until", "job", "run")
 
 

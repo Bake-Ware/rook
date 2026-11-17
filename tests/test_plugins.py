@@ -133,7 +133,7 @@ async def scenario(tmp_path):
                 assert name not in [p["name"] for p in await listed()]
             failed, hub_caps = await tool(door, "caps", worker="hub")
             assert "squatter.sit" not in [c["name"] for c in hub_caps["caps"][0]["caps"]]
-            assert {t["type"] for t in records.list_types(hub)} == {"blob", "note"}     # no "copy"
+            assert {t["type"] for t in records.list_types(hub)} == {"blob", "config", "note"}     # no "copy"
             assert installed_folders() == ["notes"]
 
             # 5. A handler that asks the library for records of a type it does not own is refused

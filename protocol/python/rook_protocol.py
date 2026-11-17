@@ -211,6 +211,7 @@ MESSAGES = {
         })), OPT),
         "max_message": (_positive, OPT),          # D4: the largest message it can receive
         "open_streams": (_list_of(_string), OPT),  # D5: the streams it opened and still has
+        "config_version": (_string, OPT),          # CF2: the version of the config it applied
     },
     # Hub -> worker (H2).
     "heartbeat_reply": {
@@ -278,6 +279,11 @@ MESSAGES = {
             "version": (_string, REQ),
             "source": (_string, REQ),
         })), REQ),
+    },
+    # Hub -> worker, optional: the worker's config, secrets put in, when it links and when it changes (CF2, CF3).
+    "config": {
+        "values": (_object, REQ),
+        "version": (_string, REQ),
     },
     # Worker -> hub, optional: puts an event on the hub's bus (J2).
     "event": {
