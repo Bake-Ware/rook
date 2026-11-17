@@ -109,11 +109,13 @@ async def scenario(tmp_path):
             assert (await login(client, base, "Alice", "correct horse"))[0] == 200
             session = hub.auth.list_tokens()[-1]["moniker"]
 
-            # 1. The nav ends with Settings (P2, P4); its sections are installed like pages: core's one is Plugins.
+            # 1. The nav ends with Settings (P2, P4); its sections are installed like pages: core's are
+            #    the hub's name and Plugins.
             status, reply = await ask(client, "GET", base + "/api/session")
             assert reply["nav"][0]["pages"][-1] == {"id": "settings", "label": "Settings", "path": "/settings",
                                                     "script": "/site/pages/settings.js"}
             assert await ask(client, "GET", base + "/api/settings") == (200, {"sections": [
+                {"id": "hub", "label": "Hub", "script": "/site/sections/hub.js"},
                 {"id": "plugins", "label": "Plugins", "script": "/site/sections/plugins.js"}]})
 
             # 2. The installed plugins and what each added (PL1, PL3).

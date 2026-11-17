@@ -103,6 +103,10 @@ CREATE TABLE IF NOT EXISTS monikers (    -- one home, so monikers are unique hub
     moniker TEXT PRIMARY KEY,
     guid    TEXT NOT NULL UNIQUE
 );
+CREATE TABLE IF NOT EXISTS settings (    -- the hub's own settings (P4 Settings); today only its name
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -512,6 +516,37 @@ class Hub:
             record["keys"] = [dict(row) for row in self._db.execute(
                 "SELECT key, attached_at, revoked_at FROM keys WHERE worker = ? ORDER BY attached_at", (guid,))]
             return record
+
+    def reassign(self, worker, owner, *, user=None, token=None):
+        """Make another user a worker's owner (W6: "Reassignable"). Owner is a fact, not a
+        gate: nothing is refused because of who owns a worker. Journaled (L1)."""
+        with self._lock, self._db:
+            actor = self.auth.actor(user, token)
+            row, new = self._resolve(worker), self.auth._user(owner)
+            self._db.execute("UPDATE workers SET owner = ? WHERE guid = ?", (new["guid"], row["guid"]))
+            self._journal("auth", actor, row["guid"], {"owner_changed": row["guid"], "from": row["owner"],
+                                                       "to": new["guid"]})
+        return self.get_worker(row["guid"])
+
+    # The hub's name ("Hubs have names"; P4 Settings, hub name). None until someone sets it.
+
+    def name(self):
+        with self._lock:
+            row = self._db.execute("SELECT value FROM settings WHERE key = 'name'").fetchone()
+        return row[0] if row else None
+
+    def set_name(self, name, *, user=None, token=None):
+        """Name the hub. Kept in hub.db, so it survives a restart. Journaled (L1)."""
+        if not isinstance(name, str) or not name.strip():
+            raise HubError("bad_message", "name is required and must be a string.", "Give the hub a name, like \"Home\".")
+        name = name.strip()
+        with self._lock, self._db:
+            actor = self.auth.actor(user, token)
+            before = self._db.execute("SELECT value FROM settings WHERE key = 'name'").fetchone()
+            self._db.execute("INSERT INTO settings (key, value) VALUES ('name', ?) "
+                             "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (name,))
+            self._journal("auth", actor, None, {"hub_named": name, "from": before[0] if before else None})
+        return name
 
     def set_interval(self, worker, seconds):
         """Set one worker's heartbeat interval; it gets it in the next heartbeat reply (H2)."""
