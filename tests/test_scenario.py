@@ -58,7 +58,7 @@ async def lifecycle(tmp_path):
         assert len(pending) == 1
         assert pending[0]["key"] == first.key
         assert pending[0]["name"] == "test-box"
-        assert [c["name"] for c in pending[0]["caps"]] == ["demo.echo", "demo.fail", "net.http", "net.tcp", "net.udp"]
+        assert [c["name"] for c in pending[0]["caps"]] == ["demo.echo", "demo.fail"]   # its own; plugins come after approval (PL7)
         assert pending[0]["likely_rekey_of"] == []
         assert hub.list_workers() == []
 
@@ -85,18 +85,21 @@ async def lifecycle(tmp_path):
         await eventually(lambda: hub.get_worker(guid)["online"])
         await eventually(lambda: first.interval)
         assert first.interval == DEFAULT_INTERVAL
+        ALL = ["demo.echo", "demo.fail", "net.http", "net.tcp", "net.udp", "shell.exec", "shell.open", "shell.which"]
+        await eventually(lambda: [c["name"] for c in hub.get_worker(guid)["caps"]] == ALL)   # with the default plugins (PL7)
         record = hub.get_worker(guid)
-        assert [c["name"] for c in record["caps"]] == ["demo.echo", "demo.fail", "net.http", "net.tcp", "net.udp"]
+        assert [c["name"] for c in record["caps"]] == ALL
         assert record["facts"]["form"] == "python" and "disk" in record["health"]
         assert "gateway_mac" in record["band"]
         raw = [decode(row[0].encode()) for row in hub._db.execute(
             "SELECT body FROM heartbeats WHERE worker = ?", (guid,))]
         assert raw and raw[0]["identity"]["key"] == first.key
 
+        beats = len(raw)                # the first, and the one after the default plugins loaded (PL7, W5)
         hub.set_interval(guid, 7)       # per worker (H2) ...
         first.changed()                 # ... and a change heartbeats at once (H1)
         await eventually(lambda: first.interval == 7)
-        assert len(hub._db.execute("SELECT id FROM heartbeats WHERE worker = ?", (guid,)).fetchall()) == 2
+        assert len(hub._db.execute("SELECT id FROM heartbeats WHERE worker = ?", (guid,)).fetchall()) == beats + 1
 
         # 4. Calls go through the hub; failures say what to try next; every
         #    call is journaled (C3, W5, L1).
@@ -129,7 +132,7 @@ async def lifecycle(tmp_path):
         clock.advance(1)
         record = hub.get_worker(guid)
         assert not record["online"]
-        assert [c["name"] for c in record["caps"]] == ["demo.echo", "demo.fail", "net.http", "net.tcp", "net.udp"]
+        assert [c["name"] for c in record["caps"]] == ALL
         reply = await hub.call(guid, "demo.echo", {}, "call it while offline", user=bake)
         assert reply["code"] == "worker_offline" and reply["next"]
 

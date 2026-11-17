@@ -188,7 +188,8 @@ async def exchange(tmp_path):
         assert again.link_key == hub.link_key and again.sessions.live(rekeyed.key) is None
         assert stat.S_IMODE(os.stat(tmp_path / "hub" / "hub_link.key").st_mode) == 0o600
         assert not [p for p in (tmp_path / "hub").iterdir() if p.name not in (
-            "hub.db", "hub.key", "hub_link.key", "token.secret", "hub.lock") and not p.name.startswith("hub.db-")]
+            "hub.db", "hub.key", "hub_link.key", "token.secret", "hub.lock", "plugins")   # plugins: the defaults (PL7)
+            and not p.name.startswith("hub.db-")]
     finally:
         again.close()
 

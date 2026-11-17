@@ -249,7 +249,7 @@ async def scenario(tmp_path):
             assert await call("hub", "keep.get", "read it back", record=kept) == {"title": "Launch checklist",
                                                                                    "text": TEXT}
             listed = (await call("hub", "plugin.list", "see the plugins"))["plugins"]
-            assert [p["name"] for p in listed] == ["keep"] and "keep.put" in listed[0]["caps"]
+            assert [p["name"] for p in listed] == ["net", "shell", "keep"] and "keep.put" in listed[2]["caps"]   # PL7
             # The journal and the recorded stream read back.
             failed, found = await tool(door, "journal", text="launch checklist")
             assert any(e["why"] == WHY for e in found["entries"])

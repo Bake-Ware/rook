@@ -60,7 +60,8 @@ async def scenario(tmp_path):
     elsewhere = tmp_path / "elsewhere"
 
     def installed_folders():
-        return sorted(p.name.split(".")[0] for p in (state / "plugins").iterdir())
+        return sorted(p.name.split(".")[0] for p in (state / "plugins").iterdir()
+                      if p.name.split(".")[0] not in ("net", "shell"))      # beside the defaults (PL7)
 
     try:
         async with mcp_client(f"http://{host}:{port}/mcp", agent) as door:
@@ -71,7 +72,8 @@ async def scenario(tmp_path):
                 return await call("plugin.install", "install a plugin", path=str(path))
 
             async def listed():
-                return (await call("plugin.list", "see the plugins"))[1]["plugins"]
+                return [p for p in (await call("plugin.list", "see the plugins"))[1]["plugins"]
+                        if p["name"] not in ("net", "shell")]                 # beside the defaults (PL7)
 
             # 1. The agent installs notes from its folder. The reply says what it added; the
             #    caps tool lists its caps on the hub with their schemas; plugin.list shows it (PL3, PL4).
@@ -200,7 +202,7 @@ async def scenario(tmp_path):
         reply = await hub.call("hub", "note.search", {"text": "groceries"}, "after a restart", user=alice["guid"])
         assert reply["type"] == "result" and reply["result"]["version"] == "1.1"
         assert reply["result"]["notes"][0]["note"] == made["note"]
-        assert [p["name"] for p in hub.plugins.list()] == ["notes", "snoop", "everything"]
+        assert [p["name"] for p in hub.plugins.list()] == ["net", "shell", "notes", "snoop", "everything"]
     finally:
         hub.close()
 
@@ -279,7 +281,7 @@ def test_a_plugin_that_fails_at_start_is_skipped(tmp_path, caplog):
     try:
         assert "Plugin frail was not loaded" in caplog.text and "broken on disk" in caplog.text
         assert "note.create" in hub.plugins.caps and "frail.ok" not in hub.plugins.caps
-        assert [p["name"] for p in hub.plugins.list()] == ["notes", "frail"]
+        assert [p["name"] for p in hub.plugins.list()] == ["net", "shell", "notes", "frail"]
     finally:
         hub.close()
 
@@ -305,7 +307,7 @@ def test_a_moved_hub_keeps_its_plugins(tmp_path):
             found = await hub.call("hub", "note.search", {"text": "boxes"}, "after the move", user=alice)
             assert [n["note"] for n in found["result"]["notes"]] == [made["result"]["note"]]
             hub.plugins.install(str(NOTES), {"user": alice, "token": None})      # a reinstall still swaps folders
-            assert [p.name.split(".")[0] for p in (after / "plugins").iterdir()] == ["notes"]
+            assert sorted(p.name.split(".")[0] for p in (after / "plugins").iterdir()) == ["net", "notes", "shell"]   # PL7
         finally:
             hub.close()
     asyncio.run(go())

@@ -81,7 +81,7 @@ async def owner_only_throughout(tmp_path):
         # A plugin install: its copied folder, and the __pycache__ Python writes as it imports the hub module.
         status, reply = await ask(client, "POST", hub.base + "/api/plugins", {"path": str(plugin)})
         assert status == 200, reply
-        [folder] = (data / "plugins").iterdir()
+        [folder] = [f for f in (data / "plugins").iterdir() if f.name.startswith("keep.")]   # beside the defaults (PL7)
         assert (folder / "__pycache__").is_dir() and (folder / "hub.py").exists()
         owner_only(data)
         # A blob (K3).
@@ -240,7 +240,7 @@ async def another_users(tmp_path, monkeypatch):
         assert hub.plugins.install(plugin, {"user": user["guid"], "token": None})["name"] == "keep"
         assert "keep.put" in hub.plugins.caps
         monkeypatch.undo()
-        [folder] = (data / "plugins").iterdir()
+        [folder] = [f for f in (data / "plugins").iterdir() if f.name.startswith("keep.")]   # beside the defaults (PL7)
         assert stat.S_IMODE((folder / "hub.py").stat().st_mode) == 0o644      # left as it was
     finally:
         hub.close()
