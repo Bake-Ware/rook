@@ -92,7 +92,12 @@ async def worker_row(client, base, moniker):
 
 
 async def a_call(client, base, moniker):
-    """A call through the hub to the worker: net.http, a cap every worker serves (D3), on the hub's own setup URL."""
+    """A call through the hub to the worker: net.http, a cap every worker serves (D3; the default plugin
+    `net`, PL7), on the hub's own setup URL. The plugin's worker part arrives after the link: wait for it."""
+    deadline = time.monotonic() + 20
+    while not any(c["name"] == "net.http" for c in (await worker_row(client, base, moniker))["caps"]):
+        assert time.monotonic() < deadline
+        await asyncio.sleep(0.1)
     return await ask(client, "POST", base + "/api/call", {"worker": moniker, "cap": "net.http",
                                                           "args": {"url": base + "/api/setup"}, "why": "a test call"})
 
@@ -125,7 +130,8 @@ async def start_and_again(tmp_path):
             assert worker.lines[0] == f"Rook worker {NAME}, state in {tmp_path / 'home' / '.rook-worker'}"
             assert worker.lines[1].startswith(f"  Knocking at {hub.base} with the key in ")
             [knock] = await pending(client, hub.base)                   # R4: name and offered caps, before approval
-            assert knock["name"] == NAME and {"net.http", "net.tcp", "net.udp"} <= {c["name"] for c in knock["caps"]}
+            # The caps it offers are its own; it has none until the default plugins arrive after approval (PL7).
+            assert knock["name"] == NAME and knock["caps"] == []
             await asyncio.sleep(0.5)
             assert worker.process.returncode is None and not any(line.startswith("Linked") for line in worker.lines)
 

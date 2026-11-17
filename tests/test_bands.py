@@ -37,7 +37,10 @@ class Box:
             "facts": {"os": "linux", "arch": "x86_64", "hostname": self.name, "form": "python",
                       "version": "0.1.0", "macs": []},
             "caps": [], "band": {"gateway_mac": gateway_mac}, "health": {}}))
-        assert decode(await self.link.recv())["type"] == "heartbeat_reply"
+        reply = decode(await self.link.recv())
+        if reply["type"] == "plugins":      # the default plugins (PL7); this stand-in loads none
+            reply = decode(await self.link.recv())
+        assert reply["type"] == "heartbeat_reply"
 
     async def stop(self):
         self.link.close()

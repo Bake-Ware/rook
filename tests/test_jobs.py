@@ -27,7 +27,10 @@ def events(hub, name=None):
 
 
 def runs(hub, job):
-    return journal(hub, kind="job", job=job["guid"])
+    """The job's runs that have ended: an entry is written as its call starts and holds the reply once it
+    ends, and a run read in between would be compared too early."""
+    return [e for e in journal(hub, kind="job", job=job["guid"])
+            if not e["result"] or json.loads(e["result"]).get("type") != "running"]
 
 
 def test_jobs_and_events(tmp_path):
