@@ -529,6 +529,7 @@ class Hub:
             actor = self.auth.actor(user, token)
             row, new = self._resolve(worker), self.auth._user(owner)
             self._db.execute("UPDATE workers SET owner = ? WHERE guid = ?", (new["guid"], row["guid"]))
+            config.owner_changed(self, row["guid"], new["guid"])    # its config record's owner follows (CF1)
             self._journal("auth", actor, row["guid"], {"owner_changed": row["guid"], "from": row["owner"],
                                                        "to": new["guid"]})
         return self.get_worker(row["guid"])

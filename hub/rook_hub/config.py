@@ -8,7 +8,7 @@ what someone set is kept. Core declares the type itself, as it declares `blob`
 which reach the record through the plugin library (library.Call), as a plugin's
 caps reach its own records. The record is made when the worker is approved, or
 at the hub's start for a worker approved before there were config records; its
-owner is the worker's owner.
+owner is the worker's owner, and follows it when the worker is reassigned (W6).
 
 Delivery (CF2, CF3): the hub sends the worker a `config` message with its values,
 each `secret:<name>` replaced by the secret's value (the worker's scope, then its
@@ -54,6 +54,12 @@ def make(hub, guid, actor):
         moniker = hub._db.execute("SELECT moniker FROM workers WHERE guid = ?", (guid,)).fetchone()[0]
         records._create(hub, TYPE, f"Config of {moniker}", "", records._json({"worker": guid, "values": {}}),
                         None, actor)
+
+
+def owner_changed(hub, guid, owner):
+    """The worker's owner is now `owner` (W6): so is its config record's. The lock and the transaction are held."""
+    make(hub, guid, (owner, None))
+    hub._db.execute("UPDATE records SET owner = ? WHERE guid = ?", (owner, _find(hub, guid)))
 
 
 def make_missing(hub):
