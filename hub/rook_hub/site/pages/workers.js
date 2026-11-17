@@ -1,7 +1,7 @@
 /* The Workers page (P4, P7, B2, B5, R2, R4, W6, D1, D4, D6, D8, PL3): workers and devices
    grouped by band, with a group for roaming ones; a filter for workers, devices or
-   both; the stats strip; pending approvals; unrecognised networks; band rename; a
-   worker expanded to its facts, health, caps, streams, the devices pinned to it and
+   both; the stats strip; pending approvals; unrecognised networks; band rename and
+   merge on the group header; a worker expanded to its owner, which can be changed, its facts, health, caps, streams, the devices pinned to it and
    whether it serves devices, and whether it receives plugins with the plugin parts it
    loaded or failed to load; a device expanded to its driver, route, latest status
    and caps. A stream on the card opens in place as a terminal (P8), its closed
@@ -37,6 +37,12 @@ const WORKER_DETAIL = `
             <div class="dblock"><h4>Runs on</h4>
               <div class="kv"><template v-for="[k, v] in facts(w.facts)" :key="k"><span class="k">{{ k }}</span><span class="v">{{ v }}</span></template></div>
               <p v-if="!facts(w.facts).length" class="note" style="margin:0">It has not reported yet.</p></div>
+            <div class="dblock"><h4>Owner <span class="dim2">a fact: it allows and refuses nothing</span></h4>
+              <div class="kv"><span class="k">Owner</span><span class="v">{{ w.owner.name }} <span class="dim2 mono small">{{ w.owner.moniker }}</span></span></div>
+              <div class="gw-row" style="margin-top:8px"><select class="mono" v-model="ownerTo[w.moniker]" :aria-label="'New owner of ' + w.name" @click.stop>
+                  <option value="" disabled>choose a user</option>
+                  <option v-for="u in data.users.filter(u => u.moniker !== w.owner.moniker)" :key="u.moniker" :value="u.moniker">{{ u.name }}{{ u.revoked ? ' (revoked)' : '' }}</option></select>
+                <button class="btn sm" type="button" :disabled="!ownerTo[w.moniker]" @click.stop="reassign(w)">Change owner</button></div></div>
             <div class="dblock"><h4>Caps <span class="dim2">{{ w.caps.length }} served</span></h4>
               <div v-for="c in w.caps" :key="c.name" class="capline"><code>{{ c.name }}</code><span v-if="c.returns==='stream'" class="badge plain">stream</span><span class="note">{{ c.description }}</span></div>
               <p v-if="!w.caps.length" class="note" style="margin:0">No caps.</p></div>
@@ -78,7 +84,7 @@ export default {
     return {
       data: null, error: '', q: view.get('q') || '', only: view.get('worker') || '', open: {},
       show: ['workers', 'devices'].includes(view.get('show')) ? view.get('show') : 'all',
-      renaming: {}, rename: {}, newBand: {}, addTo: {}, timer: null,
+      renaming: {}, rename: {}, newBand: {}, addTo: {}, merging: {}, mergeInto: {}, ownerTo: {}, timer: null,
       attached: {}, closedOf: {}, focus: view.get('stream') || '', focusStream: null,
       layout: ['grid', '3d'].includes(view.get('view')) ? view.get('view') : 'list', beats: null, beatTimer: null,
     };
@@ -244,6 +250,20 @@ export default {
       if (!band) { toast('Choose a band to add it to.'); return; }
       return this.act(() => api('POST', `/api/bands/${band}/gateways`, { gateway_mac: gw.gateway_mac }), 'Added to the band');
     },
+    /* W6: the worker's owner becomes the chosen user, through the worker.reassign hub cap. */
+    reassign(w) {
+      const to = this.data.users.find(u => u.moniker === this.ownerTo[w.moniker]);
+      if (!to) return;
+      return this.act(() => api('POST', `/api/workers/${w.moniker}/owner`, { owner: to.moniker }), w.name + ' is now owned by ' + to.name)
+        .then(() => { this.ownerTo[w.moniker] = ''; });
+    },
+    /* P4: band `band` joins the chosen band; its gateways and workers go there and it is gone. */
+    merge(band) {
+      const into = this.bands.find(b => b.moniker === this.mergeInto[band.moniker]);
+      if (!into) { toast('Choose the band it joins.'); return; }
+      return this.act(() => api('POST', `/api/bands/${band.moniker}/merge`, { into: into.moniker }), band.name + ' merged into ' + into.name)
+        .then(() => { this.merging[band.moniker] = false; });
+    },
     rowMenu(w) { return [{ label: w.device ? 'Pin this device' : 'Pin this worker', pin: { label: 'Workers: ' + w.name, href: viewHref('/workers', { worker: w.moniker }) } }]; },
     ago(iso) {
       if (!iso) return 'never';
@@ -325,11 +345,22 @@ export default {
             <button class="btn sm accent" type="button" @click="saveName(g.band)">Save</button>
             <button class="btn sm ghost" type="button" @click="renaming[g.band.moniker]=false">Cancel</button>
           </template>
+          <template v-else-if="g.band && merging[g.band.moniker]">
+            <h2>{{ g.band.name }}</h2><span class="count">joins</span>
+            <select class="mono" v-model="mergeInto[g.band.moniker]" :aria-label="'Band ' + g.band.name + ' joins'">
+              <option value="" disabled>choose a band</option>
+              <option v-for="b in bands.filter(b => b.moniker !== g.band.moniker)" :key="b.moniker" :value="b.moniker">{{ b.name }}</option></select>
+            <button class="btn sm accent" type="button" :disabled="!mergeInto[g.band.moniker]" @click="merge(g.band)">Merge</button>
+            <button class="btn sm ghost" type="button" @click="merging[g.band.moniker]=false">Cancel</button>
+            <span class="count">its gateways and workers go to that band, and {{ g.band.name }} is gone</span>
+          </template>
           <h2 v-else>{{ g.band ? g.band.name : 'Roaming' }}</h2>
           <span class="count">{{ g.shown.length }} shown · {{ g.band ? g.band.gateways.join(', ') : 'on networks no band holds, or none' }}</span>
           <div class="spacer"></div>
-          <button v-if="g.band && !renaming[g.band.moniker]" class="btn sm ghost" type="button"
+          <button v-if="g.band && !renaming[g.band.moniker] && !merging[g.band.moniker]" class="btn sm ghost" type="button"
             @click="rename[g.band.moniker]=g.band.name; renaming[g.band.moniker]=true">✎ rename</button>
+          <button v-if="g.band && bands.length > 1 && !renaming[g.band.moniker] && !merging[g.band.moniker]" class="btn sm ghost" type="button"
+            @click="mergeInto[g.band.moniker]=''; merging[g.band.moniker]=true">⇲ merge</button>
         </div>
         <p v-if="!g.shown.length" class="note" style="margin:0;padding:10px 14px">Nothing on this band right now.</p>
         <div v-else-if="layout==='grid'" class="wgrid">

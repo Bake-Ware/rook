@@ -170,7 +170,7 @@ async def scenario(tmp_path):
 
             # What the filters offer: kinds, users, workers and devices, caps, jobs.
             status, choices = await ask(client, "GET", base + "/api/journal/choices")
-            assert choices["kinds"] == ["call", "auth", "band", "event", "job", "stream"]
+            assert choices["kinds"] == ["call", "auth", "band", "event", "job", "stream", "config"]
             assert {u["name"] for u in choices["users"]} == {"Alice", "Bob"}
             assert {(w["moniker"], w["device"]) for w in choices["workers"]} >= {
                 ("hub", False), (desk.moniker, False), (added["moniker"], True), (tv["moniker"], True)}
@@ -203,6 +203,7 @@ async def scenario(tmp_path):
             # 6. Records (K1-K4): types with their plugin, browse by type, search, open, links both ways.
             status, reply = await ask(client, "GET", base + "/api/record-types")
             assert reply["types"] == [{"type": "blob", "plugin": "core", "count": 2},
+                                      {"type": "config", "plugin": "core", "count": 2},   # desk's and nas's (CF1)
                                       {"type": "note", "plugin": "notes", "count": 2}]
             status, reply = await ask(client, "GET", base + "/api/records?type=note")
             assert [r["title"] for r in reply["records"]] == ["Desk", "Lamp setup"]
@@ -240,7 +241,8 @@ async def scenario(tmp_path):
             assert status == 400 and reply["code"] == "not_a_blob"
             status, reply = await ask(client, "GET", f"{base}/api/records/no-such-record")
             assert status == 400 and reply["code"] == "unknown_record" and reply["next"]
-            assert records.search(hub, type="note") and len(records.search(hub)) == 4    # nothing changed (K2)
+            # 6: the two notes, the two blobs and the config records of desk and nas (CF1)
+            assert records.search(hub, type="note") and len(records.search(hub)) == 6    # nothing changed (K2)
 
             # 7. Devices on the Workers page, in their band, with route, reachability and status (P4, P7, D1, D4, D6).
             status, view = await ask(client, "GET", base + "/api/workers")

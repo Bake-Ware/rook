@@ -132,6 +132,31 @@ def rename(hub, band, name, *, user=None, token=None):
         return _record(hub, _band(hub, row["guid"]))
 
 
+def merge(hub, band, into, *, user=None, token=None):
+    """Make two bands one (P4: band merge): band `band`'s gateway MACs are added to band
+    `into` (B2), so the workers on them are in `into` from now on (B1), and `band` is gone.
+    The devices on `band` move with them (D1: a device is a worker to agents). Its moniker
+    stays taken, as every moniker does (G1). Journaled (L1)."""
+    with hub._lock, hub._db:
+        actor = hub.auth.actor(user, token)
+        gone, kept = _band(hub, band), _band(hub, into)
+        if gone["guid"] == kept["guid"]:
+            raise HubError("bad_message", f"Band {gone['name']} cannot be merged into itself.",
+                           "Name two different bands: the one that goes, and the one it joins.")
+        moved = [r[0] for r in hub._db.execute(
+            "SELECT mac FROM band_gateways WHERE band = ? ORDER BY added_at, mac", (gone["guid"],))]
+        workers = [row for row in hub._db.execute("SELECT guid, moniker, name, state FROM workers").fetchall()
+                   if _gateway(row) in moved]
+        hub._db.execute("UPDATE band_gateways SET band = ? WHERE band = ?", (kept["guid"], gone["guid"]))
+        hub._db.execute("UPDATE devices SET band = ? WHERE band = ?", (kept["guid"], gone["guid"]))
+        hub._db.execute("DELETE FROM bands WHERE guid = ?", (gone["guid"],))
+        hub._journal("band", actor, None, {"band_merged": gone["guid"], "name": gone["name"],
+                                           "into": kept["guid"], "gateways": moved})
+        for row in workers:
+            _change(hub, row, gone, kept)
+        return _record(hub, kept)
+
+
 def get(hub, band):
     with hub._lock:
         return _record(hub, _band(hub, band))

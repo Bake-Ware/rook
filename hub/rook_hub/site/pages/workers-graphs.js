@@ -8,7 +8,7 @@
      one chart per field it reports, from the same history, grouped by the hub.
    - FleetView: the 0.4 3D scene (vendor/rook-scene.js), the hub as a rook and the
      workers and devices as pawns around it, grouped by band. */
-import { api } from '/site/shell.js';
+import { api, store } from '/site/shell.js';
 
 export const HB_WINDOW = 60;   // seconds over which a heartbeat bar drains, as in 0.4
 const DAY = 86400, MONTH = 30 * DAY;
@@ -231,7 +231,7 @@ export const FleetView = {
   },
   methods: {
     push() {
-      this.fleet.update([{ id: 'hub', name: location.host, hub: true, kind: 'computer', version: '', age: 0, group: '' }, ...this.pieces]);
+      this.fleet.update([{ id: 'hub', name: store.hub.name || location.host, hub: true, kind: 'computer', version: '', age: 0, group: '' }, ...this.pieces]);
     },
   },
   KIND,

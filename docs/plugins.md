@@ -21,7 +21,7 @@ A JSON object (JSON, because the standard library reads it).
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
-| `name` | string | yes | Lowercase letters and digits, with hyphens between them (`notes`, `lg-tv`). It names the plugin on this hub. Installing a plugin with a name that is already installed replaces it. `core` is taken: it owns the `blob` record type. |
+| `name` | string | yes | Lowercase letters and digits, with hyphens between them (`notes`, `lg-tv`). It names the plugin on this hub. Installing a plugin with a name that is already installed replaces it. `core` is taken: it owns the `blob` and `config` record types. |
 | `version` | string | yes | The plugin's version, free text (`1.0.0`). Shown by `plugin.list`. |
 | `hub` | object | no | What runs at the hub. See below. |
 | `worker` | object | no | What runs on workers, by worker form. See below. |

@@ -25,7 +25,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import MAX_MESSAGE, PROTOCOL, ProtocolError, decode, encode, verify_link_key
 
-from . import bands, caps, devices, history, jobs, link, plugins, records, scrub, site, streams, vault, web
+from . import bands, caps, config, devices, history, jobs, link, plugins, records, scrub, site, streams, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -88,7 +88,8 @@ CREATE INDEX IF NOT EXISTS heartbeats_worker_at ON heartbeats (worker, at);
 CREATE TABLE IF NOT EXISTS journal (
     id     INTEGER PRIMARY KEY,
     at     REAL NOT NULL,
-    kind   TEXT NOT NULL,            -- call, auth, band, event, job (a job's run), stream (a close) or plugin (a worker part that failed to load)
+    kind   TEXT NOT NULL,            -- call, auth, band, event, job (a job's run), stream (a close), plugin (a worker part that failed to load)
+                                     -- or config (a worker's config that could not be sent as it linked)
                                      -- a call's or job's entry is written when it starts, result {"type": "running", ...}, and holds its reply once it ends
     user   TEXT,                     -- the acting user (L1); none for events of the hub's own
     token  TEXT,                     -- the token they acted through, if any (L1)
@@ -102,6 +103,10 @@ CREATE TABLE IF NOT EXISTS journal (
 CREATE TABLE IF NOT EXISTS monikers (    -- one home, so monikers are unique hub-wide (G1)
     moniker TEXT PRIMARY KEY,
     guid    TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS settings (    -- the hub's own settings (P4 Settings); today only its name
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 """
 
@@ -177,6 +182,7 @@ class Hub:
                 self._db.execute(f"ALTER TABLE {table} ADD COLUMN link_key TEXT")
         self._db.executescript(bands.SCHEMA)
         self._db.executescript(records.SCHEMA)
+        self._db.executescript(config.SCHEMA)
         self._db.executescript(jobs.SCHEMA)
         self._db.executescript(vault.SCHEMA)
         self._db.executescript(streams.SCHEMA)
@@ -208,6 +214,7 @@ class Hub:
         self.plugins.load_all()  # every installed plugin, at start (PL3)
         if new:
             self.plugins.install_defaults()     # core's own caps, as plugins installed by default (PL7)
+        config.make_missing(self)    # a worker approved before there were config records gets one (CF1)
 
     def _load_key(self, name, kind):
         """A key of `kind` kept in the data directory, made on first start (owner-only)."""
@@ -395,6 +402,7 @@ class Hub:
         self._see(guid, "moniker", [moniker], now)
         self._see(guid, "mac", json.loads(knock["macs"]), now)
         self._db.execute("DELETE FROM knocks WHERE key = ?", (key,))
+        config.make(self, guid, actor)    # its config record, with nothing set yet (CF1)
         self._journal("auth", actor, guid, {"approved": key})
         return guid
 
@@ -490,6 +498,7 @@ class Hub:
             "online": last is not None and self.clock() - last <= MISSED_HEARTBEATS * row["interval"],
             "caps": state.get("caps", []), "facts": state.get("facts"), "band": state.get("band"),
             "health": state.get("health"), "streams": state.get("streams"), "plugins": state.get("plugins"),
+            "config_version": state.get("config_version"),
         }
 
     def get_worker(self, worker):
@@ -512,6 +521,38 @@ class Hub:
             record["keys"] = [dict(row) for row in self._db.execute(
                 "SELECT key, attached_at, revoked_at FROM keys WHERE worker = ? ORDER BY attached_at", (guid,))]
             return record
+
+    def reassign(self, worker, owner, *, user=None, token=None):
+        """Make another user a worker's owner (W6: "Reassignable"). Owner is a fact, not a
+        gate: nothing is refused because of who owns a worker. Journaled (L1)."""
+        with self._lock, self._db:
+            actor = self.auth.actor(user, token)
+            row, new = self._resolve(worker), self.auth._user(owner)
+            self._db.execute("UPDATE workers SET owner = ? WHERE guid = ?", (new["guid"], row["guid"]))
+            config.owner_changed(self, row["guid"], new["guid"])    # its config record's owner follows (CF1)
+            self._journal("auth", actor, row["guid"], {"owner_changed": row["guid"], "from": row["owner"],
+                                                       "to": new["guid"]})
+        return self.get_worker(row["guid"])
+
+    # The hub's name ("Hubs have names"; P4 Settings, hub name). None until someone sets it.
+
+    def name(self):
+        with self._lock:
+            row = self._db.execute("SELECT value FROM settings WHERE key = 'name'").fetchone()
+        return row[0] if row else None
+
+    def set_name(self, name, *, user=None, token=None):
+        """Name the hub. Kept in hub.db, so it survives a restart. Journaled (L1)."""
+        if not isinstance(name, str) or not name.strip():
+            raise HubError("bad_message", "name is required and must be a string.", "Give the hub a name, like \"Home\".")
+        name = name.strip()
+        with self._lock, self._db:
+            actor = self.auth.actor(user, token)
+            before = self._db.execute("SELECT value FROM settings WHERE key = 'name'").fetchone()
+            self._db.execute("INSERT INTO settings (key, value) VALUES ('name', ?) "
+                             "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (name,))
+            self._journal("auth", actor, None, {"hub_named": name, "from": before[0] if before else None})
+        return name
 
     def set_interval(self, worker, seconds):
         """Set one worker's heartbeat interval; it gets it in the next heartbeat reply (H2)."""
@@ -546,7 +587,8 @@ class Hub:
                     self._links[guid] = link
                     if "open_streams" in message:   # the streams it still has; the rest it lost (D5)
                         self.streams.still_open(guid, message["open_streams"])
-                    if first:       # connecting: the plugin worker parts it should have (PL3)
+                    if first:       # connecting: its config (CF2), and the plugin worker parts it should have (PL3)
+                        config.connected(self, guid, message.get("config_version"))
                         self.plugins.connected(guid, link, message.get("plugins", []))
                     self.events.heartbeat(self.get_worker(guid))
                 elif message["type"] == "event" and guid is not None:   # a worker emits (J2)
@@ -590,8 +632,8 @@ class Hub:
                              "Generate a new key, knock with it, and ask a person or agent to attach it."), None
             guid, now = row["worker"], self.clock()
             before = self._db.execute("SELECT * FROM workers WHERE guid = ?", (guid,)).fetchone()
-            state = {name: message[name] for name in ("facts", "caps", "band", "health", "streams", "plugins")
-                     if name in message}
+            state = {name: message[name] for name in ("facts", "caps", "band", "health", "streams", "plugins",
+                                                     "config_version") if name in message}
             self._db.execute(
                 "UPDATE workers SET name = ?, protocol = ?, last_heartbeat = ?, state = ? WHERE guid = ?",
                 (message["identity"]["name"], message["protocol"], now, json.dumps(state), guid))

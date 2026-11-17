@@ -1,24 +1,26 @@
 """Caps the hub itself serves, called like any worker's caps with worker `hub`.
 
 Only what the plan requires an agent to be able to do: approve a knocking
-worker (R2), attach a knock to a known identity (W7), mint a join token (R3),
-manage jobs and emit events (J7, J2; jobs.py), keep and list secrets (X3;
-vault.py), redact the journal (L5; scrub.py), and install and list plugins
-(PL4; plugins.py) and add a device (D1; devices.py). Installed plugins add caps
-of their own, served the same way (PL1).
+worker (R2), attach a knock to a known identity (W7), change a worker's owner
+(W6), mint a join token (R3), manage jobs and emit events (J7, J2; jobs.py),
+keep and list secrets (X3; vault.py), redact the journal (L5; scrub.py),
+install and list plugins (PL4; plugins.py), add a device (D1; devices.py), and
+read and set a worker's config (CF1 to CF3; config.py). Installed plugins add
+caps of their own, served the same way (PL1).
 """
 
 import datetime
 
-from . import devices, jobs, plugins, scrub, vault
+from . import config, devices, jobs, plugins, scrub, vault
 from .errors import HubError
 
 HUB = "hub"  # the worker name that addresses the hub's own caps
 
 # Hub caps whose arguments are stored, not used: their secret:<name> references are kept
 # as written and resolved when the stored call runs (X2: a job stores the reference;
-# a device's config keeps it and its driver gets the value each time, D7).
-KEEP_REFERENCES = {"job.create", "device.add"}
+# a device's config keeps it and its driver gets the value each time, D7; a worker's config
+# keeps it and the worker gets the value each time its config is sent, CF3).
+KEEP_REFERENCES = {"job.create", "device.add", "config.set"}
 
 
 def _text(args, name):
@@ -41,6 +43,12 @@ def approve(hub, args, actor):
 def attach(hub, args, actor):
     record = hub.attach(_text(args, "key"), _text(args, "worker"), **actor)
     return {"attached_to": _worker(record)}
+
+
+def reassign(hub, args, actor):
+    record = hub.reassign(_text(args, "worker"), _text(args, "owner"), **actor)
+    owner = hub.auth.get_user(record["owner"])
+    return {"worker": _worker(record), "owner": {"moniker": owner["moniker"], "name": owner["name"]}}
 
 
 def join_token(hub, args, actor):
@@ -68,6 +76,13 @@ CAPS = {
                        "key": {"type": "string", "description": "The knocking worker's key."},
                        "worker": {"type": "string", "description": "The known worker's moniker or GUID."}}},
     }),
+    "worker.reassign": (reassign, {
+        "description": "Make another user a worker's owner. Owner is a fact: it allows and refuses nothing.",
+        "schema": {"type": "object", "required": ["worker", "owner"], "additionalProperties": False,
+                   "properties": {
+                       "worker": {"type": "string", "description": "The worker's moniker or GUID."},
+                       "owner": {"type": "string", "description": "The new owner: a user's moniker or GUID."}}},
+    }),
     "worker.join-token": (join_token, {
         "description": "Mint a one-use join token: a new worker that knocks with it is approved at once.",
         "schema": {"type": "object", "additionalProperties": False, "properties": {}},
@@ -80,6 +95,7 @@ CAPS.update(vault.caps())  # create and list secrets, never their values (X3)
 CAPS.update(scrub.caps())  # take a value out of the journal (L5)
 CAPS.update(plugins.CAPS)  # install and list plugins (PL4)
 CAPS.update(devices.CAPS)  # add a device (D1)
+CAPS.update(config.CAPS)  # read and set a worker's config (CF1, CF2, CF3)
 
 
 def descriptors(hub):
