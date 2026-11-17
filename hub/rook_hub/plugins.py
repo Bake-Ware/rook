@@ -165,7 +165,8 @@ class Plugins:
                 validate({"type": "call", "id": "-", "cap": cap, "args": {}})
             except ProtocolError as e:
                 raise HubError("bad_plugin", f"Plugin {name} declares cap {cap!r}: {e}.",
-                               "Name caps as dot-separated lowercase segments, such as note.create (W3).") from None
+                               "Name caps as dot-separated segments, such as note.create, "
+                               "with hyphens only inside a segment (W3).") from None
             if not callable(handler) or not isinstance(meta["description"], str) or not meta["description"] \
                     or "\n" in meta["description"] or not isinstance(meta["schema"], dict):
                 raise HubError("bad_plugin", f"Plugin {name}'s cap {cap} needs a handler, a one-line description "
