@@ -7,7 +7,7 @@
    (GET /api/session). */
 const { createApp, reactive, markRaw } = Vue;
 
-export const store = reactive({ user: null, nav: [], pins: [], toast: '', ready: false,
+export const store = reactive({ user: null, hub: { name: null }, nav: [], pins: [], toast: '', ready: false,
   view: location.pathname + location.search });   // the page's current view, so the strip can follow it (P6)
 
 /* ---------------- Talking to the hub ---------------- */
@@ -163,9 +163,9 @@ const SideBar = {
     async logout() { await api('POST', '/api/logout').catch(() => {}); store.user = null; store.pins = []; },
   },
   template: `<aside class="sidebar">
-    <a class="brand" href="/" title="Rook hub">
+    <a class="brand" href="/" :title="store.hub.name ? store.hub.name + ' · ' + host : 'Rook hub'">
       <img src="/site/assets/rook-logo.png" alt="" width="30" height="45">
-      <div><b>♜ ROOK</b><small>{{ host }}</small></div></a>
+      <div><b>♜ ROOK</b><small>{{ store.hub.name || host }}</small></div></a>
     <div>
       <div class="nav-label"><span>Pinned</span></div>
       <ol class="pinned-strip" aria-label="Pinned views; drag to reorder">
@@ -274,7 +274,7 @@ const App = {
     async load() {
       try {
         const session = await api('GET', '/api/session');
-        store.user = session.user; store.nav = session.nav;
+        store.user = session.user; store.hub = session.hub; store.nav = session.nav;
         store.pins = (await api('GET', '/api/pins')).pins;
         await Promise.all(session.components.map(async c => {
           if (app.component(c.name)) return;
@@ -302,6 +302,9 @@ const App = {
           <div v-else-if="failed" class="wrap"><p class="callout bad page-failed" role="alert">{{ failed }}</p></div></main></div>
     </template><toast-line></toast-line>`,
 };
+
+/* The browser tab names the hub once it has a name ("Hubs have names"). */
+Vue.watchEffect(() => { document.title = store.hub.name ? store.hub.name + ' · Rook hub' : 'Rook hub'; });
 
 const app = createApp(App);
 app.component('side-bar', SideBar);

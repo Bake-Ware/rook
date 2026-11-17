@@ -121,9 +121,11 @@ def workers_view(hub):
     pending = [{"key": k["key"], "name": k["name"], "macs": k["macs"], "first_seen": iso(k["first_at"]),
                 "caps": [{"name": c["name"], "description": c["description"]} for c in k["caps"]]}
                for k in hub.list_pending()]
+    users = [{"name": u["name"], "moniker": u["moniker"], "revoked": u["revoked_at"] is not None}
+             for u in hub.auth.list_users()]     # whom a worker's owner can be changed to (W6)
     return {"stats": {"online": sum(w["online"] for w in workers), "pending": len(pending),
                       "devices": len(all_devices)},
-            "groups": groups, "pending": pending, "unrecognised": bands.unrecognised(hub)}
+            "groups": groups, "pending": pending, "unrecognised": bands.unrecognised(hub), "users": users}
 
 
 def stream_view(hub, stream):
@@ -294,7 +296,7 @@ def add_routes(app, hub):
     @logged_in
     async def me(request, token, user):
         person = hub.auth.get_user(user)
-        return {"user": {"name": person["name"], "moniker": person["moniker"]},
+        return {"user": {"name": person["name"], "moniker": person["moniker"]}, "hub": {"name": hub.name()},
                 "nav": navigation(hub), "components": plugin_components(hub)}
 
     @logged_in
@@ -310,6 +312,13 @@ def add_routes(app, hub):
         return reply["result"]
 
     @logged_in
+    async def reassign(request, token, user):
+        """A worker's owner changed on its row (W6, P3), through the worker.reassign hub cap (L1)."""
+        owner = _text(await _body(request), "owner")
+        return await _hub_cap(hub, "worker.reassign", {"worker": request.match_info["worker"], "owner": owner},
+                              "Owner changed on the Workers page.", token)
+
+    @logged_in
     async def name_band(request, token, user):
         body = await _body(request)
         return bands.create(hub, _text(body, "name"), _text(body, "gateway_mac"), token=token)
@@ -322,6 +331,11 @@ def add_routes(app, hub):
     @logged_in
     async def rename_band(request, token, user):
         return bands.rename(hub, request.match_info["band"], _text(await _body(request), "name"), token=token)
+
+    @logged_in
+    async def merge_band(request, token, user):
+        """The band in the path joins band `into` and is gone (P4: merge on the group header)."""
+        return bands.merge(hub, request.match_info["band"], _text(await _body(request), "into"), token=token)
 
     def pins_of(user):
         with hub._lock:
@@ -514,6 +528,8 @@ def add_routes(app, hub):
     app.router.add_post("/api/bands", name_band)
     app.router.add_post("/api/bands/{band}/gateways", add_gateway)
     app.router.add_post("/api/bands/{band}/name", rename_band)
+    app.router.add_post("/api/bands/{band}/merge", merge_band)
+    app.router.add_post("/api/workers/{worker}/owner", reassign)
     app.router.add_get("/api/pins", get_pins)
     app.router.add_put("/api/pins", put_pins)
     jobs_secrets_auth_routes(app, hub, logged_in)
@@ -740,11 +756,11 @@ def jobs_secrets_auth_routes(app, hub, logged_in):
     app.router.add_post("/api/password", change_password)
 
 
-# ------------------------------------------------- the Settings page and its Plugins section
+# ------------------------------------------------- the Settings page: its Hub and Plugins sections
 
 # The Settings page is the last page of the Hub segment (P4). Its sections are installed the
 # way pages are installed into segments (P2), so a plugin's settings section can be added
-# the same way later (PL1). Core installs one: Plugins.
+# the same way later (PL1). Core installs two: the hub's name, and Plugins.
 install_page("Hub", "settings", "Settings", "/site/pages/settings.js")
 SETTINGS = []
 
@@ -754,14 +770,24 @@ def install_settings_section(section, label, script):
     SETTINGS.append({"id": section, "label": label, "script": script})
 
 
+install_settings_section("hub", "Hub", "/site/sections/hub.js")
 install_settings_section("plugins", "Plugins", "/site/sections/plugins.js")
 
 
 def settings_routes(app, hub, logged_in):
-    """The Settings page's sections, and its Plugins section's data and install (P4, PL3, PL4)."""
+    """The Settings page's sections, its Hub section's name ("Hubs have names"; P4 Settings,
+    hub name), and its Plugins section's data and install (P4, PL3, PL4)."""
     @logged_in
     async def get_settings(request, token, user):
         return {"sections": SETTINGS + plugin_sections(hub)}
+
+    @logged_in
+    async def get_hub(request, token, user):
+        return {"name": hub.name()}
+
+    @logged_in
+    async def name_hub(request, token, user):
+        return {"name": hub.set_name(_text(await _body(request), "name"), token=token)}
 
     @logged_in
     async def get_plugins(request, token, user):
@@ -786,6 +812,8 @@ def settings_routes(app, hub, logged_in):
         return {"installed": dict(reply["installed"], **plugin_adds(hub, reply["installed"]["name"]))}
 
     app.router.add_get("/api/settings", get_settings)
+    app.router.add_get("/api/hub", get_hub)
+    app.router.add_post("/api/hub/name", name_hub)
     app.router.add_get("/api/plugins", get_plugins)
     app.router.add_post("/api/plugins/check", check_plugin)
     app.router.add_post("/api/plugins", install_plugin)
