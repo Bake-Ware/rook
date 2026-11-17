@@ -126,7 +126,7 @@ async def scenario(tmp_path):
                 "schema": {"type": "object", "properties": {"text": {"type": "string"}}}}]}]}
             failed, hub_caps = await tool(session, "caps", worker="hub")
             assert [c["name"] for c in hub_caps["caps"][0]["caps"]] == [
-                "worker.approve", "worker.attach", "worker.reassign", "worker.join-token",
+                "worker.approve", "worker.attach", "worker.reassign", "worker.revoke", "worker.join-token",
                 "job.create", "job.list", "job.pause", "job.unpause", "job.delete", "event.emit",
                 "secret.create", "secret.list", "journal.redact", "plugin.install", "plugin.list", "worker.plugins",
                 "device.add", "config.get", "config.set"]

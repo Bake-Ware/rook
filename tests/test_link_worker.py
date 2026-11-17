@@ -131,7 +131,7 @@ def test_refusals_stop_the_worker_without_a_retry(tmp_path):
             return post(body, path)
         worker._post = counted
         try:
-            # key_revoked: a rekey attaches a new key to this worker; the old one's next link_open is refused.
+            # key_revoked: a rekey attaches a new key to this worker; the old one is told over its link (R5).
             other, link = SigningKey.generate(), PrivateKey.generate().public_key.encode().hex()
             hub.knock({"type": "knock", "protocol": 1, "name": "box", "key": other.verify_key.encode().hex(),
                        "macs": [], "caps": [], "link_key": link, "link_signature": sign_link_key(other, link)})
@@ -139,7 +139,7 @@ def test_refusals_stop_the_worker_without_a_retry(tmp_path):
             with pytest.raises(Refused) as refused:
                 await asyncio.wait_for(running, 5)
             assert refused.value.message["code"] == "key_revoked" and refused.value.message["next"]
-            assert posts == ["/link"]                                           # once: no retry
+            assert posts == []                                  # told over the link: no link_open, no retry
 
             # unknown_key: a hub that never approved this key.
             stranger = Worker(tmp_path / "stranger", f"http://{host}:{port}", connector(hub), macs=[])
