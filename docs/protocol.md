@@ -31,7 +31,7 @@ A message is a JSON object (RFC 8259) encoded as UTF-8, with a string field `typ
 
 ## Minimum worker (W2)
 
-A worker must implement `knock`, `knock_reply`, `link_open`, `link_accept`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, make its link, heartbeat and answer calls. The `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them, and `stream_resize` may be ignored by any worker. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`).
+A worker must implement `knock`, `knock_reply`, `link_open`, `link_accept`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, make its link, heartbeat and answer calls. The `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them, and `stream_resize` may be ignored by any worker. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`). So is `config`: a worker that does not know it answers `bad_message`, which the hub ignores.
 
 ## Shared blocks
 
@@ -156,6 +156,7 @@ Connecting is the first heartbeat. The worker sends one at the interval the hub 
 | `plugins` | list of object | no | The plugin worker parts it holds (PL3), each `{name, version}` as the `plugins` message gave them, with `error` (string) for one that failed to load. Workers that take no plugin parts leave it out. Added in v1 as an optional field (U8). |
 | `max_message` | integer | no | The largest encoded message, in bytes, this worker can receive. The hub sends it no call or input above it and refuses such a call or input with `message_too_large`. Left out, or above 16,000,000, the limit is 16,000,000. Small workers set it; others leave it out. Added in v1 as an optional field (U8). |
 | `open_streams` | list of string | no | The handles of every stream this worker opened and still has open (S2). When it is present, the hub closes, as closed by the worker, every open stream this worker opened that is not listed: a worker that restarted has lost them. Left out, the hub closes nothing. Added in v1 as an optional field (U8). |
+| `config_version` | string | no | The `version` of the last `config` message this worker applied (CF2). It is how the hub learns the config was applied. Left out until the worker has applied one. Added in v1 as an optional field (U8). |
 
 ### `heartbeat_reply`: hub to worker (H2)
 
@@ -268,6 +269,15 @@ A worker sends it whenever something happens that jobs may care about, for examp
 | `plugins` | list of object | yes | Every plugin worker part this worker should have now, in the order to load them. Each is `name` (the plugin's name), `version` (its version, free text) and `source` (the part's code, as text: for the form `python`, a Python module). May be empty. |
 
 The list is the whole state, not a change. The worker drops what is no longer listed or whose version or source changed, loads what is new, and then heartbeats with its caps (W5) and its `plugins` report, which carries an `error` for each part that failed to load. It answers nothing else. The hub sends it when a worker connects (unless the worker holds no parts and should have none) and again whenever that worker's list changes (a plugin is installed or replaced, or the worker's opt-out changes). Added in v1 as an optional message (U8): the hub sends it only to the worker forms it pushes plugin parts to, which is `python` today.
+
+### `config`: hub to worker, optional (CF1, CF2, CF3)
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `values` | object | yes | The worker's config: the values set for it at the hub. Each value that is exactly `secret:<name>` at the hub arrives as that secret's value (X2, CF3). May be empty. |
+| `version` | string | yes | Names this config. The hub's next `config` with other values has another version. |
+
+The whole config, not a change. The worker applies it and then heartbeats with `config_version` set to this `version`; it answers nothing else. The hub sends it when the worker connects (unless the worker holds no config and should have none) and again whenever its config changes. The worker need not keep it across a restart: it gets it again when it connects. Added in v1 as an optional message (U8): a worker that does not know it answers `bad_message`, which the hub ignores, and keeps working.
 
 ## Sequences
 
