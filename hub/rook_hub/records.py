@@ -8,7 +8,8 @@ looks inside the body: there is no schema registry.
 These are plain functions for plugin code only. Records are never a raw cap
 and never an MCP tool (K2). Every type is declared by the plugin that owns it
 before a record of that type can be made, so types do not creep (K2). Core
-itself declares one type, `blob` (K3): its bytes live on the hub's disk under
+itself declares two types: `config`, a worker's config (CF1; config.py), and
+`blob` (K3), whose bytes live on the hub's disk under
 `blobs/`, named by their SHA-256, so the same bytes are kept once; its body
 holds the hash, the size and the MIME type.
 
