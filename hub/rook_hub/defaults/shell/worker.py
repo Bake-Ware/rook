@@ -1,12 +1,13 @@
-"""shell: run commands and open terminals on this worker, shipped as a plugin installed
-by default (PL7). What the caps take and give comes from docs/inventory.md: CAP-01
-(shell.exec, shell.which), CAP-03 (shell.open, a terminal as a stream: S1, S2) and
-WRK4-070 (the shell model).
+"""shell: run commands, read the environment and open terminals on this worker, shipped as a
+plugin installed by default (PL7). What the caps take and give comes from docs/inventory.md: CAP-01
+(shell.exec, shell.which), CAP-02 (shell.env, 0.5's: origin/castling rook/plugins/shell/plugin.yaml
+and scripts/shell.py, by Bake's answer of 17 November), CAP-03 (shell.open, a terminal as a stream:
+S1, S2) and WRK4-070 (the shell model).
 
 The shell model: `cmd` is a string run by a shell, `/bin/sh -c` unless `shell` names
 another: sh, bash or powershell (PowerShell 7, `pwsh`). `argv` is a list run with no
-shell at all. Only Linux and macOS are built: on Windows each cap answers that it is
-not built there yet (W5).
+shell at all. Only Linux and macOS are built: on Windows each cap but shell.env answers
+that it is not built there yet (W5).
 
 Nothing here bounds a command: no timeout, no size cap, no list of what may run.
 The plan defers all of that (Build rules). A result over the largest message is
@@ -39,6 +40,10 @@ def _check(args, cap, allowed):
     """Refuse an argument the cap does not take, so it is never silently ignored (C3)."""
     if WINDOWS:
         raise ValueError(f"{cap} is not built for Windows workers yet; call it on a Linux or macOS worker")
+    _only(args, cap, allowed)
+
+
+def _only(args, cap, allowed):
     extra = sorted(set(args) - set(allowed))
     if extra:
         raise ValueError(f"{cap} takes no argument {', '.join(extra)}; it takes {', '.join(allowed)}")
@@ -133,6 +138,21 @@ async def which(args):
     if not name:
         raise ValueError("give name, a program's name, such as git")
     return shutil.which(name)
+
+
+# ------------------------------------------------------------------- shell.env
+
+async def env(args):
+    """One variable (name), or every variable whose name starts with prefix, as 0.5's shell.env.
+    Values are given as they are: 0.5's masking of names that look like credentials is not built
+    (a Needs Bake item of brief 41)."""
+    _only(args, "shell.env", ("name", "prefix", "default"))
+    name, prefix, default = _text(args, "name"), _text(args, "prefix"), _text(args, "default")
+    if (name is None) == (prefix is None):
+        raise ValueError("give name (one variable) or prefix (every variable starting with it), not both")
+    if name is not None:
+        return os.environ.get(name, default)
+    return {k: v for k, v in sorted(os.environ.items()) if k.startswith(prefix)}
 
 
 # ------------------------------------------------------------------- shell.open
@@ -315,6 +335,13 @@ CAPS = {
         {"type": "object", "required": ["name"], "additionalProperties": False, "properties": {
             "name": {"type": "string", "description": "A program's name, such as git."}}},
         which),
+    "shell.env": Cap(
+        "One environment variable of this worker (name), or all whose names start with prefix, as an object.",
+        {"type": "object", "additionalProperties": False, "properties": {
+            "name": {"type": "string", "description": "A variable's name; gives its value, or default if it is not set."},
+            "prefix": {"type": "string", "description": "Gives every variable whose name starts with it; \"\" for all."},
+            "default": {"type": "string", "description": "What a name that is not set gives; null unless given."}}},
+        env),
     "shell.open": Cap(
         "Start a command (a login shell unless given) as a live stream: a terminal unless pty is false; it closes when the command ends.",
         {"type": "object", "additionalProperties": False, "properties": {
