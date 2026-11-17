@@ -18,6 +18,8 @@ static SemaphoreHandle_t mu;
 static std::vector<Device> table;
 static volatile uint32_t scans_ = 0;
 static bool mdns_on = false;
+static std::function<void(const std::string&, const std::string&)> rekey_;
+static volatile uint32_t renames_ = 0;
 static const size_t MAX_DEVICES = 24, MAX_KEPT = 8;
 
 static void say(const char* fmt, ...) {
@@ -47,10 +49,11 @@ static void add_kind(Device& d, const std::string& k) {
     if (!has(d.kinds, k)) d.kinds.push_back(k);
 }
 
-std::string mac_of(const std::string& ip) {
+std::string mac_of(const std::string& ip, int tries) {
     ip4_addr_t a;
     if (!netif_default || !ip4addr_aton(ip.c_str(), &a)) return "";
-    for (int attempt = 0; attempt < 2; attempt++) {
+    if (tries < 1) tries = 1;
+    for (int attempt = 0; attempt <= tries; attempt++) {
         struct eth_addr* eth = nullptr;
         const ip4_addr_t* got = nullptr;
         if (etharp_find_addr(netif_default, &a, &eth, &got) >= 0 && eth) {
@@ -59,7 +62,7 @@ std::string mac_of(const std::string& ip) {
                      eth->addr[3], eth->addr[4], eth->addr[5]);
             return b;
         }
-        if (attempt == 0) {
+        if (attempt < tries) {
             etharp_request(netif_default, &a);
             vTaskDelay(pdMS_TO_TICKS(200));
         }
@@ -72,6 +75,15 @@ static std::string id_of(const Device& d) {
     std::string s;
     for (char c : d.mac) if (c != ':') s += c;
     return s;
+}
+
+// Tell whoever filed things under a device's id (dev.cpp's pairing keys) that it changed.
+static void tell_rekeyed(const std::vector<std::pair<std::string, std::string>>& moved) {
+    for (auto& m : moved) {
+        say("lan: %s is now %s", m.first.c_str(), m.second.c_str());
+        renames_++;
+        if (rekey_) rekey_(m.first, m.second);
+    }
 }
 
 // One header's value from an SSDP answer (name in lower case).
@@ -287,9 +299,16 @@ int scan() {
     std::map<std::string, std::string> where;
     ssdp(found, where);
     mdns(found);
+    if (netif_default) {                  // ask after every address at once, so the answers are in by the time we look
+        for (auto& d : found) {
+            ip4_addr_t a;
+            if (ip4addr_aton(d.ip.c_str(), &a)) etharp_request(netif_default, &a);
+        }
+        if (!found.empty()) vTaskDelay(pdMS_TO_TICKS(300));
+    }
     for (auto& d : found) {
         d.seen = true;
-        d.mac = mac_of(d.ip);
+        d.mac = mac_of(d.ip, 2);
         if (has(d.kinds, "roku")) {
             d.driver = "roku";
             if (!d.port) d.port = 8060;
@@ -312,7 +331,24 @@ int scan() {
         if (d.name.empty()) d.name = d.kinds[0] + " " + d.ip.substr(d.ip.rfind('.') + 1);
         d.id = id_of(d);
     }
+    std::vector<std::pair<std::string, std::string>> moved;
     xSemaphoreTake(mu, portMAX_DELAY);
+    // Keep each device's id steady across scans: one known before only by its address
+    // takes the MAC id now found for that address; one whose MAC this scan missed keeps
+    // the MAC it had at that address.
+    for (auto& d : found) {
+        for (auto& old : table) {
+            if (old.ip != d.ip || old.id == d.id) continue;
+            if (!d.mac.empty() && old.mac.empty() && old.id == old.ip) {
+                moved.push_back({old.id, d.id});
+                old.id = d.id;
+                old.mac = d.mac;
+            } else if (d.mac.empty() && !old.mac.empty() && !old.driver.empty() && old.driver == d.driver) {
+                d.mac = old.mac;
+                d.id = old.id;
+            }
+        }
+    }
     for (auto& old : table) {
         if (!old.kept) continue;
         bool again = false;
@@ -334,6 +370,7 @@ int scan() {
     int n = 0;
     for (auto& d : table) n += d.seen;
     xSemaphoreGive(mu);
+    tell_rekeyed(moved);
     scans_++;
     say("scan: %d devices answered", n);
     return n;
@@ -387,14 +424,32 @@ void forget(const std::string& id) {
 }
 
 void learn_mac(const std::string& id) {
+    std::vector<std::pair<std::string, std::string>> moved;
     xSemaphoreTake(mu, portMAX_DELAY);
-    for (auto& d : table) {
+    for (size_t i = 0; i < table.size(); i++) {
+        Device& d = table[i];
         if (d.id != id || !d.mac.empty()) continue;
         d.mac = mac_of(d.ip);
+        std::string now = id_of(d);
+        if (now == d.id) continue;
+        moved.push_back({d.id, now});
+        d.id = now;
+        for (size_t k = 0; k < table.size(); k++) {   // already listed under its MAC: one entry, not two
+            if (k == i || table[k].id != now) continue;
+            table[k].kept = table[k].kept || d.kept;
+            table.erase(table.begin() + i);
+            break;
+        }
+        break;
     }
     save_kept();
     xSemaphoreGive(mu);
+    tell_rekeyed(moved);
 }
+
+void on_rekey(std::function<void(const std::string& old_id, const std::string& new_id)> f) { rekey_ = f; }
+
+uint32_t renames() { return renames_; }
 
 bool wake(const std::string& mac) {
     unsigned m[6];

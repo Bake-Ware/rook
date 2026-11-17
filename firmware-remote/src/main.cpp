@@ -41,7 +41,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.11.1"
+#define FW_VERSION "0.11.2"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -1785,6 +1785,12 @@ void loop() {
         thinking_until = 0;
         chat::status("");
         ui::redraw();
+    }
+    static uint32_t renames_seen = 0;
+    if (lan::renames() != renames_seen) {            // a device got its MAC id: follow it (found by address)
+        renames_seen = lan::renames();
+        lan::Device d;
+        if (!local_id.empty() && lan::find(local_id, d) && d.id != local_id) set_local(d.id);
     }
     if (devs_pending && lan::scans() != devs_scans) {
         devs_pending = false;

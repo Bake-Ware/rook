@@ -40,6 +40,27 @@ static std::string lg_key(const std::string& id) {
     return d[id] | "";
 }
 
+// Move a key filed under one id (a TV's address, before its MAC was known) to another.
+static void move_lg_key(const std::string& from, const std::string& to) {
+    if (from == to) return;
+    JsonDocument d;
+    if (deserializeJson(d, settings::kv("lan_keys")) || !d.is<JsonObject>()) return;
+    std::string k = d[from] | "";
+    if (k.empty()) return;
+    d.remove(from);
+    if (std::string(d[to] | "").empty()) d[to] = k;
+    std::string json;
+    serializeJson(d, json);
+    settings::set_kv("lan_keys", json);
+}
+
+// The device's key: under its id, else under its address (paired while known by that).
+static std::string lg_key(const lan::Device& d) {
+    std::string k = lg_key(d.id);
+    if (k.empty() && !d.ip.empty() && d.ip != d.id) k = lg_key(d.ip);
+    return k;
+}
+
 static void set_lg_key(const std::string& id, const std::string& key) {
     JsonDocument d;
     deserializeJson(d, settings::kv("lan_keys"));
@@ -52,7 +73,7 @@ static void set_lg_key(const std::string& id, const std::string& key) {
 }
 
 bool paired(const lan::Device& d) {
-    return d.driver == "roku" || (d.driver == "webos" && !lg_key(d.id).empty());
+    return d.driver == "roku" || (d.driver == "webos" && !lg_key(d).empty());
 }
 
 std::vector<std::string> supports(const lan::Device& d) {
@@ -182,7 +203,8 @@ static bool lg_open(const lan::Device& d, bool prompt, std::string& err) {
         return true;
     }
     lg_close();
-    std::string key = lg_key(d.id);
+    std::string key = lg_key(d);
+    if (!key.empty() && lg_key(d.id).empty()) move_lg_key(d.ip, d.id);
     if (key.empty() && !prompt) {
         err = d.name + " is not paired: pick it in the remote's menu, or remote.device action pair";
         return false;
@@ -361,7 +383,7 @@ static bool lg_launch(const lan::Device& d, const std::string& app, std::string&
 // Off when it is on; Wake-on-LAN when it is off or does not answer.
 static bool lg_power(const lan::Device& d, std::string& did, std::string& err) {
     std::string why;
-    if (lg_key(d.id).empty()) { lg_open(d, false, err); return false; }
+    if (lg_key(d).empty()) { lg_open(d, false, err); return false; }
     if (lg_open(d, false, why)) {
         JsonDocument out;
         std::string state = "Active";
@@ -401,6 +423,7 @@ static bool perform(Job& j) {
     if (j.action == "forget") {
         if (lg.id == d.id) lg_close();
         set_lg_key(d.id, "");
+        if (!d.ip.empty() && d.ip != d.id) set_lg_key(d.ip, "");     // one kept from before its MAC was known
         lan::forget(d.id);
         return true;
     }
@@ -423,7 +446,7 @@ static bool perform(Job& j) {
         if (action == "launch") return lg_launch(d, arg, j.error);
         if (action == "power") return lg_power(d, j.out, j.error);
         if (action == "pair") {
-            if (lg_key(d.id).empty() && note_) note_("Accept\non the\nTV");
+            if (lg_key(d).empty() && note_) note_("Accept\non the\nTV");
             if (lg.id == d.id) lg_close();
             bool ok = lg_open(d, true, j.error);
             if (ok) lan::keep(d.id);
@@ -467,6 +490,11 @@ static void task(void*) {
 void begin(std::function<void(const char*)> log, std::function<void(const std::string&)> note) {
     log_ = log;
     note_ = note;
+    // Runs on this task (scans and learn_mac happen here), like every other use of lg.
+    lan::on_rekey([](const std::string& from, const std::string& to) {
+        move_lg_key(from, to);
+        if (lg.id == from) lg.id = to;
+    });
     jobs_mu = xSemaphoreCreateMutex();
     q = xQueueCreate(8, sizeof(Job*));
     xTaskCreate(task, "dev", 12288, nullptr, 1, nullptr);

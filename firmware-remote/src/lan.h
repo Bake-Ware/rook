@@ -30,8 +30,12 @@ std::vector<Device> devices();
 bool find(const std::string& id_or_name, Device& out);
 void keep(const std::string& id);      // remember this one across restarts
 void forget(const std::string& id);
-void learn_mac(const std::string& id); // look its MAC up again (after talking to it)
-std::string mac_of(const std::string& ip);
+void learn_mac(const std::string& id); // look its MAC up again (after talking to it); may change its id
+// Called (on the task that scanned or learned) when a device known by its address
+// gets its MAC id, so what was filed under the old id can follow it.
+void on_rekey(std::function<void(const std::string& old_id, const std::string& new_id)> f);
+uint32_t renames();                    // how many ids have changed so far
+std::string mac_of(const std::string& ip, int tries = 1);   // ARP; each try waits 200 ms
 bool wake(const std::string& mac);     // Wake-on-LAN
 void fill(const Device& d, JsonObject o);
 
