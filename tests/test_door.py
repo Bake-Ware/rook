@@ -225,6 +225,29 @@ def test_door_edges(tmp_path):
     asyncio.run(go())
 
 
+def test_door_errors_say_what_to_try_next(tmp_path):
+    # C3: the JSON-RPC errors for a body that is not JSON and for a method the door does not answer.
+    async def go():
+        hub = Hub(tmp_path / "hub")
+        host, port = await hub.serve("127.0.0.1", 0)
+        url = f"http://{host}:{port}/mcp"
+        agent = hub.auth.mint("agent", user=hub.auth.create_user("Alice", "a password")["guid"])
+        try:
+            async with httpx2.AsyncClient() as http:
+                not_json = await http.post(url, content=b"{not json", headers={"Authorization": f"Bearer {agent}"})
+                assert not_json.status_code == 400
+                assert not_json.json()["error"] == {"code": -32700, "message": (
+                    "The body is not JSON. Send one JSON-RPC 2.0 message, as JSON, as the body of the POST.")}
+                unknown = (await post(http, url, agent, "resources/list")).json()
+                assert unknown["error"] == {"code": -32601, "message": (
+                    "This door does not answer resources/list. Use one it answers: initialize, ping, tools/list "
+                    "or tools/call.")}
+        finally:
+            await hub.stop_serving()
+            hub.close()
+    asyncio.run(go())
+
+
 def test_attach_through_the_door(tmp_path):
     # W7: an agent attaches a likely rekey to the known worker with the worker.attach hub cap.
     from nacl.signing import SigningKey
