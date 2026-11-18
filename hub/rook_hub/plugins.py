@@ -8,7 +8,8 @@ and installing a plugin whose name is already installed replaces its code at
 once. When the hub starts it loads every installed plugin (PL3).
 
 Core's own caps ship as plugins installed by default (PL7): the folders under
-`defaults/` (`net`: the network primitives, D3; `shell`: commands and terminals).
+`defaults/` (`battery`: battery.status; `file`: files; `net`: the network primitives, D3;
+`shell`: commands, the environment and terminals; `worker`: worker.ping).
 A hub installs them when it makes a new data directory, as any plugin is installed,
 and from then on they are installed plugins like any other: loaded at every start,
 replaced by an install of the same name, pushed to workers and withdrawn by the
