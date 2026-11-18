@@ -77,6 +77,28 @@ def test_heartbeat_reads_battery_temperature_and_gpu_where_linux_exposes_them(tm
     validate(Worker(tmp_path / "state", "http://unused", no_connect, macs=[]).heartbeat())
 
 
+def test_a_slow_reading_never_holds_up_a_heartbeat(tmp_path, monkeypatch):
+    # H4 on a running worker: battery, temperature and GPU are read on a thread of their own and a heartbeat
+    # carries the latest reading. Read on the event loop at every heartbeat, a few milliseconds each (a Wi-Fi
+    # card's sensor, nvidia-smi) held up the link itself: test_sizes_and_order_over_the_real_carrier never ended.
+    monkeypatch.setattr(rook_worker, "SYS", tmp_path / "no-sys")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "nvidia-smi").write_text("#!/bin/sh\n/bin/sleep 1\necho '50, 8192, 4096'\n")
+    (bin_dir / "nvidia-smi").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    worker = Worker(tmp_path / "state", "http://unused", no_connect, macs=[])
+
+    async def go():
+        started = time.monotonic()
+        first = worker.heartbeat()["health"]
+        assert time.monotonic() - started < 0.5 and "gpu" not in first      # no reading yet: not waited for
+        while "gpu" not in worker.heartbeat()["health"]:
+            await asyncio.sleep(0.05)
+        assert worker.heartbeat()["health"]["gpu"] == 50.0
+    asyncio.run(go())
+
+
 def test_heartbeat_leaves_out_what_the_machine_does_not_expose(tmp_path, monkeypatch):
     # H4: no battery, no sensor, no GPU, and values that cannot be read: those fields are absent, nothing fails.
     monkeypatch.setattr(rook_worker, "SYS", fake_sys(tmp_path / "sys", {

@@ -60,6 +60,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import types
 import urllib.error
 import urllib.request
@@ -216,6 +217,8 @@ class Worker:
         self._changed = asyncio.Event()
         self._interval_known = asyncio.Event()
         self._cpu = None
+        self._read = {}                   # battery, temperature and GPU as last read (H4)
+        self._reading = None              # the thread reading them, while it runs
 
     def _load_key(self, name, kind):
         """Generate a key of `kind` on first start; reuse it after (R5, W7)."""
@@ -578,14 +581,37 @@ class Worker:
             self._cpu = (idle, total)
         except (OSError, KeyError, ValueError, IndexError):
             pass
-        found = {"battery": battery(), "temperature": temperature()}
-        found["gpu"], found["vram"] = gpus()
-        health.update((name, value) for name, value in found.items() if value is not None)
+        health.update(self._devices())
         return health
+
+    def _devices(self):
+        """Battery, temperature and GPU as last read, and a new reading started on a thread of its own if
+        none is running. Reading them takes milliseconds (a Wi-Fi card's sensor, `nvidia-smi`): on the
+        event loop at every heartbeat, that holds up the link the heartbeats travel on. So a heartbeat
+        carries the latest reading, never waits for one, and the first after a start has none yet. With no
+        event loop running (health() called on its own), they are read here and now."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return devices()
+        if self._reading is None or not self._reading.is_alive():
+            self._reading = threading.Thread(target=self._read_devices, daemon=True)
+            self._reading.start()
+        return self._read
+
+    def _read_devices(self):
+        self._read = devices()
 
 
 def _read(path):
     return path.read_text().strip()
+
+
+def devices():
+    """The H4 fields Linux exposes beyond CPU, RAM and disk: those found, by name."""
+    found = {"battery": battery(), "temperature": temperature()}
+    found["gpu"], found["vram"] = gpus()
+    return {name: value for name, value in found.items() if value is not None}
 
 
 def battery():
