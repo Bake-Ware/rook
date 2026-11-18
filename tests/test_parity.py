@@ -42,7 +42,7 @@ class Rig:
             await asyncio.sleep(0.02)
         key = (await self.tool("workers"))[1]["knocking"][0]["key"]
         self.moniker = (await self.ok("hub", "worker.approve", key=key))["approved"]["moniker"]
-        while "shell.open" not in await self.announced():
+        while not {"shell.open", "shell.env", "file.read", "worker.ping"} <= set(await self.announced()):
             await asyncio.sleep(0.02)
         return self
 
@@ -65,7 +65,7 @@ class Rig:
         text = result["content"][0]["text"]
         return result["isError"], (text if result["isError"] else json.loads(text))
 
-    async def ok(self, worker, cap, **args):
+    async def ok(self, worker, cap, /, **args):
         failed, reply = await self.tool("call", worker=worker, cap=cap, args=args, why=WHY)
         assert not failed, reply
         return reply
@@ -138,7 +138,7 @@ def test_workers_caps_heartbeat_and_offline(tmp_path):
 
         _, caps = await rig.tool("caps", worker=rig.moniker, match="shell.")
         names = {c["name"]: c for c in caps["caps"][0]["caps"]}
-        assert set(names) == {"shell.exec", "shell.open", "shell.which"}
+        assert set(names) == {"shell.env", "shell.exec", "shell.open", "shell.which"}
         assert names["shell.open"]["returns"] == "stream" and names["shell.exec"]["schema"]["properties"]
         _, hub_caps = await rig.tool("caps", worker="hub")
         assert "worker.approve" in {c["name"] for c in hub_caps["caps"][0]["caps"]}
@@ -343,4 +343,48 @@ def test_install_a_plugin_and_call_its_caps(tmp_path):
         while "parity.hello" not in await rig.announced():
             await asyncio.sleep(0.02)
         assert await rig.ok(rig.moniker, "parity.hello", name="rook") == {"hello": "rook"}
+    run(tmp_path, body)
+
+
+# ------------------------------------------------------------------ files, environment, liveness (brief 41)
+
+def test_files_environment_and_ping(tmp_path):
+    """Rows 36, 37, 38: write, read (text and bytes), list, search and stat a file; read the worker's
+    environment; ping the worker."""
+    async def body(rig):
+        folder = rig.tmp_path / "files"
+        note = folder / "a" / "b.txt"
+        written = await rig.ok(rig.moniker, "file.write", path=str(note), content="line one\nneedle two\n",
+                               create_parents=True)
+        assert written["written"] == 20
+        assert (await rig.ok(rig.moniker, "file.read", path=str(note)))["content"] == "line one\nneedle two\n"
+        await rig.ok(rig.moniker, "file.write", path=str(folder / "bin"), content="AAEC/w==", encoding="base64")
+        assert (await rig.ok(rig.moniker, "file.read", path=str(folder / "bin"), encoding="base64"))["content"] == "AAEC/w=="
+        listed = await rig.ok(rig.moniker, "file.list", path=str(folder), recursive=True)
+        assert {e["path"] for e in listed["entries"]} == {"a", "a/b.txt", "bin"}
+        found = await rig.ok(rig.moniker, "file.search", path=str(folder), pattern="needle")
+        assert [(m["line"], m["text"]) for m in found["matches"]] == [(2, "needle two")]
+        assert (await rig.ok(rig.moniker, "file.stat", path=str(note)))["size"] == 20
+
+        assert await rig.ok(rig.moniker, "shell.env", name="NO_SUCH_VARIABLE_X", default="dflt") == "dflt"
+        assert (await rig.ok(rig.moniker, "worker.ping"))["pong"] is True
+    run(tmp_path, body)
+
+
+# ------------------------------------------------------------------ owner and config (briefs 40, 42)
+
+def test_owner_and_config(tmp_path):
+    """Rows 50, 51: reassign a worker's owner through the door; set a worker's config with a secret by
+    reference, and see the worker apply it, the reference kept everywhere but on the wire."""
+    async def body(rig):
+        reply = await rig.ok("hub", "worker.reassign", worker=rig.moniker, owner=rig.user["moniker"])
+        assert reply["owner"]["moniker"] == rig.user["moniker"]
+
+        await rig.ok("hub", "secret.create", scope="hub", name="cfgpw", value="cfg-secret-77")
+        set_ = await rig.ok("hub", "config.set", worker=rig.moniker, set={"greeting": "hi", "pw": "secret:cfgpw"})
+        assert set_["config"]["values"] == {"greeting": "hi", "pw": "secret:cfgpw"}
+        while (got := await rig.ok("hub", "config.get", worker=rig.moniker))["config"]["applied"] != set_["config"]["version"]:
+            await asyncio.sleep(0.05)
+        _, journal = await rig.tool("journal", limit=1000)
+        assert "cfg-secret-77" not in json.dumps(journal) and "cfg-secret-77" not in json.dumps(got)
     run(tmp_path, body)
