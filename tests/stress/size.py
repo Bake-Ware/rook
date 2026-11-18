@@ -33,7 +33,7 @@ async def fill_journal(band):
             return await band.door.call("hub", "secret.list", {}, why=f"Stress fill {k}")
         await asyncio.gather(*(one(i + k) for k in range(n)))
         i += n
-    band.log("filled", what="journal", entries=await newest_id(band.door), seconds=round(time.monotonic() - started, 1))
+    band.log("filled", store="journal", entries=await newest_id(band.door), seconds=round(time.monotonic() - started, 1))
 
 
 async def fill_records(band):
@@ -41,7 +41,7 @@ async def fill_records(band):
     for start in range(0, RECORDS, 5_000):
         code, reply, _ = await band.door.call("hub", "stress.fill", {"start": start, "n": 5_000})
         assert code is None, reply
-    band.log("filled", what="records", records=RECORDS, seconds=round(time.monotonic() - started, 1))
+    band.log("filled", store="records", records=RECORDS, seconds=round(time.monotonic() - started, 1))
 
 
 class Probe:
@@ -122,7 +122,7 @@ async def body(band):
         ("Data page journal, limit 100,000", site_get("/api/journal?limit=100000")),
         ("Data page journal, text of one entry", site_get("/api/journal?text=Stress%20fill%2077777")),
         ("Data page journal choices", site_get("/api/journal/choices")),
-        ("records cap, one word (5,000 match), default 50", plugin_search(text="amber")),
+        ("records cap, one word (13,550 match), default 50", plugin_search(text="amber")),
         ("records cap, one word, limit 50,000", plugin_search(text="amber", limit=50_000)),
         ("records cap, all of the type, limit 50,000", plugin_search(limit=50_000)),
         ("records cap, one record's number", plugin_search(text="number43210")),
