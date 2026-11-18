@@ -41,7 +41,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.11.2"
+#define FW_VERSION "0.11.3"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -947,6 +947,69 @@ static bool cap_bt(JsonObjectConst a, JsonObject r, std::string& err) {
     return true;
 }
 
+// Raw access to the paired remote's IR-over-BLE service, to find its code
+// format by experiment (bt.h has the characteristics). Each write's status,
+// and the IR_KEY_EVENT notifications of the last 5 s, come back.
+static bool hex_bytes(const std::string& hex, std::string& out) {
+    out.clear();
+    int hi = -1;
+    for (char ch : hex) {
+        int v = isdigit((unsigned char)ch) ? ch - '0' : (ch >= 'a' && ch <= 'f') ? ch - 'a' + 10 : (ch >= 'A' && ch <= 'F') ? ch - 'A' + 10 : -1;
+        if (v < 0) {
+            if (ch == ' ' || ch == ':' || ch == ',' || ch == '-') continue;
+            return false;
+        }
+        if (hi < 0) hi = v;
+        else {
+            out += (char)(hi << 4 | v);
+            hi = -1;
+        }
+    }
+    return hi < 0;
+}
+
+static bool cap_ir(JsonObjectConst a, JsonObject r, std::string& err) {
+    std::string action = a["action"] | "";
+    std::string code;
+    if (!hex_bytes(a["code"] | "", code)) { err = "bad args: code is hex bytes"; return false; }
+    std::vector<std::string> steps;
+    if (action == "write") {
+        std::string ch = a["char"] | "";
+        if (ch.empty()) { err = "bad args: char (c1..c5) is needed"; return false; }
+        if (code.empty() && !a["key"].isNull()) {         // key alone: its 2 bytes, little-endian
+            int k = a["key"] | 0;
+            code = std::string{(char)(k & 0xFF), (char)((k >> 8) & 0xFF)};
+        }
+        steps = bt::ir_write(ch, code);
+    } else if (action == "program") {
+        if (a["key"].isNull()) { err = "bad args: key (an Android keycode) is needed"; return false; }
+        steps = bt::ir_program((uint16_t)(a["key"] | 0), code);
+    } else if (action == "suppress" || action == "clear") {
+        // clear: an empty suppress list (every key back to IR) and the seen events forgotten
+        std::vector<uint16_t> keys;
+        if (action == "suppress")
+            for (JsonVariantConst k : a["keys"].as<JsonArrayConst>()) keys.push_back((uint16_t)(k | 0));
+        steps = bt::ir_suppress(keys);
+        if (action == "clear") bt::ir_forget_events();
+    } else if (!action.empty() && action != "status") {
+        err = "bad args: action is write, program, suppress or clear";
+        return false;
+    }
+    if (!steps.empty()) delay(300);                 // long enough for a key event the writes set off
+    r["ready"] = bt::ir_ready();
+    JsonArray w = r["writes"].to<JsonArray>();
+    for (auto& s : steps) w.add(s);
+    JsonArray ev = r["events"].to<JsonArray>();
+    for (auto& e : bt::ir_events(5000)) {
+        JsonObject o = ev.add<JsonObject>();
+        o["ago_ms"] = e.ago_ms;
+        o["event"] = e.down ? "down" : "up";
+        o["key"] = e.key;
+        o["raw"] = e.raw;
+    }
+    return true;
+}
+
 static bool cap_wifi(JsonObjectConst a, JsonObject r, std::string& err) {
     std::string action = a["action"] | "list";
     std::string ssid = a["ssid"] | "";
@@ -1182,6 +1245,12 @@ static void handle_line(const std::string& line) {
             bt::forget();
         }
         fill_bt(out["bt"].to<JsonObject>());
+    } else if (cmd == "ir") {
+        std::string err;
+        if (!cap_ir(in.as<JsonObjectConst>(), out["ir"].to<JsonObject>(), err)) {
+            out["ok"] = false;
+            out["error"] = err;
+        }
     } else if (cmd == "dev.scan") {
         std::string err;
         out["queued"] = dev::run("scan", "", "", 0, err);
@@ -1556,6 +1625,7 @@ void setup() {
             worker.on("remote.ask", cap_ask, true);
             worker.on("remote.wait", cap_wait, true);
             worker.on("remote.bt", cap_bt);
+            worker.on("remote.ir", cap_ir, true);
             worker.on("remote.wifi", cap_wifi);
             worker.on("remote.scan", cap_scan, true);
             worker.on("remote.devices", cap_devices);

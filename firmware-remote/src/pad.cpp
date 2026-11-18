@@ -386,5 +386,13 @@ bool find_ready() { return false; }
 void find(int) {}
 std::string find_info() { return ""; }
 
+bool ir_ready() { return false; }     // no IR service on a USB pad
+static std::vector<std::string> no_ir() { return {"the pad has no IR service"}; }
+std::vector<std::string> ir_write(const std::string&, const std::string&) { return no_ir(); }
+std::vector<std::string> ir_program(uint16_t, const std::string&) { return no_ir(); }
+std::vector<std::string> ir_suppress(const std::vector<uint16_t>&) { return no_ir(); }
+std::vector<IrEvent> ir_events(uint32_t) { return {}; }
+void ir_forget_events() {}
+
 }  // namespace bt
 #endif  // ROOK_GAMEPAD

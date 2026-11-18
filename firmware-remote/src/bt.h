@@ -9,6 +9,7 @@
 #include <Arduino.h>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace bt {
 
@@ -48,5 +49,23 @@ bool find_ready();                    // the connected remote has the service
 void find(int level);                 // 1..3: beep (quiet to loud); 0: stop
 std::string find_info();              // what was written and what the remote said back (hex)
 std::string voice_info();             // its answer about its voice service, and its last control message (hex)
+
+// Raw access to the remote's IR-over-BLE service (D343BFC0-...; the onn
+// remote has it), to find its code format by experiment. Characteristics by
+// their last two hex digits: c1 IR_PROG_CONTROL (01 start, 00 finish), c2
+// IR_KEY_ID (Android keycode, 2 bytes little-endian), c3 IR_CODE (the code,
+// split over writes), c4 IR_SUPPRESS (keycodes that stay BLE), c5 IR_KEY_EVENT
+// (notifies 00 down / 01 up, then the keycode). Every write is with response
+// and runs on the Bluetooth task; each answers one line per write,
+// "<char> <hex>: ok" or the error (att 0x.. from the remote, err N locally).
+// The key events also come out of next_key() as ir_<keycode hex>, but only
+// when no HID key arrived with them.
+struct IrEvent { uint32_t ago_ms; bool down; int key; std::string raw; };
+bool ir_ready();                                  // the connected remote has the service
+std::vector<std::string> ir_write(const std::string& suffix, const std::string& bytes);   // chunked at the MTU
+std::vector<std::string> ir_program(uint16_t keycode, const std::string& code);           // start, key, code (20-byte chunks), finish
+std::vector<std::string> ir_suppress(const std::vector<uint16_t>& keys);
+std::vector<IrEvent> ir_events(uint32_t within_ms);   // IR_KEY_EVENT notifications seen lately, oldest first
+void ir_forget_events();
 
 }  // namespace bt

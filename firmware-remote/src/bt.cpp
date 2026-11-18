@@ -1,6 +1,9 @@
 #include "bt.h"
 #include <NimBLEDevice.h>
 #include <Preferences.h>
+#include <deque>
+#include <memory>
+#include <vector>
 
 namespace {
 
@@ -34,6 +37,24 @@ const char* const F_DATA = "18020003-5a21-4f05-bc7d-af01f617b664";
 NimBLERemoteCharacteristic *f_ctl = nullptr, *f_data = nullptr;
 volatile int f_want = -1;
 std::string f_said;
+// IR over BLE: d343bfc1..c5 (see bt.h). The writes run on the bt task, which
+// owns the connection; callers hand it a job and wait for its answer.
+const char* const IR_SVC = "d343bfc0-5a21-4f05-bc7d-af01f617b664";
+NimBLERemoteCharacteristic* ir_chr[5] = {};      // c1..c5
+struct IrSeen { uint32_t ms; bool down; int key; std::string raw; };
+std::deque<IrSeen> ir_seen;                      // under mu
+struct IrPending { uint32_t ms; int key; };
+std::vector<IrPending> ir_pending;               // IR downs waiting to see whether a HID key comes with them (under mu)
+volatile uint32_t last_hid_ms = 0;
+const uint32_t IR_HID_WINDOW = 250;              // a HID key this close to an IR event is the same press
+struct IrJob {
+    std::function<std::vector<std::string>()> run;
+    std::vector<std::string> out;
+    SemaphoreHandle_t done = xSemaphoreCreateBinary();
+    ~IrJob() { vSemaphoreDelete(done); }
+};
+std::shared_ptr<IrJob> ir_job;                   // under mu
+SemaphoreHandle_t ir_mu;                         // one job at a time
 const uint32_t V_MAX_MS = 30000;            // an utterance is cut off here (the hub takes 30 s at most)
 const size_t V_BUF_MAX = 16000;             // nobody is taking the audio: stop keeping it
 NimBLERemoteCharacteristic* v_tx = nullptr;
@@ -176,6 +197,140 @@ void logf(const char* fmt, ...) {
     if (logger) logger(b);
 }
 
+std::string hex_of(const uint8_t* d, size_t len) {
+    std::string s;
+    char b[3];
+    for (size_t i = 0; i < len; i++) {
+        snprintf(b, sizeof b, "%02x", d[i]);
+        s += b;
+    }
+    return s;
+}
+
+// IR_KEY_EVENT: 00 down / 01 up, then the Android keycode (little-endian).
+void on_ir_event(NimBLERemoteCharacteristic*, uint8_t* d, size_t len, bool) {
+    std::string raw = hex_of(d, len < 16 ? len : 16);
+    bool down = len && d[0] == 0x00;
+    int key = len >= 3 ? (d[1] | (d[2] << 8)) : -1;
+    logf("bt: ir key %s %d (%s)", down ? "down" : "up", key, raw.c_str());
+    uint32_t ms = millis();
+    xSemaphoreTake(mu, portMAX_DELAY);
+    ir_seen.push_back({ms, down, key, raw});
+    while (ir_seen.size() > 40) ir_seen.pop_front();
+    if (down && key >= 0 && ir_pending.size() < 8) ir_pending.push_back({ms, key});
+    xSemaphoreGive(mu);
+}
+
+// IR downs old enough to know: one with a HID key near it was that key's press
+// (already sent); the rest go out as ir_<keycode hex>. Run on the bt task.
+void ir_flush_pending() {
+    uint32_t now = millis(), hid = last_hid_ms;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    for (size_t i = 0; i < ir_pending.size();) {
+        IrPending p = ir_pending[i];
+        if (now - p.ms < IR_HID_WINDOW) { i++; continue; }
+        ir_pending.erase(ir_pending.begin() + i);
+        int32_t apart = (int32_t)(hid - p.ms);
+        if (hid && apart > -(int32_t)IR_HID_WINDOW && apart < (int32_t)IR_HID_WINDOW) continue;
+        char name[20];
+        snprintf(name, sizeof name, "ir_%x", p.key);
+        xQueueSend(keys, name, 0);
+    }
+    xSemaphoreGive(mu);
+}
+
+// One write with response, its status from the remote: 0, or BLE_HS_ATT_ERR(att
+// code) when it refused, or another host error. Run on the bt task.
+struct WriteWait { TaskHandle_t task; volatile int rc; };
+
+int on_ir_written(uint16_t, const ble_gatt_error* e, ble_gatt_attr*, void* arg) {
+    WriteWait* w = (WriteWait*)arg;
+    w->rc = e ? e->status : 0;
+    xTaskNotifyGive(w->task);
+    return 0;
+}
+
+int gatt_write(NimBLERemoteCharacteristic* c, const uint8_t* d, size_t len) {
+    if (!client || !client->isConnected()) return BLE_HS_ENOTCONN;
+    WriteWait w{xTaskGetCurrentTaskHandle(), 0};
+    ulTaskNotifyTake(pdTRUE, 0);
+    int rc = ble_gattc_write_flat(client->getConnId(), c->getHandle(), d, len, on_ir_written, &w);
+    if (rc) return rc;
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);    // the host always answers: done, refused, timed out (30 s) or disconnected
+    return w.rc;
+}
+
+std::string status_text(int rc) {
+    if (rc == 0) return "ok";
+    char b[24];
+    if (rc > BLE_HS_ERR_ATT_BASE && rc < BLE_HS_ERR_ATT_BASE + 0x100) snprintf(b, sizeof b, "att 0x%02x", rc - BLE_HS_ERR_ATT_BASE);
+    else snprintf(b, sizeof b, "err %d", rc);
+    return b;
+}
+
+int ir_index(const std::string& suffix) {
+    std::string s;
+    for (char ch : suffix) s += (char)tolower((unsigned char)ch);
+    if (s.rfind("0x", 0) == 0) s.erase(0, 2);
+    if (s.size() == 4 && s.rfind("bf", 0) == 0) s.erase(0, 2);
+    if (s.size() == 2 && s[0] == 'c' && s[1] >= '1' && s[1] <= '5') return s[1] - '1';
+    return -1;
+}
+
+// Write bytes to c<n>, in pieces of at most chunk bytes (0: the MTU's worth);
+// one line per write. An empty write is still one write.
+void ir_write_on(int idx, const std::string& bytes, size_t chunk, std::vector<std::string>& out) {
+    char label[4];
+    snprintf(label, sizeof label, "c%d", idx + 1);
+    NimBLERemoteCharacteristic* c = ir_chr[idx];
+    if (!c) {
+        out.push_back(std::string(label) + ": the remote has no such characteristic");
+        return;
+    }
+    if (!chunk) {
+        int mtu = client ? client->getMTU() : 23;
+        chunk = mtu > 3 ? mtu - 3 : 20;
+    }
+    size_t at = 0;
+    do {
+        size_t n = std::min(chunk, bytes.size() - at);
+        const uint8_t* d = (const uint8_t*)bytes.data() + at;
+        int rc = gatt_write(c, d, n);
+        std::string line = std::string(label) + " " + hex_of(d, n) + ": " + status_text(rc);
+        logf("bt: ir write %s", line.c_str());
+        out.push_back(line);
+        at += n;
+        if (rc) break;                           // the rest would only pile on the first refusal
+    } while (at < bytes.size());
+}
+
+std::vector<std::string> ir_run(std::function<std::vector<std::string>()> f) {
+    if (!mu || !ir_mu) return {"bluetooth is not started"};
+    xSemaphoreTake(ir_mu, portMAX_DELAY);
+    auto job = std::make_shared<IrJob>();
+    job->run = f;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    ir_job = job;
+    xSemaphoreGive(mu);
+    bool done = xSemaphoreTake(job->done, pdMS_TO_TICKS(90000)) == pdTRUE;
+    xSemaphoreGive(ir_mu);
+    if (!done) {
+        xSemaphoreTake(mu, portMAX_DELAY);
+        if (ir_job == job) ir_job.reset();
+        xSemaphoreGive(mu);
+        return {"timed out waiting for the bluetooth task"};
+    }
+    return job->out;
+}
+
+bool ir_have() {
+    for (auto* c : ir_chr)
+        if (c) return true;
+    return false;
+}
+
+bool ir_usable() { return connected && client && client->isConnected() && ir_have(); }
+
 // Consumer-page usages (what a TV remote mostly sends), by the handheld's names.
 const char* consumer_name(uint32_t u) {
     switch (u) {
@@ -243,6 +398,7 @@ void on_report(NimBLERemoteCharacteristic* c, uint8_t* d, size_t len, bool) {
     } else {
         for (size_t i = 0; i < len && i < 4; i++) usage |= (uint32_t)d[i] << (8 * i);
     }
+    if (usage) last_hid_ms = millis();
     Last* l = nullptr;
     for (int i = 0; i < nlasts; i++)
         if (lasts[i].handle == c->getHandle()) l = &lasts[i];
@@ -366,7 +522,23 @@ void connect_to(const std::string& addr, uint8_t type) {
         if (f_data && (f_data->canNotify() || f_data->canIndicate())) f_data->subscribe(f_data->canNotify(), on_fms);
     }
     f_want = -1;
+    for (auto*& c : ir_chr) c = nullptr;
+    bool ir_events_on = false;
+    NimBLERemoteService* is = client->getService(NimBLEUUID(IR_SVC));
+    if (is) {
+        for (int i = 0; i < 5; i++) {
+            char u[40];
+            snprintf(u, sizeof u, "d343bfc%d-5a21-4f05-bc7d-af01f617b664", i + 1);
+            ir_chr[i] = is->getCharacteristic(NimBLEUUID(u));
+        }
+        NimBLERemoteCharacteristic* ev = ir_chr[4];
+        if (ev && (ev->canNotify() || ev->canIndicate())) ir_events_on = ev->subscribe(ev->canNotify(), on_ir_event);
+        logf("bt: ir service: c1 %s c2 %s c3 %s c4 %s c5 %s, key events %s", ir_chr[0] ? "yes" : "no",
+             ir_chr[1] ? "yes" : "no", ir_chr[2] ? "yes" : "no", ir_chr[3] ? "yes" : "no", ir_chr[4] ? "yes" : "no",
+             ir_events_on ? "on" : "off");
+    }
     xSemaphoreTake(mu, portMAX_DELAY);
+    ir_pending.clear();
     services_text = svcs;
     v_buf.clear();
     xSemaphoreGive(mu);
@@ -382,6 +554,15 @@ void task(void*) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(v_ready ? 30 : 200));
         if (!inited) continue;
+        std::shared_ptr<IrJob> job;
+        xSemaphoreTake(mu, portMAX_DELAY);
+        job.swap(ir_job);
+        xSemaphoreGive(mu);
+        if (job) {
+            job->out = ir_usable() ? job->run() : std::vector<std::string>{"the remote is not connected, or has no IR service"};
+            xSemaphoreGive(job->done);
+        }
+        ir_flush_pending();
         if (connected && v_ready && v_tx && client && client->isConnected()) {
             bool rsp = !v_tx->canWriteNoResponse();
             if (v_want_open) {
@@ -478,6 +659,7 @@ namespace bt {
 void begin(std::function<void(const char*)> log) {
     logger = log;
     mu = xSemaphoreCreateMutex();
+    ir_mu = xSemaphoreCreateMutex();
     keys = xQueueCreate(16, 20);
     prefs.begin("rook-bt", false);
     saved_addr = prefs.getString("addr", "").c_str();
@@ -617,6 +799,61 @@ std::string voice_info() {
                     (v_speech ? ", speech" : ", no speech") + "; control:" + v_hist;
     xSemaphoreGive(mu);
     return s;
+}
+
+bool ir_ready() { return ir_usable(); }
+
+std::vector<std::string> ir_write(const std::string& suffix, const std::string& bytes) {
+    int idx = ir_index(suffix);
+    if (idx < 0) return {"char is c1..c5 (" + suffix + ")"};
+    return ir_run([idx, bytes] {
+        std::vector<std::string> out;
+        ir_write_on(idx, bytes, 0, out);
+        return out;
+    });
+}
+
+std::vector<std::string> ir_program(uint16_t keycode, const std::string& code) {
+    return ir_run([keycode, code] {
+        std::vector<std::string> out;
+        ir_write_on(0, std::string("\x01", 1), 0, out);
+        std::string key{(char)(keycode & 0xFF), (char)(keycode >> 8)};
+        ir_write_on(1, key, 0, out);
+        ir_write_on(2, code, 20, out);
+        ir_write_on(0, std::string("\x00", 1), 0, out);     // finish even after a refusal: no session left open
+        return out;
+    });
+}
+
+std::vector<std::string> ir_suppress(const std::vector<uint16_t>& list) {
+    std::string bytes;
+    for (uint16_t k : list) {
+        bytes += (char)(k & 0xFF);
+        bytes += (char)(k >> 8);
+    }
+    return ir_run([bytes] {
+        std::vector<std::string> out;
+        ir_write_on(3, bytes, 0, out);
+        return out;
+    });
+}
+
+std::vector<IrEvent> ir_events(uint32_t within_ms) {
+    std::vector<IrEvent> out;
+    if (!mu) return out;
+    uint32_t now = millis();
+    xSemaphoreTake(mu, portMAX_DELAY);
+    for (auto& e : ir_seen)
+        if (now - e.ms <= within_ms) out.push_back({now - e.ms, e.down, e.key, e.raw});
+    xSemaphoreGive(mu);
+    return out;
+}
+
+void ir_forget_events() {
+    if (!mu) return;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    ir_seen.clear();
+    xSemaphoreGive(mu);
 }
 
 bool next_key(std::string& name) {
