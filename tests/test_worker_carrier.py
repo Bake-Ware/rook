@@ -489,6 +489,9 @@ def test_a_stall_of_20_s_makes_a_new_session(tmp_path):
             await asyncio.sleep(20)
             rig.proxy.stalled = False
             await until(lambda: rig.hub.sessions.live(worker.key) not in (None, first) and rig.online(), timeout=15)
-            assert len(worker.opens) == 2                  # one new link_open: the session was lost (3.2)
+            # The worker linked again by itself, on a new session (3.2). How many link attempts that took is the
+            # transport's business (Bake, 17 Nov 18:45: "It's just part of normal transport retry."): Channel 0
+            # gives up after its resends and HELLO is resent on its own schedule, so two or three, by timing.
+            assert len(worker.opens) >= 2
             assert (await rig.call("demo.echo", {"after": "20 s"}))["result"] == {"after": "20 s"}
     asyncio.run(go())
