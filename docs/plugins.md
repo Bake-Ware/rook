@@ -252,14 +252,16 @@ Core's own caps ship as plugins in the one format above, in `hub/rook_hub/defaul
 
 None of these caps has a timeout, a size cap or a list of what may run (Build rules; Bake, 14 and 17 November). `max_bytes` and `limit` are there for a caller who wants to bound a call, and have no default: with nothing passed, a cap gives everything. A call with an argument the cap does not take is refused, saying which it takes. The shell caps are built for Linux and macOS (the same POSIX calls; only Linux has been run); on Windows each but `shell.env` answers that it is not built there yet (W5). `battery.status` is built for Linux only. The file caps use the standard library only; only Linux has been run.
 
-What a hub does at start:
+What a hub does at start, every start (Bake, 17 November: "How else are you going to load new plugins?"). It first loads every installed plugin, then goes through the folders in `defaults/` in name order (`battery`, `file`, `net`, `shell`, `worker`):
 
-- **A data directory it has just made** (no `hub.db` before this start): it installs them in name order (`battery`, `file`, `net`, `shell`, `worker`), as any plugin is installed. They are not journaled: no person or agent installed them. From then on they are installed plugins like any other.
-- **The default plugins present**: it loads them as it loads every installed plugin, and installs nothing.
-- **Replaced by a person** (an install of a plugin with one of those names): the person's plugin is what is installed, and a start leaves it.
-- **A data directory the hub did not just make** (one made before this slice, or one whose default plugins are gone): it installs nothing. Rook has no uninstall, so a default plugin is gone only if someone removed it from the data directory by hand; the hub logs that it could not load it and carries on.
+- **Not installed** (no plugin of that name in the data directory: a new data directory, or one made by a core that did not ship it): it installs it, as any plugin is installed.
+- **Installed at an older version** than the one shipped: it installs the shipped one in its place, as an install of the same name replaces a plugin. Versions are compared as dotted numbers, number by number, a missing place counting as 0 (`0.1` is `0.1.0`). A version that is not dotted numbers is never counted older, so it is left.
+- **Installed at the same or a newer version**: it leaves it. That covers a plugin a person installed under one of those names at a version at least the shipped one: the person's plugin stays. A person's plugin under one of those names at an older version is replaced, as the rule says.
+- **One that fails to install** (for example a cap it adds is already served by a plugin a person installed): the hub logs that it was not installed and why, keeps what was installed before, and carries on.
 
-Workers get the worker parts as they get any plugin's, so a worker opted out of plugins (P4) serves none of these caps, and a worker's knock offers only its own caps: the default plugins arrive after approval.
+These installs are not journaled: no person or agent made them. The hub keeps no other note of the defaults: it compares the shipped version with the installed one each time, so a second start with nothing new installs nothing. Rook has no uninstall, so a default plugin is removed only by hand: one whose folder was removed from the data directory is still installed as far as the hub knows, so a start logs that it could not load it and carries on, until a core ships a newer version of it, which is then installed.
+
+Workers get the worker parts as they get any plugin's, so a worker opted out of plugins (P4) serves none of these caps, and a worker's knock offers only its own caps: the default plugins arrive after approval. A worker linked to the hub when it stopped needs no restart of its own: it links again when the hub is back, and is sent the new and updated worker parts as on any install.
 
 ### `skill` (kept, not served)
 

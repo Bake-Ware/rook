@@ -10,10 +10,11 @@ once. When the hub starts it loads every installed plugin (PL3).
 Core's own caps ship as plugins installed by default (PL7): the folders under
 `defaults/` (`battery`: battery.status; `file`: files; `net`: the network primitives, D3;
 `shell`: commands, the environment and terminals; `worker`: worker.ping).
-A hub installs them when it makes a new data directory, as any plugin is installed,
-and from then on they are installed plugins like any other: loaded at every start,
-replaced by an install of the same name, pushed to workers and withdrawn by the
-opt-out. A hub that starts on a data directory it did not just make installs nothing.
+At every start the hub installs each one its data directory lacks, and updates each
+one whose installed version is older than the shipped one, as any plugin is installed
+(install_defaults). Otherwise they are installed plugins like any other: loaded at
+every start, replaced by an install of the same name, pushed to workers and withdrawn
+by the opt-out.
 
 A plugin adds, never replaces (PL1): a cap name or a record type that the hub or
 another plugin already has is refused, and then nothing of that plugin is kept.
@@ -57,6 +58,7 @@ MANIFEST = "plugin.json"
 DEFAULTS = pathlib.Path(__file__).parent / "defaults"   # core's own caps as plugins (PL7)
 PUSHED = "python"   # the worker form the hub pushes worker parts to (PL3); others are kept, not pushed
 _NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*\Z")
+_VERSION = re.compile(r"[0-9]+(\.[0-9]+)*\Z")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS plugins (
@@ -265,10 +267,23 @@ class Plugins:
         return self.get(name)
 
     def install_defaults(self):
-        """Install core's own plugins (PL7), in name order, on a new data directory."""
+        """At every start, install core's own plugins (PL7) in name order: each one not installed,
+        and each one whose installed version is older than the shipped one. One that fails is
+        logged and skipped, as load_all does, and what was installed before stays."""
         for folder in sorted(DEFAULTS.iterdir()):
-            if (folder / MANIFEST).is_file():
+            if not (folder / MANIFEST).is_file():
+                continue
+            shipped = read_manifest(folder)
+            with self.hub._lock:
+                row = self.hub._db.execute("SELECT version FROM plugins WHERE name = ?",
+                                           (shipped["name"],)).fetchone()
+            if row is not None and not older(row["version"], shipped["version"]):
+                continue
+            try:
                 self.install(folder, None)
+            except HubError as e:
+                log.error("Plugin %s %s was not installed: %s %s", shipped["name"], shipped["version"],
+                          e.message["message"], e.message["next"])
 
     def load_all(self):
         """Load every installed plugin, as the hub starts. One that fails is logged and skipped."""
@@ -418,6 +433,17 @@ def _check_driver(plugin, driver):
                                          "description and a JSON Schema object.", fix)
     if driver.status_handler is not None and not inspect.iscoroutinefunction(driver.status_handler):
         raise HubError("bad_plugin", f"Driver {driver.name}'s status function must be async.", fix)
+
+
+def older(installed, shipped):
+    """Whether version `installed` is older than `shipped`: both dotted numbers such as "0.1.0",
+    compared number by number, missing places counting as 0. A version that is not dotted
+    numbers is never older: what to do with one is not decided (brief 45, Needs Bake)."""
+    if not (_VERSION.match(installed) and _VERSION.match(shipped)):
+        return False
+    a, b = ([int(n) for n in v.split(".")] for v in (installed, shipped))
+    width = max(len(a), len(b))
+    return a + [0] * (width - len(a)) < b + [0] * (width - len(b))
 
 
 # ------------------------------------------------------------ hub caps (PL4)

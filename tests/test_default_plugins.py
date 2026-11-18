@@ -11,12 +11,15 @@ import sqlite3
 import stat
 import time
 
-from rook_hub import Hub
-from rook_hub.plugins import DEFAULTS
+import rook_hub.plugins
+from rook_hub import Hub, records
+from rook_hub.plugins import DEFAULTS, older
 from rook_worker import Worker
 
 SHELL_CAPS = ["shell.env", "shell.exec", "shell.open", "shell.which"]
 NET_CAPS = ["net.http", "net.tcp", "net.udp"]
+NEW_CAPS = ["battery.status", "file.list", "file.read", "file.search", "file.stat", "file.write",
+            "shell.env", "worker.ping"]
 
 
 async def until(check, timeout=10.0):
@@ -112,13 +115,48 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     again.close()
 
 
-def test_a_data_directory_the_hub_did_not_just_make_gets_no_default_plugins(tmp_path):
-    # A data directory made before this slice: it has a database and no default plugins.
+def test_a_data_directory_made_before_the_default_plugins_gets_them_on_its_next_start(tmp_path):
+    # A data directory made before there were default plugins: it has a database and no plugins.
     (tmp_path / "hub").mkdir()
     sqlite3.connect(tmp_path / "hub" / "hub.db").close()
     hub = Hub(tmp_path / "hub")
-    assert hub.plugins.list() == []
+    assert [p["name"] for p in hub.plugins.list()] == ["battery", "file", "net", "shell", "worker"]
     hub.close()
+
+
+def test_a_person_plugin_at_an_older_version_is_replaced_and_one_not_in_dotted_numbers_is_left(tmp_path):
+    hub = Hub(tmp_path / "hub")
+    alice = {"user": hub.auth.create_user("Alice", "a password")["guid"], "token": None}
+    for name, version in (("worker", "0.0.9"), ("battery", "beta")):
+        folder = tmp_path / f"my-{name}"
+        folder.mkdir()
+        (folder / "plugin.json").write_text(json.dumps({"name": name, "version": version}))
+        hub.plugins.install(folder, alice)
+    hub.close()
+    again = Hub(tmp_path / "hub")
+    versions = {p["name"]: p["version"] for p in again.plugins.list()}
+    assert versions["worker"] == "0.1.0" and versions["battery"] == "beta"
+    again.close()
+
+
+def test_a_default_that_cannot_be_installed_is_logged_and_the_hub_starts(tmp_path, monkeypatch, caplog):
+    shipped = tmp_path / "defaults"
+    shutil.copytree(DEFAULTS / "worker", shipped / "worker")
+    (shipped / "broken").mkdir()
+    (shipped / "broken" / "plugin.json").write_text(json.dumps({"name": "broken", "version": "1.0.0",
+                                                                "hub": {"module": "hub.py"}}))
+    (shipped / "broken" / "hub.py").write_text("def setup(plugin):\n    raise RuntimeError('no')\n")
+    monkeypatch.setattr(rook_hub.plugins, "DEFAULTS", shipped)
+    hub = Hub(tmp_path / "hub")
+    assert [p["name"] for p in hub.plugins.list()] == ["worker"]
+    assert "Plugin broken 1.0.0 was not installed" in caplog.text
+    hub.close()
+
+
+def test_older_compares_dotted_numbers_and_nothing_else():
+    assert older("0.1.0", "0.2.0") and older("0.9", "0.10") and older("1", "1.0.1")
+    assert not older("0.2.0", "0.2.0") and not older("0.1", "0.1.0") and not older("1.0.0", "0.9.9")
+    assert not older("beta", "0.2.0") and not older("0.1.0-rc1", "0.2.0") and not older("0.1.0", "")
 
 
 def test_each_default_cap_has_a_one_line_description_and_a_schema():
@@ -300,3 +338,93 @@ async def opt_out(tmp_path):
                            "test the opt-out", user=rig.alice)
         await until(lambda: set(SHELL_CAPS + NET_CAPS) <= set(rig.announced()))
         assert (await rig.ok("shell.exec", argv=["true"]))["ok"] is True
+
+
+# ------------------------------------------------------- a hub made by an older core (PL7)
+
+def kept(data):
+    """What a start must leave as it was: users, tokens, workers and their keys, records, secrets."""
+    db = sqlite3.connect(data / "hub.db")
+    try:
+        return {table: db.execute(f"SELECT {columns} FROM {table} ORDER BY 1, 2").fetchall()
+                for table, columns in (("users", "*"), ("tokens", "*"), ("keys", "*"), ("records", "*"),
+                                       ("secrets", "*"), ("plugin_optouts", "worker, 1"),
+                                       ("workers", "guid, moniker, name, owner, approved_at, interval"))}
+    finally:
+        db.close()
+
+
+def plugin_rows(data):
+    db = sqlite3.connect(data / "hub.db")
+    try:
+        return db.execute("SELECT guid, name, version, folder, installed_at FROM plugins ORDER BY name").fetchall()
+    finally:
+        db.close()
+
+
+def test_a_hub_made_by_an_older_core_gets_the_new_defaults_on_its_next_start(tmp_path, monkeypatch):
+    asyncio.run(older_core(tmp_path, monkeypatch))
+
+
+async def older_core(tmp_path, monkeypatch):
+    # The defaults an older core shipped: net, and shell 0.1.0 without shell.env.
+    old = tmp_path / "old-defaults"
+    for name in ("net", "shell"):
+        shutil.copytree(DEFAULTS / name, old / name)
+    (old / "shell" / "plugin.json").write_text(json.dumps({"name": "shell", "version": "0.1.0",
+                                                           "worker": {"python": {"module": "worker.py"}}}))
+    with open(old / "shell" / "worker.py", "a") as f:
+        f.write('\nCAPS.pop("shell.env")\n')
+    data, key = tmp_path / "hub", tmp_path / "keys" / "vault.key"
+
+    monkeypatch.setattr(rook_hub.plugins, "DEFAULTS", old)
+    hub = Hub(data, vault_key_file=key)
+    host, port = await hub.serve("127.0.0.1", 0)
+    alice = hub.auth.create_user("Alice", "a password")["guid"]
+    hub.auth.mint("agent", user=alice)
+    hub.vault.create({"scope": "hub", "name": "deploy-key", "value": "s3cret"}, {"user": alice, "token": None})
+    records.store_blob(hub, b"kept bytes", "text/plain", "Kept", user=alice)
+    assert {p["name"]: p["version"] for p in hub.plugins.list()} == {"net": "0.1.0", "shell": "0.1.0"}
+    worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
+    task = asyncio.create_task(worker.run())
+    try:
+        await until(lambda: any(p["key"] == worker.key for p in hub.list_pending()))
+        guid = hub.approve(worker.key, user=alice)["guid"]
+
+        def announced():
+            return {c["name"] for c in hub.get_worker(guid)["caps"] or []}
+
+        await until(lambda: set(NET_CAPS) | {"shell.exec"} <= announced())
+        assert not set(NEW_CAPS) & announced()
+        await hub.stop_serving()
+        hub.close()
+        before = kept(data)
+
+        # The next start, by this core: file, battery and worker go in, shell goes to 0.2.0.
+        monkeypatch.setattr(rook_hub.plugins, "DEFAULTS", DEFAULTS)
+        hub = Hub(data, vault_key_file=key)
+        assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
+            "battery": "0.1.0", "file": "0.1.0", "net": "0.1.0", "shell": "0.2.0", "worker": "0.1.0"}
+        await hub.serve(host, port)                  # the same address: the worker's hub URL
+        # The worker, never restarted, links again and is sent the new worker parts, as on any install.
+        await until(lambda: set(NEW_CAPS + NET_CAPS + SHELL_CAPS) <= announced(), timeout=60)
+        reply = await hub.call(guid, "worker.ping", {}, "the new default answers", user=alice)
+        assert reply["type"] == "result" and reply["result"]["pong"] is True, reply
+        reply = await hub.call(guid, "shell.env", {"name": "HOME"}, "the updated default answers", user=alice)
+        assert reply["type"] == "result", reply
+        await hub.stop_serving()
+        hub.close()
+        assert kept(data) == before                  # records, tokens, workers and secrets untouched
+        rows = plugin_rows(data)
+        assert len(list((data / "plugins").iterdir())) == 5   # one copy per plugin: shell 0.1.0's is gone
+
+        # A second start with nothing new changes nothing.
+        hub = Hub(data, vault_key_file=key)
+        hub.close()
+        assert plugin_rows(data) == rows and kept(data) == before
+        assert len(list((data / "plugins").iterdir())) == 5
+    finally:
+        worker.stop()
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 30)
+        if hub._runner is not None:
+            await hub.stop_serving()
