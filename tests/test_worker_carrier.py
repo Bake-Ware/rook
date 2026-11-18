@@ -312,6 +312,10 @@ def test_a_hub_that_never_answers_hello_is_a_failed_attempt(tmp_path, monkeypatc
         async with Rig(tmp_path) as rig:
             worker = rig.worker()
             await rig.approved(worker)
+            # The hub shows the worker online once it has the first heartbeat; the worker's session has worked
+            # once it has the hub's reply (3.2). Wait for that, so the first session counts as a good one and
+            # is followed by a new exchange at once: the two waits counted below are the two failed attempts.
+            await until(lambda: worker._replied)
             waits = []
 
             async def wait(seconds):
