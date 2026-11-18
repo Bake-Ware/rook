@@ -276,7 +276,7 @@ async def scenario(tmp_path):
             await eventually(lambda: "greet.hello" in announced(b))
             assert await greets(b)
             await eventually(lambda: {p["name"]: "error" in p for p in hub.get_worker(b)["plugins"]} == {
-                "net": False, "shell": False, "greeter": False, "broken": True, "exiter": True, "grabby": True, "quitter": False})
+                "battery": False, "file": False, "net": False, "shell": False, "worker": False, "greeter": False, "broken": True, "exiter": True, "grabby": True, "quitter": False})
             assert await porch.nothing_more()
 
             # 8. The opt-out from the site: refused without a session, journaled under the person (P4, T4).
@@ -293,7 +293,7 @@ async def scenario(tmp_path):
                 rows = {w["moniker"]: w for group in view["groups"] for w in group["workers"]}
                 assert (rows[a]["receives_plugins"], rows[b]["receives_plugins"]) == (False, True)
                 assert rows[a]["plugins"] == [] and {p["name"] for p in rows[b]["plugins"]} == {
-                    "net", "shell", "greeter", "broken", "exiter", "grabby", "quitter"}
+                    "battery", "file", "net", "shell", "worker", "greeter", "broken", "exiter", "grabby", "quitter"}
             failed, read = await tool(door, "journal", kind="auth", worker=a)
             assert read["entries"][0]["result"] == {"receives_plugins": False}
             assert read["entries"][0]["user"] == alice["moniker"]
@@ -337,7 +337,7 @@ def test_install_checks_the_worker_section(tmp_path):
                 assert e.message["next"].startswith("Fix ")
             else:
                 raise AssertionError(f"{module!r} was accepted")
-        assert [p["name"] for p in hub.plugins.list()] == ["net", "shell"]     # only the defaults (PL7)
+        assert [p["name"] for p in hub.plugins.list()] == ["battery", "file", "net", "shell", "worker"]     # only the defaults (PL7)
         folder = write_plugin(tmp_path / "esp-only", {"name": "esp-only", "version": "1",
                                                       "worker": {"esp32": {"image": "anything"}}})
         assert hub.plugins.install(folder, actor)["worker"] is True

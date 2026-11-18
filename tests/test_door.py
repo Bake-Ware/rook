@@ -110,7 +110,8 @@ async def scenario(tmp_path):
             moniker = approved["approved"]["moniker"]
             await eventually(lambda: first.identity)
             await eventually(lambda: hub.get_worker(moniker)["online"])
-            ALL = ["demo.echo", "net.http", "net.tcp", "net.udp", "shell.exec", "shell.open", "shell.which"]
+            ALL = ["battery.status", "demo.echo", "file.list", "file.read", "file.search", "file.stat", "file.write",
+                   "net.http", "net.tcp", "net.udp", "shell.env", "shell.exec", "shell.open", "shell.which", "worker.ping"]
             await eventually(lambda: [c["name"] for c in hub.get_worker(moniker)["caps"]] == ALL)   # PL7
             failed, listing = await tool(session, "workers")
             [w] = listing["workers"]
