@@ -211,6 +211,7 @@ class Hub:
         self._serving_dir = None  # the open hub.lock while this hub holds its data directory (serve)
         self._stopping = None     # while serving: an event set when stop_serving begins
         self._telling = set()     # the tasks telling linked workers their key was revoked (R5)
+        self._revoked_links = set()   # links whose key was revoked, until their worker leaves (R5)
         self.plugins = plugins.Plugins(self)
         self.plugins.load_all()  # every installed plugin, at start (PL3)
         if new:
@@ -442,31 +443,46 @@ class Hub:
         return self.get_worker(guid)
 
     def _end_revoked(self, guid, revoked):
-        """Keys of `guid` were just revoked (R5, W7): their sessions go at once (link design 3.3). A
-        worker linked under one of them is first told over its link (docs/protocol.md, `error`), so it
-        stops at once with what to do next (C3); then its link ends."""
+        """Keys of `guid` were just revoked (R5, W7). Their sessions go at once (link design 3.3), but
+        for the one a worker is linked under: that worker is first told over its link (docs/protocol.md,
+        `error`), so it stops at once with what to do next (C3). From now on that link takes no call
+        and its open calls end; the hub reads nothing from it but heartbeats, which a revoked key gets
+        refused, and the link closed. Its session ends when the worker, told, leaves.
+
+        Why not end the session at once, as before: the message would be lost whenever it waits behind
+        other frames for the Channel's window (32 frames; a `plugins` message just after linking is more),
+        because removing the key stops those frames for good. Telesthete's `Channel.close()` would wait
+        for delivery, but only up to its own 5 s; this waits for the worker instead."""
+        for key in revoked:
+            self.sessions.remove_pending(key)
         link = self._links.get(guid)
         if link is None or link.key not in revoked:
             for key in revoked:
                 self.sessions.remove(key)
             return
+        self._unlink(guid, link)
+        self._revoked_links.add(link)
         moniker = self.get_worker(guid)["moniker"]
         told = error("key_revoked", f"This key was revoked from {moniker}.",
                      "Generate a new key, knock with it, and ask a person or agent to attach it.")
-        task = asyncio.get_running_loop().create_task(self._tell_revoked(link, told, revoked))
+        task = asyncio.get_running_loop().create_task(self._tell(link, told))
         self._telling.add(task)
         task.add_done_callback(self._telling.discard)
 
-    async def _tell_revoked(self, link, told, revoked):
-        """Hand the worker `told` on its link, then end the link and the revoked keys' sessions. The
-        message goes before the key does, so the worker can still read it."""
+    async def _tell(self, link, message):
         try:
-            await link.send(encode(told))
+            await link.send(encode(message))
         except EOFError:
             pass                              # the link closed first: its next link_open is refused
-        link.close()
-        for key in revoked:
-            self.sessions.remove(key)
+
+    def _unlink(self, guid, link):
+        """`link` is no longer `guid`'s: no call goes to it, and the calls it had open end."""
+        if self._links.get(guid) is link:
+            del self._links[guid]
+            for call_id, (owner, future, *_) in list(self._calls.items()):
+                if owner == guid and not future.done():
+                    future.set_result(error("worker_disconnected", "The worker's link closed before it answered.",
+                                            "Check whether the worker is online, then call again.", call_id))
 
     def _journal(self, kind, actor, worker, result, cap=None, why=None, job=None, run=None):
         """One journal entry (L1), scrubbed of secrets as it is written (L4).
@@ -614,6 +630,8 @@ class Hub:
                     await link.send(encode(error("bad_message", str(e),
                                                  "Send messages as docs/protocol.md defines them.")))
                     continue
+                if link in self._revoked_links and message["type"] != "heartbeat":
+                    continue            # its key was revoked: only told, and refused (R5)
                 if message["type"] == "heartbeat":
                     reply, accepted = self._heartbeat(link.key, message, data)
                     await link.send(encode(reply))
@@ -649,12 +667,9 @@ class Hub:
         except EOFError:
             pass
         finally:
-            if guid is not None and self._links.get(guid) is link:
-                del self._links[guid]
-                for call_id, (owner, future, *_) in list(self._calls.items()):
-                    if owner == guid and not future.done():
-                        future.set_result(error("worker_disconnected", "The worker's link closed before it answered.",
-                                                "Check whether the worker is online, then call again.", call_id))
+            self._revoked_links.discard(link)
+            if guid is not None:
+                self._unlink(guid, link)
 
     def _heartbeat(self, key, message, raw):
         """Store a heartbeat (H1, H4) and its raw copy (H5); reply with the interval (H2).

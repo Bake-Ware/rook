@@ -246,20 +246,26 @@ async def over_websocket(tmp_path):
         assert hub._db.execute("SELECT count(*) FROM heartbeats").fetchone()[0] == beats
         await round_trip(setup, second, "on the second session")
 
-        # Revoke (attach revokes the old key, W7; 3.3): the worker is told over its link (R5), then the key
-        # leaves the Endpoint, the link closes, and the session's frames are dropped before decryption.
+        # Revoke (attach revokes the old key, W7; 3.3): no call goes to the link from then on, and the worker
+        # is told over it (R5). This played worker ignores that and heartbeats: it is refused, the link
+        # closes, the key leaves the Endpoint, and the session's frames are dropped before decryption.
+        # (A real worker stops when told, and its leaving ends the session: test_worker_carrier.py.)
         now_live = hub._links[worker["guid"]]
         rekeyed = Box()
         status, _ = await post(setup.client, f"{setup.base}/knock", rekeyed.knock())
         assert status == 200
         hub.attach(rekeyed.key, worker["moniker"], user=setup.alice)
+        assert worker["guid"] not in hub._links
+        told = await second.recv()
+        assert (told["code"], told["message"]) == ("key_revoked", f"This key was revoked from {worker['moniker']}.")
+        second.send(heartbeat(setup.box.key, caps=CAPS))
+        assert (await second.recv())["code"] == "key_revoked"
         await until(lambda: now_live.closed)
         assert hub.carrier.endpoint.band_ids() == []
         assert hub.sessions.live(setup.box.key) is None
         dropped = hub.carrier.endpoint.dropped_unknown
         second.send(heartbeat(setup.box.key, caps=CAPS))
         await until(lambda: hub.carrier.endpoint.dropped_unknown > dropped)
-        await until(lambda: worker["guid"] not in hub._links)
         assert udp_sockets() == before
 
 

@@ -215,7 +215,7 @@ The hub hands the same message back to whoever made the call. Codes in use:
 
 New codes may be added without a version change; receivers treat an unknown code like any other error.
 
-**A revoked key, told over the link (R5, C3).** When the hub revokes a key, outright or by attaching a new key to the identity (W7), and a worker is linked under that key, the hub sends it an `error` with code `key_revoked` and no `id`, then ends the link. The worker stops at once and says the message and its next step. Nothing new for a worker to implement: it already reads `error`, and one that ignores this learns when its next `link_open` is refused with `key_revoked`.
+**A revoked key, told over the link (R5, C3).** When the hub revokes a key, outright or by attaching a new key to the identity (W7), and a worker is linked under that key, the hub sends it an `error` with code `key_revoked` and no `id`. From then on the hub sends that link no call and reads nothing from it but heartbeats, which it refuses with `key_revoked`, closing the link. The worker stops at once, says the message and its next step, and leaves, which ends the session. Nothing new for a worker to implement: it already reads `error`, and one that ignores this learns when its next `link_open` is refused with `key_revoked`.
 
 ## Sizes
 

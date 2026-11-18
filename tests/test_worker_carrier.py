@@ -408,8 +408,9 @@ def test_revoke_without_rekey_tells_the_linked_worker_at_once(tmp_path):
                 assert e.message == told
             rig.running = []
             assert len(worker.opens) == 1                  # it learnt over the link, not at a link_open
-            await until(lambda: rig.guid not in rig.hub._links)
-            assert rig.hub.sessions.live(worker.key) is None and rig.hub.sessions.pending(worker.key) == []
+            assert rig.guid not in rig.hub._links          # no call goes to it from the revoke on
+            await until(lambda: rig.hub.sessions.live(worker.key) is None)     # it left: its session is gone
+            assert rig.hub.sessions.pending(worker.key) == [] and rig.hub.carrier.endpoint.band_ids() == []
             assert [k["revoked_at"] is not None for k in rig.hub.seen(moniker)["keys"]] == [True]
             entries = [json.loads(r[0]) for r in rig.hub._db.execute(
                 "SELECT result FROM journal WHERE kind = 'auth' AND worker = ?", (rig.guid,))]
