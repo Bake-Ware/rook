@@ -290,7 +290,7 @@ def test_job_create_says_what_is_wrong(tmp_path):
                       "call": {"worker": "hub", "cap": "event.emit"}}, "every <N>m"),
                     ({"title": "t", "match": {"event": "x"}, "call": {"worker": "nowhere", "cap": "a.b"}},
                      "List the workers"),
-                    ({"title": "t", "match": {"event": "x"}, "call": {"worker": "hub", "cap": "Not A Cap"}}, "cap name"),
+                    ({"title": "t", "match": {"event": "x"}, "call": {"worker": "hub", "cap": "not..a.cap"}}, "cap name"),
                     ({"match": {"event": "x"}, "call": {"worker": "hub", "cap": "a.b"}}, "schema")):
                 reply = await hub.call("hub", "job.create", args, "bad job", user=alice)
                 assert reply["type"] == "error" and words in reply["message"] + reply["next"]

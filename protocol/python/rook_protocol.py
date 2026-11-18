@@ -88,16 +88,25 @@ def _signature(value, path):
         raise ProtocolError(f"{path} must be 128 lowercase hex characters (an Ed25519 signature)")
 
 
-# W3: dot-separated segments; a hyphen only inside a segment.
-_CAP_NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+(-[a-z0-9]+)*)*\Z")
+# W3: dot-separated segments; a hyphen only inside a segment. That is all W3 forbids: an empty
+# segment, and a hyphen at either end of one. A segment is otherwise any characters but a dot.
+_SEGMENT = r"[^.\-](?:[^.]*[^.\-])?"
+_CAP_NAME = re.compile(rf"{_SEGMENT}(?:\.{_SEGMENT})*", re.DOTALL)
 
 
 def _cap_name(value, path):
     _string(value, path)
-    if not _CAP_NAME.match(value):
+    if not _CAP_NAME.fullmatch(value):
         raise ProtocolError(
-            f"{path} {value!r} is not a cap name: use dot-separated lowercase segments "
-            "like shell.exec, with hyphens only inside a segment")
+            f"{path} {value!r} is not a cap name: use dot-separated segments like shell.exec, "
+            "with no empty segment and hyphens only inside a segment")
+
+
+def _one_line(value, path):
+    """W3: a cap's description is one line, as a plugin's cap's is (hub/plugins.py)."""
+    _string(value, path)
+    if not value or "\n" in value:
+        raise ProtocolError(f"{path} must be one line of text, not empty and with no line break")
 
 
 def _base64(value, path):
@@ -147,7 +156,7 @@ REQ, OPT = True, False
 
 CAP = _struct({                                   # W3, S1
     "name": (_cap_name, REQ),
-    "description": (_string, REQ),
+    "description": (_one_line, REQ),
     "schema": (_object, REQ),
     "returns": (_one_of("result", "stream"), REQ),
 })

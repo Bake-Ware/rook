@@ -50,15 +50,26 @@ def test_unknown_fields_are_kept_not_rejected():
     assert validate(newer) is newer
 
 
-@pytest.mark.parametrize("name", ["shell.exec", "wake-on-lan.send", "echo", "gpu.vram-free"])
+# W3 says dot-separated, with hyphens only inside a segment, and forbids nothing else.
+@pytest.mark.parametrize("name", ["shell.exec", "wake-on-lan.send", "echo", "gpu.vram-free", "Shell.exec", "shell_exec",
+                                  "a-b-c.d-e"])
 def test_cap_names_accepted(name):
     validate({"type": "call", "id": "1", "cap": name, "args": {}})
 
 
-@pytest.mark.parametrize("name", ["Shell.exec", "shell..exec", "shell.exec-", "-shell", "shell_exec", "", "shell.exec."])
+@pytest.mark.parametrize("name", ["shell..exec", "shell.exec-", "-shell", "shell.-exec", "", "shell.exec.", ".shell", "-"])
 def test_cap_names_rejected(name):
     with pytest.raises(ProtocolError, match="cap name"):
         validate({"type": "call", "id": "1", "cap": name, "args": {}})
+
+
+@pytest.mark.parametrize("description", ["Echo.\nIt returns the arguments.", "Echo.\n", ""])
+def test_a_cap_description_is_one_line(description):
+    # W3: a worker-announced cap's description is checked as a plugin's cap's is (hub/plugins.py).
+    heartbeat = next(v["message"] for v in VECTORS["valid"] if v["name"] == "heartbeat, Linux worker")
+    two_lines = dict(heartbeat, caps=[dict(heartbeat["caps"][0], description=description)])
+    with pytest.raises(ProtocolError, match=r"description must be one line"):
+        validate(two_lines)
 
 
 def test_encode_refuses_what_json_cannot_carry():

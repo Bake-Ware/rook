@@ -264,7 +264,12 @@ export default {
       return this.act(() => api('POST', `/api/bands/${band.moniker}/merge`, { into: into.moniker }), band.name + ' merged into ' + into.name)
         .then(() => { this.merging[band.moniker] = false; });
     },
-    rowMenu(w) { return [{ label: w.device ? 'Pin this device' : 'Pin this worker', pin: { label: 'Workers: ' + w.name, href: viewHref('/workers', { worker: w.moniker }) } }]; },
+    rowMenu(w) {
+      const pin = { label: w.device ? 'Pin this device' : 'Pin this worker', pin: { label: 'Workers: ' + w.name, href: viewHref('/workers', { worker: w.moniker }) } };
+      return w.device || w.key_revoked ? [pin] : [pin, { label: 'Revoke key', run: () => this.revoke(w) }];
+    },
+    /* R5: the worker is told at once and stops; attaching a new key to it brings it back. */
+    revoke(w) { return this.act(() => api('POST', `/api/workers/${w.moniker}/revoke`), 'Revoked the key of ' + w.name); },
     ago(iso) {
       if (!iso) return 'never';
       const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
@@ -368,7 +373,7 @@ export default {
                    :style="open[w.moniker] ? {columnSpan: 'all', display: 'block'} : null">
             <div class="top" @click="toggle(w.moniker)" role="button" tabindex="0" :aria-expanded="!!open[w.moniker]" @keydown.enter="toggle(w.moniker)">
               <span class="sdot" :class="{off: w.device ? !w.reachable : !w.online}" :title="w.device ? reach(w) : w.online ? 'online' : 'offline'"></span>
-              <div class="wname"><span class="n">{{ w.name }} <span v-if="w.device" class="via">{{ route(w) }}</span><span v-if="w.device" class="badge plain">device · {{ w.driver }}</span><span v-else-if="!w.online" class="badge plain">offline</span></span><span class="m">{{ w.moniker }}</span></div>
+              <div class="wname"><span class="n">{{ w.name }} <span v-if="w.device" class="via">{{ route(w) }}</span><span v-if="w.device" class="badge plain">device · {{ w.driver }}</span><span v-else-if="!w.online" class="badge plain">offline</span><span v-if="w.key_revoked" class="badge bad">key revoked</span></span><span class="m">{{ w.moniker }}</span></div>
               <row-menu :items="rowMenu(w)"></row-menu>
             </div>
             <div class="meta">
@@ -398,7 +403,7 @@ ${DEVICE_DETAIL}
                :aria-expanded="!!open[w.moniker]" @keydown.enter="toggle(w.moniker)">
             <span class="caret">{{ open[w.moniker] ? '▾' : '▸' }}</span>
             <span class="sdot" :class="{off: !w.online}" :title="w.online ? 'online' : 'offline'"></span>
-            <div class="wname"><span class="n">{{ w.name }}<span v-if="!w.online" class="badge plain">offline</span><span v-if="!w.serves_devices" class="badge plain" title="opted out of serving devices">no devices</span><span v-if="!w.receives_plugins" class="badge plain" title="opted out of plugins">no plugins</span></span><span class="m">{{ w.moniker }}</span></div>
+            <div class="wname"><span class="n">{{ w.name }}<span v-if="!w.online" class="badge plain">offline</span><span v-if="w.key_revoked" class="badge bad" title="its key was revoked: attach a new key to bring it back">key revoked</span><span v-if="!w.serves_devices" class="badge plain" title="opted out of serving devices">no devices</span><span v-if="!w.receives_plugins" class="badge plain" title="opted out of plugins">no plugins</span></span><span class="m">{{ w.moniker }}</span></div>
             <span class="owner" :title="w.owner.moniker">{{ w.owner.name }}</span>
             <span class="owner">{{ ago(w.last_heartbeat) }}</span>
             <row-menu :items="rowMenu(w)"></row-menu>

@@ -248,7 +248,8 @@ def add_routes(app, hub):
         try:
             message = json.loads(await request.content.read())   # no size limit: arguments carry files
         except ValueError:
-            return _rpc(None, 400, error={"code": -32700, "message": "The body is not JSON."})
+            return _rpc(None, 400, error={"code": -32700, "message": (
+                "The body is not JSON. Send one JSON-RPC 2.0 message, as JSON, as the body of the POST.")})
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
             return _rpc(None, 400, error={"code": -32600, "message": "Send one JSON-RPC 2.0 message per request."})
         message_id = message.get("id")
@@ -278,7 +279,8 @@ def add_routes(app, hub):
                 return _rpc(message_id, error={"code": -32602, "message": (
                     f"No tool is called {params.get('name')!r}. The tools are {', '.join(HANDLERS)}.")})
             return _rpc(message_id, result=await _tool(hub, token, params))
-        return _rpc(message_id, error={"code": -32601, "message": f"This door does not answer {method}."})
+        return _rpc(message_id, error={"code": -32601, "message": (
+            f"This door does not answer {method}. Use one it answers: initialize, ping, tools/list or tools/call.")})
 
     async def no_stream(request):
         return web.Response(status=405, headers={"Allow": "POST"}, text="This door answers POST only.")

@@ -122,6 +122,13 @@ class Sessions:
             if live is not None:
                 self._drop(live)
 
+    def remove_pending(self, key):
+        """Every pending session of `key`; its live one stays: the key was revoked, and the worker linked
+        under it is still to be told (Hub._end_revoked)."""
+        with self._lock:
+            for psk in self._pending.pop(key, {}).values():
+                self._drop(psk)
+
     def pending(self, key):
         """The worker ephemerals `key` has sessions pending for."""
         with self._lock:

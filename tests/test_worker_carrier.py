@@ -5,6 +5,7 @@ timers (the hub restart and the 20 s stall); everything else is quick."""
 
 import asyncio
 import dataclasses
+import json
 import logging
 import time
 
@@ -357,18 +358,73 @@ def test_revoke_stops_the_worker_and_a_rekey_through_attach_takes_its_place(tmp_
             rig.run(new)
             await until(lambda: any(p["key"] == new.key for p in rig.hub.list_pending()))
             rig.hub.attach(new.key, moniker, user=rig.alice)
-            # The hub drops the old session's key without a word (section 3.3); the old worker learns when
-            # its next message goes unacknowledged. Its next heartbeat is made now, not in 15 s.
-            old.changed()
+            # The hub tells the old worker over its link that its key was revoked, then drops the session's
+            # key (section 3.3; docs/protocol.md, "A revoked key, told over the link"). It stops at once.
             try:
-                await asyncio.wait_for(running, 10)
+                await asyncio.wait_for(running, 3)
                 raise AssertionError("the revoked worker kept running")
             except Refused as e:
-                assert e.message["code"] == "key_revoked" and e.message["next"]
+                assert e.message == {"type": "error", "code": "key_revoked",
+                                     "message": f"This key was revoked from {moniker}.",
+                                     "next": "Generate a new key, knock with it, and ask a person or agent to attach it."}
+            assert len(old.opens) == 1                  # told over the link, not by a refused link_open
             await until(rig.online)
             assert rig.hub._links[rig.guid].key == new.key
             assert (await rig.call("demo.echo", {"rekeyed": True}))["result"] == {"rekeyed": True}
             rig.running = [(w, t) for w, t in rig.running if w is not old]
+    asyncio.run(go())
+
+
+def test_a_cap_named_with_hyphens_is_served_over_the_real_carrier(tmp_path):
+    # W3: hyphens inside a segment. The real worker announces it, and a call reaches it.
+    async def go():
+        async with Rig(tmp_path) as rig:
+            worker = rig.worker()
+            worker.caps["wake-on-lan.send"] = Cap("Wake a machine on the LAN.", {"type": "object"}, echo)
+            await rig.approved(worker)
+            assert "wake-on-lan.send" in {c["name"] for c in rig.hub.get_worker(rig.guid)["caps"]}
+            assert (await rig.call("wake-on-lan.send", {"mac": "02:00:00:00:00:01"}))["result"] == {
+                "mac": "02:00:00:00:00:01"}
+    asyncio.run(go())
+
+
+def test_revoke_without_rekey_tells_the_linked_worker_at_once(tmp_path):
+    # R5: the hub cap worker.revoke, on a worker linked over the real carrier. It is told over its link and
+    # stops with a reason and a next step (C3); its sessions are gone; started again, its link_open is
+    # refused with the same reason. The identity stays, with the revoke in its journal.
+    async def go():
+        async with Rig(tmp_path) as rig:
+            worker = rig.worker()
+            running = await rig.approved(worker)
+            moniker = rig.hub.get_worker(rig.guid)["moniker"]
+            reply = await rig.hub.call("hub", "worker.revoke", {"worker": moniker}, "it was sold", user=rig.alice)
+            assert reply["result"] == {"revoked_from": {"guid": rig.guid, "moniker": moniker, "name": "box"}}
+            told = {"type": "error", "code": "key_revoked", "message": f"This key was revoked from {moniker}.",
+                    "next": "Generate a new key, knock with it, and ask a person or agent to attach it."}
+            try:
+                await asyncio.wait_for(running, 3)
+                raise AssertionError("the revoked worker kept running")
+            except Refused as e:
+                assert e.message == told
+            rig.running = []
+            assert len(worker.opens) == 1                  # it learnt over the link, not at a link_open
+            assert rig.guid not in rig.hub._links          # no call goes to it from the revoke on
+            await until(lambda: rig.hub.sessions.live(worker.key) is None)     # it left: its session is gone
+            assert rig.hub.sessions.pending(worker.key) == [] and rig.hub.carrier.endpoint.band_ids() == []
+            assert [k["revoked_at"] is not None for k in rig.hub.seen(moniker)["keys"]] == [True]
+            entries = [json.loads(r[0]) for r in rig.hub._db.execute(
+                "SELECT result FROM journal WHERE kind = 'auth' AND worker = ?", (rig.guid,))]
+            assert entries[-1] == {"revoked": [worker.key]}
+            assert (await rig.call("demo.echo"))["code"] == "worker_offline"
+
+            again = rig.worker()                           # the same state directory, started again
+            try:
+                await asyncio.wait_for(again.run(), 5)
+                raise AssertionError("the revoked key linked again")
+            except Refused as e:
+                assert e.message == told and len(again.opens) == 1
+            assert rig.hub.list_pending() == []            # no knock: it is still the same identity
+            assert rig.hub.get_worker(moniker)["guid"] == rig.guid
     asyncio.run(go())
 
 
