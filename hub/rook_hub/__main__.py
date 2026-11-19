@@ -20,6 +20,7 @@ README.md has the commands from a fresh clone.
 
 import argparse
 import asyncio
+import getpass
 import signal
 import sys
 
@@ -35,7 +36,7 @@ _VAULT = {
 }
 
 
-async def run(hub, host, port):
+async def run(hub, host, port, note=None):
     stop = asyncio.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(signum, stop.set)
@@ -45,6 +46,8 @@ async def run(hub, host, port):
     print(f"Rook hub at http://{address[0]}:{address[1]}/", flush=True)
     if needed:
         print("  This hub has no user yet: open the address above to set it up.", flush=True)
+    if note:
+        print(note, flush=True)
     print(f"  data:      {hub.state_dir.resolve()}", flush=True)
     if hub.tightened:
         print(f"  tightened: {hub.tightened} files and folders in the data directory were open to other users; "
@@ -118,13 +121,23 @@ def main(argv=None):
                         help="the vault key file, outside the data directory; made on the first start")
     parser.add_argument("--host", default="127.0.0.1", help="the address to listen on (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8700, help="the port to listen on (default 8700)")
+    parser.add_argument("--no-password", action="store_true",
+                        help="a new hub is open until claimed: its first owner (--owner) has no password, and the "
+                             "site lets the first visitor in as them until a password is set")
+    parser.add_argument("--owner", default=None,
+                        help="with --no-password: the first owner's sign-in name (default: this computer's login)")
     args = parser.parse_args(argv)
+    note = None
     try:
         hub = Hub(args.data, vault_key_file=args.vault_key)
     except HubError as e:
         sys.exit(f"rook hub: {e.message['message']} {e.message['next']}")
+    if args.no_password:
+        opened = hub.auth.open_until_claimed(args.owner or getpass.getuser())
+        note = (f"  It needs no sign-in until you set a password; you'll sign in as {opened['name']}."
+                         if opened else "  --no-password: this hub has a user already, so it is left as it is.")
     try:
-        asyncio.run(run(hub, args.host, args.port))
+        asyncio.run(run(hub, args.host, args.port, note))
     except HubError as e:          # another hub serves this data directory
         sys.exit(f"rook hub: {e.message['message']} {e.message['next']}")
     except OSError as e:

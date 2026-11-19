@@ -8,6 +8,7 @@ run is in the pull request.
 """
 
 import asyncio
+import json
 import os
 import pathlib
 import time
@@ -57,6 +58,9 @@ class Rig:
         self.moniker = (await self.ok("hub", "worker.approve", key=key))["approved"]["moniker"]
         await self.ok("hub", "plugin.install", path=ECHO)
         await self.ok("hub", "setting.set", plugin="agents", key="backend", value="echo-engine.turn")
+        # A new hub starts in setup, and its house turns carry the first-run skill until it is done (HA3).
+        # These tests are about turns, not setup (tests/test_wizard.py is): setup is done here.
+        await self.ok("hub", "agent.setup", done=True)
         await self.linked()
         return self
 
@@ -223,9 +227,11 @@ def test_engine_settings_and_errors_say_what_to_do(tmp_path):
     """The agents plugin's settings are listed and set like the hub's; an engine nobody serves fails
     the turn with a reason, kept in the conversation."""
     async def body(rig):
-        listed = (await rig.ok("hub", "setting.list", plugin="agents"))["settings"]
-        assert {s["key"]: s["value"] for s in listed} == {"house_name": None, "dock": "house",
-                                                          "backend": "echo-engine.turn", "worker": None}
+        listed = {s["key"]: s["value"] for s in (await rig.ok("hub", "setting.list", plugin="agents"))["settings"]}
+        assert {k: listed[k] for k in ("house_name", "dock", "backend", "worker")} == {
+            "house_name": None, "dock": "house", "backend": "echo-engine.turn", "worker": None}
+        assert set(listed) == {"house_name", "dock", "backend", "worker", "setup", "sound", "rookie", "rookie_theme"}  # HA3's
+        assert listed["setup"]["done"] is True and listed["sound"] is None
         await rig.ok("hub", "setting.set", plugin="agents", key="house_name", value="Jeeves")
         assert "You are Jeeves" in (await rig.say("hi"))["text"]
         await rig.ok("hub", "setting.set", plugin="agents", key="backend", value="nobody.turn")
@@ -305,4 +311,25 @@ def test_the_claude_code_turn_runs_claude_with_0_5s_arguments(tmp_path, monkeypa
         assert f'"url": "{rig.url}/mcp"' in args
         await rig.say("again")
         assert "--resume\ns-123\n" in log.read_text()
+    run(tmp_path, body)
+
+
+def test_the_agent_messages_itself_and_nothing_hangs(tmp_path):
+    """A message sent from a turn's own door token is taken like any other: appended, queued and
+    answered after that turn. The send answers {agent, stream, seq} at once although it asked to
+    wait, so the turn that sent it ends; nothing is refused and nothing hangs."""
+    async def body(rig):
+        sent = await rig.say("SELF please")
+        said = json.loads(sent["text"].removeprefix("sent itself: "))
+        assert set(said) == {"agent", "stream", "seq"} and said["agent"] == "house"
+        assert said["stream"] == sent["stream"] and said["seq"] == 3           # after the input and the prompt
+        events = await rig.until(lambda got: len(replies(got)) == 2)
+        assert [(e["seq"], e["type"], e["data"].get("role"), e["data"].get("text")) for e in events] == [
+            (1, "input", None, "SELF please"), (2, "turn", "prompt", "SELF please"),
+            (3, "input", None, "from my own turn"), (4, "turn", "reply", sent["text"]),
+            (5, "turn", "prompt", "from my own turn"), (6, "turn", "reply", events[5]["data"]["text"])]
+        assert events[2]["by"] == "person:Alice"                               # the token stood for Alice
+        assert events[5]["data"]["text"].startswith("echo 2: from my own turn")  # its own turn, answered after
+        tokens = (await rig.ok("hub", "token.list"))["tokens"]
+        assert all(t["revoked_at"] for t in tokens if t["minted_by"])         # both turns' tokens ended
     run(tmp_path, body)
