@@ -201,3 +201,51 @@ async def scenario(tmp_path):
         await box.stop()
         await hub.stop_serving()
         hub.close()
+
+
+def test_the_settings_page_installs_a_plugin_from_a_url(tmp_path):
+    """PL4 ("by a user in Settings"), brief 61: the Plugins section's field takes the URL of a zip of a plugin's
+    folder as it takes a folder. The check says what installing would do and installs nothing; the install
+    goes through plugin.install with that url, journaled under the user."""
+    import io
+    import zipfile
+    from aiohttp import web
+
+    greet = write_plugin(tmp_path / "greet", "2.0.0", "from a url")
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as z:
+        for path in greet.rglob("*"):
+            if path.is_file():
+                z.write(path, f"greet-main/{path.relative_to(greet)}")
+
+    async def serve(request):
+        return web.Response(body=archive.getvalue())
+
+    async def go():
+        hub = Hub(tmp_path / "hub", clock=Clock())
+        host, port = await hub.serve("127.0.0.1", 0)
+        base = f"http://{host}:{port}"
+        hub.auth.create_user("Alice", "correct horse")
+        app = web.Application()
+        app.router.add_get("/greet.zip", serve)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        await web.TCPSite(runner, "127.0.0.1", 0).start()
+        url = "http://127.0.0.1:%d/greet.zip" % runner.addresses[0][1]
+        try:
+            async with browser() as client:
+                assert (await login(client, base, "Alice", "correct horse"))[0] == 200
+                status, reply = await ask(client, "POST", base + "/api/plugins/check", {"path": url})
+                assert status == 200 and reply == {"plugin": {"name": "greet", "version": "2.0.0"}, "replaces": None}
+                assert "greet" not in [p["name"] for p in hub.plugins.list()]
+                status, reply = await ask(client, "POST", base + "/api/plugins", {"path": url})
+                assert status == 200 and reply["installed"]["name"] == "greet"
+                [call] = journal.read(hub, kind="call", cap="plugin.install")
+                assert call["why"] == "Installed on the Settings page."
+                assert (await hub.call("hub", "greet.hello", {}, "try", user=hub.auth.list_users()[0]["guid"]))[
+                    "result"] == {"text": "from a url"}
+        finally:
+            await runner.cleanup()
+            await hub.stop_serving()
+            hub.close()
+    asyncio.run(go())
