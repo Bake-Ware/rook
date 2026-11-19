@@ -201,8 +201,10 @@ async def in_chrome(tmp_path):
             # A terminal's xterm (its modules and its stylesheet), loaded as a terminal loads it.
             await page.js("import('/site/terminal.js').then(m => Vue.createApp(m.default, {stream: {moniker: 'none', "
                           "open: false, title: 'none'}}).mount(document.body.appendChild(document.createElement('div')))); true")
-            await page.until("performance.getEntriesByType('resource').some(e => e.name.includes('xterm.css'))")
+            await page.until("['xterm.css', 'xterm.mjs', 'addon-fit.mjs'].every(f => "
+                             "performance.getEntriesByType('resource').some(e => e.name.includes(f)))")
             await asyncio.sleep(1)
+            await page.js("true")       # the page's events are read while a command waits: the last ones too
             assert not page.errors, page.errors
         files = [(u, status, cache) for u, status, cache in page.responses if "/site/" in u or "/plugin-files/" in u]
         unversioned = [u for u, _, _ in files if not re.search(r"\?v=[0-9a-f]{12}\Z", u)]
@@ -253,6 +255,7 @@ async def first_run(tmp_path):
             await page.cmd("Page.navigate", url=base + "/settings?section=agents/your-account")
             await page.until("performance.getEntriesByType('resource').some(e => e.name.includes('settings-account.js'))")
             await asyncio.sleep(1)
+            await page.js("true")       # the page's events are read while a command waits: the last ones too
             assert not page.errors, page.errors
     files = [(u, status, cache) for u, status, cache in page.responses if "/site/" in u or "/plugin-files/" in u]
     unversioned = [u for u, _, _ in files if not re.search(r"\?v=[0-9a-f]{12}\Z", u)]
