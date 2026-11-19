@@ -122,7 +122,7 @@ function rich(text) {
 function addRow(node) {
   const log = $("#dock-log");
   log.insertBefore(node, $("#dock-wait"));
-  while (log.children.length > 200) log.firstChild.remove();
+  // core: 0.5 dropped the oldest rows past 200 here; nothing is cut (RULES-HA: no limit comes over).
   scrollChat();
 }
 
