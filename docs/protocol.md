@@ -9,6 +9,7 @@ Test vectors: [`protocol/vectors.json`](../protocol/vectors.json). Python librar
 - **Knock** (`knock`, and its reply `knock_reply`, or an `error`) travels as one HTTPS `POST` to `<hub URL>/knock`: the request body is the knock, the response body is the reply. A worker that has not been approved shares no key with the hub, so it cannot reach the hub over Telesthete yet ([telesthete-surface.md](telesthete-surface.md), answer c). The hub URL is the only input the worker needs (R1, U2).
 - **Every other message** travels over the worker's link to its hub, one message per Telesthete Channel message (channel type `0x02`, channel id 0, opened by the worker; SPEC §6, §6.6). Telesthete's fragmentation keeps message boundaries, so Rook adds no length prefix. The link is a Telesthete band under a key made for this connection only, by `link_open` and `link_accept` over HTTPS (below). It runs over WebSocket at the hub URL with scheme `wss` (or `ws`) and path `/band`.
 - **The link exchange** (`link_open`, and its reply `link_accept` or an `error`) travels as one HTTPS `POST` to `<hub URL>/link`, each time the worker connects.
+- **The hub's start number** (`hub_start`, below) is the response to one HTTPS `GET <hub URL>/link`, with no body and no credentials.
 
 Why the link is keyed this way, and what each side does with it: [link-design.md](link-design.md).
 
@@ -31,7 +32,7 @@ A message is a JSON object (RFC 8259) encoded as UTF-8, with a string field `typ
 
 ## Minimum worker (W2)
 
-A worker must implement `knock`, `knock_reply`, `link_open`, `link_accept`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, make its link, heartbeat and answer calls. The `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them, and `stream_resize` may be ignored by any worker. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`). So is `config`: a worker that does not know it answers `bad_message`, which the hub ignores. `result_part` and `result_ack` are optional too: a worker that never sends a result in pieces never sees `result_ack`.
+A worker must implement `knock`, `knock_reply`, `link_open`, `link_accept`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, make its link, heartbeat and answer calls. The `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them, and `stream_resize` may be ignored by any worker. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`). So is `config`: a worker that does not know it answers `bad_message`, which the hub ignores. `result_part` and `result_ack` are optional too: a worker that never sends a result in pieces never sees `result_ack`. A worker need not read the hub's start number (`hub_start`) either: one that does not learns of a hub restart as before.
 
 ## Shared blocks
 
@@ -118,6 +119,7 @@ The hub checks, in order: the message is valid (else `bad_message`); `key` is ap
 | `ephemeral` | string | yes | The hub's new X25519 public key for this exchange, 64 lowercase hex characters. |
 | `hub_link_key` | string | yes | The hub's X25519 public key, 64 lowercase hex characters. |
 | `signature` | string | yes | Ed25519 signature by the hub key, 128 lowercase hex characters. |
+| `hub_start` | integer | no | The hub's start number: positive, and new at every start of the hub (brief 57). Not covered by `signature`. |
 
 The bytes `signature` signs are the ASCII text `rook-link-accept-v1:` followed by, raw, the worker's `key` (32 bytes), the worker's `ephemeral` (32), this `ephemeral` (32) and `hub_link_key` (32). It covers the worker's own ephemeral, so an old `link_accept` never answers a new request.
 
@@ -139,6 +141,16 @@ psk = lowercase hexadecimal of okm                                 64 ASCII char
 X25519 is RFC 7748, Ed25519 RFC 8032, HKDF-SHA256 RFC 5869. Telesthete takes `psk` as an ordinary PSK: its `band_id` is `SHA256(psk)[:16]`. The vectors give every step for fixed keys.
 
 **Neither side stores a session key or an ephemeral secret.** Both ephemeral secrets are erased as soon as the PSK is computed, and a worker that loses its link makes a new `link_open`.
+
+### `hub_start`: hub to worker, the HTTPS response to `GET <hub URL>/link` (brief 57)
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `hub_start` | integer | yes | The hub's start number now, as in `link_accept`. |
+
+A hub holds its sessions in memory only, so a hub that has started again holds none, and cannot answer a worker's frames under an earlier session's key. The start number tells a worker so at once. It is positive and new at every start of the hub; today it is the hub's Telesthete session epoch, the milliseconds since the Unix epoch when the hub process started, but a worker only compares it for equality. When a worker's WebSocket connection to `/band` drops and connects again, the worker reads `hub_start`. A number different from the one its session's `link_accept` gave means the hub that held the session is gone: the worker ends the session and makes a new `link_open` at once, as after any session that worked. The same number, or none read (the hub unreachable, or an answer that is not a `hub_start`), changes nothing: the session carries on, with its calls in flight.
+
+Added in v1 as an optional field and message (U8). A worker that does not know them ignores the field and never sends `GET /link`; it learns of a hub restart as before, when Channel 0 gives up or no word comes for `PEER_TIMEOUT`. A worker whose hub sends no `hub_start` in `link_accept` never reads it.
 
 ### `heartbeat`: worker to hub (H1, H4, S4)
 
@@ -165,7 +177,7 @@ Connecting is the first heartbeat. The worker sends one at the interval the hub 
 | `protocol` | integer | yes | The hub's version (U8). |
 | `interval` | integer | yes | Seconds until the next heartbeat. Set by the hub per worker. |
 
-The hub answers every heartbeat. A worker the hub holds no link for is shown offline at once; one whose link is up but which misses three intervals is shown offline too (H3, as narrowed after the stress test).
+The hub answers every heartbeat. When the hub changes a linked worker's interval (`worker.interval`, brief 61) it also sends a `heartbeat_reply` unasked, so the worker follows the new interval at once; a worker that takes a different interval as a change heartbeats at once (H1). One that does not still gets the new interval in the reply to its next heartbeat. A worker the hub holds no link for is shown offline at once; one whose link is up but which misses three intervals is shown offline too (H3, as narrowed after the stress test).
 
 ### `call`: hub to worker (C3, W5)
 
@@ -361,4 +373,4 @@ worker                                   hub
   |--- result{id, result} ---------------->|
 ```
 
-A restart reuses the stored key and identity, makes a new `link_open`, and goes straight to the link (R5). A worker that loses its link makes a new `link_open`; it never reuses a session key.
+A restart reuses the stored key and identity, makes a new `link_open`, and goes straight to the link (R5). A worker that loses its link makes a new `link_open`; it never reuses a session key. So does a worker whose WebSocket connection comes back to a hub with a different `hub_start`.

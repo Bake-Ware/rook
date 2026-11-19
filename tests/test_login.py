@@ -33,7 +33,7 @@ def test_password_login(tmp_path):
         #    it, only a salted hash; equal passwords hash differently.
         alice = hub.auth.create_user("Alice", "correct horse battery")
         bob = hub.auth.create_user("Bob", "correct horse battery")
-        assert "password" not in alice and set(alice) == {"guid", "moniker", "name", "created_at", "revoked_at"}
+        assert "password" not in alice and set(alice) == {"guid", "moniker", "name", "created_at", "revoked_at", "system"}
         stored = {row[0]: row[1] for row in hub._db.execute("SELECT guid, password FROM users")}
         assert stored[alice["guid"]].startswith("scrypt$") and stored[bob["guid"]].startswith("scrypt$")
         assert stored[alice["guid"]] != stored[bob["guid"]]

@@ -26,15 +26,15 @@ STOPS = 5                       # seconds a stopped worker may take to exit
 class WorkerStarted:
     """`python -m rook_worker URL` with HOME set to `home`: its output lines as they come."""
 
-    def __init__(self, home, url):
-        self.home, self.url = home, url
+    def __init__(self, home, url, *more):
+        self.home, self.url, self.more = home, url, more      # more: further arguments, such as --code
         self.lines = []
 
     async def start(self):
         env = dict(os.environ, HOME=str(self.home),
                    PYTHONPATH=os.pathsep.join(str(ROOT / p) for p in ("protocol/python", "core/python")))
         self.process = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "rook_worker", self.url, cwd=ROOT, env=env,
+            sys.executable, "-m", "rook_worker", self.url, *self.more, cwd=ROOT, env=env,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         self._reading = asyncio.create_task(self._read())
         return self

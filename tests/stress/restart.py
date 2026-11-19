@@ -4,6 +4,11 @@ start it again on the same port; then kill -9 it and start it again. Records wha
 what the journal holds, and what came back by itself. For brief 51 it also measures, after each
 start, the time from the hub answering HTTP again to each worker saying it linked, and checks
 throughout that `workers` never says a worker is online while a call to it answers `worker_offline`.
+
+For brief 57 the workers reach the hub through a relay in this process, which passes every TCP
+connection through to the hub's port, and before the restarts it cuts every connection once with
+the hub running: a brief drop. Calls running on each worker across the drop must answer, and no
+worker may lose its session (no "lost", no new "Linked").
 `python tests/stress/restart.py`"""
 
 import asyncio
@@ -17,6 +22,64 @@ import rig
 from flood import COMMANDS
 
 RATE, PHASE = 50, 30      # calls a second; seconds of load before, between and after the restarts
+
+
+class Relay:
+    """Passes every TCP connection through to the hub's port (HTTP and the WebSocket to /band alike);
+    `cut` closes every connection open now, as a network drop would. The hub keeps its port across a
+    restart, so the relay keeps working."""
+
+    def __init__(self):
+        self.open = set()
+
+    async def __call__(self, hub):
+        self.hub = hub
+        self.server = await asyncio.start_server(self.connection, "127.0.0.1", 0)
+        return f"http://127.0.0.1:{self.server.sockets[0].getsockname()[1]}"
+
+    async def connection(self, reader, writer):
+        try:
+            up_reader, up_writer = await asyncio.open_connection("127.0.0.1", self.hub.port)
+        except OSError:                         # the hub is down: the worker sees the connection close
+            writer.close()
+            return
+        pair = (writer, up_writer)
+        self.open.add(pair)
+
+        async def pipe(source, sink):
+            try:
+                while data := await source.read(65536):
+                    sink.write(data)
+                    await sink.drain()
+            except OSError:
+                pass
+            finally:
+                sink.close()
+        await asyncio.gather(pipe(reader, up_writer), pipe(up_reader, writer))
+        self.open.discard(pair)
+
+    def cut(self):
+        for down, up in list(self.open):
+            down.transport.abort()
+            up.transport.abort()
+        return len(self.open)
+
+
+async def drop(band, relay):
+    """Brief 57: cut every connection with the hub running, with a call running on each worker across
+    the cut. Each call must answer, and each worker keep its session."""
+    lines = [len(w.lines) for w in band.workers]
+    running = [asyncio.create_task(band.door.call(m, "shell.exec", {"cmd": "sleep 3; echo across the drop"}))
+               for m in band.monikers]
+    await asyncio.sleep(1)                     # the calls are running on the workers
+    cut = relay.cut()
+    answers = await asyncio.gather(*running)
+    await asyncio.sleep(2)
+    said = [[line for line in w.lines[n:] if "lost" in line or "Linked" in line or "Cannot" in line]
+            for w, n in zip(band.workers, lines)]
+    band.log("drop", connections_cut=cut,
+             calls_in_flight=[(code or "ok", (reply or {}).get("stdout") if not code else None) for code, reply, _ in answers],
+             workers_said=said, sessions_kept=sum(1 for s in said if not s))
 
 
 class Calls:
@@ -162,6 +225,8 @@ async def body(band):
     checking = asyncio.create_task(agreement.run())
     marks = []
     await asyncio.sleep(PHASE)
+    await drop(band, relay)
+    await asyncio.sleep(PHASE)
     await restart(band, "clean", marks)
     await asyncio.sleep(PHASE)
     await restart(band, "kill -9", marks)
@@ -204,4 +269,5 @@ async def body(band):
 
 
 if __name__ == "__main__":
-    rig.main("restart", body, n=3)
+    relay = Relay()
+    rig.main("restart", body, n=3, via=relay)

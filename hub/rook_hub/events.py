@@ -104,7 +104,7 @@ class Events:
             if not record["online"]:
                 del self._online[guid]
                 self.emit("worker.offline", _worker(record), worker=guid)
-        for spec in jobs.schedules(self.hub):
+        for spec in jobs.schedules(self.hub) if last is not None else ():   # a first look has nothing behind it
             if jobs.schedule_due(spec, last, now):
                 self.emit("schedule", {"schedule": spec})
         for device in devices.due(self.hub, now):       # device status polls (D6)

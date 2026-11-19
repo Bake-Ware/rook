@@ -294,7 +294,7 @@ def test_job_create_says_what_is_wrong(tmp_path):
                     ({"match": {"event": "x"}, "call": {"worker": "hub", "cap": "a.b"}}, "schema")):
                 reply = await hub.call("hub", "job.create", args, "bad job", user=alice)
                 assert reply["type"] == "error" and words in reply["message"] + reply["next"]
-            assert hub._db.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+            assert hub._db.execute("SELECT count(*) FROM jobs WHERE owner = ?", (alice,)).fetchone()[0] == 0
         finally:
             hub.close()
     asyncio.run(go())

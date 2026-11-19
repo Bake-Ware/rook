@@ -97,9 +97,12 @@ async def lifecycle(tmp_path):
         assert raw and "disk" in raw[0]["health"] and "caps" not in raw[0] and "identity" not in raw[0]
 
         beats = len(raw)                # the first, and the one after the default plugins loaded (PL7, W5)
-        hub.set_interval(guid, 7)       # per worker (H2) ...
-        first.changed()                 # ... and a change heartbeats at once (H1)
+        assert hub.set_interval(guid, 7)    # per worker, sent at once to a linked worker (H2; brief 61) ...
         await eventually(lambda: first.interval == 7)
+        # ... and the new interval is a change, which heartbeats at once (H1): one heartbeat, not two.
+        await eventually(lambda: len(hub._db.execute("SELECT id FROM heartbeats WHERE worker = ?", (guid,)).fetchall())
+                         == beats + 1)
+        await asyncio.sleep(0.2)
         assert len(hub._db.execute("SELECT id FROM heartbeats WHERE worker = ?", (guid,)).fetchall()) == beats + 1
 
         # 4. Calls go through the hub; failures say what to try next; every

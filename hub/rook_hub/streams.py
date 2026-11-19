@@ -276,6 +276,19 @@ class Streams:
             records = [self._record(row) for row in rows]
         return [r for r in records if open is None or r["open"] == open]
 
+    def search(self, query, worker=None, open=None):
+        """Streams whose title, description, cap, worker or opener holds `query`, ignoring case, newest
+        first (0.5's stream.search; S5). `worker` (a moniker or GUID) and `open` narrow."""
+        if not isinstance(query, str) or not query:
+            raise HubError("bad_message", "query is required to search.",
+                           "Give the text to look for in the streams' titles and descriptions.")
+        if worker is not None:
+            with self.hub._lock:
+                worker = self.hub._moniker(self.hub._resolve(worker)["guid"])
+        query = query.casefold()
+        return [r for r in self.list(open) if (worker is None or r["worker"] == worker) and query in " ".join(
+            str(r[name] or "") for name in ("title", "description", "cap", "worker", "opened_by")).casefold()]
+
     def get(self, stream):
         with self.hub._lock:
             return self._record(self._row(stream))

@@ -40,6 +40,8 @@ PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub --data ~/rook-hub --
 
 Open the address it prints. While the hub has no user, the site shows a setup page: choose a name and a password for the first user, typing the password twice, and you are signed in. After that the site shows the login page. The hub runs until you stop it with Ctrl-C.
 
+Every hub also has a system owner, `system` (moniker `hub-system-owner`): not a person, it cannot log in, and no one can take its name. It owns the one built-in job, "Heartbeat roll-up", which every 12 hours rolls heartbeats older than 12 hours into one-minute buckets. The job is on the Jobs page, where it can be paused or deleted like any other; a deleted one is made again at the next start.
+
 ## Starting a worker
 
 On the machine the worker is for, from a clone, after the first two commands under Tests, with the address the hub prints when it starts:
@@ -51,6 +53,7 @@ PYTHONPATH=protocol/python:core/python .venv/bin/python -m rook_worker http://12
 - The hub's address is the only input. The worker keeps its keys, and the identity the hub gives it, in `~/.rook-worker`.
 - On the first start it knocks under this machine's hostname and says it is waiting for approval. Approve it on the hub: on the Workers page, or by an agent. It then links, prints `Linked to … as <moniker>.` and serves until you stop it with Ctrl-C.
 - Started again, it links at once as the same worker: no second knock, no second approval.
+- To join with no one approving, add `--code TOKEN` with a join token from the hub (an agent mints one with `worker.join-token`, or `token.create` with `purpose: join`). It is approved at once, owned by whoever minted the token. A join token works once.
 - If the hub cannot be reached, the address is not a hub, or the hub refuses the worker's key, it says so in one line and exits. Once approved, a hub that goes away is waited for: the worker says why it cannot link and links again when the hub is back.
 
 ## Backing up, restoring and moving a hub
@@ -64,6 +67,8 @@ PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub backup --data ~/rook
 The backup is encrypted with a key made from the vault key. Without the vault key file nobody can read anything in it, and neither can you: the vault key is **not** in the backup. Keep the key file, and move it, apart from the backup.
 
 While it runs, a backup keeps a plain working copy of the database in the data directory itself (`.backup.db`), never where the backup is written, and removes it when done; the data directory's disk needs free space for that copy, as big as `hub.db`. The backup file is written readable by you only. Its disk needs room for the backup, about the size of the data directory.
+
+An agent can do the same through the hub's caps (worker `hub`): `backup.run {to}` writes a backup of the running hub to a new file on the hub's disk, `backup.list {folder}` lists the backups in a folder, and `backup.verify {path}` reads one through and proves it opens with this hub's vault key, writing nothing. Restoring stays a command, below: it writes a hub that is not running.
 
 To restore, on this machine or another one, into a new or empty directory:
 

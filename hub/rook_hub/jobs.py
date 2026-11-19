@@ -139,6 +139,34 @@ def _all(hub):
     return hub._db.execute("SELECT * FROM jobs ORDER BY created_at").fetchall()
 
 
+# The built-in jobs: owned by the system owner (auth.py), made at start when not there.
+# Today one: the heartbeat roll-up every 12 hours (H5 as Bake narrowed it after the stress test;
+# brief 50 item 4, and Bake 19 Nov on who owns it). It is a job like any other: the Jobs page
+# shows it, and it is paused, un-paused or deleted as any job is.
+BUILT_IN = [{
+    "title": "Heartbeat roll-up",
+    "description": "Every 12 hours: heartbeats older than 12 hours become one-minute buckets "
+                   "(lowest, highest, how many) and the raw rows are deleted.",
+    "event": "schedule", "payload": {"schedule": "every 720m"},
+    "worker": "hub", "cap": "heartbeat.roll-up", "args": {},
+}]
+
+
+def make_built_in(hub):
+    """Make each built-in job the system owner does not have, calling the same cap. Every start."""
+    with hub._lock, hub._db:
+        for job in BUILT_IN:
+            if hub._db.execute("SELECT 1 FROM jobs WHERE owner = ? AND worker = ? AND cap = ?",
+                               (hub.auth.system, job["worker"], job["cap"])).fetchone():
+                continue
+            guid = str(uuid.uuid4())
+            hub._db.execute(
+                "INSERT INTO jobs (guid, moniker, title, description, owner, event, payload, worker, cap, args, "
+                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (guid, hub._new_moniker(guid), job["title"], job["description"], hub.auth.system, job["event"],
+                 json.dumps(job["payload"]), job["worker"], job["cap"], json.dumps(job["args"]), hub.clock()))
+
+
 # ------------------------------------------------------------- hub caps (J7)
 
 def _checked(args):

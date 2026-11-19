@@ -1,6 +1,6 @@
 /* The Auth page (T3, T5, T6): users, and tokens with purpose, scope, owner and use;
    revoke a token, revoke a user (and every token of theirs), mint an agent token for
-   yourself (shown once, T3's one exception), and change your own password.
+   yourself (shown once, T3's one exception) or a webhook token (J2), and change your own password.
    A new token lives only in this page's memory until Done or leaving the page; it never
    goes into the address, a pin or the browser's storage. */
 import { api, toast, viewHref, showView } from '/site/shell.js';
@@ -24,6 +24,7 @@ export default {
     users() { return this.data ? this.data.users.filter(u => !this.view.user || u.moniker === this.view.user) : []; },
     tokens() { return this.data ? this.data.tokens.filter(t => !this.view.token || t.moniker === this.view.token) : []; },
     live() { return this.data ? this.data.tokens.filter(t => !t.revoked_at && !t.spent_at).length : 0; },
+    origin() { return location.origin; },
   },
   watch: {
     view: { handler() { showView('/auth', this.view); }, deep: true },
@@ -38,8 +39,8 @@ export default {
     async act(path, done) {
       try { await api('POST', path); toast(done); await this.load(); } catch (e) { toast(e.message); }
     },
-    async mint() {
-      try { this.minted = await api('POST', '/api/tokens'); await this.load(); } catch (e) { toast(e.message); }
+    async mint(purpose) {
+      try { this.minted = await api('POST', '/api/tokens', { purpose }); await this.load(); } catch (e) { toast(e.message); }
     },
     async copy() {
       try { await navigator.clipboard.writeText(this.minted.token); toast('Copied'); }
@@ -61,7 +62,8 @@ export default {
     <header class="topbar">
       <div><div class="title-row"><h1>Auth</h1><pin-view :label="pinLabel" :href="href"></pin-view></div><p>Who can sign in, and every token, whose it is and when it was last used.</p></div>
       <div class="spacer"></div>
-      <button v-if="tab==='tokens' && !minted" class="btn accent" type="button" @click="mint">+ New token</button>
+      <button v-if="tab==='tokens' && !minted" class="btn" type="button" @click="mint('webhook')">+ Webhook token</button>
+      <button v-if="tab==='tokens' && !minted" class="btn accent" type="button" @click="mint('agent')">+ New token</button>
     </header>
 
     <div class="wrap">
@@ -98,7 +100,11 @@ export default {
 
       <template v-if="tab==='tokens' && data">
         <div v-if="minted" class="callout" role="status">
-          <b>Your new agent token, {{ minted.moniker }}.</b> Copy it into your MCP client now; it is not shown again.
+          <template v-if="minted.purpose==='webhook'"><b>Your new webhook token, {{ minted.moniker }}.</b> POST to
+            <span class="mono">{{ origin }}/webhook</span> with the header <span class="mono">Authorization: Bearer</span> and this token;
+            a job matching event <span class="mono">webhook</span> with <span class="mono">token_moniker {{ minted.moniker }}</span> runs on it.
+            Copy it now; it is not shown again.</template>
+          <template v-else><b>Your new agent token, {{ minted.moniker }}.</b> Copy it into your MCP client now; it is not shown again.</template>
           <div style="display:flex;gap:8px;margin-top:8px">
             <input ref="minted" class="mono" readonly :value="minted.token" style="flex:1" aria-label="New token" @focus="$event.target.select()">
             <button class="btn accent" type="button" @click="copy">Copy</button>

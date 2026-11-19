@@ -15,8 +15,11 @@ through `worker.revoke` (R5), and a redact through `journal.redact`, so each is
 a call in the journal (L1).
 """
 
+import asyncio
 import json
 import pathlib
+import shutil
+import tempfile
 
 from aiohttp import web
 
@@ -196,7 +199,8 @@ def journal_choices(hub):
     announced = {c["name"] for c in caps.descriptors(hub)}
     announced.update(c["name"] for w in [*workers, *all_devices] for c in w["caps"])
     return {"kinds": list(KINDS),
-            "users": [{"name": u["name"], "moniker": u["moniker"]} for u in hub.auth.list_users()],
+            "users": [{"name": u["name"], "moniker": u["moniker"]}      # the system owner acts too (its jobs)
+                      for u in [*hub.auth.list_users(), hub.auth.get_user(hub.auth.system)]],
             "workers": [{"name": "hub", "moniker": "hub", "device": False}]
                        + [{"name": w["name"], "moniker": w["moniker"], "device": False} for w in workers]
                        + [{"name": d["name"], "moniker": d["moniker"], "device": True} for d in all_devices],
@@ -558,7 +562,7 @@ def _names(hub):
     """{moniker: name} for every worker, device and user, to show names beside monikers."""
     names = {w["moniker"]: w["name"] for w in hub.list_workers()}
     names.update({d["moniker"]: d["name"] for d in devices.list_devices(hub)})
-    names.update({u["moniker"]: u["name"] for u in hub.auth.list_users()})
+    names.update({u["moniker"]: u["name"] for u in [*hub.auth.list_users(), hub.auth.get_user(hub.auth.system)]})
     return names
 
 
@@ -651,9 +655,10 @@ def secrets_view(hub, token):
 
 
 def auth_view(hub, token, user):
-    """What the Auth page lists (T6): users, and tokens with purpose, scope, owner, times and use."""
+    """What the Auth page lists (T6): users, and tokens with purpose, scope, owner, times and use.
+    Users are the people who can sign in; the system owner is not one (auth.py)."""
     users = hub.auth.list_users()
-    names = {u["guid"]: u["name"] for u in users}
+    names = {u["guid"]: u["name"] for u in [*users, hub.auth.get_user(hub.auth.system)]}
     tokens = hub.auth.list_tokens()
     monikers = {t["guid"]: t["moniker"] for t in tokens}
     session = hub.auth.verify(token)["guid"]
@@ -729,9 +734,10 @@ def jobs_secrets_auth_routes(app, hub, logged_in):
     @logged_in
     async def new_token(request, token, user):
         # The person mints it directly (T5: "a user mints directly"), not through the session,
-        # so the token hangs on the person and not on this browser's login.
-        jwt = hub.auth.mint("agent", user=user)
-        return {"token": jwt, "moniker": hub.auth.verify(jwt)["moniker"]}
+        # so the token hangs on the person and not on this browser's login. An agent token, or
+        # with {"purpose": "webhook"} a webhook token (J2), the reply as token.create gives it.
+        purpose = (await _body(request)).get("purpose", "agent") if request.can_read_body else "agent"
+        return caps.token_create(hub, {"purpose": purpose}, {"user": user})
 
     @logged_in
     async def revoke_token(request, token, user):
@@ -810,7 +816,14 @@ def settings_routes(app, hub, logged_in):
         """What installing from `path` would do, before the person confirms: the folder's plugin,
         and the installed one it would replace at once (PL3). Or the refusal, with what to fix."""
         path = _text(await _body(request), "path")
-        manifest = plugins.read_manifest(pathlib.Path(path).expanduser().resolve())
+        if path.startswith(("http://", "https://")):        # a URL (PL4): fetched to look, then again to install
+            work = pathlib.Path(tempfile.mkdtemp(prefix="rook-plugin-"))
+            try:
+                manifest = plugins.read_manifest(await asyncio.to_thread(plugins.fetch, path, work))
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        else:
+            manifest = plugins.read_manifest(pathlib.Path(path).expanduser().resolve())
         try:
             installed = hub.plugins.get(manifest["name"])
         except HubError:
@@ -820,7 +833,8 @@ def settings_routes(app, hub, logged_in):
     @logged_in
     async def install_plugin(request, token, user):
         path = _text(await _body(request), "path")
-        reply = await _hub_cap(hub, "plugin.install", {"path": path}, "Installed on the Settings page.", token)
+        where = {"url": path} if path.startswith(("http://", "https://")) else {"path": path}
+        reply = await _hub_cap(hub, "plugin.install", where, "Installed on the Settings page.", token)
         return {"installed": dict(reply["installed"], **plugin_adds(hub, reply["installed"]["name"]))}
 
     app.router.add_get("/api/settings", get_settings)
