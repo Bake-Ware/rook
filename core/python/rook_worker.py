@@ -252,6 +252,36 @@ class Refused(Exception):
         self.message = message
 
 
+class PluginWorker:
+    """What a plugin's worker module knows of the worker it runs in: `WORKER` in its module
+    (brief HA2). `hub_url`, the hub as this worker reaches it; `name`; `config`, the plugin's own
+    section of the config the hub sends this worker (CF2: `config.set` values under the plugin's
+    name), {} when there is none; `data`, a folder of the plugin's own in the worker's state
+    directory, made on first use, kept across restarts and updates of the plugin."""
+
+    def __init__(self, worker, plugin):
+        self._worker, self.plugin = worker, plugin
+
+    @property
+    def hub_url(self):
+        return self._worker.hub_url
+
+    @property
+    def name(self):
+        return self._worker.name
+
+    @property
+    def config(self):
+        section = self._worker.config.get(self.plugin)
+        return section if isinstance(section, dict) else {}
+
+    @property
+    def data(self):
+        folder = self._worker.state_dir / "plugins" / self.plugin
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return folder
+
+
 class Worker:
     def __init__(self, state_dir, hub_url, connect=None, name=None, caps=None, macs=None, knock_every=5.0,
                  token=None):
@@ -658,6 +688,7 @@ class Worker:
         self._loads += 1
         module_name = f"rook_plugin_{part['name'].replace('-', '_')}_{self._loads}"
         module = types.ModuleType(module_name)
+        module.WORKER = PluginWorker(self, part["name"])     # what it knows of this worker (brief HA2)
         sys.modules[module_name] = module
         try:
             exec(compile(part["source"], f"<plugin {part['name']}>", "exec"), module.__dict__)
