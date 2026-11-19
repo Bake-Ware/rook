@@ -221,3 +221,45 @@ async def in_chrome(tmp_path):
             assert plain in seen, (plain, sorted(seen))
     finally:
         await hub.stop_serving()
+
+
+def test_a_new_hubs_first_run_loads_every_file_at_its_version(tmp_path):
+    from test_site_dock import CHROME
+    import pytest
+    if CHROME is None:
+        pytest.skip("no Chrome to load the site with")
+    asyncio.run(first_run(tmp_path))
+
+
+async def first_run(tmp_path):
+    """A new hub started as the installer starts it (`--no-password`, open until claimed), and a fresh
+    browser on `/`: the wizard's files and all they load come at their versions, as everything else."""
+    from test_first_run import Started
+    from test_site_dock import Chrome
+    data, key = tmp_path / "data", tmp_path / "keys" / "vault.key"
+    async with Started(data, key, extra=["--no-password"]) as hub, browser() as stranger:
+        base = hub.base
+        # Open until claimed, the site signs every visitor in: the page's map has the plugins' files.
+        imports = import_map(await text(stranger, base + "/"))
+        for file in ("setup.js", "settings-account.js", "dock.js"):
+            plain = f"/plugin-files/agents/shell/{file}"
+            assert imports[plain] == f"{plain}?v={version(AGENTS / 'shell' / file)}", plain
+        async with watching(Chrome)() as page:
+            page.responses = []
+            await page.cmd("Page.navigate", url=base + "/")
+            await page.until("performance.getEntriesByType('resource').some(e => e.name.includes('/plugin-files/agents/shell/setup.js'))")
+            await page.until("document.body.classList.contains('setup')")
+            await asyncio.sleep(1)
+            await page.cmd("Page.navigate", url=base + "/settings?section=agents/your-account")
+            await page.until("performance.getEntriesByType('resource').some(e => e.name.includes('settings-account.js'))")
+            await asyncio.sleep(1)
+            assert not page.errors, page.errors
+    files = [(u, status, cache) for u, status, cache in page.responses if "/site/" in u or "/plugin-files/" in u]
+    unversioned = [u for u, _, _ in files if not re.search(r"\?v=[0-9a-f]{12}\Z", u)]
+    assert not unversioned, unversioned
+    assert all(cache == FOR_GOOD for _, status, cache in files if status == 200), files
+    seen = {u.split(base)[1].split("?")[0] for u, _, _ in files}
+    for plain in ("/site/shell.js", "/site/style.css", "/site/vendor/vue.global.prod.js", "/site/pages/settings.js",
+                  "/plugin-files/agents/shell/setup.js", "/plugin-files/agents/shell/dock.js",
+                  "/plugin-files/agents/shell/dock.css", "/plugin-files/agents/shell/settings-account.js"):
+        assert plain in seen, (plain, sorted(seen))

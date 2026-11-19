@@ -99,9 +99,10 @@ def _signed_in(hub, request):
 def shell_page(hub, request):
     """The page shell (`/` and every page path): index.html with its files at their versioned addresses,
     and the import map. A plugin's files are in the map for a person signed in, as the files themselves
-    are served only to a session (P1). An ETag, so an unchanged shell is answered 304, as before."""
+    are served only to a session (P1), and while the hub is open until claimed (HA3), when the site
+    signs every visitor in. An ETag, so an unchanged shell is answered 304, as before."""
     imports = site_versions()
-    if _signed_in(hub, request):
+    if _signed_in(hub, request) or hub.auth.unclaimed_owner() is not None:
         imports.update(plugin_versions(hub))
     html = re.sub(r'(src|href)="(/site/[^"?]+)"', lambda m: f'{m[1]}="{imports.get(m[2], m[2])}"',
                   (FILES / "index.html").read_text("utf-8"))
