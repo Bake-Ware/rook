@@ -110,6 +110,15 @@ async def slow(args):
     await asyncio.sleep(3600)
 
 
+gate = {}
+
+
+async def wait(args):
+    gate["waiting"] = True
+    await gate["release"].wait()
+    return "released"
+
+
 async def term(args, stream):
     async def run():
         while (data := await stream.read()) is not None:
@@ -129,6 +138,7 @@ async def held(args, stream):
 CAPS = {"demo.echo": Cap("Echo.", {"type": "object"}, echo), "demo.size": Cap("Size.", {"type": "object"}, size),
         "demo.count": Cap("Count runs.", {"type": "object"}, count),
         "demo.slow": Cap("Never answers.", {"type": "object"}, slow),
+        "demo.wait": Cap("Answers once the test releases it.", {"type": "object"}, wait),
         "demo.term": Cap("A terminal.", {"type": "object"}, term, opens_stream=True),
         "demo.held": Cap("A stream.", {"type": "object"}, held, opens_stream=True)}
 
@@ -138,6 +148,7 @@ class Rig:
 
     def __init__(self, tmp_path):
         self.tmp_path, self.links, self.running = tmp_path, [], []
+        self.reads = []             # (the start number from link_accept, the one read after a reconnect)
 
     async def __aenter__(self):
         await self.serve()
@@ -151,7 +162,15 @@ class Rig:
         self.base = f"http://{self.host}:{self.port}"
 
     async def via_proxy(self, session):
-        """The worker's own carrier, pointed at the proxy instead of the hub's /band."""
+        """The worker's own carrier, pointed at the proxy instead of the hub's /band. Each read of the hub's
+        start number after a reconnect (brief 57) is recorded in `reads`."""
+        read = session.read_hub_start
+        if read is not None:
+            async def recorded():
+                start = await read()
+                self.reads.append((session.hub_start, start))
+                return start
+            session = dataclasses.replace(session, read_hub_start=recorded)
         link = await rook_link.connect(dataclasses.replace(session, band_url=self.proxy.url))
         self.links.append(link)
         return link
@@ -536,4 +555,79 @@ def test_a_hub_that_is_stopping_gives_no_session_and_the_worker_links_to_the_nex
             assert answers[-1] == "link_accept" and answers.count("link_accept") == 1    # no session wasted
             assert back < rook_link.PEER_TIMEOUT
             assert (await rig.call("demo.echo", {"back": True}))["result"] == {"back": True}
+    asyncio.run(go())
+
+
+# ------------------------------------------------- brief 57: the hub's start number after a reconnect
+
+
+def test_a_hub_that_dies_without_goodbye_is_left_at_once(tmp_path):
+    """Brief 57: the hub dies without a word (as kill -9: no GOODBYE reaches the worker) and a new hub starts
+    on the same data directory and address. The worker's WebSocket client reconnects, the worker reads the
+    hub's start number, finds it changed, and makes a new session at once: no wait for Channel 0 to give up
+    or for PEER_TIMEOUT, and no attempt wasted."""
+    async def go():
+        async with Rig(tmp_path) as rig:
+            worker = rig.worker()
+            await rig.approved(worker)
+            first = rig.hub.carrier.started
+            rig.proxy.stalled = True                # nothing more reaches the worker from this hub
+            await asyncio.gather(rig.hub.stop_serving(), rig.proxy.cut())
+            rig.hub.close()
+            rig.proxy.stalled = False
+            await rig.serve(rig.port)               # the same data directory and address
+            serving = time.monotonic()
+            await until(rig.online, timeout=2 * rook_link.PEER_TIMEOUT)
+            back = time.monotonic() - serving
+            print(f"worker back {back:.1f} s after the next hub served")
+            assert (first, rig.hub.carrier.started) in rig.reads and first != rig.hub.carrier.started
+            assert len(worker.opens) == 2           # one new session, at once: no failed attempt
+            assert back < rook_link.PEER_TIMEOUT / 3
+            assert (await rig.call("demo.echo", {"back": True}))["result"] == {"back": True}
+    asyncio.run(go())
+
+
+def test_a_brief_drop_to_the_same_hub_keeps_the_session_and_the_call_in_flight(tmp_path):
+    """Brief 57: the worker's WebSocket drops and comes back to the same hub. The start number it reads is
+    the one it was given, so the session carries on, and a call running across the drop still answers."""
+    async def go():
+        async with Rig(tmp_path) as rig:
+            worker = rig.worker()
+            await rig.approved(worker)
+            psk = rig.hub.sessions.live(worker.key)
+            gate.clear()
+            gate["release"] = asyncio.Event()
+            call = asyncio.create_task(rig.call("demo.wait"))
+            await until(lambda: gate.get("waiting"))
+            await rig.proxy.cut()
+            await until(lambda: rig.reads)          # reconnected, and the hub's start number read
+            assert rig.reads == [(rig.hub.carrier.started, rig.hub.carrier.started)]
+            gate["release"].set()
+            assert (await call)["result"] == "released"
+            assert len(worker.opens) == 1 and rig.hub.sessions.live(worker.key) == psk
+            assert (await rig.call("demo.echo", {"after": "drop"}))["result"] == {"after": "drop"}
+    asyncio.run(go())
+
+
+def test_a_hub_that_gives_no_start_number_is_never_asked(tmp_path, monkeypatch):
+    """U8, brief 57: against a hub older than the start number (its link_accept has none), the worker never
+    reads one, and a drop and reconnect carries on as before."""
+    from rook_hub import link
+    open_session = link.open_session
+
+    def older(hub, message):
+        reply = open_session(hub, message)
+        reply.pop("hub_start", None)
+        return reply
+    monkeypatch.setattr(link, "open_session", older)
+
+    async def go():
+        async with Rig(tmp_path) as rig:
+            worker = rig.worker()
+            await rig.approved(worker)
+            psk = rig.hub.sessions.live(worker.key)
+            await rig.proxy.cut()
+            assert (await rig.call("demo.echo", {"after": "cut"}))["result"] == {"after": "cut"}
+            await asyncio.sleep(1)
+            assert rig.reads == [] and len(worker.opens) == 1 and rig.hub.sessions.live(worker.key) == psk
     asyncio.run(go())
