@@ -15,8 +15,11 @@ through `worker.revoke` (R5), and a redact through `journal.redact`, so each is
 a call in the journal (L1).
 """
 
+import asyncio
 import json
 import pathlib
+import shutil
+import tempfile
 
 from aiohttp import web
 
@@ -813,7 +816,14 @@ def settings_routes(app, hub, logged_in):
         """What installing from `path` would do, before the person confirms: the folder's plugin,
         and the installed one it would replace at once (PL3). Or the refusal, with what to fix."""
         path = _text(await _body(request), "path")
-        manifest = plugins.read_manifest(pathlib.Path(path).expanduser().resolve())
+        if path.startswith(("http://", "https://")):        # a URL (PL4): fetched to look, then again to install
+            work = pathlib.Path(tempfile.mkdtemp(prefix="rook-plugin-"))
+            try:
+                manifest = plugins.read_manifest(await asyncio.to_thread(plugins.fetch, path, work))
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        else:
+            manifest = plugins.read_manifest(pathlib.Path(path).expanduser().resolve())
         try:
             installed = hub.plugins.get(manifest["name"])
         except HubError:
@@ -823,7 +833,8 @@ def settings_routes(app, hub, logged_in):
     @logged_in
     async def install_plugin(request, token, user):
         path = _text(await _body(request), "path")
-        reply = await _hub_cap(hub, "plugin.install", {"path": path}, "Installed on the Settings page.", token)
+        where = {"url": path} if path.startswith(("http://", "https://")) else {"path": path}
+        reply = await _hub_cap(hub, "plugin.install", where, "Installed on the Settings page.", token)
         return {"installed": dict(reply["installed"], **plugin_adds(hub, reply["installed"]["name"]))}
 
     app.router.add_get("/api/settings", get_settings)

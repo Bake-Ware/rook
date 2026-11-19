@@ -1,5 +1,6 @@
 /* The Settings page's Plugins section (PL1, PL3, PL4): the installed plugins and what each
-   added, and install from a folder on the hub's disk through the plugin.install hub cap.
+   added, and install from a folder on the hub's disk, or from a URL of an archive of one, through
+   the plugin.install hub cap.
    Before it installs it says what will happen, including that a plugin of the same name
    is replaced at once. It asks the hub again every few seconds. */
 import { api, toast } from '/site/shell.js';
@@ -50,15 +51,15 @@ export default {
   template: `<div>
     <p v-if="error" class="callout bad" role="alert">{{ error }}</p>
     <section class="panel">
-      <div class="panel-head"><h2>Install from a folder</h2><span class="sub">a plugin folder on the hub’s disk, holding plugin.json</span></div>
+      <div class="panel-head"><h2>Install a plugin</h2><span class="sub">a plugin folder on the hub’s disk, holding plugin.json, or the URL of a zip or tar archive of one</span></div>
       <form class="panel-body form-stack" @submit.prevent="check">
         <div style="display:flex;gap:8px;align-items:end">
-          <label class="field" style="flex:1">Folder on the hub’s disk<input class="mono" v-model="path" placeholder="/srv/rook/plugins/notes" spellcheck="false" @input="pending=null"></label>
+          <label class="field" style="flex:1">Folder on the hub’s disk, or URL<input class="mono" v-model="path" placeholder="/srv/rook/plugins/notes or https://…/notes.zip" spellcheck="false" @input="pending=null"></label>
           <button class="btn accent" type="submit" :disabled="busy || !path.trim()">Install…</button>
         </div>
         <div v-if="pending" class="callout" :class="{bad: pending.replaces}" role="status">
           <template v-if="pending.replaces"><b>This replaces {{ pending.replaces.name }} {{ pending.replaces.version }} at once</b>
-            with {{ pending.plugin.version }} from this folder: its code is swapped while the hub runs, with no restart.</template>
+            with {{ pending.plugin.version }} from here: its code is swapped while the hub runs, with no restart.</template>
           <template v-else><b>Install {{ pending.plugin.name }} {{ pending.plugin.version }}.</b> It loads at once.</template>
           <div style="display:flex;gap:8px;margin-top:8px">
             <button class="btn primary" type="button" :disabled="busy" @click="install">{{ pending.replaces ? 'Replace it' : 'Install' }}</button>
