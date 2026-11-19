@@ -1,12 +1,17 @@
 """Round 6, hub restart under load: with a call flood (50 calls a second, mixed short commands, over
 three workers) and 25 terminals being typed into every 100 ms, stop the hub cleanly (SIGTERM) and
 start it again on the same port; then kill -9 it and start it again. Records what each client saw,
-what the journal holds, and what came back by itself. `python tests/stress/restart.py`"""
+what the journal holds, and what came back by itself. For brief 51 it also measures, after each
+start, the time from the hub answering HTTP again to each worker saying it linked, and checks
+throughout that `workers` never says a worker is online while a call to it answers `worker_offline`.
+`python tests/stress/restart.py`"""
 
 import asyncio
 import collections
 import signal
 import time
+
+import aiohttp
 
 import rig
 from flood import COMMANDS
@@ -61,6 +66,51 @@ class Typist:
             await asyncio.sleep(0.1)
 
 
+class Agreement:
+    """Over and over: list the workers, ping each, list them again. A ping answered `worker_offline`
+    between two listings that both say that worker is online is a disagreement: `workers` said
+    online while a call answered offline (brief 51)."""
+
+    def __init__(self, band):
+        self.band, self.running, self.rounds, self.offline, self.disagreed = band, True, 0, 0, []
+
+    async def run(self):
+        door = self.band.door
+        while self.running:
+            try:
+                before = await self.listed()
+                pings = await asyncio.gather(*(door.call(m, "worker.ping", {}) for m in self.band.monikers))
+                after = await self.listed()
+            except Exception:              # the hub is down: nothing to compare
+                await asyncio.sleep(0.05)
+                continue
+            self.rounds += 1
+            for m, (code, _, _) in zip(self.band.monikers, pings):
+                if code == "worker_offline":
+                    self.offline += 1
+                    if m in before and m in after:
+                        self.disagreed.append((round(time.time(), 3), m))
+            await asyncio.sleep(0.05)
+
+    async def listed(self):
+        code, reply = await self.band.door.tool("workers")
+        if code:
+            raise RuntimeError(code)
+        return {w["moniker"] for w in reply["workers"] if w["online"]}
+
+
+async def answering(url):
+    """Wait until the hub answers HTTP (any status); the time it first did."""
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None)) as http:
+        while True:
+            try:
+                async with http.get(url + "/") as r:
+                    await r.read()
+                return time.time()
+            except aiohttp.ClientError:
+                await asyncio.sleep(0.01)
+
+
 def linked_lines(worker):
     return sum("Linked to" in line for line in worker.lines)
 
@@ -79,16 +129,22 @@ async def restart(band, how, marks):
     stopped = time.time()
     await band.hub.start()
     started = time.time()
+    http = await answering(band.hub.url)
     band.door.url = band.hub.url
     await rig.ready(band.door, band.monikers)      # the hub lists them online, with their caps
     listed = time.time()
-    while any(linked_lines(w) <= n for w, n in zip(band.workers, linked)):   # each says it linked again
-        await asyncio.sleep(0.05)
-    back = time.time()
+    each = [None] * len(band.workers)
+    while None in each:                            # each says it linked again
+        for i, (w, n) in enumerate(zip(band.workers, linked)):
+            if each[i] is None and linked_lines(w) > n:
+                each[i] = time.time()
+        await asyncio.sleep(0.01)
+    back = max(each)
     marks.append({"how": how, "stop_sent": t0, "exited": stopped, "exit_code": code, "listening": started,
                   "workers_back": back})
     band.log("restart", how=how, exit_code=code, stop_s=round(stopped - t0, 2), start_s=round(started - stopped, 2),
              listed_online_s=round(listed - started, 2), workers_linked_s=round(back - started, 2),
+             http_s=round(http - started, 2), linked_after_http_s=[round(t - http, 2) for t in each],
              workers_said=[[l for l in w.lines if "lost" in l or "Linked" in l or "Cannot" in l][-3:] for w in band.workers])
     band.measure("after", sub=f"hub stopped {how}")
 
@@ -98,6 +154,8 @@ async def body(band):
     calls, typists = Calls(band), [Typist(band, i) for i in range(25)]
     gen = asyncio.create_task(calls.generate())
     typing = [asyncio.create_task(t.run()) for t in typists]
+    agreement = Agreement(band)
+    checking = asyncio.create_task(agreement.run())
     marks = []
     await asyncio.sleep(PHASE)
     await restart(band, "clean", marks)
@@ -105,9 +163,13 @@ async def body(band):
     await restart(band, "kill -9", marks)
     await asyncio.sleep(PHASE)
     calls.running = False
+    agreement.running = False
     for t in typists:
         t.running = False
     await gen
+    await checking
+    band.log("result", sub="workers and calls agree", rounds=agreement.rounds, pings_offline=agreement.offline,
+             online_while_call_offline=len(agreement.disagreed), first=agreement.disagreed[:5])
     band.log("waiting", calls_left=sum(1 for t in calls.tasks if not t.done()))
     await asyncio.gather(*calls.tasks)        # every call, however long it takes
     await asyncio.gather(*typing, return_exceptions=True)
