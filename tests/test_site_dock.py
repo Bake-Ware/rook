@@ -262,6 +262,7 @@ async def dock(tmp_path):
             await page.until("!document.querySelector('#dock-ready')")
             await eventually(lambda: len(agent.sent) > sent)
             assert agent.sent[sent].startswith("[site] First visit to a new hub; setup isn't finished.")
+            assert "cap agent.skill on worker hub" in agent.sent[sent]        # core's hub is worker "hub", not 0.5's "rook"
 
             # No errors on any page, from the dock or anything else (WebGL is the background scene's).
             assert [e for e in page.errors if "WebGL" not in e] == []

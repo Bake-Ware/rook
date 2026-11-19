@@ -681,7 +681,8 @@ async function untilReady() {
 function setupBrief(look) {
   const lookSoFar = typeof window.lookSoFar === "function" ? window.lookSoFar : (l) => `name ${l.name}`;
   const done = !look || !look.next;
-  return SETUP_KICKOFF + "; setup isn't finished. Read the first-run skill (cap agent.skill on worker rook, " +
+  // core: 0.5's hub was the worker "rook"; core's hub caps are called with worker "hub".
+  return SETUP_KICKOFF + "; setup isn't finished. Read the first-run skill (cap agent.skill on worker hub, " +
     "args {name: \"first-run\"}) and follow it. The left of the screen is your work pane: open what you set up " +
     "there with [[open: ...]] (the skill says how). " + (done
     ? `The person already picked the look and feel on the left: ${lookSoFar(look || rookie.look)}. ` +
