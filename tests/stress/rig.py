@@ -131,12 +131,14 @@ class WorkerProcess(Process):
 
 
 def stats(pid):
-    """RSS in MB, open file descriptors, threads and CPU seconds used so far of one process, from /proc."""
+    """RSS and peak RSS in MB, open file descriptors, threads and CPU seconds used so far of one process,
+    from /proc."""
     try:
         status = pathlib.Path(f"/proc/{pid}/status").read_text()
         fields = dict(line.split(":", 1) for line in status.splitlines())
         ticks = pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
         return {"rss_mb": round(int(fields["VmRSS"].split()[0]) / 1024, 1),
+                "peak_mb": round(int(fields["VmHWM"].split()[0]) / 1024, 1),     # the most RSS it has had
                 "fds": len(os.listdir(f"/proc/{pid}/fd")), "threads": int(fields["Threads"]),
                 "cpu_s": round((int(ticks[11]) + int(ticks[12])) / os.sysconf("SC_CLK_TCK"), 1)}
     except (FileNotFoundError, ProcessLookupError):
