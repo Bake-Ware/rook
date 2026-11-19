@@ -13,11 +13,22 @@ The data requests are only what the pages need, as the logged-in user.
 Approving a worker goes through the `worker.approve` hub cap, revoking its key
 through `worker.revoke` (R5), and a redact through `journal.redact`, so each is
 a call in the journal (L1).
+
+Every file the pages load carries a version in its address (house agent brief HA5): a short hash
+of its bytes, `/site/shell.js?v=3fa9c1d2e5b7`, which changes when the file does. A proxy in front
+of the hub (Cloudflare keeps scripts and stylesheets for hours whatever the hub says) then never
+hands out an old copy for a new one. The page shell names its own files at their versioned
+addresses and carries an import map from each file's plain address to its versioned one, so a
+module's `import ... from '/site/shell.js'` reaches the same versioned address the page loaded;
+`/api/session` gives plugins' files at theirs. A file asked for at its current version may be kept
+for good (web.cache_header); the same file without a version, or at another, is `no-cache` as before.
 """
 
 import asyncio
+import hashlib
 import json
 import pathlib
+import re
 import shutil
 import tempfile
 
@@ -29,6 +40,77 @@ from .journal import iso
 
 FILES = pathlib.Path(__file__).parent / "site"
 COOKIE = "rook_session"
+
+# ------------------------------------------------- versioned addresses (house agent HA5)
+
+SERVED = web.RequestKey("served", pathlib.Path)   # the plugin file a request is answered with
+
+_VERSIONS = {}  # a file's path -> ((inode, size, modified), its version): worked out once until it changes
+
+
+def version(path):
+    """A short hash of the file's bytes as served. Remembered until the file changes on disk (a plugin
+    install, a new start), which its inode, size and modification time show."""
+    stat = path.stat()
+    seen = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+    known = _VERSIONS.get(path)
+    if known is None or known[0] != seen:
+        known = _VERSIONS[path] = (seen, hashlib.sha256(path.read_bytes()).hexdigest()[:12])
+    return known[1]
+
+
+def site_versions():
+    """{plain address: versioned address} for every file under /site/."""
+    return {f"/site/{p.relative_to(FILES).as_posix()}": f"/site/{p.relative_to(FILES).as_posix()}?v={version(p)}"
+            for p in sorted(FILES.rglob("*")) if p.is_file()}
+
+
+def plugin_versions(hub):
+    """{plain address: versioned address} for every file a plugin's site section names."""
+    return {plain: versioned for plugin, folder, site in plugins.site_parts(hub)
+            for part in plugins.SITE_FIELDS for entry in site.get(part, [])
+            for plain, versioned in [(_plain_url(plugin, folder, entry["file"]), _file_url(plugin, folder, entry["file"]))]}
+
+
+def served_file(request):
+    """The file on disk a request for a site file is answered with, or None: /site/* here, and a
+    plugin's file as its handler noted it. web.cache_header compares its version with the address's."""
+    if SERVED in request:
+        return request[SERVED]
+    if request.path.startswith("/site/"):
+        path = (FILES / request.path[len("/site/"):]).resolve()
+        if path.is_relative_to(FILES.resolve()) and path.is_file():
+            return path
+    return None
+
+
+def _signed_in(hub, request):
+    """Whether the request carries a session that works, looked at without recording a use (T6)."""
+    token = request.cookies.get(COOKIE)
+    if not token:
+        return False
+    with hub._lock:
+        try:
+            return hub.auth._refusal(hub.auth._row(token), "session") is None
+        except HubError:
+            return False
+
+
+def shell_page(hub, request):
+    """The page shell (`/` and every page path): index.html with its files at their versioned addresses,
+    and the import map. A plugin's files are in the map for a person signed in, as the files themselves
+    are served only to a session (P1). An ETag, so an unchanged shell is answered 304, as before."""
+    imports = site_versions()
+    if _signed_in(hub, request):
+        imports.update(plugin_versions(hub))
+    html = re.sub(r'(src|href)="(/site/[^"?]+)"', lambda m: f'{m[1]}="{imports.get(m[2], m[2])}"',
+                  (FILES / "index.html").read_text("utf-8"))
+    table = json.dumps({"imports": imports}).replace("</", "<\\/")
+    html = html.replace("</head>", f'<script type="importmap">{table}</script>\n</head>', 1).encode("utf-8")
+    etag = f'"{hashlib.sha256(html).hexdigest()[:16]}"'
+    if etag in request.headers.get("If-None-Match", ""):
+        return web.Response(status=304, headers={"ETag": etag})
+    return web.Response(body=html, content_type="text/html", charset="utf-8", headers={"ETag": etag})
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pins (           -- saved views in a user's Pinned strip (P6)
@@ -256,7 +338,7 @@ def add_routes(app, hub):
         return answer
 
     async def page(request):
-        return web.FileResponse(FILES / "index.html")
+        return shell_page(hub, request)
 
     def signed_in(user):
         """A reply that signs the user in: a new session, in the cookie (T3, T4)."""
@@ -854,8 +936,18 @@ def settings_routes(app, hub, logged_in):
 # manifest names. A plugin's page calls caps with shell.js's call(), through POST /api/call,
 # as the logged-in user, journaled under them (Bake 13 Nov).
 
-def _file_url(plugin, folder, file):
+def _plain_url(plugin, folder, file):
     return f"/plugin-files/{plugin}/{plugins.site_file(folder, file)}"
+
+
+def _file_url(plugin, folder, file):
+    """A plugin's file at its versioned address (HA5); at its plain one if it is not on disk, as
+    before (the load says the file failed)."""
+    plain = _plain_url(plugin, folder, file)
+    try:
+        return f"{plain}?v={version(folder / plugins.site_file(folder, file))}"
+    except OSError:
+        return plain
 
 
 def navigation(hub):
@@ -930,6 +1022,7 @@ def plugin_site_routes(app, hub, logged_in, session):
                          for part in plugins.SITE_FIELDS for entry in site.get(part, [])}
                 if name == plugin and wanted in files:
                     kind = "text/css" if wanted.endswith(".css") else "text/javascript"     # a shell file may be CSS
+                    request[SERVED] = folder / wanted          # for its version (web.cache_header, HA5)
                     return web.FileResponse(folder / wanted, headers={
                         "Content-Type": f"{kind}; charset=utf-8"})   # no-cache: web.cache_header
             raise HubError("unknown_file", f"Plugin {plugin} has no site file {wanted}.",
@@ -953,7 +1046,7 @@ def plugin_site_routes(app, hub, logged_in, session):
         return reply
 
     async def page(request):
-        return web.FileResponse(FILES / "index.html")   # the shell finds the page, or says it is gone
+        return shell_page(hub, request)   # the shell finds the page, or says it is gone
 
     app.router.add_get("/plugins/{plugin}/{page}", page)
     app.router.add_get("/plugin-files/{plugin}/{file:.+}", plugin_file)

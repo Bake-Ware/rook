@@ -7,7 +7,7 @@
    A stream that is a terminal (its cap takes cols and rows) is told the size it is shown at
    (Bake 13 Nov): when the view attaches, and again when the fitted size changes, once the
    window has stopped changing for a moment, so dragging a window does not flood the worker. */
-import { api, toast } from '/site/shell.js';
+import { api, toast, asset } from '/site/shell.js';
 
 const WAIT = 25;            // seconds the hub may hold a read while nothing new arrives
 const SCROLLBACK = 100000;  // lines the view keeps; the hub keeps the whole recording
@@ -17,7 +17,7 @@ let loading = null;
 function loadXterm() {
   if (!loading) {
     const css = document.createElement('link');
-    css.rel = 'stylesheet'; css.href = '/site/vendor/xterm/xterm.css';
+    css.rel = 'stylesheet'; css.href = asset('/site/vendor/xterm/xterm.css');
     document.head.append(css);
     loading = Promise.all([import('/site/vendor/xterm/xterm.mjs'), import('/site/vendor/xterm/addon-fit.mjs')])
       .then(([x, f]) => ({ Terminal: x.Terminal, FitAddon: f.FitAddon }));

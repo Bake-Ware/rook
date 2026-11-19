@@ -7,6 +7,14 @@
    (GET /api/session). */
 const { createApp, reactive, markRaw } = Vue;
 
+/* A site file's address with its version (house agent HA5), from the page's import map: for what
+   is loaded other than by import (an image, a stylesheet). An address it does not know is as given. */
+const VERSIONS = (() => {
+  try { return JSON.parse(document.querySelector('script[type="importmap"]').textContent).imports || {}; }
+  catch (e) { return {}; }
+})();
+export const asset = path => VERSIONS[path] || path;
+
 export const store = reactive({ user: null, hub: { name: null }, nav: [], pins: [], toast: '', ready: false,
   view: location.pathname + location.search });   // the page's current view, so the strip can follow it (P6)
 
@@ -171,7 +179,7 @@ const SideBar = {
   },
   template: `<aside class="sidebar">
     <a class="brand" href="/" :title="store.hub.name ? store.hub.name + ' · ' + host : 'Rook hub'">
-      <img src="/site/assets/rook-logo.png" alt="" width="30" height="45">
+      <img src="${asset('/site/assets/rook-logo.png')}" alt="" width="30" height="45">
       <div><b>♜ ROOK</b><small>{{ store.hub.name || host }}</small></div></a>
     <div>
       <div class="nav-label"><span>Pinned</span></div>
@@ -230,7 +238,7 @@ const LoginView = {
   },
   template: `<main class="login">
     <form v-if="asked" class="panel login-box" :class="{setup}" @submit.prevent="submit">
-      <div class="brand"><img src="/site/assets/rook-logo.png" alt="" width="30" height="45"><div><b>♜ ROOK</b><small>{{ setup ? 'set up this hub' : 'log in to this hub' }}</small></div></div>
+      <div class="brand"><img src="${asset('/site/assets/rook-logo.png')}" alt="" width="30" height="45"><div><b>♜ ROOK</b><small>{{ setup ? 'set up this hub' : 'log in to this hub' }}</small></div></div>
       <template v-if="setup">
         <p class="login-note">This hub has no user yet. Choose a name and a password for its first user.</p>
         <p v-if="setup.vault_key_file" class="callout login-note">The vault key is in <b class="mono">{{ setup.vault_key_file }}</b>.
