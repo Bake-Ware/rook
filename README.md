@@ -68,6 +68,8 @@ The backup is encrypted with a key made from the vault key. Without the vault ke
 
 While it runs, a backup keeps a plain working copy of the database in the data directory itself (`.backup.db`), never where the backup is written, and removes it when done; the data directory's disk needs free space for that copy, as big as `hub.db`. The backup file is written readable by you only. Its disk needs room for the backup, about the size of the data directory.
 
+An agent can do the same through the hub's caps (worker `hub`): `backup.run {to}` writes a backup of the running hub to a new file on the hub's disk, `backup.list {folder}` lists the backups in a folder, and `backup.verify {path}` reads one through and proves it opens with this hub's vault key, writing nothing. Restoring stays a command, below: it writes a hub that is not running.
+
 To restore, on this machine or another one, into a new or empty directory:
 
 ```sh

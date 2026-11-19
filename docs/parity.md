@@ -9,8 +9,8 @@ Anything in 0.5 that is a gate is not a row: `holds`, `session` (it narrows what
 ## How it was run
 
 - **Local**: a hub and a worker started from this branch (first on 7ed52527; rows 36 to 38 and 49 to 51 again on aaab7fcc, with briefs 40, 41 and 42 merged) with the README's own commands. The hub ran on an ephemeral port, the worker under a throwaway `HOME`, so `~/.rook-worker` and the live worker were left alone. A person's steps went through the site's API: the first user through `/api/setup`, the agent token through `/api/tokens`. After that, everything went through `POST /mcp`, with the agent token, as JSON-RPC, the way an agent does it. Times are wall-clock, measured at the client. Machine: cachyrig, Python 3.14, Telesthete at the pinned commit.
-- **Beta** (`https://rookbeta.bake.systems`): run on 18 November, 00:30 to 00:39 UTC, with the door token the reviewer gave (`patient-steady-spruce`, owned by Bake), on its one worker, cachyrig (`quiet-calm-candle`), at one agent's pace. The reviewer said the beta ran core 7b0d7608. A redeploy by another session happened during the run (Found waits 3); afterwards the hub still served the same caps, and the door cannot say which commit it runs (`serverInfo` is `0.1.0` on every build). Only light rows ran there, and nothing was changed on it but what the rows make: one secret, `parity_check_20261117_183022`, is left there because core cannot delete a secret (row 56); the two jobs were deleted. The results are in "The beta run" below.
-- **Tests**: `tests/test_parity.py` covers rows 1 to 25, 36 to 38, 50 and 51 against a real served hub and a real worker over the real carrier, through the MCP door over HTTP. Each test names the rows it covers.
+- **Beta** (`https://rookbeta.bake.systems`): run on 18 November, 00:30 to 00:39 UTC, with the door token the reviewer gave (`patient-steady-spruce`, owned by Bake), on its one worker, cachyrig (`quiet-calm-candle`), at one agent's pace. The reviewer said the beta ran core 7b0d7608. A redeploy by another session happened during the run (Found waits 3); afterwards the hub still served the same caps, and the door cannot say which commit it runs (`serverInfo` is `0.1.0` on every build). Only light rows ran there, and nothing was changed on it but what the rows make: one secret, `parity_check_20261117_183022`, is left there because core could not delete a secret then (row 56; `secret.delete` since brief 61); the two jobs were deleted. The results are in "The beta run" below.
+- **Tests**: `tests/test_parity.py` covers rows 1 to 25, 36 to 38, 50 and 51, and (brief 61) 11, 38, 43, 45, 48, 53, 56 and 59, against a real served hub and a real worker over the real carrier, through the MCP door over HTTP. Each test names the rows it covers.
 
 Verdicts: **same**, **improved**, **missing** (0.5 does it and core cannot), **broken** (core has it and it does not work), **pending brief N** (another brief this round builds it), **not in plan** (0.5 does it and PLAN.md never mentions it: a gap for Bake to decide, not a fault).
 
@@ -35,7 +35,7 @@ Verdicts: **same**, **improved**, **missing** (0.5 does it and core cannot), **b
 | 8 | Run a command: stdout, stderr, exit code | `shell.exec`: argv, cmd, shell, stdin, cwd, env, **timeout (default 30 s, at most 3,600 s)**; output cut at 8 MiB per stream | `shell.exec`: argv, cmd, shell, stdin, cwd, env. No timeout and no cut | improved (no bound, as Bake asked) | `cmd: "echo out; echo err >&2; exit 3"` → `{code: 3, ok: false, stdout: "out\n", stderr: "err\n"}` 17 ms. argv, cwd, env, stdin and `shell: bash` all as given. Windows is not built in core's shell; it is outside this round |
 | 9 | Find a program | `shell.which` | `shell.which` | same | `git` → `"/usr/bin/git"`; a missing name → `null` |
 | 10 | Get errors that say what to try next | `{ok: false, error}` | Every refusal has `code: message Next: …` (C3) | improved | `unknown_cap`, `unknown_worker`, `bad_message` (no why), an unknown argument, a missing cwd: each one has a next step |
-| 11 | Large output | Cut at 8 MiB per stream (`truncated`) | Whole, up to the 16,000,000-byte message cap (docs/protocol.md "Sizes"). Above it: `cap_failed` | improved, one bound | 3,000 lines 24 ms. 10 MB of text whole, 2.1 s. 20 MB: `cap_failed: its result is 20000111 bytes encoded, over the 16000000 a message may be`, and its next step ("Check the arguments against the schema") does not help. NUL-heavy output grows sixfold in JSON: 10 MB of `/dev/zero` is 60 MB encoded and refused |
+| 11 | Large output | Cut at 8 MiB per stream (`truncated`) | Whole, with no cut: a result over about a megabyte comes as pieces of a stream that the door says how to join (brief 54) | improved | 3,000 lines 24 ms. 10 MB of text whole, 2.1 s. 20 MB of text whole, as pieces (`test_cap_failed_says_what_to_do`, brief 61); before brief 54 it was refused with a next step that did not help |
 | 12 | Follow a long call as a stream | Call still running after 45 s → `{id, running, worker: rook, stream}`; follow `status` events | Same shape after 45 s; the stream's last entry is the reply | same | `sleep 50; echo slept`: the call answered `running` at 45,014 ms; one `stream read wait=40` gave the reply 2 s later and `open: false` |
 
 ### Terminals and streams
@@ -92,28 +92,28 @@ Verdicts: **same**, **improved**, **missing** (0.5 does it and core cannot), **b
 | 35 | See a pending worker's offered caps (R4) | n/a | `workers` → `knocking[].caps` | same, but empty | The standard worker knocks with `caps: []`: its caps are all default plugins, pushed after approval |
 | 36 | Read and write files | `file.read/write/list/search/stat` | The same five caps, with 0.5's arguments; `max_bytes` and `limit` cut only when given | same (brief 41) | Write with `create_parents` 14 ms; read 16 ms; base64 bytes both ways; recursive list; search found `needle two` on line 2 (56 ms); stat. A 12 MB text file read whole in 2.6 s; `max_bytes: 100` gave 100 bytes and `truncated: true`. A missing file: `cap_failed … check the path with file.stat`. Beta: not served (see Gaps, default plugins) |
 | 37 | Read the environment | `shell.env` | `shell.env` by name (with default) or prefix | same (brief 41) | `name: HOME` 12 ms; a missing name with `default` gave the default; `prefix: XDG_` gave an object. Beta: not served |
-| 38 | Ping a worker; read its battery | `worker.ping`, `battery.status` | `worker.ping` → `{pong, at}`; `battery.status` → `{percent, status}` | same (brief 41) | Ping 15 ms. cachyrig has no battery: `cap_failed: this worker has no battery …; call battery.status on a worker with a battery`. Beta: not served |
+| 38 | Ping a worker; read its battery | `worker.ping`, `battery.status` | `worker.ping` → `{pong, at}`; `battery.status` → `{percent, status}` | same (brief 41) | Ping 15 ms. cachyrig has no battery: `cap_failed: this worker has no battery …; call battery.status on a worker with a battery`, next "Change what the reason names and call again, or call battery.status on another worker that announces it" (pull request 433; checked in brief 61). Beta: not served |
 | 39 | Read one worker's status | `worker.status` | Covered by `workers` (row 3) | improved | |
 | 40 | Read the worker's own log of calls | `worker.log` | No | not in plan | inventory CAP-13 |
 | 41 | Restart a worker | `worker.restart` | No | not in plan | inventory CAP-12 |
 | 42 | Update a worker | `worker.update`, rollouts | No | missing (U2 to U9; no brief this round) | |
-| 43 | Install a plugin from a URL | n/a | Folder only | missing (PL4 says "a folder or a URL") | `plugin.install` takes `path` |
+| 43 | Install a plugin from a URL | n/a | `plugin.install url=…`: a zip or tar archive of the plugin's folder, downloaded with no time or size limit; the Settings page takes a URL too | improved (brief 61) | `test_install_a_plugin_from_a_url`: a tar.gz with a top folder and a zip with `plugin.json` at its top both install and serve their cap at once; a 404 and a page that is not an archive are refused with what to do |
 | 44 | Opt a worker out of plugins | n/a | `worker.plugins worker=… receive=false` | improved | Out: the caps list went empty; back in: all 7 caps returned within 1 s |
-| 45 | Find a stream | `stream.list` (kind, open), `stream.get`, `stream.search` | `stream list` (open filter), with title and description | same for list; search missing | S5 housekeeping works from titles; there is no text search |
+| 45 | Find a stream | `stream.list` (kind, open), `stream.get`, `stream.search` | `stream` actions `list` (open filter) and `search` (`query` in title, description, cap, worker or opener, any case; `worker`, `open`) | same (brief 61) | `test_stream_search` |
 | 46 | Chat rooms on the hub | `stream.open` on worker `rook` | No | not in plan | inventory CAP-53 |
 | 47 | Hub summary; door kill switch | `hub.status`, `hub.door` | No | not in plan | inventory CAP-35, CAP-37 |
-| 48 | Read and change hub settings as an agent | `setting.list`, `setting.set` | Settings page only; no cap | missing for agents | P4 puts settings on a page; no plan line gives agents a way in |
-| 49 | Hub name | n/a | Settings page (`POST /api/hub/name`); no cap | same, site only (brief 40) | Set and read back through the site locally. Not changed on the beta |
+| 48 | Read and change hub settings as an agent | `setting.list`, `setting.set` | `setting.list`, `setting.set key value` over what the Settings page holds: today the hub's name | same (brief 61) | `test_settings_as_an_agent`; an unknown key is refused with the keys there are |
+| 49 | Hub name | n/a | Settings page (`POST /api/hub/name`) and `setting.set key=name` | improved (briefs 40, 61) | Set and read back through the site locally, and through the door. Not changed on the beta |
 | 50 | Reassign a worker's owner; merge bands | n/a | `worker.reassign worker owner` over MCP, and `users.list` lists the users it takes; band merge on the Workers page only (no band caps exist, so none for merge either) | owner: same; bands: site only (brief 40) | Reassign 14 ms. An unknown owner is refused with "List the users and use a GUID or moniker from there", and `users.list` (brief 60) is that list: `tests/test_parity_tokens.py::test_users_listed`. The site creates only the first user, so a hub has one user to reassign to. Not changed on the beta |
 | 51 | Worker config | n/a | `config.get`, `config.set` (set, unset); a `secret:` value goes in on the wire only | same (brief 42) | `config.set` 12 ms answered `sent: true`; `config.get` then showed `applied` equal to `version`; the secret's value not in the journal or in `config.get`. Beta, read-only: `config.get` on quiet-calm-candle 115 ms, `values: {}`, `applied: null`, the same as a fresh local worker with nothing set |
 | 52 | Revoke a worker's key | n/a | none yet | pending brief 43 | Also H4's battery, temperature and GPU in the heartbeat |
-| 53 | Back up the hub as an agent | `backup.*` caps | Command line only (`python -m rook_hub backup`) | missing for agents | F3 is met by the command; no cap |
+| 53 | Back up the hub as an agent | `backup.*` caps | `backup.run to`, `backup.list folder`, `backup.verify path`, over what the command does; restore stays the command (it writes a hub that is not running) | same (brief 61) | `test_backups_as_an_agent`: a backup of the running hub, listed, verified; a changed byte refused; the command restores it into a hub holding the same secret |
 | 54 | Redact a value from the journal | n/a | `journal.redact value=…` | improved | Found by text, redacted (`redacted: 1`, 53 ms), not found again |
 | 55 | Network primitives on a worker | Appliance actions at the hub | `net.http`, `net.tcp`, `net.udp` (D3) | improved | `net.http` to the hub's own `/api/setup` → status 200, headers, body, 17 ms |
-| 56 | Replace or delete a secret | `secret.set` replaces; `secret.delete` | `secret.create` with a used name → `secret_exists: … secrets are not replaced`; no delete | missing | |
+| 56 | Replace or delete a secret | `secret.set` replaces; `secret.delete` | `secret.set` makes or replaces (moniker and references kept); `secret.delete`; `secret.create` still refuses a used name, pointing at `secret.set` | same (brief 61) | `test_replace_and_delete_a_secret`: the worker gets the new value, neither value is journaled, a deleted secret's reference is refused with what to do |
 | 57 | Reveal a secret's value | `secret.reveal`, held for the person | Secrets page only, for the signed-in user (X3) | same, by plan | |
 | 58 | A worker stops mid-call | n/a | The call ends at once with `worker_disconnected` and a next step | same | `sleep 90` call, the worker stopped at 50 s: the follow stream gave the error within 3 s |
-| 59 | Change a worker's heartbeat interval (H2) | n/a | The hub sends 15 s; `Hub.set_interval` exists, but no cap or page calls it | missing | `hub/rook_hub/__init__.py:516` |
+| 59 | Change a worker's heartbeat interval (H2) | n/a | `worker.interval worker seconds`: a linked worker is sent it at once and heartbeats on it | improved (brief 61) | `test_heartbeat_interval`: 1 s gave a heartbeat every second; 600 s, none in the next 2 s |
 | 60 | Devices | `appliance.*` | `device.add` | not this round | TVs and devices are out of this round's scope |
 
 ## The beta run
@@ -162,18 +162,13 @@ One line each: what 0.5 does, then what core does.
 - Run a job now: 0.5 `job.run`; core only through `event.emit` of an event job's event (row 27).
 - Change a job: 0.5 `job.update`; core delete and make again (row 29).
 - Closed by brief 60: the webhook token is minted (row 30), agents mint, list and revoke tokens (row 32), the start command joins with a join token (row 33), and `users.list` lists users over the door (row 50).
-- Replace or delete a secret: 0.5 `secret.set` and `secret.delete`; core refuses to replace and cannot delete (row 56).
-- Stream search: 0.5 `stream.search`; core lists with titles only (row 45).
-- Hub settings as an agent: 0.5 `setting.list/set`; core page only (row 48).
-- Backups as an agent: 0.5 `backup.*`; core command line only (row 53).
-- Plugin from a URL: PL4 names it; core installs from a folder only (row 43).
-- Heartbeat interval: H2 says the hub sets it per worker; core sends 15 s and has no way to change it (row 59).
-- Worker update: 0.5 `worker.update`; core none, and no brief builds it this round (row 42).
+- Built by brief 61: replace and delete a secret (row 56), stream search (row 45), hub settings as an agent (row 48), backups as an agent (row 53), plugin from a URL (row 43), the heartbeat interval (row 59).
+- Worker update: 0.5 `worker.update`; core none. Bake has updates on hold (RULES.md, 19 November), so it is not built (row 42).
 - New default plugins never reach an existing hub: `install_defaults` runs only when a data directory is new (`hub/rook_hub/__init__.py:216`, `hub/rook_hub/plugins.py:266`). A hub made before brief 41 keeps only `net` and `shell` after it upgrades: the beta's `plugin.list` shows only those two after the redeploy, and a local data directory made on 7b0d7608 and opened on aaab7fcc lists `net` and `shell`. So the file, env and health caps (rows 36 to 38) are not on the beta. 0.5 had no such case: its worker caps came from manifests it shipped. Getting them there means a `plugin.install` of each folder on the beta's disk, which is not this brief's to do.
-- Next steps on `cap_failed`: every worker-side failure gets the same "Check the arguments against the schema of …", even where the cause is not the arguments (no battery, a result too large) (rows 11, 38).
+- Next steps on `cap_failed` (rows 11, 38): fixed by pull request 433 (the next step points at the reason, or at another worker) and brief 54 (a big result is pieces, not refused); checked again in brief 61.
 - The beta's Cloudflare refuses Python's default User-Agent with error 1010 (see The beta run); a deployment matter, not core.
 - Not in plan, for Bake to decide: worker log, worker restart, worker description and problems, hub summary and door switch, chat rooms, ready-made jobs (rows 3, 31, 40, 41, 46, 47).
-- Oversized results: 0.5 cuts at 8 MiB; core refuses above 16,000,000 encoded bytes with a next step that does not help, and NUL-heavy output grows sixfold in encoding (row 11).
+- Oversized results: 0.5 cuts at 8 MiB; core sends any size whole, as pieces of a stream over about a megabyte (brief 54). NUL-heavy output still grows sixfold in JSON (row 11).
 
 ## Bounds met while testing
 
@@ -184,6 +179,6 @@ Listed here because the testing ran into them. Brief 44 (stall test and bounds) 
 | A call answers `running` after 45 s | `hub/rook_hub/__init__.py:35` `CALL_WAIT` | Rows 12, Found waits 1 and 2 |
 | A stream read waits at most 40 s; 200 entries a page unless asked | `hub/rook_hub/streams.py:78`, `:250` | Row 17, Found waits 4 |
 | The journal gives 50 entries unless asked | `hub/rook_hub/door.py:185` | Row 18 |
-| A message is at most 16,000,000 bytes | `docs/protocol.md`, "Sizes" | Row 11 |
+| A message is at most 16,000,000 bytes | `docs/protocol.md`, "Sizes" | Row 11, before brief 54 made a big result pieces |
 | Offline after 3 heartbeats of 15 s | `hub/rook_hub/__init__.py:33`; H2, H3 | Row 6 |
 | A join token lasts 10 minutes | `hub/rook_hub/auth.py:52`; T2 names "minutes and one use" | Row 33 |
