@@ -129,16 +129,20 @@ async def restart(band, how, marks):
     stopped = time.time()
     await band.hub.start()
     started = time.time()
+    each = [None] * len(band.workers)
+
+    async def watch():                             # when each worker says it linked again
+        while None in each:
+            for i, (w, n) in enumerate(zip(band.workers, linked)):
+                if each[i] is None and linked_lines(w) > n:
+                    each[i] = time.time()
+            await asyncio.sleep(0.01)
+    watching = asyncio.create_task(watch())
     http = await answering(band.hub.url)
     band.door.url = band.hub.url
     await rig.ready(band.door, band.monikers)      # the hub lists them online, with their caps
     listed = time.time()
-    each = [None] * len(band.workers)
-    while None in each:                            # each says it linked again
-        for i, (w, n) in enumerate(zip(band.workers, linked)):
-            if each[i] is None and linked_lines(w) > n:
-                each[i] = time.time()
-        await asyncio.sleep(0.01)
+    await watching
     back = max(each)
     marks.append({"how": how, "stop_sent": t0, "exited": stopped, "exit_code": code, "listening": started,
                   "workers_back": back})
