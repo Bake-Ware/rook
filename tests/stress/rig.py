@@ -252,12 +252,14 @@ async def ready(door, monikers, caps=("shell.exec", "shell.open", "worker.ping")
 
 
 class Band:
-    """A hub and `n` workers under one directory in /tmp, with an agent token and a door."""
+    """A hub and `n` workers under one directory in /tmp, with an agent token and a door. With `via`, an
+    async function of the hub process giving a URL, the workers are started on that URL instead of the
+    hub's (a relay in front of the hub: restart.py)."""
 
-    def __init__(self, base, n=1, log=None):
+    def __init__(self, base, n=1, log=None, via=None):
         self.base = pathlib.Path(base)
         self.base.mkdir(parents=True, exist_ok=True)
-        self.n = n
+        self.n, self.via = n, via
         self.log = log or Log(self.base / "round.jsonl")
 
     async def start(self):
@@ -271,7 +273,8 @@ class Band:
             tokenfile.write_text(json.dumps({"token": self.token, "cookies": self.cookies}))
             tokenfile.chmod(0o600)
         self.door = Door(self.hub.url, self.token)
-        self.workers = [await WorkerProcess(self.base, f"w{i + 1}", self.hub.url).start() for i in range(self.n)]
+        url = self.hub.url if self.via is None else await self.via(self.hub)
+        self.workers = [await WorkerProcess(self.base, f"w{i + 1}", url).start() for i in range(self.n)]
         await approve(self.door, self.workers)
         _, listed = await self.door.tool("workers")
         self.monikers = [w["moniker"] for w in listed["workers"]]
@@ -293,7 +296,7 @@ class Band:
         await self.hub.stop()
 
 
-def main(round_name, body, n=1):
+def main(round_name, body, n=1, via=None):
     """Run one round: `python tests/stress/<round>.py [--keep] [--log FILE]`. The hub and workers live
     in a new directory in /tmp, removed when the round ends unless --keep; the log is kept."""
     import argparse
@@ -307,7 +310,7 @@ def main(round_name, body, n=1):
     log = Log(args.log or pathlib.Path(tempfile.gettempdir()) / f"rook-stress-{round_name}.jsonl")
 
     async def run():
-        band = await Band(base, n, log).start()
+        band = await Band(base, n, log, via).start()
         try:
             await body(band)
         finally:

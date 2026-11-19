@@ -341,3 +341,36 @@ def test_max_message_limits_calls_and_input(tmp_path):
             await eventually(lambda: not hub._links)
             hub.close()
     asyncio.run(go())
+
+
+def test_the_hub_gives_its_start_number_in_link_accept_and_on_get_link(tmp_path):
+    """Brief 57: a number new at every start of the hub, in link_accept and on GET /link, so a worker whose
+    WebSocket reconnects can tell whether the hub that holds its session still answers. It is outside the
+    signed bytes, so a worker older than it verifies link_accept as before and ignores it (U8)."""
+    async def go():
+        starts = []
+        for _ in range(2):                                  # the same data directory, started twice
+            hub = Hub(tmp_path / "hub")
+            host, port = await hub.serve("127.0.0.1", 0)
+            base = f"http://{host}:{port}"
+            try:
+                async with aiohttp.ClientSession() as client:
+                    box = Box()
+                    await post(client, f"{base}/knock", box.knock())
+                    hub.approve(box.key, user=hub.auth.create_user(f"Alice {len(starts)}", "a password")["guid"])
+                    box.hub_key = (await post(client, f"{base}/knock", box.knock()))[1]["hub_key"]
+                    _, opening = box.link_open()
+                    status, accept = await post(client, f"{base}/link", opening)
+                    assert status == 200 and accept["hub_start"] == hub.carrier.started
+                    assert verify_link_accept(box.hub_key, box.key, opening["ephemeral"], accept)
+                    older = {name: value for name, value in accept.items() if name != "hub_start"}
+                    assert verify_link_accept(box.hub_key, box.key, opening["ephemeral"], older)   # the same signature
+                    async with client.get(f"{base}/link") as response:
+                        assert response.status == 200
+                        assert decode(await response.read()) == {"type": "hub_start", "hub_start": hub.carrier.started}
+                starts.append(hub.carrier.started)
+            finally:
+                await hub.stop_serving()
+                hub.close()
+        assert starts[1] > starts[0]                         # milliseconds at start, as the session epoch is
+    asyncio.run(go())

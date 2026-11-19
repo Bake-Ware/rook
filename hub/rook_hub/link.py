@@ -9,7 +9,9 @@ link under that PSK.
 Sessions live in memory only. Neither a session key nor an ephemeral secret is ever
 written or logged, so a hub that restarts holds none: a recording of an earlier session
 is worthless to it (2.6). The one file is `hub_link.key`, the hub's X25519 link secret,
-in the data directory beside `hub.key`.
+in the data directory beside `hub.key`. So that a worker learns at once when the hub that held
+its session is gone, `link_accept` carries the hub's start number, new at every start, and
+`GET /link` answers it (brief 57).
 
 Pending sessions are kept per worker ephemeral (D10): a repeat of an ephemeral replaces
 only its own entry, so a replayed `link_open` never displaces the real worker's fresh one.
@@ -192,7 +194,7 @@ def open_session(hub, message):
     del ephemeral       # the ephemeral secret is not kept (link design 2.2)
     hub.sessions.add(key, message["ephemeral"], psk)
     return {"type": "link_accept", "protocol": PROTOCOL, "ephemeral": hub_ephemeral,
-            "hub_link_key": hub.link_key,
+            "hub_link_key": hub.link_key, "hub_start": hub.carrier.started,
             "signature": sign_link_accept(hub._signing_key, key, message["ephemeral"], hub_ephemeral, hub.link_key)}
 
 
@@ -204,8 +206,11 @@ class Carrier:
     def __init__(self, hub):
         self.hub = hub
         # Session epoch: milliseconds since the Unix epoch at start, so it increases across
-        # restarts on a synced clock (section 5.1; Telesthete SPEC 4.3).
-        self.endpoint = Endpoint(hostname="hub", send=self._send, session_epoch=int(time.time() * 1000))
+        # restarts on a synced clock (section 5.1; Telesthete SPEC 4.3). It is also the hub's start
+        # number (brief 57): given in link_accept and on GET /link, so a worker whose WebSocket
+        # reconnects learns whether the hub that holds its session is still the one answering.
+        self.started = int(time.time() * 1000)
+        self.endpoint = Endpoint(hostname="hub", send=self._send, session_epoch=self.started)
         self._bands = {}        # psk -> its Band in the Endpoint
         self._timers = {}       # psk -> its PENDING_WAIT timer, while the session is pending
         self._links = {}        # psk -> its TelestheteLink, once the worker opened Channel 0
@@ -400,5 +405,11 @@ def add_routes(app, hub):
                   else 503 if reply["code"] == "hub_stopping" else 403)
         return web.Response(body=encode(reply), status=status, content_type="application/json")
 
+    async def start(request):
+        """`GET /link`: the hub's start number now (docs/protocol.md, `hub_start`; brief 57)."""
+        return web.Response(body=encode({"type": "hub_start", "hub_start": hub.carrier.started}),
+                            content_type="application/json")
+
     app.router.add_post("/link", link)
+    app.router.add_get("/link", start)
     app.router.add_get("/band", hub.carrier.band)
