@@ -21,6 +21,7 @@ from memory_link import connector, link_pair
 from rook_hub import Hub
 from rook_protocol import (MAX_MESSAGE, MAX_STREAM_DATA, ProtocolError, decode, encode, sign_link_accept,
                            sign_link_key)
+import rook_link
 from rook_worker import PIECE, Cap, Refused, Session, Worker
 from test_hub import heartbeat
 from test_link_exchange import Keys
@@ -151,6 +152,53 @@ def test_refusals_stop_the_worker_without_a_retry(tmp_path):
                 await asyncio.wait_for(stranger.run(), 5)
             assert refused.value.message["code"] == "unknown_key" and refused.value.message["next"] and tries == []
         finally:
+            await hub.stop_serving()
+            hub.close()
+    asyncio.run(go())
+
+
+def test_within_ends_when_cancelled_in_the_step_its_awaitable_ends():
+    """Brief 64: rook_link.within, the wait the heartbeat loop and the link's opening use. A cancel that
+    comes in the same loop step as the awaitable finishing ends it; asyncio.wait_for on Python 3.11
+    returned the awaitable's result instead, and the cancelled task went on."""
+    async def go():
+        event, ended = asyncio.Event(), []
+
+        async def waits():
+            ended.append(await rook_link.within(event.wait(), 60))
+        task = asyncio.create_task(waits())
+        await asyncio.sleep(0)              # it is waiting
+        event.set()                         # the awaitable finishes ...
+        task.cancel()                       # ... and the cancel comes, in one step
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert ended == []
+    asyncio.run(go())
+
+
+def test_a_change_and_a_refusal_in_one_step_still_stop_the_worker(tmp_path):
+    """Brief 64: the worker's heartbeat wait ends when its session is cancelled, even when the cancel
+    comes in the same loop step as a change (Worker.changed). Here the hub's link carries a config (whose
+    handling calls changed()) and then key_revoked back to back, so the worker reads both without yielding
+    and ends its session in the step the change was made. On Python 3.11, asyncio.wait_for swallowed that
+    cancel: the heartbeat loop carried on, heartbeating on the link, and run() did not end."""
+    async def go():
+        hub = Hub(tmp_path / "hub")
+        host, port = await hub.serve("127.0.0.1", 0)
+        alice = hub.auth.create_user("Alice", "a password")["guid"]
+        worker, running, connect, guid = await approved_worker(hub, tmp_path, f"http://{host}:{port}", alice)
+        try:
+            await eventually(lambda: worker.interval is not None)        # past its first heartbeat_reply
+            link = hub._links[guid]
+            told = {"type": "error", "code": "key_revoked", "message": "This key was revoked from box.",
+                    "next": "Generate a new key, knock with it, and ask a person or agent to attach it."}
+            await link.send(encode({"type": "config", "values": {"x": 1}, "version": "brief-64"}))
+            await link.send(encode(told))                                 # no await suspends between the two
+            with pytest.raises(Refused) as refused:
+                await asyncio.wait_for(running, 5)
+            assert refused.value.message == told and worker.config == {"x": 1}
+        finally:
+            running.cancel()
             await hub.stop_serving()
             hub.close()
     asyncio.run(go())
