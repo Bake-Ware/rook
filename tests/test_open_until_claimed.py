@@ -6,7 +6,10 @@ while the browser that set it stays signed in. Driven through real HTTP on local
 import asyncio
 import getpass
 
-from rook_hub import Hub
+from nacl.signing import SigningKey
+
+from helpers import link_fields
+from rook_hub import Hub, journal
 from rook_hub.auth import UNCLAIMED
 from rook_hub.errors import HubError
 from test_first_run import Started
@@ -86,3 +89,51 @@ async def no_password_start(tmp_path):
         assert "  --no-password: this hub has a user already, so it is left as it is." in hub.lines
         status, reply = await ask(client, "GET", hub.base + "/api/session")
         assert status == 200 and reply["user"]["name"] == getpass.getuser()
+
+
+def system_worker(hub, name):
+    """A worker joined with a join token the system owner holds, as the installer joins this machine's
+    (brief HA4: `python -m rook_hub join-token` before the hub's first start, when no person exists)."""
+    signing_key = SigningKey.generate()
+    key = signing_key.verify_key.encode().hex()
+    hub.knock({"type": "knock", "protocol": 1, "name": name, "key": key, "macs": [], "caps": [],
+               **link_fields(signing_key)})
+    return hub.approve(key, user=hub.auth.system)["guid"]
+
+
+def owner_changes(hub):
+    return [e for e in journal.read(hub, kind="auth", limit=100) if "owner_changed" in (e.get("result") or {})]
+
+
+def test_claiming_hands_the_systems_workers_to_the_owner(tmp_path):
+    """The steward's note on HA3: when the first person claims the hub, every worker the system owner
+    owns becomes theirs, in the same step (on 0.5 the owner owned the installer's machine)."""
+    hub = Hub(tmp_path / "hub")
+    try:
+        owner = hub.auth.open_until_claimed("bake")
+        desk = system_worker(hub, "desk")
+        assert hub.get_worker(desk)["owner"] == hub.auth.system      # open, not yet claimed: still the system's
+        hub.auth.change_password(owner["guid"], "correct horse", user=owner["guid"])      # claimed
+        assert hub.get_worker(desk)["owner"] == owner["guid"]
+        [change] = owner_changes(hub)
+        assert change["result"]["from"] == hub.auth.system and change["result"]["to"] == owner["guid"]
+        # Once: a worker the system owns later, and a later password, move nothing.
+        shop = system_worker(hub, "shop")
+        hub.auth.change_password(owner["guid"], "battery staple", user=owner["guid"])
+        assert hub.get_worker(shop)["owner"] == hub.auth.system and len(owner_changes(hub)) == 1
+    finally:
+        hub.close()
+
+
+def test_the_setup_pages_first_user_claims_the_systems_workers(tmp_path):
+    hub = Hub(tmp_path / "hub")
+    try:
+        desk, nas = system_worker(hub, "desk"), system_worker(hub, "nas")
+        alice = hub.auth.create_user("Alice", "correct horse", first=True)
+        assert {hub.get_worker(w)["owner"] for w in (desk, nas)} == {alice["guid"]}
+        assert len(owner_changes(hub)) == 2
+        later = system_worker(hub, "shop")
+        hub.auth.create_user("Bob", "battery staple")                 # a second person claims nothing
+        assert hub.get_worker(later)["owner"] == hub.auth.system and len(owner_changes(hub)) == 2
+    finally:
+        hub.close()

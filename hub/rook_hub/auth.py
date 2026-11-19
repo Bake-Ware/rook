@@ -179,6 +179,8 @@ class Auth:
             self.db.execute(
                 "INSERT INTO users (guid, moniker, name, name_key, password, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (guid, moniker, name, _name_key(name), hashed, self.hub.clock()))
+            if first:
+                self._claim_workers(guid, (guid, None))
         return self.get_user(guid)
 
     def open_until_claimed(self, name):
@@ -195,6 +197,19 @@ class Auth:
                 (guid, moniker, name, _name_key(name), self.hub.clock()))
             (self.hub.state_dir / UNCLAIMED).touch()
         return self.get_user(guid)
+
+    def _claim_workers(self, person, actor):
+        """The first person claims the hub (the setup page made them, or a password ended open-until-
+        claimed): every worker the system owner owns becomes theirs, in the same step (brief HA3, the
+        steward's note: the installer joins this machine's worker with a join token the system owner
+        holds, as no person exists yet; on 0.5 the owner owned the installer's machine). Each change is
+        journaled as worker.reassign journals one. The lock and the transaction are held."""
+        from . import config
+        for row in self.db.execute("SELECT guid FROM workers WHERE owner = ?", (self.system,)).fetchall():
+            self.db.execute("UPDATE workers SET owner = ? WHERE guid = ?", (person, row["guid"]))
+            config.owner_changed(self.hub, row["guid"], person)
+            self.hub._journal("auth", actor, row["guid"], {"owner_changed": row["guid"], "from": self.system,
+                                                           "to": person})
 
     def unclaimed_owner(self):
         """While the hub is open until claimed, the user the site signs every visitor in as (its first
@@ -251,7 +266,13 @@ class Auth:
             row = self._user(target)
             self.db.execute("UPDATE users SET password = ? WHERE guid = ?", (hashed, row["guid"]))
             self.hub._journal("auth", actor, None, {"password_changed": row["guid"]})
-            (self.hub.state_dir / UNCLAIMED).unlink(missing_ok=True)     # claimed: open no more (HA3)
+            marker = self.hub.state_dir / UNCLAIMED
+            if marker.exists():                                         # claimed: open no more (HA3)
+                first = self.db.execute("SELECT guid FROM users WHERE system = 0 AND revoked_at IS NULL "
+                                        "ORDER BY created_at LIMIT 1").fetchone()
+                if first is not None:
+                    self._claim_workers(first["guid"], actor)
+                marker.unlink(missing_ok=True)
 
     def _user_record(self, row):
         """A user as the hub hands it out: never the password hash. `system` is true for the system owner."""
