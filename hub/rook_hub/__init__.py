@@ -474,9 +474,11 @@ class Hub:
             pass                              # the link closed first: its next link_open is refused
 
     def _unlink(self, guid, link):
-        """`link` is no longer `guid`'s: no call goes to it, and the calls it had open end."""
+        """`link` is no longer `guid`'s: no call goes to it, the calls it had open end, and the worker is
+        offline at once (brief 51)."""
         if self._links.get(guid) is link:
             del self._links[guid]
+            self.events.unlinked(guid)
             for call_id, (owner, future, *_) in list(self._calls.items()):
                 if owner == guid and not future.done():
                     future.set_result(error("worker_disconnected", "The worker's link closed before it answered.",
@@ -549,7 +551,10 @@ class Hub:
             "guid": row["guid"], "moniker": row["moniker"], "name": row["name"],
             "owner": row["owner"], "approved_at": row["approved_at"],
             "interval": row["interval"], "protocol": row["protocol"], "last_heartbeat": last,
-            "online": last is not None and self.clock() - last <= MISSED_HEARTBEATS * row["interval"],
+            # Online: the hub holds a link for it, and it has not missed three heartbeats on it (H3;
+            # no link means offline at once, brief 51).
+            "online": row["guid"] in self._links and last is not None
+                      and self.clock() - last <= MISSED_HEARTBEATS * row["interval"],
             "caps": state.get("caps", []), "facts": state.get("facts"), "band": state.get("band"),
             "health": state.get("health"), "streams": state.get("streams"), "plugins": state.get("plugins"),
             "config_version": state.get("config_version"),

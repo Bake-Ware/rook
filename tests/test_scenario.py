@@ -124,13 +124,12 @@ async def lifecycle(tmp_path):
         assert json.loads(rows[0]["result"])["result"] == {"text": "hi"}
         assert json.loads(rows[1]["result"])["code"] == "unknown_cap"
 
-        # 5. The worker stops. After three missed heartbeats it is offline,
-        #    and its record and caps are kept (H3).
+        # 5. The worker stops. Its link is gone, so it is offline at once, with no
+        #    heartbeat missed (brief 51; a linked worker that misses three is offline
+        #    by H3: test_hub.py), and its record and caps are kept (H3).
         first.stop()
         await running
-        clock.advance(3 * 7)
-        assert hub.get_worker(guid)["online"]
-        clock.advance(1)
+        await eventually(lambda: guid not in hub._links)
         record = hub.get_worker(guid)
         assert not record["online"]
         assert [c["name"] for c in record["caps"]] == ALL
