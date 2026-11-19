@@ -351,19 +351,37 @@ async def band_route(tmp_path):
                 assert closing.type in (WSMsgType.CLOSE, WSMsgType.CLOSED)
                 assert 0.4 < time.monotonic() - started < 3
 
-            # A full outgoing queue drops, and other connections go on (the seam's send never blocks).
-            await setup.approve()
-            async with client.ws_connect(url) as stalled:
-                await until(lambda: len(hub.carrier._queues) == 1)
-                [path] = hub.carrier._queues
-                psk, _ = await setup.session()
-                played = await setup.connect(psk)
-                await setup.online(played)
-                for _ in range(link.QUEUE + 50):
-                    hub.carrier._send(path, b"\x01" * 100)        # what the Endpoint calls: never blocks
-                assert hub.carrier._queues[path].qsize() <= link.QUEUE
-                await round_trip(setup, played, "beside a full queue")
-                assert not stalled.closed
+
+def test_band_queue_does_not_drop(tmp_path):
+    asyncio.run(band_queue(tmp_path))
+
+
+async def band_queue(tmp_path):
+    """Brief 58 (Bake 17 Nov, "no max queue"): frames for a /band connection whose socket is not
+    being read all wait in its queue, however many; none is dropped, they arrive whole and in
+    order once it is read, and other connections go on meanwhile (the seam's send never blocks)."""
+    async with Setup(tmp_path / "hub") as setup:
+        hub, url = setup.hub, setup.base.replace("http", "ws") + "/band"
+        await setup.approve()
+        async with aiohttp.ClientSession() as client, client.ws_connect(url) as stalled:
+            await until(lambda: len(hub.carrier._queues) == 1)
+            [path] = hub.carrier._queues
+            psk, _ = await setup.session()
+            played = await setup.connect(psk)
+            await setup.online(played)
+            # 2,000 numbered frames of 4 KB: far past the 256 core used to drop at, and 8 MB, more
+            # than the socket's buffers hold while nobody reads it.
+            frames = [n.to_bytes(4, "big") + b"\x01" * 4096 for n in range(2000)]
+            for frame in frames:
+                hub.carrier._send(path, frame)          # what the Endpoint calls: never blocks
+            assert hub.carrier._queues[path].qsize() == len(frames)
+            await round_trip(setup, played, "beside a stalled connection")
+            got = []
+            while len(got) < len(frames):
+                message = await stalled.receive()
+                assert message.type == WSMsgType.BINARY, message
+                got.append(message.data)
+            assert got == frames
 
 
 def test_pending_session_unused_is_removed(tmp_path, monkeypatch):
