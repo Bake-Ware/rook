@@ -23,6 +23,16 @@ peers, every WATCH seconds. A WebSocket connection that drops and comes back und
 while the hub still holds it, does not end the link: the Telesthete client reconnects and the
 session and Channel 0 carry on (section 3.3).
 
+The link also ends at once when its WebSocket connection comes back to a hub that has started
+since (brief 57). A hub gives its start number in `link_accept` (`session.hub_start`), new at every
+start. The WebSocket client calls its public `on_connected` hook after every (re)connect; the
+Band sets it to send HELLO, and this link wraps it. After each reconnect the link reads the hub's
+start number again (`session.read_hub_start`, `GET /link`); a different number means the hub that
+held this session is gone, so it can never answer under its key, and the link ends. The worker
+then makes a new session at once, instead of waiting for Channel 0 to give up or for
+PEER_TIMEOUT. The same number, or none read, changes nothing. A hub that gives no number (one
+older than brief 57) is never asked, as before.
+
 A session's key lives only in its Band, and goes when the link ends. It is never written or
 logged: Telesthete logs a `band_id` prefix only. `wss://` is verified against the system's roots,
 as the knock's HTTPS is.
@@ -63,6 +73,16 @@ class TelestheteLink:
         self.transport = WebSocketTransport(session.band_url)       # ssl=None: the system's roots
         self.band = Band(session.psk, transport=self.transport, reconnect=True)
         self._channel = None
+        self._hub_start, self._read_hub_start = session.hub_start, session.read_hub_start
+        self._connections = 0
+        self._checks = set()            # the reads of the hub's start number running after reconnects
+        if self._hub_start is not None and self._read_hub_start is not None:
+            hello = self.transport.on_connected         # the Band's: HELLO on every (re)connect
+
+            def connected():
+                hello()
+                self._connected()
+            self.transport.on_connected = connected
         self._inbox = asyncio.Queue()
         self._watching = None
         self._stopping = None
@@ -74,6 +94,8 @@ class TelestheteLink:
         except TimeoutError:
             self.close()                        # never answered: a failed attempt (section 3.2)
             return
+        if self.closed:                         # ended meanwhile: a reconnect found the hub had restarted (brief 57)
+            return
         channel = self._channel = self.band.channel(CHANNEL, self.transport.peer_address)
         channel.on_message(self._inbox.put_nowait)
         channel.on_reset(lambda reason: self.close())          # any reset ends the link (section 3.2)
@@ -81,8 +103,22 @@ class TelestheteLink:
         self._watching = asyncio.get_running_loop().create_task(self._watch())
 
     async def _answered(self):
-        while not self.band.get_peers():        # HELLO_ACK: the hub holds this session's key
+        while not self.band.get_peers() and not self.closed:    # HELLO_ACK: the hub holds this session's key
             await asyncio.sleep(0.02)
+
+    def _connected(self):
+        """The WebSocket client connected to /band. Every connection after the first is a reconnect:
+        read the hub's start number, to learn whether the hub that holds this session still answers."""
+        self._connections += 1
+        if self._connections > 1 and not self.closed:
+            task = asyncio.get_running_loop().create_task(self._check_hub())
+            self._checks.add(task)
+            task.add_done_callback(self._checks.discard)
+
+    async def _check_hub(self):
+        start = await self._read_hub_start()
+        if start is not None and start != self._hub_start:
+            self.close()                        # that hub is gone, and this session with it (brief 57)
 
     async def _watch(self):
         """The hub is lost once no peer of the Band is alive: PEER_TIMEOUT without a word."""
@@ -126,10 +162,11 @@ class TelestheteLink:
         self._stopping = asyncio.get_running_loop().create_task(self._stop())
 
     async def _stop(self):
-        watching = self._watching
-        if watching is not None and watching is not asyncio.current_task():
-            watching.cancel()
-            await asyncio.gather(watching, return_exceptions=True)
+        tasks = [task for task in (self._watching, *self._checks)
+                 if task is not None and task is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await self.band.stop()                  # GOODBYE, then the Band's tasks and its transport
 
     async def wait_closed(self):

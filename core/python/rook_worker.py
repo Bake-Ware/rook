@@ -210,10 +210,18 @@ class Part:
 class Session:
     """What one link exchange gives the carrier (link design 3.1): the worker's identity key,
     the PSK the link runs under (never printed), and where the hub serves links: the hub URL
-    with scheme ws or wss and path /band (2.3). One session per connection; never reused."""
+    with scheme ws or wss and path /band (2.3). One session per connection; never reused.
+
+    `hub_start` is the start number the hub gave in link_accept, and `read_hub_start` reads the
+    hub's start number now (GET /link; None if it cannot be read). When the carrier's connection to
+    /band drops and comes back, it reads the number again: a different one means the hub that held
+    this session is gone, and the link ends at once (brief 57). A hub that gives no number (one
+    older than brief 57) leaves `hub_start` None, and the carrier never reads it."""
     key: str
     psk: str = field(repr=False)
     band_url: str
+    hub_start: int | None = None
+    read_hub_start: Callable[[], Awaitable[int | None]] | None = field(default=None, repr=False)
 
 
 class Refused(Exception):
@@ -421,7 +429,24 @@ class Worker:
         except ProtocolError:                     # a small-order point
             return self._cannot_link("the hub's link_accept did not pass the checks of link design 2.5")
         scheme, rest = self.hub_url.split("://", 1)
-        return Session(self.key, psk, f"{'wss' if scheme == 'https' else 'ws'}://{rest}/band")
+        return Session(self.key, psk, f"{'wss' if scheme == 'https' else 'ws'}://{rest}/band",
+                       reply.get("hub_start"), self._read_hub_start)
+
+    async def _read_hub_start(self):
+        """The hub's start number now, from `GET /link` (brief 57), or None if it cannot be read: the
+        hub unreachable, or one that has no such route."""
+        try:
+            reply = await asyncio.to_thread(self._get, "/link")
+        except (OSError, ProtocolError):
+            return None
+        return reply["hub_start"] if reply["type"] == "hub_start" else None
+
+    def _get(self, path):
+        try:
+            with urllib.request.urlopen(self.hub_url + path, timeout=HTTP_TIMEOUT) as response:
+                return decode(response.read())
+        except urllib.error.HTTPError as e:
+            return decode(e.read())
 
     # ----------------------------------------------------------------- link
 
