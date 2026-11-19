@@ -13,9 +13,12 @@ The data requests are only what the pages need, as the logged-in user.
 Approving a worker goes through the `worker.approve` hub cap, revoking its key
 through `worker.revoke` (R5), and a redact through `journal.redact`, so each is
 a call in the journal (L1).
+
+What blocks (the session's use, the database, password hashing, reading a request's JSON and
+encoding a reply) runs on a thread (Hub.off_loop, brief 53), so the hub's event loop serves
+everyone else meanwhile.
 """
 
-import asyncio
 import json
 import pathlib
 import shutil
@@ -66,14 +69,22 @@ def _refused(error):
     return web.json_response(error.message, status=401 if unauthorised else 400)
 
 
-async def _body(request):
+async def _body(hub, request):
+    """The request's JSON object, read on a thread; else HubError."""
+    raw = await request.read()
     try:
-        body = await request.json()
+        body = await hub.off_loop(json.loads, raw)
     except ValueError:
         body = None
     if not isinstance(body, dict):
         raise HubError("bad_message", "The request body must be a JSON object.", "Send JSON, as the site does.")
     return body
+
+
+async def _json(hub, value, **kwargs):
+    """A JSON reply, encoded on a thread: a reply can be tens of megabytes (brief 53)."""
+    body = await hub.off_loop(lambda: json.dumps(value).encode("utf-8"))
+    return web.Response(body=body, content_type="application/json", charset="utf-8", **kwargs)
 
 
 def _text(body, name):
@@ -134,6 +145,18 @@ def workers_view(hub):
     return {"stats": {"online": sum(w["online"] for w in workers), "pending": len(pending),
                       "devices": len(all_devices)},
             "groups": groups, "pending": pending, "unrecognised": bands.unrecognised(hub), "users": users}
+
+
+def session_view(hub, user):
+    """Who is logged in, the hub's name and the navigation, for the site's shell."""
+    person = hub.auth.get_user(user)
+    return {"user": {"name": person["name"], "moniker": person["moniker"]}, "hub": {"name": hub.name()},
+            "nav": navigation(hub), "components": plugin_components(hub)}
+
+
+def worker_streams_view(hub, worker, wanted):
+    worker = hub.get_worker(worker)["moniker"]
+    return {"streams": [stream_view(hub, s) for s in hub.streams.list(wanted) if s["worker"] == worker]}
 
 
 def stream_view(hub, stream):
@@ -249,9 +272,9 @@ def add_routes(app, hub):
     def logged_in(handler):
         async def answer(request):
             try:
-                token, user = session(request)
+                token, user = await hub.off_loop(session, request)
                 # no-store: a revealed value or a new token is never kept in the browser's cache
-                return web.json_response(await handler(request, token, user), headers={"Cache-Control": "no-store"})
+                return await _json(hub, await handler(request, token, user), headers={"Cache-Control": "no-store"})
             except HubError as e:
                 return _refused(e)
         return answer
@@ -259,36 +282,40 @@ def add_routes(app, hub):
     async def page(request):
         return web.FileResponse(FILES / "index.html")
 
-    def signed_in(user):
+    async def signed_in(user):
         """A reply that signs the user in: a new session, in the cookie (T3, T4)."""
-        token = hub.auth.mint("session", user=user["guid"])
+        token = await hub.off_loop(lambda: hub.auth.mint("session", user=user["guid"]))
         reply = web.json_response({"user": {"name": user["name"], "moniker": user["moniker"]}})
         reply.set_cookie(COOKIE, token, httponly=True, samesite="Strict", path="/")
         return reply
 
     async def login(request):
         try:
-            body = await _body(request)
-            return signed_in(hub.auth.login(_text(body, "name"), body.get("password") or ""))
+            body = await _body(hub, request)
+            return await signed_in(await hub.off_loop(hub.auth.login, _text(body, "name"), body.get("password") or ""))
         except HubError as e:
             return web.json_response(e.message, status=401 if e.message["code"] != "bad_message" else 400)
 
     # Setup (Bake 13 Nov: "First user needs a setup wizard if no user is created."): while the
     # hub has no user, the site shows a setup page in place of the login page. It makes the
     # first user and signs them in; once any user exists, setup is over for good.
-    async def setup_state(request):
+    def has_users():
         with hub._lock:
-            needed = not hub.auth.has_users()
+            return hub.auth.has_users()
+
+    async def setup_state(request):
+        needed = not await hub.off_loop(has_users)
         key_file = str(hub.vault_key_file) if needed and hub.vault_key_file else None
         return web.json_response({"needed": needed, "vault_key_file": key_file})
 
     async def setup(request):
         try:
-            body = await _body(request)
+            body = await _body(hub, request)
             password = body.get("password")
             if not isinstance(password, str) or not password:
                 raise HubError("bad_message", "password is required.", "Give a password.")
-            return signed_in(hub.auth.create_user(_text(body, "name"), password, first=True))
+            return await signed_in(await hub.off_loop(lambda: hub.auth.create_user(_text(body, "name"), password,
+                                                                                    first=True)))
         except HubError as e:
             return web.json_response(e.message, status=403 if e.message["code"] == "setup_done" else 400)
 
@@ -296,25 +323,26 @@ def add_routes(app, hub):
         reply = web.json_response({"logged_out": True})
         reply.del_cookie(COOKIE, path="/")
         try:
-            token, _ = session(request)
-            hub.auth.revoke_token(hub.auth.verify(token)["guid"], token=token)
+            await hub.off_loop(end_session, request)
         except HubError:
             pass   # no session to end
         return reply
 
+    def end_session(request):
+        token, _ = session(request)
+        hub.auth.revoke_token(hub.auth.verify(token)["guid"], token=token)
+
     @logged_in
     async def me(request, token, user):
-        person = hub.auth.get_user(user)
-        return {"user": {"name": person["name"], "moniker": person["moniker"]}, "hub": {"name": hub.name()},
-                "nav": navigation(hub), "components": plugin_components(hub)}
+        return await hub.off_loop(session_view, hub, user)
 
     @logged_in
     async def workers(request, token, user):
-        return workers_view(hub)
+        return await hub.off_loop(workers_view, hub)
 
     @logged_in
     async def approve(request, token, user):
-        key = _text(await _body(request), "key")
+        key = _text(await _body(hub, request), "key")
         reply = await hub.call("hub", "worker.approve", {"key": key}, "Approved on the Workers page.", token=token)
         if reply["type"] == "error":
             raise HubError(reply["code"], reply["message"], reply["next"])
@@ -323,7 +351,7 @@ def add_routes(app, hub):
     @logged_in
     async def reassign(request, token, user):
         """A worker's owner changed on its row (W6, P3), through the worker.reassign hub cap (L1)."""
-        owner = _text(await _body(request), "owner")
+        owner = _text(await _body(hub, request), "owner")
         return await _hub_cap(hub, "worker.reassign", {"worker": request.match_info["worker"], "owner": owner},
                               "Owner changed on the Workers page.", token)
 
@@ -335,22 +363,26 @@ def add_routes(app, hub):
 
     @logged_in
     async def name_band(request, token, user):
-        body = await _body(request)
-        return bands.create(hub, _text(body, "name"), _text(body, "gateway_mac"), token=token)
+        body = await _body(hub, request)
+        name, mac = _text(body, "name"), _text(body, "gateway_mac")
+        return await hub.off_loop(lambda: bands.create(hub, name, mac, token=token))
 
     @logged_in
     async def add_gateway(request, token, user):
-        body = await _body(request)
-        return bands.add_gateway(hub, request.match_info["band"], _text(body, "gateway_mac"), token=token)
+        body = await _body(hub, request)
+        return await hub.off_loop(lambda: bands.add_gateway(hub, request.match_info["band"], _text(body, "gateway_mac"),
+                                                            token=token))
 
     @logged_in
     async def rename_band(request, token, user):
-        return bands.rename(hub, request.match_info["band"], _text(await _body(request), "name"), token=token)
+        name = _text(await _body(hub, request), "name")
+        return await hub.off_loop(lambda: bands.rename(hub, request.match_info["band"], name, token=token))
 
     @logged_in
     async def merge_band(request, token, user):
         """The band in the path joins band `into` and is gone (P4: merge on the group header)."""
-        return bands.merge(hub, request.match_info["band"], _text(await _body(request), "into"), token=token)
+        into = _text(await _body(hub, request), "into")
+        return await hub.off_loop(lambda: bands.merge(hub, request.match_info["band"], into, token=token))
 
     def pins_of(user):
         with hub._lock:
@@ -359,18 +391,21 @@ def add_routes(app, hub):
 
     @logged_in
     async def get_pins(request, token, user):
-        return pins_of(user)
+        return await hub.off_loop(pins_of, user)
 
     @logged_in
     async def put_pins(request, token, user):
         """Replace the user's pins with this list, in this order (P6)."""
-        pins = (await _body(request)).get("pins")
+        pins = (await _body(hub, request)).get("pins")
         if not isinstance(pins, list) or not all(
                 isinstance(p, dict) and isinstance(p.get("label"), str) and p["label"]
                 and isinstance(p.get("href"), str) and p["href"].startswith("/") and not p["href"].startswith("//")
                 for p in pins):
             raise HubError("bad_message", "pins must be a list of {label, href}, each href a path on this hub.",
                            "Send the whole Pinned strip, in order.")
+        return await hub.off_loop(set_pins, user, pins)
+
+    def set_pins(user, pins):
         with hub._lock, hub._db:
             hub._db.execute("DELETE FROM pins WHERE user = ?", (user,))
             hub._db.executemany("INSERT INTO pins (user, position, label, href) VALUES (?, ?, ?, ?)",
@@ -398,13 +433,12 @@ def add_routes(app, hub):
     @logged_in
     async def worker_streams(request, token, user):
         """A worker's streams, newest first; `open=false` for the closed ones (S5)."""
-        worker = hub.get_worker(_query_text(request, "worker"))["moniker"]
-        wanted = {"true": True, "false": False}.get(request.query.get("open"))
-        return {"streams": [stream_view(hub, s) for s in hub.streams.list(wanted) if s["worker"] == worker]}
+        worker, wanted = _query_text(request, "worker"), {"true": True, "false": False}.get(request.query.get("open"))
+        return await hub.off_loop(worker_streams_view, hub, worker, wanted)
 
     @logged_in
     async def one_stream(request, token, user):
-        return {"stream": stream_view(hub, hub.streams.get(request.match_info["stream"]))}
+        return await hub.off_loop(lambda: {"stream": stream_view(hub, hub.streams.get(request.match_info["stream"]))})
 
     @logged_in
     async def read_stream(request, token, user):
@@ -419,7 +453,7 @@ def add_routes(app, hub):
     @logged_in
     async def stream_input(request, token, user):
         """What the person typed, to the worker, recorded as theirs (S2)."""
-        text = (await _body(request)).get("text")
+        text = (await _body(hub, request)).get("text")
         if not isinstance(text, str) or not text:
             raise HubError("bad_message", "text is required.", "Send what was typed as text.")
         return await hub.streams.write(request.match_info["stream"], text, token=token)
@@ -427,7 +461,7 @@ def add_routes(app, hub):
     @logged_in
     async def close_stream(request, token, user):
         """Close on purpose, with a reason, journaled under the user (S4, L1)."""
-        why = _text(await _body(request), "why")
+        why = _text(await _body(hub, request), "why")
         return await hub.streams.close(request.match_info["stream"], why, token=token)
 
     app.router.add_get("/api/streams", worker_streams)
@@ -439,7 +473,7 @@ def add_routes(app, hub):
     @logged_in
     async def resize_stream(request, token, user):
         """The size the person's terminal shows the stream at, to its worker (Bake 13 Nov). Not recorded."""
-        body = await _body(request)
+        body = await _body(hub, request)
         return await hub.streams.resize(request.match_info["stream"], body.get("cols"), body.get("rows"), token=token)
 
     app.router.add_post("/api/streams/{stream}/resize", resize_stream)
@@ -449,16 +483,17 @@ def add_routes(app, hub):
     @logged_in
     async def read_journal(request, token, user):
         filters = {name: request.query[name] for name in JOURNAL_FILTERS if request.query.get(name)}
-        return {"entries": journal.read(hub, **filters, limit=_limit(request.query))}
+        limit = _limit(request.query)
+        return {"entries": await hub.off_loop(lambda: journal.read(hub, **filters, limit=limit))}
 
     @logged_in
     async def choices(request, token, user):
-        return journal_choices(hub)
+        return await hub.off_loop(journal_choices, hub)
 
     @logged_in
     async def redact(request, token, user):
         """journal.redact as a call by the user; the value is never kept or echoed (L5)."""
-        body = await _body(request)
+        body = await _body(hub, request)
         if not isinstance(body.get("value"), str) or not body["value"]:
             raise HubError("bad_message", "value is required.", "Give the exact text to take out of the journal.")
         reply = await hub.call("hub", "journal.redact", {"value": body["value"]}, "Redacted on the Data page.",
@@ -469,33 +504,40 @@ def add_routes(app, hub):
 
     @logged_in
     async def list_records(request, token, user):
-        names = {}
-        found = records.search(hub, type=request.query.get("type") or None, text=request.query.get("text") or None,
-                               limit=_limit(request.query))
-        return {"records": [record_view(hub, r, names) for r in found]}
+        kind, text, limit = request.query.get("type") or None, request.query.get("text") or None, _limit(request.query)
+
+        def view():
+            names = {}
+            return {"records": [record_view(hub, r, names) for r in records.search(hub, type=kind, text=text,
+                                                                                    limit=limit)]}
+        return await hub.off_loop(view)
 
     @logged_in
     async def types(request, token, user):
-        return {"types": record_types(hub)}
+        return {"types": await hub.off_loop(record_types, hub)}
 
     @logged_in
     async def unlinked(request, token, user):
-        names = {}
-        return {"records": [record_view(hub, r, names) for r in records.unlinked_blobs(hub)]}
+        def view():
+            names = {}
+            return {"records": [record_view(hub, r, names) for r in records.unlinked_blobs(hub)]}
+        return await hub.off_loop(view)
 
     @logged_in
     async def one_record(request, token, user):
-        names, name = {}, request.match_info["record"]
-        linked = records.links(hub, name)
-        return {"record": record_view(hub, records.get(hub, name), names),
-                "links": {way: [record_view(hub, r, names) for r in linked[way]] for way in ("to", "from")}}
+        def view(name):
+            names, linked = {}, records.links(hub, name)
+            return {"record": record_view(hub, records.get(hub, name), names),
+                    "links": {way: [record_view(hub, r, names) for r in linked[way]] for way in ("to", "from")}}
+        return await hub.off_loop(view, request.match_info["record"])
 
     async def blob_bytes(request):
         """A blob's bytes, as a download: never shown as a page of this site."""
-        try:
+        def read(name):
             session(request)
-            name = request.match_info["record"]
-            record, data = records.get(hub, name), records.read_blob(hub, name)
+            return records.get(hub, name), records.read_blob(hub, name)
+        try:
+            record, data = await hub.off_loop(read, request.match_info["record"])
         except HubError as e:
             return _refused(e)
         filename = json.dumps(record["title"] or record["moniker"], ensure_ascii=True)
@@ -505,17 +547,19 @@ def add_routes(app, hub):
 
     @logged_in
     async def serves_devices(request, token, user):
-        serves = (await _body(request)).get("serves")
+        serves = (await _body(hub, request)).get("serves")
         if not isinstance(serves, bool):
             raise HubError("bad_message", "serves must be true or false.", "Send {\"serves\": true} or false.")
-        return {"serves_devices": devices.set_serves_devices(hub, request.match_info["worker"], serves, token=token)}
+        return {"serves_devices": await hub.off_loop(lambda: devices.set_serves_devices(
+            hub, request.match_info["worker"], serves, token=token))}
 
     @logged_in
     async def receives_plugins(request, token, user):
-        receives = (await _body(request)).get("receives")
+        receives = (await _body(hub, request)).get("receives")
         if not isinstance(receives, bool):
             raise HubError("bad_message", "receives must be true or false.", "Send {\"receives\": true} or false.")
-        return {"receives_plugins": hub.plugins.set_receives(request.match_info["worker"], receives, token=token)}
+        return {"receives_plugins": await hub.off_loop(lambda: hub.plugins.set_receives(
+            request.match_info["worker"], receives, token=token))}
 
     app.router.add_get("/api/journal", read_journal)
     app.router.add_get("/api/journal/choices", choices)
@@ -691,19 +735,19 @@ def jobs_secrets_auth_routes(app, hub, logged_in):
     # Jobs (P4, J1, J3, J4, J5, J7, P8)
     @logged_in
     async def get_jobs(request, token, user):
-        return jobs_view(hub)
+        return await hub.off_loop(jobs_view, hub)
 
     @logged_in
     async def get_runs(request, token, user):
-        return {"runs": runs(hub, request.query.get("job") or None)}
+        return {"runs": await hub.off_loop(runs, hub, request.query.get("job") or None)}
 
     @logged_in
     async def get_targets(request, token, user):
-        return job_targets(hub)
+        return await hub.off_loop(job_targets, hub)
 
     @logged_in
     async def new_job(request, token, user):
-        return await hub_cap("job.create", await _body(request), "Created on the Jobs page.", token)
+        return await hub_cap("job.create", await _body(hub, request), "Created on the Jobs page.", token)
 
     def job_action(cap, why):
         @logged_in
@@ -714,47 +758,47 @@ def jobs_secrets_auth_routes(app, hub, logged_in):
     # Secrets (X3)
     @logged_in
     async def get_secrets(request, token, user):
-        return secrets_view(hub, token)
+        return await hub.off_loop(secrets_view, hub, token)
 
     @logged_in
     async def new_secret(request, token, user):
-        body = await _body(request)
+        body = await _body(hub, request)
         args = {name: body.get(name) for name in ("scope", "name", "value")}
         return await hub_cap("secret.create", args, "Added on the Secrets page.", token)
 
     @logged_in
     async def reveal(request, token, user):
-        return {"value": hub.vault.reveal(request.match_info["secret"], token=token)}
+        return {"value": await hub.off_loop(lambda: hub.vault.reveal(request.match_info["secret"], token=token))}
 
     # Auth (T3, T5, T6)
     @logged_in
     async def get_auth(request, token, user):
-        return auth_view(hub, token, user)
+        return await hub.off_loop(auth_view, hub, token, user)
 
     @logged_in
     async def new_token(request, token, user):
         # The person mints it directly (T5: "a user mints directly"), not through the session,
         # so the token hangs on the person and not on this browser's login. An agent token, or
         # with {"purpose": "webhook"} a webhook token (J2), the reply as token.create gives it.
-        purpose = (await _body(request)).get("purpose", "agent") if request.can_read_body else "agent"
-        return caps.token_create(hub, {"purpose": purpose}, {"user": user})
+        purpose = (await _body(hub, request)).get("purpose", "agent") if request.can_read_body else "agent"
+        return await hub.off_loop(caps.token_create, hub, {"purpose": purpose}, {"user": user})
 
     @logged_in
     async def revoke_token(request, token, user):
-        hub.auth.revoke_token(request.match_info["token"], token=token)
+        await hub.off_loop(lambda: hub.auth.revoke_token(request.match_info["token"], token=token))
         return {"revoked": request.match_info["token"]}
 
     @logged_in
     async def revoke_user(request, token, user):
-        hub.auth.revoke_user(request.match_info["user"], token=token)
+        await hub.off_loop(lambda: hub.auth.revoke_user(request.match_info["user"], token=token))
         return {"revoked": request.match_info["user"]}
 
     @logged_in
     async def change_password(request, token, user):
-        password = (await _body(request)).get("password")
+        password = (await _body(hub, request)).get("password")
         if not isinstance(password, str) or not password:
             raise HubError("bad_message", "password is required.", "Give the new password.")
-        hub.auth.change_password(user, password, token=token)
+        await hub.off_loop(lambda: hub.auth.change_password(user, password, token=token))
         return {"changed": True}
 
     app.router.add_get("/api/jobs", get_jobs)
@@ -797,29 +841,34 @@ def settings_routes(app, hub, logged_in):
     hub name), and its Plugins section's data and install (P4, PL3, PL4)."""
     @logged_in
     async def get_settings(request, token, user):
-        return {"sections": SETTINGS + plugin_sections(hub)}
+        return {"sections": SETTINGS + await hub.off_loop(plugin_sections, hub)}
 
     @logged_in
     async def get_hub(request, token, user):
-        return {"name": hub.name()}
+        return {"name": await hub.off_loop(hub.name)}
 
     @logged_in
     async def name_hub(request, token, user):
-        return {"name": hub.set_name(_text(await _body(request), "name"), token=token)}
+        name = _text(await _body(hub, request), "name")
+        return {"name": await hub.off_loop(lambda: hub.set_name(name, token=token))}
 
     @logged_in
     async def get_plugins(request, token, user):
-        return {"plugins": [dict(p, **plugin_adds(hub, p["name"])) for p in hub.plugins.list()]}
+        return {"plugins": await hub.off_loop(
+            lambda: [dict(p, **plugin_adds(hub, p["name"])) for p in hub.plugins.list()])}
 
     @logged_in
     async def check_plugin(request, token, user):
         """What installing from `path` would do, before the person confirms: the folder's plugin,
         and the installed one it would replace at once (PL3). Or the refusal, with what to fix."""
-        path = _text(await _body(request), "path")
+        path = _text(await _body(hub, request), "path")
+        return await hub.off_loop(would_install, path)
+
+    def would_install(path):
         if path.startswith(("http://", "https://")):        # a URL (PL4): fetched to look, then again to install
             work = pathlib.Path(tempfile.mkdtemp(prefix="rook-plugin-"))
             try:
-                manifest = plugins.read_manifest(await asyncio.to_thread(plugins.fetch, path, work))
+                manifest = plugins.read_manifest(plugins.fetch(path, work))
             finally:
                 shutil.rmtree(work, ignore_errors=True)
         else:
@@ -832,10 +881,11 @@ def settings_routes(app, hub, logged_in):
 
     @logged_in
     async def install_plugin(request, token, user):
-        path = _text(await _body(request), "path")
+        path = _text(await _body(hub, request), "path")
         where = {"url": path} if path.startswith(("http://", "https://")) else {"path": path}
         reply = await _hub_cap(hub, "plugin.install", where, "Installed on the Settings page.", token)
-        return {"installed": dict(reply["installed"], **plugin_adds(hub, reply["installed"]["name"]))}
+        adds = await hub.off_loop(plugin_adds, hub, reply["installed"]["name"])
+        return {"installed": dict(reply["installed"], **adds)}
 
     app.router.add_get("/api/settings", get_settings)
     app.router.add_get("/api/hub", get_hub)
@@ -915,9 +965,9 @@ def plugin_site_routes(app, hub, logged_in, session):
     async def plugin_file(request):
         """One file a plugin's manifest names, to a session only (P1)."""
         try:
-            session(request)
+            await hub.off_loop(session, request)
             plugin, wanted = request.match_info["plugin"], request.match_info["file"]
-            for name, folder, site in plugins.site_parts(hub):
+            for name, folder, site in await hub.off_loop(plugins.site_parts, hub):
                 files = {plugins.site_file(folder, entry["file"])
                          for part in plugins.SITE_FIELDS for entry in site.get(part, [])}
                 if name == plugin and wanted in files:
@@ -933,12 +983,12 @@ def plugin_site_routes(app, hub, logged_in, session):
         """One cap call as the logged-in user, journaled under them (L1): what a page's call() sends.
         A call still running after CALL_WAIT answers {type: "running", id, worker, stream} and goes on,
         as the door's call does (Bake 13 Nov): its reply ends up as that stream's last entry."""
-        body = await _body(request)
+        body = await _body(hub, request)
         args = body.get("args", {})
         if not isinstance(args, dict):
             raise HubError("bad_message", "args must be an object.", "Send the cap's arguments as an object.")
         reply = await hub.call_or_follow(_text(body, "worker"), _text(body, "cap"), args, _text(body, "why"),
-                                         token=token)
+                                         token=token, size=len(await request.read()))
         if reply["type"] == "error":
             raise HubError(reply["code"], reply["message"], reply["next"])
         return reply
