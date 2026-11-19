@@ -53,7 +53,6 @@ from .errors import HubError, error
 CHANNEL = 0             # every Rook message rides Channel 0, opened by the worker (section 4.1)
 PENDING_WAIT = 60       # seconds a pending session may wait for its Channel 0 (reviewer, told to Bake 13 Nov)
 SILENT = 60             # /band: a connection that sends nothing for this long is closed (Telesthete SPEC 9.3)
-QUEUE = 256             # /band: frames waiting to go out on one connection; past this they are dropped
 FLUSH = 0.25            # at stop: seconds, at most, for /band connections to take the frames queued for them
 
 
@@ -291,10 +290,11 @@ class Carrier:
     # -------------------------------------------------------------- /band
 
     def _send(self, path, frame):
-        """The Endpoint's send callback: must not block or raise. A connection whose queue is full
-        loses the frame, as UDP would; the Channel retransmits (Telesthete seam, T9)."""
+        """The Endpoint's send callback: must not block or raise (Telesthete seam, T9). The frame
+        waits in its connection's queue, which has no maximum (Bake 17 Nov, "no max queue"), until
+        the connection takes it; a frame for a connection that is gone is not sent."""
         queue = self._queues.get(path)
-        if queue is not None and not queue.full():
+        if queue is not None:
             queue.put_nowait(frame)
 
     async def band(self, request):
@@ -304,7 +304,7 @@ class Carrier:
         ws = web.WebSocketResponse(receive_timeout=SILENT)      # pings are answered (autoping)
         await ws.prepare(request)
         path = ("ws", next(self._numbers))
-        queue = self._queues[path] = asyncio.Queue(QUEUE)
+        queue = self._queues[path] = asyncio.Queue()       # no maximum: nothing is dropped for being full
         self._requests[path] = request
 
         async def pump():
