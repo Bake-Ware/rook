@@ -8,6 +8,7 @@ run is in the pull request.
 """
 
 import asyncio
+import json
 import os
 import pathlib
 import time
@@ -305,4 +306,25 @@ def test_the_claude_code_turn_runs_claude_with_0_5s_arguments(tmp_path, monkeypa
         assert f'"url": "{rig.url}/mcp"' in args
         await rig.say("again")
         assert "--resume\ns-123\n" in log.read_text()
+    run(tmp_path, body)
+
+
+def test_the_agent_messages_itself_and_nothing_hangs(tmp_path):
+    """A message sent from a turn's own door token is taken like any other: appended, queued and
+    answered after that turn. The send answers {agent, stream, seq} at once although it asked to
+    wait, so the turn that sent it ends; nothing is refused and nothing hangs."""
+    async def body(rig):
+        sent = await rig.say("SELF please")
+        said = json.loads(sent["text"].removeprefix("sent itself: "))
+        assert set(said) == {"agent", "stream", "seq"} and said["agent"] == "house"
+        assert said["stream"] == sent["stream"] and said["seq"] == 3           # after the input and the prompt
+        events = await rig.until(lambda got: len(replies(got)) == 2)
+        assert [(e["seq"], e["type"], e["data"].get("role"), e["data"].get("text")) for e in events] == [
+            (1, "input", None, "SELF please"), (2, "turn", "prompt", "SELF please"),
+            (3, "input", None, "from my own turn"), (4, "turn", "reply", sent["text"]),
+            (5, "turn", "prompt", "from my own turn"), (6, "turn", "reply", events[5]["data"]["text"])]
+        assert events[2]["by"] == "person:Alice"                               # the token stood for Alice
+        assert events[5]["data"]["text"].startswith("echo 2: from my own turn")  # its own turn, answered after
+        tokens = (await rig.ok("hub", "token.list"))["tokens"]
+        assert all(t["revoked_at"] for t in tokens if t["minted_by"])         # both turns' tokens ended
     run(tmp_path, body)
