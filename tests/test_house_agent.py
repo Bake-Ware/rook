@@ -58,6 +58,9 @@ class Rig:
         self.moniker = (await self.ok("hub", "worker.approve", key=key))["approved"]["moniker"]
         await self.ok("hub", "plugin.install", path=ECHO)
         await self.ok("hub", "setting.set", plugin="agents", key="backend", value="echo-engine.turn")
+        # A new hub starts in setup, and its house turns carry the first-run skill until it is done (HA3).
+        # These tests are about turns, not setup (tests/test_wizard.py is): setup is done here.
+        await self.ok("hub", "agent.setup", done=True)
         await self.linked()
         return self
 
@@ -224,9 +227,11 @@ def test_engine_settings_and_errors_say_what_to_do(tmp_path):
     """The agents plugin's settings are listed and set like the hub's; an engine nobody serves fails
     the turn with a reason, kept in the conversation."""
     async def body(rig):
-        listed = (await rig.ok("hub", "setting.list", plugin="agents"))["settings"]
-        assert {s["key"]: s["value"] for s in listed} == {"house_name": None, "dock": "house",
-                                                          "backend": "echo-engine.turn", "worker": None}
+        listed = {s["key"]: s["value"] for s in (await rig.ok("hub", "setting.list", plugin="agents"))["settings"]}
+        assert {k: listed[k] for k in ("house_name", "dock", "backend", "worker")} == {
+            "house_name": None, "dock": "house", "backend": "echo-engine.turn", "worker": None}
+        assert set(listed) == {"house_name", "dock", "backend", "worker", "setup", "sound", "rookie", "rookie_theme"}  # HA3's
+        assert listed["setup"]["done"] is True and listed["sound"] is None
         await rig.ok("hub", "setting.set", plugin="agents", key="house_name", value="Jeeves")
         assert "You are Jeeves" in (await rig.say("hi"))["text"]
         await rig.ok("hub", "setting.set", plugin="agents", key="backend", value="nobody.turn")

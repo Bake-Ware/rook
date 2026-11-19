@@ -301,11 +301,26 @@ def add_routes(app, hub):
             pass   # no session to end
         return reply
 
-    @logged_in
-    async def me(request, token, user):
+    def session_view(user):
         person = hub.auth.get_user(user)
         return {"user": {"name": person["name"], "moniker": person["moniker"]}, "hub": {"name": hub.name()},
-                "nav": navigation(hub), "components": plugin_components(hub), "shell": plugin_shell(hub)}
+                "nav": navigation(hub), "components": plugin_components(hub), "shell": plugin_shell(hub),
+                "password": hub.auth.has_password(user), "unclaimed": hub.auth.unclaimed_owner() is not None}
+
+    async def me(request):
+        """Who is signed in. While the hub is open until claimed (brief HA3; 0.5's `--no-password`), a
+        visitor with no good session is signed in as its first owner, with a new session in the cookie."""
+        try:
+            _, user = session(request)
+        except HubError as e:
+            owner = hub.auth.unclaimed_owner()
+            if owner is None:
+                return _refused(e)
+            token = hub.auth.mint("session", user=owner["guid"])
+            reply = web.json_response(session_view(owner["guid"]))
+            reply.set_cookie(COOKIE, token, httponly=True, samesite="Strict", path="/")
+            return reply
+        return web.json_response(session_view(user))
 
     @logged_in
     async def workers(request, token, user):

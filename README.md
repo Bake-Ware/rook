@@ -51,6 +51,8 @@ PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub --data ~/rook-hub --
 
 Open the address it prints. While the hub has no user, the site shows a setup page: choose a name and a password for the first user, typing the password twice, and you are signed in. After that the site shows the login page. The hub runs until you stop it with Ctrl-C.
 
+Or start a new hub open until claimed, as the installer does: add `--no-password` (and `--owner NAME`, which defaults to this computer's login). With no user yet, the hub makes that owner with no password, and the site lets whoever opens it in as the owner, with no login, until a password is set (the setup wizard asks for one, and the Auth page sets one). Setting any password ends that for good: from then on a new browser gets the login page, while the browser that set it stays signed in. On a hub that has a user already the flag changes nothing. When the first person claims the hub (the setup page makes them, or their password ends open-until-claimed), every worker the system owner owns becomes theirs in the same step, journaled as a reassignment: the installer joins this machine's worker with a join token the system owner holds, since no person exists yet.
+
 Every hub also has a system owner, `system` (moniker `hub-system-owner`): not a person, it cannot log in, and no one can take its name. It owns the one built-in job, "Heartbeat roll-up", which every 12 hours rolls heartbeats older than 12 hours into one-minute buckets. The job is on the Jobs page, where it can be paused or deleted like any other; a deleted one is made again at the next start.
 
 ## Starting a worker
