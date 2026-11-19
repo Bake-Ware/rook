@@ -155,10 +155,20 @@ async def terminal(args, stream):
 TERMINAL = {"shell.open": Cap("Open a terminal.", {"type": "object"}, terminal, opens_stream=True)}
 
 
+def heard(hub):
+    """Keep each worker's last heartbeat as the hub received it: the stored history keeps only
+    its health numbers (H5, after the stress test), and these tests read what the worker sent."""
+    hub.heard, original = {}, hub._heartbeat
+
+    def spy(key, message):
+        reply, guid = original(key, message)
+        hub.heard[guid] = message
+        return reply, guid
+    hub._heartbeat = spy
+
+
 def last_open_streams(hub, guid):
-    body = hub._db.execute("SELECT body FROM heartbeats WHERE worker = ? ORDER BY rowid DESC LIMIT 1",
-                           (guid,)).fetchone()[0]
-    return json.loads(body)["open_streams"]
+    return hub.heard[guid]["open_streams"]
 
 
 def test_a_restarted_worker_loses_its_streams(tmp_path):
@@ -168,6 +178,7 @@ def test_a_restarted_worker_loses_its_streams(tmp_path):
 
 async def restarted(tmp_path):
     hub = Hub(tmp_path / "hub")
+    heard(hub)
     host, port = await hub.serve("127.0.0.1", 0)
     bake = hub.auth.create_user("Bake", "a password")["guid"]
     worker = Worker(tmp_path / "w", f"http://{host}:{port}", connector(hub), name="box", caps=TERMINAL, macs=[],

@@ -1,46 +1,63 @@
-"""The heartbeat history (H5) and reading it for the Workers page's graphs (P4, P7).
+"""The heartbeat history (H5, as Bake narrowed it after the stress test) and reading it
+for the Workers page's graphs (P4, P7).
 
-The hub keeps the raw copy of every heartbeat (`heartbeats` table) and an hourly
-roll-up of it (`heartbeat_hours`): per worker and hour, how many heartbeats came,
-when the latest did, and for each health field (H4) how many heartbeats carried
-it, their sum, the lowest and the highest. One SQL statement (`ROLL`) makes the
-roll-up from raw rows: each heartbeat adds itself as it is stored, in the same
-transaction, so a restart in the middle of an hour loses nothing; and a hub that
-kept heartbeats before the roll-up existed rolls them up once as it starts. Nothing
-is deleted (Bake 13 Nov: "build the hourly roll-up, delete nothing").
+A stored heartbeat is its health numbers (`heartbeats` table): which worker, when it
+came, and a body that keeps only the heartbeat's `health` block (H4) and what the hub
+itself reads from a heartbeat, `config_version` (CF2) and `max_message` (D4), where
+the worker sent them (`KEPT`). The caps, facts, band and the rest are kept once, as
+the worker's current state (`workers.state`), not again in every row. Bake, after the
+stress test: "We'll store whatever the last caps was ... and then store just the
+metrics needed for the health charts."
 
-A request names a span back from the hub's clock and a step; the database groups
-the heartbeats into one bucket per step, counted back from now, so the hub hands
-out at most span / step rows however many heartbeats the span holds. Each bucket
-says when it starts (`at`). A span longer than a day, or a step of an hour or more,
-is answered from the roll-up, in whole hours: the step is rounded up to whole
-hours and the buckets count back from the end of the current hour. An average
-over several hours is the sum over the hours divided by the count, so it is the
-average of the heartbeats, not of the hourly averages. `source` says which answered.
+Raw rows live 12 hours. `roll_up` turns every raw heartbeat older than that into
+one-minute buckets per worker (`heartbeat_minutes`): for each health field the lowest
+and the highest value in that minute, and how many heartbeats the minute held; then
+it deletes those raw rows, in the same transaction. Bake: "Let's keep the resolution
+around one minute and then take min-max on that one minute sample." "Deleting those
+is not a big deal because it's ephemeral." It is the hub cap `heartbeat.roll-up`.
+Heartbeats are the only thing the hub deletes, and only this way; minute buckets are
+kept. A hub that kept heartbeats in the old shape (every field of every heartbeat, and
+an hourly roll-up beside them) is brought to this shape once, as it starts (`convert`).
 
-- `series`: one worker's health over the span, bucket by bucket (H4). Each
-  field is the bucket's average: a percent for cpu, gpu, npu and battery; the
-  share of ram, disk and vram in use, as a percent; degrees for temperature;
-  bytes for heap_free; the highest uptime. A field appears only if the worker
-  reported it in that bucket, and is listed in `fields` if it did anywhere.
-- `counts`: how many heartbeats each worker sent in each bucket, with the time
-  of its latest heartbeat (H1). Devices have no heartbeat (D6) and are not here.
+A request names a span back from the hub's clock and a step; the database groups the
+heartbeats into one bucket per step, counted back from now, so the hub hands out at
+most span / step rows however many heartbeats the span holds. Each bucket says when
+it starts (`at`). Raw rows and minute buckets are read together: a raw heartbeat is
+one sample of each field it carried; a minute bucket is `count` samples at the middle
+of its lowest and highest value, placed at the middle of the minute, so it falls in
+the bucket its heartbeats fell in whenever the buckets start on a minute. So the last
+12 hours come from raw rows, as before, and anything older from the minute buckets.
+
+- `series`: one worker's health over the span, bucket by bucket (H4). Each field is
+  the average of the bucket's samples: a percent for cpu, gpu, npu and battery; the
+  share of ram, disk and vram in use, as a percent; degrees for temperature; bytes
+  for heap_free; the highest uptime. A field appears only if the worker reported it
+  in that bucket, and is listed in `fields` if it did anywhere.
+- `counts`: how many heartbeats each worker sent in each bucket, with the time of its
+  latest heartbeat (H1). Devices have no heartbeat (D6) and are not here.
 """
 
 import asyncio
-import math
+import json
 import sqlite3
 
 from .errors import HubError
 from .journal import iso
 
 BUCKETS = 120     # buckets in a span when the step is not given
-HOUR = 3600
-RAW_SPAN = 86400  # spans up to a day, with a step under an hour, are read from the raw heartbeats
+MINUTE = 60       # a roll-up bucket: "keep the resolution around one minute" (Bake)
+RAW_KEPT = 12 * 3600   # raw heartbeats older than this are rolled up into minutes (Bake: "12 hours")
+
+KEPT = ("health", "config_version", "max_message")   # what a stored heartbeat keeps of the message
 
 PERCENT = ("cpu", "gpu", "npu", "battery")
 SIZES = ("ram", "disk", "vram")
 FIELDS = ("cpu", "ram", "disk", "gpu", "vram", "npu", "battery", "temperature", "heap_free", "uptime")
+
+
+def stored(heartbeat):
+    """What the hub stores of one heartbeat message (a dict): its health numbers and KEPT."""
+    return {name: heartbeat[name] for name in KEPT if name in heartbeat}
 
 
 def _span(span, step):
@@ -57,19 +74,6 @@ def _span(span, step):
     return span, step
 
 
-def _columns():
-    """The SELECT list that averages each health field over a bucket (H4)."""
-    h = "json_extract(body, '$.health.{}')"
-    out = [f"avg({h.format(f)}) AS {f}" for f in PERCENT + ("temperature", "heap_free")]
-    out += [f"avg(100.0 * ({h.format(s + '.total')} - {h.format(s + '.free')}) / nullif({h.format(s + '.total')}, 0)) AS {s}"
-            for s in SIZES]
-    out += [f"max({h.format(s + '.total')}) AS {s}_total" for s in SIZES]
-    out.append(f"max({h.format('uptime')}) AS uptime")
-    return ", ".join(out)
-
-
-# ------------------------------------------------------------------ the hourly roll-up (H5)
-
 def _number(path):
     """SQL for a number in a heartbeat's health block, or NULL when it is not there as a number."""
     return f"CASE WHEN json_type(body, '$.health.{path}') IN ('integer', 'real') THEN json_extract(body, '$.health.{path}') END"
@@ -82,76 +86,92 @@ def _value(field):
     return _number(field)
 
 
-SCHEMA = ("CREATE TABLE IF NOT EXISTS heartbeat_hours (\n"
-          "    worker  TEXT NOT NULL REFERENCES workers(guid),\n"
-          "    hour    INTEGER NOT NULL,      -- the hour's start, in hours since the epoch\n"
-          "    count   INTEGER NOT NULL,      -- heartbeats that arrived in it\n"
-          "    last_at REAL NOT NULL,         -- when the latest of them did\n"
-          + "".join(f"    {f}_n INTEGER NOT NULL, {f}_sum REAL NOT NULL, {f}_min REAL, {f}_max REAL,\n" for f in FIELDS)
-          + "".join(f"    {s}_total REAL,\n" for s in SIZES)
-          + "    PRIMARY KEY (worker, hour)\n);\n")
+# ------------------------------------------------------------------ the minute roll-up
 
-# The roll-up of the raw heartbeats that match `{where}`, added into the hours they fall in.
-ROLL = ("INSERT INTO heartbeat_hours (worker, hour, count, last_at, "
-        + ", ".join(f"{f}_n, {f}_sum, {f}_min, {f}_max" for f in FIELDS) + ", "
-        + ", ".join(f"{s}_total" for s in SIZES) + ") "
-        f"SELECT worker, CAST(at / {HOUR} AS INTEGER), count(*), max(at), "
-        + ", ".join(f"count({v}), total({v}), min({v}), max({v})" for v in map(_value, FIELDS)) + ", "
+SCHEMA = ("CREATE TABLE IF NOT EXISTS heartbeat_minutes (\n"
+          "    worker  TEXT NOT NULL REFERENCES workers(guid),\n"
+          "    minute  INTEGER NOT NULL,      -- the minute's start, in minutes since the epoch\n"
+          "    count   INTEGER NOT NULL,      -- heartbeats that arrived in it\n"
+          + "".join(f"    {f}_min REAL, {f}_max REAL,\n" for f in FIELDS)
+          + "".join(f"    {s}_total REAL,\n" for s in SIZES)
+          + "    PRIMARY KEY (worker, minute)\n);\n"
+          "CREATE INDEX IF NOT EXISTS heartbeat_minutes_minute ON heartbeat_minutes (minute);\n")
+
+# The raw heartbeats from before :before, added into the minutes they fall in. A minute
+# that was partly rolled up before (the 12 hours ended inside it) takes the rest in.
+ROLL = ("INSERT INTO heartbeat_minutes (worker, minute, count, "
+        + ", ".join(f"{f}_min, {f}_max" for f in FIELDS) + ", " + ", ".join(f"{s}_total" for s in SIZES) + ") "
+        f"SELECT worker, CAST(at / {MINUTE} AS INTEGER), count(*), "
+        + ", ".join(f"min({v}), max({v})" for v in map(_value, FIELDS)) + ", "
         + ", ".join(f"max({_number(s + '.total')})" for s in SIZES)
-        + f" FROM heartbeats WHERE {{where}} GROUP BY worker, CAST(at / {HOUR} AS INTEGER) "
-        "ON CONFLICT (worker, hour) DO UPDATE SET count = count + excluded.count, "
-        "last_at = max(last_at, excluded.last_at), "
-        + ", ".join(f"{f}_n = {f}_n + excluded.{f}_n, {f}_sum = {f}_sum + excluded.{f}_sum, "
-                    f"{f}_min = coalesce(min({f}_min, excluded.{f}_min), {f}_min, excluded.{f}_min), "
+        + f" FROM heartbeats WHERE at < :before GROUP BY worker, CAST(at / {MINUTE} AS INTEGER) "
+        "ON CONFLICT (worker, minute) DO UPDATE SET count = count + excluded.count, "
+        + ", ".join(f"{f}_min = coalesce(min({f}_min, excluded.{f}_min), {f}_min, excluded.{f}_min), "
                     f"{f}_max = coalesce(max({f}_max, excluded.{f}_max), {f}_max, excluded.{f}_max)" for f in FIELDS) + ", "
         + ", ".join(f"{s}_total = coalesce(max({s}_total, excluded.{s}_total), {s}_total, excluded.{s}_total)"
                     for s in SIZES))
 
 
-def roll(hub, heartbeat):
-    """Add one stored heartbeat (its row id) to its hour. The caller holds the lock and the transaction."""
-    hub._db.execute(ROLL.format(where="id = ?"), (heartbeat,))
-
-
-def roll_up_existing(hub):
-    """Roll up the heartbeats a hub kept before it had the roll-up, once: when there are heartbeats
-    and no hour yet. Called as the hub starts."""
+def roll_up(hub):
+    """Roll every raw heartbeat older than 12 hours into its minute, and delete it: one transaction."""
     with hub._lock, hub._db:
-        if hub._db.execute("SELECT 1 FROM heartbeat_hours LIMIT 1").fetchone() is None \
-                and hub._db.execute("SELECT 1 FROM heartbeats LIMIT 1").fetchone() is not None:
-            hub._db.execute(ROLL.format(where="true"))
+        before = hub.clock() - RAW_KEPT
+        hub._db.execute(ROLL, {"before": before})
+        rolled = hub._db.execute("DELETE FROM heartbeats WHERE at < ?", (before,)).rowcount
+        minutes = hub._db.execute("SELECT count(*) FROM heartbeat_minutes").fetchone()[0]
+    return {"rolled_up": rolled, "before": iso(before), "minutes": minutes}
+
+
+def convert(hub):
+    """Bring a hub's heartbeats from the old shape to this one, once, as it starts: roll up what
+    is older than 12 hours, keep only KEPT of the raw rows left, and drop the hourly roll-up,
+    which the minute buckets now answer for. A hub in the new shape is left as it is."""
+    with hub._lock:
+        hours = hub._db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'heartbeat_hours'").fetchone()
+        whole = hub._db.execute("SELECT 1 FROM heartbeats WHERE json_type(body, '$.caps') IS NOT NULL LIMIT 1").fetchone()
+    if hours is None and whole is None:
+        return
+    roll_up(hub)
+    with hub._lock, hub._db:
+        rows = hub._db.execute("SELECT id, body FROM heartbeats WHERE json_type(body, '$.caps') IS NOT NULL").fetchall()
+        hub._db.executemany("UPDATE heartbeats SET body = ? WHERE id = ?",
+                            [(json.dumps(stored(json.loads(row["body"]))), row["id"]) for row in rows])
+        hub._db.execute("DROP TABLE IF EXISTS heartbeat_hours")
+
+
+CAPS = {
+    "heartbeat.roll-up": (lambda hub, args, actor: roll_up(hub), {
+        "description": "Roll every raw heartbeat older than 12 hours into one-minute buckets (each health "
+                       "field's lowest and highest, and how many heartbeats) and delete those raw rows.",
+        "schema": {"type": "object", "additionalProperties": False, "properties": {}},
+    }),
+}
 
 
 # ------------------------------------------------------------------ reading
 
+def _samples(columns_raw, columns_minutes, worker):
+    """Raw rows and minute buckets in the span (at > :since and at <= :now), as one set of samples."""
+    only = " AND worker = :worker" if worker else ""
+    return (f"SELECT worker, at, 1 AS count{columns_raw} FROM heartbeats WHERE at > :since AND at <= :now{only} "
+            f"UNION ALL SELECT worker, minute * {MINUTE} + {MINUTE // 2} AS at, count{columns_minutes} "
+            f"FROM heartbeat_minutes WHERE minute > (:since - {MINUTE // 2}) / {MINUTE}.0 "
+            f"AND minute <= (:now - {MINUTE // 2}) / {MINUTE}.0{only}")
+
+
+_RAW = "".join(f", {_value(f)} AS {f}_lo, {_value(f)} AS {f}_hi" for f in FIELDS) \
+    + "".join(f", {_number(s + '.total')} AS {s}_total" for s in SIZES)
+_MINUTES = "".join(f", {f}_min, {f}_max" for f in FIELDS) + "".join(f", {s}_total" for s in SIZES)
+_BUCKET = "CAST((:now - at) / :step AS INTEGER)"
+
 # Buckets count back from now: bucket 0 is the last `step` seconds, so a span holds span / step of them.
-SERIES = (f"SELECT CAST((:now - at) / :step AS INTEGER) AS bucket, count(*) AS count, {_columns()} "
-          "FROM heartbeats WHERE worker = :worker AND at > :since AND at <= :now GROUP BY bucket ORDER BY bucket DESC")
-COUNTS = ("SELECT worker, CAST((:now - at) / :step AS INTEGER) AS bucket, count(*) AS count FROM heartbeats "
-          "WHERE at > :since AND at <= :now GROUP BY worker, bucket ORDER BY worker, bucket DESC")
-
-# The same questions from the roll-up, in whole hours: :now is the end of an hour, :step whole hours.
-_HOUR_BUCKET = f"CAST((:now - (hour + 1) * {HOUR}) / :step AS INTEGER)"
-_IN_SPAN = f"hour >= CAST(:since / {HOUR} AS INTEGER) AND hour < CAST(:now / {HOUR} AS INTEGER)"
-SERIES_HOURLY = (f"SELECT {_HOUR_BUCKET} AS bucket, sum(count) AS count, "
-                 + ", ".join(f"sum({f}_sum) / nullif(sum({f}_n), 0) AS {f}" for f in PERCENT + ("temperature", "heap_free") + SIZES)
-                 + ", " + ", ".join(f"max({s}_total) AS {s}_total" for s in SIZES)
-                 + f", max(uptime_max) AS uptime FROM heartbeat_hours WHERE worker = :worker AND {_IN_SPAN} "
-                 "GROUP BY bucket ORDER BY bucket DESC")
-COUNTS_HOURLY = (f"SELECT worker, {_HOUR_BUCKET} AS bucket, sum(count) AS count FROM heartbeat_hours "
-                 f"WHERE {_IN_SPAN} GROUP BY worker, bucket ORDER BY worker, bucket DESC")
-
-
-def _window(hub, span, step):
-    """(source, now, end, since, step, series SQL, counts SQL) for a span and step back from the hub's
-    clock `now`: the raw heartbeats for up to a day in steps under an hour, with buckets counted back
-    from now; else the roll-up, in whole hours, with buckets counted back from the end of this hour."""
-    now = hub.clock()
-    if span <= RAW_SPAN and step < HOUR:
-        return "raw", now, now, now - span, step, SERIES, COUNTS
-    step = math.ceil(step / HOUR) * HOUR
-    end = math.ceil(now / HOUR) * HOUR
-    return "hourly", now, end, end - math.ceil(span / step) * step, step, SERIES_HOURLY, COUNTS_HOURLY
+SERIES = (f"SELECT {_BUCKET} AS bucket, sum(count) AS count, "
+          + ", ".join(f"sum(CASE WHEN {f}_lo IS NOT NULL THEN count * ({f}_lo + {f}_hi) / 2.0 END) "
+                      f"/ sum(CASE WHEN {f}_lo IS NOT NULL THEN count END) AS {f}" for f in FIELDS if f != "uptime")
+          + ", max(uptime_hi) AS uptime, " + ", ".join(f"max({s}_total) AS {s}_total" for s in SIZES)
+          + f" FROM ({_samples(_RAW, _MINUTES, True)}) GROUP BY bucket ORDER BY bucket DESC")
+COUNTS = (f"SELECT worker, {_BUCKET} AS bucket, sum(count) AS count FROM ({_samples('', '', False)}) "
+          "GROUP BY worker, bucket ORDER BY worker, bucket DESC")
 
 
 def _read(hub, sql, params):
@@ -171,11 +191,12 @@ async def series(hub, worker, span, step=None):
     span, step = _span(span, step)
     with hub._lock:
         row = hub._resolve(worker)
-    source, now, end, since, step, sql, _ = _window(hub, span, step)
-    rows = await asyncio.to_thread(_read, hub, sql, {"worker": row["guid"], "since": since, "step": step, "now": end})
+    now = hub.clock()
+    rows = await asyncio.to_thread(_read, hub, SERIES, {"worker": row["guid"], "since": now - span, "step": step,
+                                                        "now": now})
     buckets, fields, totals = [], set(), {}
     for r in rows:
-        bucket = {"at": iso(end - (r["bucket"] + 1) * step), "count": r["count"]}
+        bucket = {"at": iso(now - (r["bucket"] + 1) * step), "count": r["count"]}
         for field in FIELDS:
             if r[field] is not None:
                 bucket[field] = round(r[field], 2)
@@ -184,7 +205,7 @@ async def series(hub, worker, span, step=None):
             if r[f"{size}_total"] is not None:
                 totals[size] = r[f"{size}_total"]
         buckets.append(bucket)
-    return {"worker": row["moniker"], "now": iso(now), "since": iso(since), "step": step, "source": source,
+    return {"worker": row["moniker"], "now": iso(now), "since": iso(now - span), "step": step,
             "fields": [f for f in FIELDS if f in fields], "totals": totals, "buckets": buckets}
 
 
@@ -194,12 +215,12 @@ async def counts(hub, span, step=None):
     with hub._lock:
         workers = hub._db.execute("SELECT guid, moniker, name, interval, last_heartbeat FROM workers "
                                   "ORDER BY approved_at").fetchall()
-    source, now, end, since, step, _, sql = _window(hub, span, step)
-    rows = await asyncio.to_thread(_read, hub, sql, {"since": since, "step": step, "now": end})
+    now = hub.clock()
+    rows = await asyncio.to_thread(_read, hub, COUNTS, {"since": now - span, "step": step, "now": now})
     per = {}
     for r in rows:
-        per.setdefault(r["worker"], []).append({"at": iso(end - (r["bucket"] + 1) * step), "count": r["count"]})
-    return {"now": iso(now), "since": iso(since), "step": step, "source": source,
+        per.setdefault(r["worker"], []).append({"at": iso(now - (r["bucket"] + 1) * step), "count": r["count"]})
+    return {"now": iso(now), "since": iso(now - span), "step": step,
             "workers": [{"moniker": w["moniker"], "name": w["name"], "interval": w["interval"],
                          "last_heartbeat": iso(w["last_heartbeat"]), "counts": per.get(w["guid"], [])}
                         for w in workers]}

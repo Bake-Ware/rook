@@ -1,9 +1,12 @@
-"""The hourly roll-up of the heartbeat history (H5, H4, H1; Bake 13 Nov: "build the hourly roll-up,
-delete nothing"), on a clock the test moves by hand: the figures per hour with a field that comes
-and goes, a restart in the middle of an hour, the one-time roll-up of history kept before it, and
-a month read from the roll-up equal, bucket for bucket, to the same question read from the raw rows."""
+"""The heartbeat history after the stress test (H5 as Bake narrowed it, H4, H1): a stored
+heartbeat is its health numbers, with no caps; raw rows older than 12 hours are rolled into
+one-minute buckets (lowest, highest, how many) by the hub cap heartbeat.roll-up and deleted;
+newer rows are untouched; a second run changes nothing; a hub with heartbeats in the old shape
+is converted once as it starts; and the charts answer the same for the last 12 hours, and from
+the buckets beyond. A real hub on a clock the test moves by hand."""
 
 import asyncio
+import datetime
 import json
 
 from nacl.signing import SigningKey
@@ -11,9 +14,12 @@ from nacl.signing import SigningKey
 from helpers import Clock, link_fields
 from rook_hub import Hub, history
 
-HOUR = 3600
-START = 400_000 * HOUR + 7          # just after the start of an hour, so no heartbeat lands on a boundary
+MINUTE, HOUR, DAY = 60, 3600, 86400
+START = 400_000 * HOUR              # on a minute (and an hour)
 GB = 1 << 30
+CAP = {"name": "demo.echo", "description": "Echo the text back.", "returns": "result",
+       "schema": {"type": "object", "properties": {"text": {"type": "string"}}}}
+WHY = "a test of the heartbeat roll-up"
 
 
 class Box:
@@ -27,177 +33,215 @@ class Box:
                    **link_fields(signing_key)})
         self.guid = hub.approve(self.key, user=owner)["guid"]
 
-    def beat(self, health):
-        message = {"type": "heartbeat", "protocol": 1, "identity": {"name": self.name, "key": self.key},
-                   "facts": {"os": "linux", "arch": "x86_64", "hostname": self.name, "form": "python",
-                             "version": "0.1.0", "macs": []}, "caps": [], "band": {"gateway_mac": None},
-                   "health": health}
-        reply, accepted = self.hub._heartbeat(self.key, message, json.dumps(message).encode())
+    def message(self, health, **more):
+        return {"type": "heartbeat", "protocol": 1, "identity": {"name": self.name, "key": self.key},
+                "facts": {"os": "linux", "arch": "x86_64", "hostname": self.name, "form": "python",
+                          "version": "0.1.0", "macs": []}, "caps": [CAP] * 20, "band": {"gateway_mac": None},
+                "health": health, **more}
+
+    def beat(self, health, **more):
+        reply, accepted = self.hub._heartbeat(self.key, self.message(health, **more))
         assert accepted == self.guid, reply
 
 
-def hours(hub, worker):
-    """The worker's roll-up, hour by hour, as plain dicts."""
+def table(hub, name, order):
     with hub._lock:
-        return [dict(r) for r in hub._db.execute(
-            "SELECT * FROM heartbeat_hours WHERE worker = ? ORDER BY hour", (worker,))]
+        return [dict(r) for r in hub._db.execute(f"SELECT * FROM {name} ORDER BY {order}")]
 
 
-def raw_count(hub):
-    with hub._lock:
-        return hub._db.execute("SELECT count(*) FROM heartbeats").fetchone()[0]
+def roll_up(hub, user):
+    reply = asyncio.run(hub.call("hub", "heartbeat.roll-up", {}, WHY, user=user))
+    assert reply["type"] == "result", reply
+    return reply["result"]
 
 
-# Three hours: cpu in every heartbeat; battery in some (a laptop unplugged and back); gpu only
-# in the last hour (it appeared); ram as total and free. The hours hold 3, 1 and 2 heartbeats.
-PLAN = [
-    (0, 600, {"cpu": 10, "battery": 80, "ram": {"total": 8 * GB, "free": 6 * GB}}),
-    (0, 1800, {"cpu": 20, "battery": 70, "ram": {"total": 8 * GB, "free": 4 * GB}}),
-    (0, 3000, {"cpu": 30, "ram": {"total": 8 * GB, "free": 2 * GB}}),
-    (1, 1200, {"cpu": 70}),
-    (2, 300, {"cpu": 40, "battery": 60, "gpu": 5}),
-    (2, 2400, {"cpu": 50, "gpu": 15, "ram": {"total": 16 * GB, "free": 8 * GB}}),
-]
+def test_a_stored_heartbeat_is_its_health_numbers(tmp_path):
+    """The caps, facts and the rest are kept once, as the worker's current state; a stored heartbeat
+    keeps its health block, config_version and max_message (the hub reads the last two)."""
+    hub = Hub(tmp_path / "hub", clock=Clock(START))
+    try:
+        owner = hub.auth.create_user("Alice", "pw")["guid"]
+        box = Box(hub, owner, "laptop")
+        box.beat({"cpu": 12, "ram": {"total": 8 * GB, "free": 2 * GB}}, config_version="abc", max_message=4096,
+                 plugins=[], streams=0, open_streams=[])
+        box.beat({"cpu": 13})
+        first, second = (json.loads(r["body"]) for r in table(hub, "heartbeats", "id"))
+        assert first == {"health": {"cpu": 12, "ram": {"total": 8 * GB, "free": 2 * GB}}, "config_version": "abc",
+                         "max_message": 4096}
+        assert second == {"health": {"cpu": 13}}
+        record = hub.get_worker(box.guid)
+        assert record["caps"] == [CAP] * 20 and record["facts"]["hostname"] == "laptop"   # once, current
+        box.beat({"cpu": 14}, max_message=4096)
+        assert hub.largest_message(box.guid) == 4096       # read from the worker's state (D4)
+    finally:
+        hub.close()
 
 
-def play(hub, clock, box, plan):
-    for hour, second, health in plan:
-        clock.now = START - 7 + hour * HOUR + second
-        box.beat(health)
+# One worker, beats in two old minutes and in the last 12 hours.
+OLD_A = START + 10 * MINUTE          # three heartbeats: cpu 10, 20, 60; battery in two; ram 25 % and 75 %
+OLD_B = START + 11 * MINUTE          # one: a gpu appears
 
 
-def test_rollup_per_hour_with_a_field_that_comes_and_goes(tmp_path):
+def test_rows_older_than_12_hours_become_minute_buckets(tmp_path):
+    clock = Clock(START)
+    hub = Hub(tmp_path / "hub", clock=clock)
+    try:
+        owner = hub.auth.create_user("Alice", "pw")["guid"]
+        box, desk = Box(hub, owner, "laptop"), Box(hub, owner, "desk")
+        for at, health in [(OLD_A + 5, {"cpu": 10, "battery": 80, "ram": {"total": 8 * GB, "free": 6 * GB}}),
+                           (OLD_A + 25, {"cpu": 60, "ram": {"total": 8 * GB, "free": 2 * GB}, "uptime": 100}),
+                           (OLD_A + 45, {"cpu": 20, "battery": 70, "uptime": 140}),
+                           (OLD_B + 30, {"cpu": 40, "gpu": 5, "vram": {"total": 24 * GB, "free": 6 * GB}})]:
+            clock.now = at
+            box.beat(health)
+        clock.now = OLD_A + 50
+        desk.beat({"temperature": 41.5})
+        late = START + 13 * HOUR             # more than 12 hours after the old minutes ...
+        for i in range(3):                   # ... and these are less than 12 hours old at the roll-up
+            clock.now = late + i * 20
+            box.beat({"cpu": 90 + i})
+        newer = table(hub, "heartbeats", "id")[-3:]
+        clock.now = START + 13 * HOUR + 2 * MINUTE
+
+        done = roll_up(hub, owner)
+        assert done["rolled_up"] == 5 and done["minutes"] == 3
+        minutes = table(hub, "heartbeat_minutes", "worker, minute")
+        a, b = [m for m in minutes if m["worker"] == box.guid]
+        assert (a["minute"], a["count"]) == (OLD_A // MINUTE, 3) and (b["minute"], b["count"]) == (OLD_B // MINUTE, 1)
+        assert (a["cpu_min"], a["cpu_max"], a["battery_min"], a["battery_max"]) == (10, 60, 70, 80)
+        assert (a["ram_min"], a["ram_max"], a["ram_total"]) == (25, 75, 8 * GB)
+        assert (a["uptime_min"], a["uptime_max"], a["gpu_min"], a["gpu_max"]) == (100, 140, None, None)
+        assert (b["cpu_min"], b["cpu_max"], b["gpu_min"], b["vram_max"], b["vram_total"]) == (40, 40, 5, 75, 24 * GB)
+        assert (b["battery_min"], b["ram_total"]) == (None, None)
+        [d] = [m for m in minutes if m["worker"] == desk.guid]
+        assert (d["count"], d["temperature_min"], d["temperature_max"]) == (1, 41.5, 41.5)
+        assert table(hub, "heartbeats", "id") == newer            # gone as raw; the newer rows untouched
+
+        again = roll_up(hub, owner)                               # a second run changes nothing
+        assert again["rolled_up"] == 0 and again["minutes"] == 3
+        assert table(hub, "heartbeat_minutes", "worker, minute") == minutes
+        assert table(hub, "heartbeats", "id") == newer
+    finally:
+        hub.close()
+
+
+def test_a_minute_the_12_hours_end_inside_is_completed_by_the_next_run(tmp_path):
     clock = Clock(START)
     hub = Hub(tmp_path / "hub", clock=clock)
     try:
         owner = hub.auth.create_user("Alice", "pw")["guid"]
         box = Box(hub, owner, "laptop")
-        play(hub, clock, box, PLAN)
-        h0, h1, h2 = hours(hub, box.guid)
-        base = (START - 7) // HOUR
-        assert [h["hour"] for h in (h0, h1, h2)] == [base, base + 1, base + 2]
-        assert [h["count"] for h in (h0, h1, h2)] == [3, 1, 2]
-        assert h0["last_at"] == START - 7 + 3000 and h2["last_at"] == START - 7 + 2 * HOUR + 2400
-        assert (h0["cpu_n"], h0["cpu_sum"], h0["cpu_min"], h0["cpu_max"]) == (3, 60, 10, 30)
-        # The battery figures cover only the heartbeats that carried it.
-        assert (h0["battery_n"], h0["battery_sum"], h0["battery_min"], h0["battery_max"]) == (2, 150, 70, 80)
-        assert (h1["battery_n"], h1["battery_min"], h1["battery_max"]) == (0, None, None)
-        assert (h2["battery_n"], h2["battery_sum"], h2["battery_min"]) == (1, 60, 60)
-        # The GPU appeared in the last hour only.
-        assert (h0["gpu_n"], h1["gpu_n"], h2["gpu_n"], h2["gpu_sum"], h2["gpu_max"]) == (0, 0, 2, 20, 15)
-        # RAM is the share in use (25, 50, 75 percent), with the largest total seen.
-        assert (h0["ram_n"], h0["ram_sum"], h0["ram_min"], h0["ram_max"], h0["ram_total"]) == (3, 150, 25, 75, 8 * GB)
-        assert (h2["ram_n"], h2["ram_sum"], h2["ram_total"]) == (1, 50, 16 * GB)
-
-        # Over the three hours, one bucket: each average is the average of the heartbeats,
-        # (10+20+30+70+40+50) / 6 = 36.67, not of the hourly averages ((20+70+45) / 3 = 45).
-        clock.now = START - 7 + 3 * HOUR - 60
-        reply = asyncio.run(history.series(hub, box.guid, 3 * HOUR, 3 * HOUR))
-        assert reply["source"] == "hourly" and reply["step"] == 3 * HOUR
-        [bucket] = reply["buckets"]
-        assert bucket["count"] == 6 and bucket["cpu"] == 36.67
-        assert bucket["battery"] == 70.0 and bucket["gpu"] == 10.0 and bucket["ram"] == 50.0
-        assert reply["fields"] == ["cpu", "ram", "gpu", "battery"] and reply["totals"] == {"ram": 16 * GB}
-        assert raw_count(hub) == len(PLAN)
+        for at, cpu in ((OLD_A + 10, 30), (OLD_A + 40, 5)):
+            clock.now = at
+            box.beat({"cpu": cpu})
+        clock.now = OLD_A + 25 + 12 * HOUR            # the 12 hours end inside the minute
+        assert roll_up(hub, owner)["rolled_up"] == 1
+        [m] = table(hub, "heartbeat_minutes", "minute")
+        assert (m["count"], m["cpu_min"], m["cpu_max"]) == (1, 30, 30)
+        clock.now += 30
+        assert roll_up(hub, owner)["rolled_up"] == 1
+        [m] = table(hub, "heartbeat_minutes", "minute")
+        assert (m["count"], m["cpu_min"], m["cpu_max"]) == (2, 5, 30)
+        assert table(hub, "heartbeats", "id") == []
     finally:
         hub.close()
 
 
-def test_restart_in_the_middle_of_an_hour(tmp_path):
-    """The same figures whether or not the hub restarted halfway through an hour."""
-    clock = Clock(START)
-    straight = Hub(tmp_path / "straight", clock=clock)
-    owner = straight.auth.create_user("Alice", "pw")["guid"]
-    box = Box(straight, owner, "laptop")
-    play(straight, clock, box, PLAN)
-    expected = [{k: v for k, v in h.items() if k != "worker"} for h in hours(straight, box.guid)]
-    straight.close()
-
-    hub = Hub(tmp_path / "restarted", clock=clock)
-    owner = hub.auth.create_user("Alice", "pw")["guid"]
-    box = Box(hub, owner, "laptop")
-    play(hub, clock, box, PLAN[:2])                 # two heartbeats into the first hour, then a restart
-    hub.close()
-    hub = Hub(tmp_path / "restarted", clock=clock)
-    box.hub = hub
-    try:
-        play(hub, clock, box, PLAN[2:])
-        assert [{k: v for k, v in h.items() if k != "worker"} for h in hours(hub, box.guid)] == expected
-        assert raw_count(hub) == len(PLAN)
-    finally:
-        hub.close()
-
-
-def test_history_kept_before_the_rollup_is_rolled_up_once(tmp_path):
-    """A hub with heartbeats and no roll-up rolls them up as it starts, to the figures the
-    incremental path gives for the same heartbeats; and it does so only once."""
-    clock = Clock(START)
-    hub = Hub(tmp_path / "hub", clock=clock)
-    owner = hub.auth.create_user("Alice", "pw")["guid"]
-    laptop, desk = Box(hub, owner, "laptop"), Box(hub, owner, "desk")
-    play(hub, clock, laptop, PLAN)
-    play(hub, clock, desk, [(h, s + 60, dict(health, cpu=health["cpu"] + 1)) for h, s, health in PLAN])
-    incremental = {w: hours(hub, w) for w in (laptop.guid, desk.guid)}
-    with hub._lock, hub._db:
-        hub._db.execute("DELETE FROM heartbeat_hours")      # as a hub kept its history before this slice
-    hub.close()
-
-    hub = Hub(tmp_path / "hub", clock=clock)
-    try:
-        assert {w: hours(hub, w) for w in (laptop.guid, desk.guid)} == incremental
-        assert raw_count(hub) == 2 * len(PLAN)
-        laptop.hub = hub
-        clock.now = START - 7 + 3 * HOUR + 100
-        laptop.beat({"cpu": 99})                            # new heartbeats add to it as before
-        hub.close()
-        hub = Hub(tmp_path / "hub", clock=clock)            # a second start rolls nothing up again
-        assert [h["count"] for h in hours(hub, laptop.guid)] == [3, 1, 2, 1]
-        assert raw_count(hub) == 2 * len(PLAN) + 1
-    finally:
-        hub.close()
-
-
-def test_a_month_from_the_rollup_equals_the_raw_rows(tmp_path, monkeypatch):
-    """A month's series and counts, answered from the roll-up, equal bucket for bucket the
-    same question answered from the raw rows; a short span is still answered from the raw rows."""
+def test_the_charts_answer_the_same_for_12_hours_and_from_buckets_beyond(tmp_path):
+    """A day of heartbeats every 20 s; the same questions asked before and after the roll-up."""
     clock = Clock(START)
     hub = Hub(tmp_path / "hub", clock=clock)
     try:
         owner = hub.auth.create_user("Alice", "pw")["guid"]
         laptop, desk = Box(hub, owner, "laptop"), Box(hub, owner, "desk")
-        month = 30 * 24 * HOUR
-        for i in range(month // 1200):                     # every 20 minutes, never on an hour boundary
-            clock.now = START + i * 1200 + 13
-            laptop.beat({"cpu": i % 97, "ram": {"total": 8 * GB, "free": (i % 8) * GB}, "uptime": i * 1200,
-                         **({"battery": 100 - i % 50} if (i // 30) % 2 else {})})       # unplugged now and then
+        plan = {}                                          # laptop: minute -> its cpu values
+        for i in range(DAY // 20):
+            clock.now = START + i * 20 + 7                # never on a minute
+            cpu = (i * 37) % 101
+            laptop.beat({"cpu": cpu, "ram": {"total": 8 * GB, "free": (i % 8) * GB}, "uptime": i * 20,
+                         **({"battery": 100 - i % 50} if (i // 90) % 2 else {})})
+            plan.setdefault(int(clock.now // MINUTE), []).append(cpu)
             if i % 3:                                      # the desk misses every third one
                 desk.beat({"cpu": (i * 7) % 89, "temperature": 40 + i % 20})
-        clock.now = START - 7 + month                       # the hour boundary after the last heartbeat
-        before = raw_count(hub)
+        clock.now = START + DAY                            # on a minute
 
-        def ask(span, step=None):
-            return (asyncio.run(history.series(hub, laptop.guid, span, step)),
-                    asyncio.run(history.series(hub, desk.guid, span, step)),
-                    asyncio.run(history.counts(hub, span, step)))
-        hourly = ask(month)
-        assert [r["source"] for r in hourly] == ["hourly"] * 3 and hourly[0]["step"] == 6 * HOUR
-        assert len(hourly[0]["buckets"]) == 120 and sum(b["count"] for b in hourly[0]["buckets"]) == month // 1200
-        assert hourly[0]["fields"] == ["cpu", "ram", "battery", "uptime"]
+        def ask():
+            return {"laptop 12 h": asyncio.run(history.series(hub, laptop.guid, 12 * HOUR, 600)),
+                    "desk 12 h": asyncio.run(history.series(hub, desk.guid, 12 * HOUR)),
+                    "counts 12 h": asyncio.run(history.counts(hub, 12 * HOUR, 300)),
+                    "counts day": asyncio.run(history.counts(hub, DAY, HOUR)),
+                    "counts month": asyncio.run(history.counts(hub, 30 * DAY, DAY)),
+                    "laptop day": asyncio.run(history.series(hub, laptop.guid, DAY, MINUTE)),
+                    "desk day": asyncio.run(history.series(hub, desk.guid, DAY, HOUR))}
+        before = ask()
+        assert roll_up(hub, owner)["rolled_up"] == (DAY // 2) // 20 + (DAY // 2) // 20 * 2 // 3
+        after = ask()
 
-        original = history._window
+        for name in ("laptop 12 h", "desk 12 h", "counts 12 h", "counts day", "counts month"):
+            assert after[name] == before[name], name      # the same answer, raw or rolled up
+        old, new = before["laptop day"], after["laptop day"]
+        assert new["fields"] == old["fields"] == ["cpu", "ram", "battery", "uptime"] and new["totals"] == old["totals"]
+        assert [b["count"] for b in new["buckets"]] == [b["count"] for b in old["buckets"]]
+        assert len(new["buckets"]) == DAY // MINUTE
+        older = 0
+        for was, got in zip(old["buckets"], new["buckets"]):
+            at = datetime.datetime.fromisoformat(got["at"]).timestamp()
+            if at >= START + DAY // 2:                     # the last 12 hours: raw, as before
+                assert got == was
+            else:                                          # older: the middle of the minute's lowest and highest
+                cpus = plan[int(at // MINUTE)]
+                assert got["cpu"] == round((min(cpus) + max(cpus)) / 2, 2) and got["uptime"] == was["uptime"]
+                older += 1
+        assert older == DAY // MINUTE // 2
+        desk_old, desk_new = before["desk day"]["buckets"], after["desk day"]["buckets"]
+        assert [b["count"] for b in desk_new] == [b["count"] for b in desk_old]
+        assert desk_new[-12:] == desk_old[-12:]             # the last 12 hours
+    finally:
+        hub.close()
 
-        def from_raw(hub, span, step):                      # the same window, read from the raw rows
-            source, now, end, since, step, *_ = original(hub, span, step)
-            return "raw", now, end, since, step, history.SERIES, history.COUNTS
-        monkeypatch.setattr(history, "_window", from_raw)
-        raw = ask(month)
-        monkeypatch.setattr(history, "_window", original)
-        for got, want in zip(hourly, raw):
-            assert dict(got, source="raw") == want
 
-        short = ask(3 * HOUR)                               # a short span: the raw rows, as before
-        assert [r["source"] for r in short] == ["raw"] * 3 and short[0]["step"] == 90
-        assert ask(6 * HOUR, HOUR)[0]["source"] == "hourly"   # a step of an hour or more: the roll-up
-        assert raw_count(hub) == before                     # nothing was deleted
+OLD_HOURS = "CREATE TABLE heartbeat_hours (worker TEXT NOT NULL, hour INTEGER NOT NULL, count INTEGER NOT NULL)"
+
+
+def test_a_hub_with_heartbeats_in_the_old_shape_is_converted_once(tmp_path):
+    """Whole heartbeats (caps and all) and an hourly roll-up, as the core before this kept them:
+    at the next start the old rows are rolled up, the rest trimmed, the hourly table dropped;
+    a second start changes nothing."""
+    clock = Clock(START)
+    hub = Hub(tmp_path / "hub", clock=clock)
+    owner = hub.auth.create_user("Alice", "pw")["guid"]
+    box = Box(hub, owner, "laptop")
+    whole = []
+    with hub._lock, hub._db:
+        for at, cpu in ((OLD_A + 5, 10), (OLD_A + 35, 50), (START + 20 * HOUR, 70), (START + 20 * HOUR + 15, 80)):
+            message = box.message({"cpu": cpu}, config_version="v1")
+            whole.append(message)
+            hub._db.execute("INSERT INTO heartbeats (worker, at, body) VALUES (?, ?, ?)",
+                            (box.guid, at, json.dumps(message)))
+        hub._db.execute(OLD_HOURS)
+        hub._db.execute("INSERT INTO heartbeat_hours VALUES (?, ?, 4)", (box.guid, START // HOUR))
+        size = hub._db.execute("SELECT avg(length(body)) FROM heartbeats").fetchone()[0]
+    hub.close()
+    clock.now = START + 22 * HOUR
+
+    hub = Hub(tmp_path / "hub", clock=clock)
+    try:
+        [m] = table(hub, "heartbeat_minutes", "minute")
+        assert (m["minute"], m["count"], m["cpu_min"], m["cpu_max"]) == (OLD_A // MINUTE, 2, 10, 50)
+        rows = table(hub, "heartbeats", "id")
+        assert [json.loads(r["body"]) for r in rows] == [history.stored(w) for w in whole[2:]]
+        assert [json.loads(r["body"]) for r in rows] == [{"health": {"cpu": 70}, "config_version": "v1"},
+                                                         {"health": {"cpu": 80}, "config_version": "v1"}]
+        with hub._lock:
+            assert hub._db.execute("SELECT 1 FROM sqlite_master WHERE name = 'heartbeat_hours'").fetchone() is None
+            assert hub._db.execute("SELECT avg(length(body)) FROM heartbeats").fetchone()[0] < size / 10
+        kept = table(hub, "heartbeat_minutes", "minute"), rows
+    finally:
+        hub.close()
+
+    clock.now += 6 * HOUR             # a second start: nothing converted again, nothing rolled up at start
+    hub = Hub(tmp_path / "hub", clock=clock)
+    try:
+        assert (table(hub, "heartbeat_minutes", "minute"), table(hub, "heartbeats", "id")) == kept
     finally:
         hub.close()

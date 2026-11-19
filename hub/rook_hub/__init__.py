@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS heartbeats (
     id     INTEGER PRIMARY KEY,
     worker TEXT NOT NULL REFERENCES workers(guid),
     at     REAL NOT NULL,
-    body   TEXT NOT NULL             -- the heartbeat as received
+    body   TEXT NOT NULL             -- its health numbers: health, config_version, max_message (history.KEPT)
 );
 CREATE INDEX IF NOT EXISTS heartbeats_worker_at ON heartbeats (worker, at);
 CREATE TABLE IF NOT EXISTS journal (
@@ -190,7 +190,7 @@ class Hub:
         self._db.executescript(devices.SCHEMA)
         self._db.executescript(site.SCHEMA)
         self._db.executescript(history.SCHEMA)
-        history.roll_up_existing(self)   # once, for a hub that kept heartbeats before the roll-up (H5)
+        history.convert(self)   # once, for a hub that kept whole heartbeats and an hourly roll-up (H5)
         if vault_key_file is not None:
             vault_key = vault.key_from_file(self, vault_key_file)
         self.vault = vault.Vault(self, vault_key)
@@ -636,7 +636,7 @@ class Hub:
                 if link in self._revoked_links and message["type"] != "heartbeat":
                     continue            # its key was revoked: only told, and refused (R5)
                 if message["type"] == "heartbeat":
-                    reply, accepted = self._heartbeat(link.key, message, data)
+                    reply, accepted = self._heartbeat(link.key, message)
                     await link.send(encode(reply))
                     if accepted is None:
                         link.close()
@@ -674,8 +674,8 @@ class Hub:
             if guid is not None:
                 self._unlink(guid, link)
 
-    def _heartbeat(self, key, message, raw):
-        """Store a heartbeat (H1, H4) and its raw copy (H5); reply with the interval (H2).
+    def _heartbeat(self, key, message):
+        """Store a heartbeat (H1, H4) and its health numbers in the history (H5); reply with the interval (H2).
         Returns (reply, worker guid), or (error, None) when the key is not accepted."""
         if message["identity"]["key"] != key:
             return error("bad_message", "The heartbeat names a different key from the link's.",
@@ -691,13 +691,12 @@ class Hub:
             guid, now = row["worker"], self.clock()
             before = self._db.execute("SELECT * FROM workers WHERE guid = ?", (guid,)).fetchone()
             state = {name: message[name] for name in ("facts", "caps", "band", "health", "streams", "plugins",
-                                                     "config_version") if name in message}
+                                                     "config_version", "max_message") if name in message}
             self._db.execute(
                 "UPDATE workers SET name = ?, protocol = ?, last_heartbeat = ?, state = ? WHERE guid = ?",
                 (message["identity"]["name"], message["protocol"], now, json.dumps(state), guid))
-            stored = self._db.execute("INSERT INTO heartbeats (worker, at, body) VALUES (?, ?, ?)",
-                                      (guid, now, raw.decode("utf-8")))
-            history.roll(self, stored.lastrowid)    # the hourly roll-up, in the same transaction (H5)
+            self._db.execute("INSERT INTO heartbeats (worker, at, body) VALUES (?, ?, ?)",   # health only (H5)
+                             (guid, now, json.dumps(history.stored(message))))
             self._see(guid, "hostname", [message["facts"]["hostname"]], now)
             self._see(guid, "mac", message["facts"]["macs"], now)
             interval = before["interval"]
@@ -791,8 +790,8 @@ class Hub:
         """The largest encoded message the hub may send this worker: 16,000,000 bytes, or the
         `max_message` of its last heartbeat if that is smaller (docs/protocol.md, "Sizes"; D4)."""
         with self._lock:
-            row = self._db.execute("SELECT json_extract(body, '$.max_message') FROM heartbeats "
-                                   "WHERE worker = ? ORDER BY at DESC, id DESC LIMIT 1", (guid,)).fetchone()
+            row = self._db.execute("SELECT json_extract(state, '$.max_message') FROM workers WHERE guid = ?",
+                                   (guid,)).fetchone()
         stated = row[0] if row else None
         return min(MAX_MESSAGE, stated) if isinstance(stated, int) else MAX_MESSAGE
 
