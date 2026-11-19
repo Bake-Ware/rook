@@ -3,6 +3,7 @@ and `shell` (docs/inventory.md CAP-01, CAP-03, WRK4-070). A real hub, served, an
 rook_worker over its real carrier (Telesthete over loopback WebSocket)."""
 
 import asyncio
+import hashlib
 import json
 import os
 import pathlib
@@ -110,7 +111,7 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     hub.plugins.install(replacement, {"user": hub.auth.create_user("Alice", "a password")["guid"], "token": None})
     hub.close()
     again = Hub(tmp_path / "hub")
-    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"battery": "0.1.0", "file": "0.1.0", "net": "0.1.0",
+    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"battery": "0.1.0", "file": "0.2.0", "net": "0.1.0",
                                                                      "shell": "9.0.0", "worker": "0.1.0"}
     again.close()
 
@@ -400,11 +401,11 @@ async def older_core(tmp_path, monkeypatch):
         hub.close()
         before = kept(data)
 
-        # The next start, by this core: file, battery and worker go in, shell goes to 0.2.0.
+        # The next start, by this core: file, battery and worker go in, shell goes to 0.3.0.
         monkeypatch.setattr(rook_hub.plugins, "DEFAULTS", DEFAULTS)
         hub = Hub(data, vault_key_file=key)
         assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-            "battery": "0.1.0", "file": "0.1.0", "net": "0.1.0", "shell": "0.2.0", "worker": "0.1.0"}
+            "battery": "0.1.0", "file": "0.2.0", "net": "0.1.0", "shell": "0.3.0", "worker": "0.1.0"}
         await hub.serve(host, port)                  # the same address: the worker's hub URL
         # The worker, never restarted, links again and is sent the new worker parts, as on any install.
         await until(lambda: set(NEW_CAPS + NET_CAPS + SHELL_CAPS) <= announced(), timeout=60)
@@ -428,3 +429,153 @@ async def older_core(tmp_path, monkeypatch):
         await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 30)
         if hub._runner is not None:
             await hub.stop_serving()
+
+
+# ---------------------------------------------- a changed built-in carries a new version (brief 55)
+
+# Each built-in plugin's version and a SHA-256 of its files, as shipped. A hub that already exists
+# updates a built-in only when the shipped version is newer (brief 45), so a built-in whose files
+# change at the same version never reaches it. When a test below says so, raise the version in the
+# plugin's plugin.json and set its line here to what the test prints.
+SHIPPED = {
+    "battery": ("0.1.0", "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"),
+    "file": ("0.2.0", "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"),
+    "net": ("0.1.0", "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"),
+    "shell": ("0.3.0", "31b456adeaa73e0063c4a8e18b19268d8a21bdba41cd5acdfd8d3770f14b09db"),
+    "worker": ("0.1.0", "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"),
+}
+
+
+def files_hash(folder):
+    """SHA-256 over every file in a plugin's folder (its path and its bytes), __pycache__ left out."""
+    digest = hashlib.sha256()
+    for path in sorted(p for p in folder.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+        for part in (path.relative_to(folder).as_posix().encode("utf-8"), path.read_bytes()):
+            digest.update(len(part).to_bytes(8, "big") + part)
+    return digest.hexdigest()
+
+
+def unversioned_changes(defaults, shipped):
+    """Each way the built-ins in `defaults` differ from the record `shipped`, saying what to do."""
+    found = {f.name: f for f in defaults.iterdir() if (f / "plugin.json").is_file()}
+    problems = []
+    for name in sorted(set(found) | set(shipped)):
+        if name not in found:
+            problems.append(f"{name} is in SHIPPED but not under {defaults}: take its line out of SHIPPED.")
+            continue
+        version, digest = json.loads((found[name] / "plugin.json").read_text())["version"], files_hash(found[name])
+        line = f"    {name!r}: ({version!r}, {digest!r}),"
+        if name not in shipped:
+            problems.append(f"{name} {version} is a new built-in: add this line to SHIPPED in "
+                            f"tests/test_default_plugins.py:\n{line}")
+        elif (version, digest) != shipped[name]:
+            was = shipped[name][0]
+            if version == was:
+                problems.append(f"The files of the built-in plugin {name} changed, but its version is still {version}, "
+                                f"so a hub that already exists keeps its old files (brief 45). Raise the version in "
+                                f"hub/rook_hub/defaults/{name}/plugin.json, then set its line in SHIPPED in "
+                                f"tests/test_default_plugins.py to what this test then prints.")
+            elif not older(was, version):
+                problems.append(f"The built-in plugin {name} went from {was} to {version}, which is not newer, so a hub "
+                                f"that has {was} keeps it. Give it a version newer than {was}.")
+            else:
+                problems.append(f"The built-in plugin {name} is now {version}: set its line in SHIPPED in "
+                                f"tests/test_default_plugins.py to\n{line}")
+    return problems
+
+
+def test_a_built_in_plugin_whose_files_changed_has_a_new_version():
+    problems = unversioned_changes(DEFAULTS, SHIPPED)
+    assert not problems, "\n\n".join(problems)
+
+
+def test_the_version_guard_catches_what_it_should(tmp_path):
+    shipped = tmp_path / "defaults"
+    shutil.copytree(DEFAULTS, shipped, ignore=shutil.ignore_patterns("__pycache__"))
+    assert unversioned_changes(shipped, SHIPPED) == []
+
+    # Core cec3ea0e's state: brief 54's files, at the versions from before them.
+    for name, version in (("shell", "0.2.0"), ("file", "0.1.0")):
+        manifest = json.loads((shipped / name / "plugin.json").read_text())
+        (shipped / name / "plugin.json").write_text(json.dumps(dict(manifest, version=version)))
+    problems = unversioned_changes(shipped, SHIPPED)
+    assert len(problems) == 2 and all("which is not newer" in p for p in problems), problems
+    shutil.rmtree(shipped)
+    shutil.copytree(DEFAULTS, shipped, ignore=shutil.ignore_patterns("__pycache__"))
+
+    # A file changed at the same version: raise the version.
+    with open(shipped / "net" / "worker.py", "a") as f:
+        f.write("# changed\n")
+    [problem] = unversioned_changes(shipped, SHIPPED)
+    assert "files of the built-in plugin net changed, but its version is still 0.1.0" in problem
+    assert "Raise the version in hub/rook_hub/defaults/net/plugin.json" in problem
+
+    # Raised: then the record is to be set, and the line to set it to is given.
+    (shipped / "net" / "plugin.json").write_text((shipped / "net" / "plugin.json").read_text().replace("0.1.0", "0.1.1"))
+    [problem] = unversioned_changes(shipped, SHIPPED)
+    assert f"'net': ('0.1.1', '{files_hash(shipped / 'net')}')," in problem
+
+    # A new built-in, and one gone.
+    shutil.copytree(shipped / "worker", shipped / "extra")
+    shutil.rmtree(shipped / "battery")
+    problems = unversioned_changes(shipped, SHIPPED)
+    assert any(p.startswith("battery is in SHIPPED but not under") for p in problems)
+    assert any(p.startswith("extra 0.1.0 is a new built-in") for p in problems)
+
+
+def test_a_hub_with_shell_0_2_0_and_file_0_1_0_gets_0_3_0_and_0_2_0(tmp_path, monkeypatch):
+    asyncio.run(before_brief_54(tmp_path, monkeypatch))
+
+
+async def before_brief_54(tmp_path, monkeypatch):
+    # What a hub made before this change holds: shell 0.2.0 and file 0.1.0. Their copies here are
+    # marked by one cap each, shell.was and file.was, so the test can see the old code go.
+    old = tmp_path / "old-defaults"
+    shutil.copytree(DEFAULTS, old, ignore=shutil.ignore_patterns("__pycache__"))
+    for name, version, keep in (("shell", "0.2.0", "shell.which"), ("file", "0.1.0", "file.stat")):
+        manifest = json.loads((old / name / "plugin.json").read_text())
+        (old / name / "plugin.json").write_text(json.dumps(dict(manifest, version=version)))
+        with open(old / name / "worker.py", "a") as f:
+            f.write(f'\nCAPS["{name}.was"] = Cap("The copy of {name} {version} this test starts from.", '
+                    f'{{"type": "object"}}, CAPS["{keep}"].handler)\n')
+    data = tmp_path / "hub"
+    monkeypatch.setattr(rook_hub.plugins, "DEFAULTS", old)
+    hub = Hub(data)
+    host, port = await hub.serve("127.0.0.1", 0)
+    alice = hub.auth.create_user("Alice", "a password")["guid"]
+    assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
+        "battery": "0.1.0", "file": "0.1.0", "net": "0.1.0", "shell": "0.2.0", "worker": "0.1.0"}
+    worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
+    task = asyncio.create_task(worker.run())
+    try:
+        await until(lambda: any(p["key"] == worker.key for p in hub.list_pending()))
+        guid = hub.approve(worker.key, user=alice)["guid"]
+
+        def announced():
+            return {c["name"] for c in hub.get_worker(guid)["caps"] or []}
+
+        await until(lambda: {"shell.was", "file.was", "shell.exec", "file.read"} <= announced())
+        await hub.stop_serving()
+        hub.close()
+
+        # The next start, by this core: shell 0.3.0 and file 0.2.0, and the worker, never restarted,
+        # is sent them when it links again.
+        monkeypatch.setattr(rook_hub.plugins, "DEFAULTS", DEFAULTS)
+        hub = Hub(data)
+        assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
+            "battery": "0.1.0", "file": "0.2.0", "net": "0.1.0", "shell": "0.3.0", "worker": "0.1.0"}
+        await hub.serve(host, port)
+        await until(lambda: {"shell.exec", "file.read"} <= announced() and not {"shell.was", "file.was"} & announced(),
+                    timeout=60)
+        reply = await hub.call(guid, "shell.exec", {"argv": ["echo", "new"]}, "the new shell answers", user=alice)
+        assert reply["type"] == "result" and reply["result"]["stdout"] == "new\n", reply
+        reply = await hub.call(guid, "file.stat", {"path": str(tmp_path)}, "the new file answers", user=alice)
+        assert reply["type"] == "result" and reply["result"]["type"] == "dir", reply
+        assert [(p["name"], p["version"]) for p in hub.get_worker(guid)["plugins"]
+                if p["name"] in ("shell", "file")] == [("file", "0.2.0"), ("shell", "0.3.0")]
+    finally:
+        worker.stop()
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 30)
+        if hub._runner is not None:
+            await hub.stop_serving()
+        hub.close()
