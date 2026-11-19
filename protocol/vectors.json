@@ -642,6 +642,14 @@
    "hex": "7b226964223a226337222c2274797065223a22726573756c745f61636b227d"
   },
   {
+   "name": "call_stop",
+   "message": {
+    "type": "call_stop",
+    "id": "c7"
+   },
+   "hex": "7b226964223a226337222c2274797065223a2263616c6c5f73746f70227d"
+  },
+  {
    "name": "error for a call",
    "message": {
     "type": "error",
@@ -720,6 +728,33 @@
     "stream": "s1"
    },
    "hex": "7b2273747265616d223a227331222c2274797065223a2273747265616d5f636c6f7365227d"
+  },
+  {
+   "name": "stream_close with the process's exit code",
+   "message": {
+    "type": "stream_close",
+    "stream": "s1",
+    "exit_code": 5
+   },
+   "hex": "7b22657869745f636f6465223a352c2273747265616d223a227331222c2274797065223a2273747265616d5f636c6f7365227d"
+  },
+  {
+   "name": "stream_close of a process ended by a signal",
+   "message": {
+    "type": "stream_close",
+    "stream": "s1",
+    "exit_code": -15
+   },
+   "hex": "7b22657869745f636f6465223a2d31352c2273747265616d223a227331222c2274797065223a2273747265616d5f636c6f7365227d"
+  },
+  {
+   "name": "stream_signal",
+   "message": {
+    "type": "stream_signal",
+    "stream": "s1",
+    "signal": "INT"
+   },
+   "hex": "7b227369676e616c223a22494e54222c2273747265616d223a227331222c2274797065223a2273747265616d5f7369676e616c227d"
   },
   {
    "name": "stream_resize",
@@ -968,6 +1003,22 @@
   {
    "name": "result_ack without its id",
    "hex": "7b2274797065223a2022726573756c745f61636b227d"
+  },
+  {
+   "name": "call_stop without its id",
+   "hex": "7b2274797065223a202263616c6c5f73746f70227d"
+  },
+  {
+   "name": "stream_close with exit_code as text",
+   "hex": "7b2274797065223a202273747265616d5f636c6f7365222c202273747265616d223a20227331222c2022657869745f636f6465223a202235227d"
+  },
+  {
+   "name": "stream_signal with a signal 0.5 did not take",
+   "hex": "7b2274797065223a202273747265616d5f7369676e616c222c202273747265616d223a20227331222c20227369676e616c223a202255535231227d"
+  },
+  {
+   "name": "stream_signal without its signal",
+   "hex": "7b2274797065223a202273747265616d5f7369676e616c222c202273747265616d223a20227331227d"
   }
  ],
  "link": {
