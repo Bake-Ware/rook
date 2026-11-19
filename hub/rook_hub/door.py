@@ -102,7 +102,8 @@ TOOLS = [
          "Work with streams: things that stay open on a worker, such as a terminal or a running process. "
          "Calling a cap whose returns is \"stream\" opens one, and the reply names it. action \"list\": every "
          "stream with its title, description, worker, who opened it and whether it is open (open: true for "
-         "open ones only). action \"read\": what passed through the stream from position `from` (0 is the "
+         "open ones only). action \"search\": the streams whose title, description, cap, worker or opener holds `query` "
+         "(any case), narrowed by `worker` and `open`. action \"read\": what passed through the stream from position `from` (0 is the "
          "start): output from the worker as \"out\", input as \"in\" with who sent it. The reply's `next` "
          "is where to read from next time. With `wait` (seconds, up to 40) a read with nothing new waits for "
          "more. action \"write\": send `text` as input (end it with \"\\n\" to finish a line). action "
@@ -112,12 +113,13 @@ TOOLS = [
          "Several clients can read one stream at once; when they resize it, the last resize wins. A stream "
          "stays open until someone closes it, so close it when its work is done."),
      "inputSchema": {"type": "object", "required": ["action"], "additionalProperties": False, "properties": {
-         "action": {"type": "string", "enum": ["list", "read", "write", "close", "resize"]},
+         "action": {"type": "string", "enum": ["list", "search", "read", "write", "close", "resize"]},
          "stream": {"type": "string", "description": "The stream's moniker or GUID."},
          "from": {"type": "integer", "minimum": 0}, "wait": {"type": "number", "minimum": 0, "maximum": 40},
          "limit": {"type": "integer", "minimum": 1}, "text": {"type": "string"}, "why": {"type": "string"},
          "open": {"type": "boolean"}, "cols": {"type": "integer", "minimum": 1},
-         "rows": {"type": "integer", "minimum": 1}}}},
+         "rows": {"type": "integer", "minimum": 1}, "query": {"type": "string"},
+         "worker": {"type": "string", "description": "search: only this worker's streams (moniker or GUID)."}}}},
 ]
 
 
@@ -194,6 +196,8 @@ async def stream(hub, token, args):
     action, name = args.get("action"), args.get("stream")
     if action == "list":
         return _dumps({"streams": hub.streams.list(args.get("open"))})
+    if action == "search":
+        return _dumps({"streams": hub.streams.search(args.get("query"), args.get("worker"), args.get("open"))})
     if not isinstance(name, str) or not name:
         raise HubError("bad_message", "stream is required for this action.",
                        "Give the stream's moniker or GUID; action \"list\" shows them.")
@@ -210,8 +214,8 @@ async def stream(hub, token, args):
         return _dumps(await hub.streams.close(name, args["why"], token=token))
     if action == "resize":
         return _dumps(await hub.streams.resize(name, args.get("cols"), args.get("rows"), token=token))
-    raise HubError("bad_message", f"action {action!r} is not one of list, read, write, close, resize.",
-                   "Use action list, read, write, close or resize.")
+    raise HubError("bad_message", f"action {action!r} is not one of list, search, read, write, close, resize.",
+                   "Use action list, search, read, write, close or resize.")
 
 
 HANDLERS = {"workers": workers, "caps": list_caps, "call": call, "journal": read_journal, "stream": stream}
