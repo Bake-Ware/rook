@@ -50,6 +50,26 @@ PEER_TIMEOUT = 15.0     # seconds without an authenticated word from the hub: it
 WATCH = 1.0             # seconds between looks at whether the hub is still alive
 
 
+async def within(awaitable, seconds):
+    """Await `awaitable` for up to `seconds`; True if it finished then, False if the time ran out (it is
+    then cancelled). Its exception, if it raised, is raised here.
+
+    It stands in for asyncio.wait_for, which on Python 3.11 swallows a cancel that comes in the same loop
+    step as the awaitable finishing: it returns, and the task that was cancelled carries on (brief 64).
+    asyncio.wait never does, so a cancel of the caller always ends this at once, on every Python."""
+    task = asyncio.ensure_future(awaitable)
+    try:
+        done, _ = await asyncio.wait({task}, timeout=seconds)
+    except BaseException:                       # cancelled: so is what it waited for
+        task.cancel()
+        raise
+    if not done:
+        task.cancel()
+        return False
+    task.result()
+    return True
+
+
 async def connect(session):
     """One session's link to the hub over Telesthete (section 3.1 steps 2 to 4). If the hub does
     not answer the Band's HELLO within PEER_TIMEOUT, the link returned has already ended."""
@@ -89,9 +109,7 @@ class TelestheteLink:
 
     async def _open(self):
         await self.band.start()                 # connects, and sends HELLO on every (re)connect
-        try:
-            await asyncio.wait_for(self._answered(), PEER_TIMEOUT)
-        except TimeoutError:
+        if not await within(self._answered(), PEER_TIMEOUT):
             self.close()                        # never answered: a failed attempt (section 3.2)
             return
         if self.closed:                         # ended meanwhile: a reconnect found the hub had restarted (brief 57)

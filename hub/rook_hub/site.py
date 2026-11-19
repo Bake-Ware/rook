@@ -273,8 +273,7 @@ def add_routes(app, hub):
         async def answer(request):
             try:
                 token, user = await hub.off_loop(session, request)
-                # no-store: a revealed value or a new token is never kept in the browser's cache
-                return await _json(hub, await handler(request, token, user), headers={"Cache-Control": "no-store"})
+                return await _json(hub, await handler(request, token, user))   # no-store: web.cache_header
             except HubError as e:
                 return _refused(e)
         return answer
@@ -972,7 +971,7 @@ def plugin_site_routes(app, hub, logged_in, session):
                          for part in plugins.SITE_FIELDS for entry in site.get(part, [])}
                 if name == plugin and wanted in files:
                     return web.FileResponse(folder / wanted, headers={
-                        "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store"})
+                        "Content-Type": "text/javascript; charset=utf-8"})   # no-cache: web.cache_header
             raise HubError("unknown_file", f"Plugin {plugin} has no site file {wanted}.",
                            "Load the plugin's pages through the site's navigation.")
         except HubError as e:

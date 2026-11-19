@@ -50,6 +50,24 @@ class Turns:
                 before.add_done_callback(lambda _: loop.call_soon(_done, after))
 
 
+# Paths whose answers are data, not the site's files: never kept by a browser or a proxy (brief 66).
+# /band is the workers' carrier (a WebSocket), not a file of the site either.
+API_PATHS = ("/api/", "/mcp", "/knock", "/link", "/webhook", "/band")
+
+
+def _is_api(path):
+    return any(path == p or path.startswith(p if p.endswith("/") else p + "/") for p in API_PATHS)
+
+
+async def cache_header(request, response):
+    """Every answer says how it may be cached (brief 66). The site's files (the index at `/` and at each
+    page path, `/site/*`, a plugin's pages and files) are `no-cache`: a browser or proxy such as
+    Cloudflare may keep a copy but asks the hub before each use, and the ETag answers 304 when nothing
+    changed, so a deploy is seen on the next load and old modules never run against a new hub. API
+    answers are `no-store`: a revealed value or a new token is never kept anywhere."""
+    response.headers["Cache-Control"] = "no-store" if _is_api(request.path) else "no-cache"
+
+
 def _done(future):
     if not future.done():
         future.set_result(None)
@@ -76,6 +94,7 @@ def app(hub):
         return web.Response(body=encode(reply), status=status, content_type="application/json")
 
     application = web.Application(middlewares=[in_turn])
+    application.on_response_prepare.append(cache_header)
     application.router.add_post("/knock", knock)
     link.add_routes(application, hub)
     door.add_routes(application, hub)

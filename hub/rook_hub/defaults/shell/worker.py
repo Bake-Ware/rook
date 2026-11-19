@@ -19,7 +19,11 @@ Stopping (brief 59): a shell.exec call that is stopped ends its command and ever
 command started (each runs in a session of its own). A signal sent to a shell.open stream goes
 to its command: on pipes, to the command and everything it started; on a terminal, to the
 program in the foreground, as a key typed there would. The stream closes with the command's
-exit code."""
+exit code.
+
+Every command starts with the signals a stream can send at their defaults (brief 65), however
+the worker itself was started: one started with `nohup ... &` ignores INT, QUIT and HUP, and its
+commands would inherit that."""
 
 import asyncio
 import codecs
@@ -107,10 +111,24 @@ def _environment(args):
     return {**os.environ, **{str(k): str(v) for k, v in env.items()}}
 
 
-async def _start(argv, args, **pipes):
+# The signals a stream can send that a process can handle (KILL cannot be ignored). Each command
+# starts with them at their defaults, whatever this worker ignores (brief 65): a worker started
+# with `nohup ... &` from a script ignores INT, QUIT and HUP, a child inherits that, and `sh`
+# cannot trap a signal that was ignored when it started.
+STREAM_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)
+
+
+def _default_signals():
+    """In the child, before the command runs: the stream's signals at their defaults."""
+    for number in STREAM_SIGNALS:
+        signal.signal(number, signal.SIG_DFL)
+
+
+async def _start(argv, args, preexec_fn=_default_signals, **pipes):
     cwd = _text(args, "cwd")
     try:
-        return await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=_environment(args), **pipes)
+        return await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=_environment(args), preexec_fn=preexec_fn,
+                                                    **pipes)
     except FileNotFoundError:
         if cwd is not None and not os.path.isdir(cwd):
             raise ValueError(f"the folder {cwd} does not exist on this worker; give cwd as an existing folder") from None
@@ -263,8 +281,10 @@ async def _on_terminal(argv, args, cols, rows):
 
 
 def _take_terminal():
+    """In the child: the stream's signals at their defaults, and the terminal as its own."""
     import fcntl
     import termios
+    _default_signals()
     fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
