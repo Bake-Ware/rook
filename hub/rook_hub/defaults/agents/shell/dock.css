@@ -4,23 +4,24 @@
    Ported to core (house agent brief HA1): core's shell.css tokens have the same names. The
    dock sits in core's #shell-dock column and the work pane is core's #work, at the head of the
    page area. 0.5's shell.css styled bare buttons, fields and links for every page; core's does
-   not, so those rules come here, scoped to the dock and the work pane. */
+   not, so those rules come here, scoped to the dock and the work pane. :where() keeps them as
+   light as 0.5's element rules were, so the rules below (such as .look-steps button) still win. */
 .offscreen { display: none !important; }
 #dock[hidden], #work[hidden], #rookie-say[hidden], :is(#dock, #work) [hidden] { display: none !important; }
 #dock, #work, #rookie-say { font: 14px/1.5 var(--sans); }
-:is(#dock, #work) a { color: var(--accent); }
-:is(#dock, #work) :is(button, input, select, textarea) { font: inherit; color: inherit; border-radius: 0; }
-:is(#dock, #work) button { background: var(--panel2); border: 1px solid var(--line2); padding: 6px 12px; cursor: pointer; }
-:is(#dock, #work) button:hover { border-color: var(--accent-line); color: var(--accent); }
-:is(#dock, #work) button:disabled { cursor: default; opacity: .55; }
-:is(#dock, #work) button.link { border: 0; padding: 0; background: none; color: var(--dim); text-align: left; font: 10px var(--mono); }
-:is(#dock, #work) button.link { display: inline; }           /* core's .link is a bordered tag with an arrow */
-:is(#dock, #work) button.link:after { content: none; }
-:is(#dock, #work) button.link:hover { color: var(--accent); }
-:is(#dock, #work) :is(input, textarea, select) { background: var(--panel2); border: 1px solid var(--line2); padding: 8px 10px; }
-:is(#dock, #work) :is(input, textarea):focus { border-color: var(--accent-line); outline: none; }
-:is(#dock, #work) :is(code, pre) { font-family: var(--mono); }
-:is(#dock, #work) .muted { color: var(--dim); font-size: 12.5px; }
+:where(#dock, #work) a { color: var(--accent); }
+:where(#dock, #work) :is(button, input, select, textarea) { font: inherit; color: inherit; border-radius: 0; }
+:where(#dock, #work) button { background: var(--panel2); border: 1px solid var(--line2); padding: 6px 12px; cursor: pointer; }
+:where(#dock, #work) button:hover { border-color: var(--accent-line); color: var(--accent); }
+:where(#dock, #work) button:disabled { cursor: default; opacity: .55; }
+:where(#dock, #work) button.link { border: 0; padding: 0; background: none; color: var(--dim); text-align: left; font: 10px var(--mono); }
+:where(#dock, #work) button.link { display: inline; }           /* core's .link is a bordered tag with an arrow */
+:where(#dock, #work) button.link:after { content: none; }
+:where(#dock, #work) button.link:hover { color: var(--accent); }
+:where(#dock, #work) :is(input, textarea, select) { background: var(--panel2); border: 1px solid var(--line2); padding: 8px 10px; }
+:where(#dock, #work) :is(input, textarea):focus { border-color: var(--accent-line); outline: none; }
+:where(#dock, #work) :is(code, pre) { font-family: var(--mono); }
+:where(#dock, #work) .muted { color: var(--dim); font-size: 12.5px; }
 #dock .grow { flex: 1; }
 /* -- the chat: the right pane, Rookie at its head; pages and work views fill the left -- */
 #dock { width: 420px; flex: none; display: none; flex-direction: column; background: var(--panel);

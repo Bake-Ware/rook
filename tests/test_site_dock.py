@@ -217,10 +217,11 @@ async def dock(tmp_path):
             await page.until("document.querySelector('main.main').classList.contains('pointed')")
             await page.until("document.querySelector('#rookie-say').textContent === 'This page'")
 
-            # 6. [[open: ...]]: a view the dock does not have says so (setup's views are HA3's) ...
-            agent.reply = "Here's the vault. [[open: vault]]"
-            await page.type("Open the vault")
-            await page.until("[...document.querySelectorAll('#dock-log .msg.bad')].some(m => m.textContent === \"There's no vault view here yet.\")")
+            # 6. [[open: ...]]: a view the dock does not have says so, as 0.5's does (setup's views,
+            #    vault, account, network and look, come with the setup wizard, brief HA3) ...
+            agent.reply = "Here it is. [[open: nowhere]]"
+            await page.type("Open nowhere")
+            await page.until("[...document.querySelectorAll('#dock-log .msg.bad')].some(m => m.textContent === \"There's no nowhere view here yet.\")")
             #    ... and "page <name>" opens that page; the dock is beside it with the conversation.
             agent.reply = "Opening the jobs. [[open: page jobs]]"
             await page.type("Show me the jobs")
