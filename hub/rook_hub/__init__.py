@@ -26,7 +26,7 @@ from nacl.signing import SigningKey
 
 from rook_protocol import MAX_MESSAGE, PROTOCOL, ProtocolError, decode, encode, verify_link_key
 
-from . import bands, caps, config, devices, history, jobs, link, plugins, records, scrub, site, streams, vault, web
+from . import bands, caps, config, devices, history, jobs, library, link, plugins, records, scrub, site, streams, vault, web
 from .auth import Auth
 from .events import Events
 from .errors import HubError, error
@@ -189,6 +189,7 @@ class Hub:
         streams.migrate(self._db)
         self.streams = streams.Streams(self)
         self._db.executescript(plugins.SCHEMA)
+        self._db.executescript(library.SETTINGS_SCHEMA)   # plugins' settings (brief HA2)
         self._db.executescript(devices.SCHEMA)
         self._db.executescript(site.SCHEMA)
         self._db.executescript(history.SCHEMA)
@@ -321,6 +322,7 @@ class Hub:
         it. A call still running is left running, for the next start to end with hub_restarted (C3)."""
         if self._stopping is not None:
             self._stopping.set()
+        await self.plugins.stop()      # what plugins left running (Call.later): a turn in progress, say
         await self.events.stop()
         await self.carrier.stop()
         if self._runner is not None:

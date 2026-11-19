@@ -2,7 +2,7 @@
 
 A plugin is how anything above core reaches Rook: tasks, knowledge, device drivers, and core's own caps too (PL7, K5). It is one folder with a manifest that says what runs at the hub, what runs on workers and what it adds to the site (PL3). Plugins add, never replace (PL1), and none hooks into routing, auth or the journal (PL2).
 
-What is built so far: the manifest, installing from a folder, hot loading, the library a plugin's hub code uses, the worker part for Python workers, pushed to them and hot loaded there, the site section (pages, settings sections, Vue components and shell files), and core's own caps as plugins installed by default.
+What is built so far: the manifest, installing from a folder, hot loading, the library a plugin's hub code uses (with settings, skills, calls to workers, ordered work and its own streams, brief HA2), the worker part for Python workers, pushed to them and hot loaded there, the site section (pages, settings sections, Vue components and shell files), and core's own caps as plugins installed by default, the house agent among them.
 
 ## The folder
 
@@ -81,6 +81,36 @@ What the hub refuses at install, keeping nothing of the plugin (an install is al
 - a record type that core or another plugin already owns (`type_taken`).
 
 A plugin that is installed again keeps its own cap names and record types, and its GUID and moniker (G1).
+
+### More a hub plugin can do (built for the house agent, brief HA2)
+
+These were added to the plugin library so the house agent could be a plugin (INVENTORY.md, section 5). They add to it; nothing above changed.
+
+**Async caps.** A cap's handler may be `async def handler(call, args)`. The hub awaits it and goes on serving meanwhile; its result is checked as a plain one's is.
+
+**Declared in `setup(plugin)`:**
+
+| | |
+|---|---|
+| `plugin.setting(name, doc, where="hub", default=None)` | A setting the hub keeps for the plugin (0.5's plugin settings). `where="hub"` is one value for the hub; `where="person"` is each user's own. Never set, it reads as `default`. Agents and the site read and change it with `setting.list` and `setting.set` with `plugin` (below). |
+| `plugin.skill(name, file)` | A skill: a markdown file in the plugin's folder, with an optional front matter of `description:` and `when:` lines between `---` lines (PL5). The agents plugin's `agent.skill` reads it, and an agent's prompt lists it by its description. |
+| `@plugin.carry(name)` on `when(call)` | While `when` (sync or async) returns text, every turn of the house agent carries skill `name` in full after that text, as 0.5's setup brief did (first-run setup uses it). `call` is as the person whose message the turn answers. None: not carried. |
+| `@plugin.on_load` on `fn(call)` | Run once each time the plugin is loaded: at every hub start, and on every install or replace, after its caps are served. `call` is as the hub's system owner. It runs while the hub starts, so it is a plain function; one that raises is logged. |
+| `plugin.folder` | The installed copy of the plugin's folder. |
+
+**On `call`, in a handler:**
+
+| | |
+|---|---|
+| `call.settings[name]`, `call.settings.get(name)`, `call.settings.set(name, value)`, `call.settings.chosen(name)` | The plugin's settings. A where="person" setting is the caller's own. Setting None forgets the value. |
+| `await call.call(worker, cap, args, why)` | Call a cap on a worker, or on `"hub"`, as the caller: journaled under them with `why` (L1), with no timeout. It returns the result; one that came in pieces comes joined. An error reply raises `Error` with that error. |
+| `await call.start(worker, cap, args, why)` | The same call, given a stream at once (brief 59), so whoever closes that stream stops the call. Returns (the stream's moniker, an awaitable of the result). |
+| `call.later(key, fn)` | Run `await fn()` on the hub after every earlier `later` of this plugin with the same `key` has ended: one at a time, in the order asked. It goes on after the cap returns, until it ends or the hub stops. Returns an asyncio task. `call.busy(key)` says whether one is still waiting or running. |
+| `call.open_stream(title, description)`, `call.append(stream, data, by_caller=False)`, `await call.read(stream, position=0, wait=0, limit=None)` | A stream at the hub that the plugin writes (S1 to S4). Its worker is `hub`. The stream tool lists, searches and reads it as any stream, but refuses to write to, resize, signal or close it there (`plugin_stream`): its input comes through the plugin's own caps. `append` adds an entry and returns its position; with `by_caller` it is input recorded with who sent it. `read` gives entries raw (base64 `data`), every one from `position` on when `limit` is None, waiting as long as asked. |
+| `call.person(who=None)`, `call.workers()`, `call.as_caller(user, token=None)` | A user (the caller, or one named by GUID, moniker or name); every worker with whether it is online and the caps it announces; the same plugin's Call as someone else. |
+| `call.skills()`, `await call.carried()` | Every skill a loaded plugin declares; the skills carried on this caller's turn now, as (name, lead-in, file). |
+
+**Settings at the door.** `setting.list` lists the hub's own settings, then each loaded plugin's: section and plugin, key, where, value (a where="person" one is the caller's own), `chosen`, and description. `{plugin}` narrows it to one plugin. `setting.set {plugin, key, value}` sets a plugin's setting; a `null` value forgets it. Without `plugin`, both caps work as before.
 
 ### Drivers: devices at the hub (built)
 
@@ -196,6 +226,12 @@ CAPS = {
   A field's place is the order the handler gave them, so put what is known last at the end. A result under about a megabyte is sent as one `result`, the same as an ordinary value, so callers see no difference.
 - The worker runs the module's source inside its own process (not sandboxed, PL2), as a module with a name of its own each load, so a replaced version starts fresh.
 
+- **`WORKER`** (brief HA2). The worker puts `WORKER` in each module before running it:
+  - `WORKER.hub_url`: the hub as this worker reaches it.
+  - `WORKER.name`: the worker's name.
+  - `WORKER.config`: the plugin's own section of the config the hub sends this worker (CF2): what `config.set {worker, set: {"<plugin>": {...}}}` set, else `{}`.
+  - `WORKER.data`: a folder of the plugin's own in the worker's state directory. It is made on first use and kept across restarts and updates.
+
 A plugin's worker caps are called and journaled exactly as any worker cap (PL2). Nothing else is needed yet. The shared helper library (PL6) is where anything that plugin worker code repeats will go.
 
 ### `site`: what it adds to the site (built)
@@ -256,20 +292,21 @@ export default {
 
 ## Core's own caps: plugins installed by default (PL7)
 
-Core's own caps ship as plugins in the one format above, in `hub/rook_hub/defaults/`. Each has a worker part for Python workers and nothing at the hub or on the site, except `agents`, which is the house agent and has a site part (and, with brief HA2, a hub part).
+Core's own caps ship as plugins in the one format above, in `hub/rook_hub/defaults/`. Each has a worker part for Python workers and nothing at the hub or on the site, except `agents`, the house agent, which has a hub part (brief HA2) and a site part, the chat dock (brief HA1).
 
 | Plugin | Caps | From |
 |---|---|---|
-| `agents` | No caps yet (brief HA2 adds the house agent's). Its site part is the chat dock beside every page, ported from 0.5 (`cbe86a47:rook/plugins/agents/shell/`): the conversation with the house agent through `agent.chat.send` (`wait: false`) and `agent.chat.read`, Rookie (`rookie.js`, vendored unchanged; `rookie-map.js`), the work pane, the chat markup (`chat-widgets.js`: `[[choices: ...]]`, `[[open: ...]]`, `[[point: ...]]`, `[[say: ...]]`) and "Getting ready" while no engine answers. A hub where `agent.site` cannot be called shows no dock. | house agent briefs HA1 and HA2; P5 |
 | `net` | `net.http`, `net.tcp`, `net.udp`: the network primitives every worker serves as a jump box for devices (D3). The functions are `rook_net`'s, which the hub also runs for a device on a direct route (D4). | D3 |
 | `shell` | `shell.exec` (run a command and wait for it: `argv`, or `cmd` in `sh`, `bash` or `powershell`; gives `ok`, `code`, `stdout`, `stderr`, and `shell` when it was not `sh`), `shell.which` (a program's path on PATH, or null), `shell.env` (one variable by `name`, its value or `default`, or every variable whose name starts with `prefix`, as an object; values as they are), `shell.open` (a command, a login shell unless given, as a stream: on a terminal of `cols` by `rows`, resized by `stream_resize`, or on pipes with `pty` false; it closes when the command ends, with its exit code, and closing it ends the command; a signal sent to the stream goes to the command and everything it started). Stopping a `shell.exec` call ends its command the same way. Every command starts with INT, TERM, HUP and QUIT at their defaults, whatever the worker itself ignores (brief 65). | docs/inventory.md CAP-01, CAP-02 (0.5's), CAP-03, WRK4-070 |
 | `file` | `file.read` (`path`, `encoding`: a codec or `base64`, `max_bytes`; gives `content`, `size`, `encoding`, and `truncated` when `max_bytes` cut it; anything that opens, a FIFO or a device too, read for as long as it takes), `file.write` (`path`, `content`, `encoding`, `append`, `create_parents`; gives `path`, `written`), `file.list` (`path`, `recursive`, `hidden`, `limit`; gives `entries` of `name`, `type`, `size`, `modified`, `mode`, and `path` when recursive), `file.search` (`pattern`, a regex, in the files under `path`, with `recursive`, `glob`, `ignore_case`, `limit`; gives `matches` of `path`, `line`, `text`; binary files skipped; the pattern runs in a child Python, so a slow one never stops the worker), `file.stat` (`path`; gives `exists`, and `type`, `size`, `modified`, `mode`). | docs/inventory.md CAP-04 (0.5's) |
 | `worker` | `worker.ping`: no arguments; gives `pong: true` and `at`, the worker's clock. | docs/inventory.md CAP-05 (0.5's) |
+| `agents` | The house agent (brief HA2; 0.5's agents plugin). `agent.chat.send {agent, text, wait}` messages it in your conversation with it, waking a turn; with `wait` (the default) it answers `{agent, stream, seq, text, reply_seq}`, without `{agent, stream, seq}`. `agent.chat.read {agent, after, limit, wait, party}` gives `{stream, events, next, closed}`: 0.5's events `{seq, at, type, by, data}` of type `input`, `turn` (role `prompt`, then `reply`) and `status` (an error), after the cursor `after`. `agent.skill {name}`, `agent.list`, and `agent.site` (what the site's dock needs). Settings: `house_name`, `dock`, `backend`, `worker`. A hub part only; how it works is at the top of its `hub.py`. Its site part (brief HA1) is the chat dock beside every page, ported from 0.5 (`cbe86a47:rook/plugins/agents/shell/`): the conversation with the house agent through `agent.chat.send` (`wait: false`) and `agent.chat.read`, Rookie (`rookie.js`, vendored unchanged; `rookie-map.js`), the work pane, the chat markup (`chat-widgets.js`: `[[choices: ...]]`, `[[open: ...]]`, `[[point: ...]]`, `[[say: ...]]`) and "Getting ready" while no engine answers. | 0.5's `rook/plugins/agents` (cbe86a47) |
+| `agents-claude-code` | `agents-claude-code.turn {prompt, session, cwd, model, effort, system, door}`: one agent turn in the Claude Code CLI on this worker, `claude -p --output-format json`, resumed by `session`, with the prompt on stdin. Its settings are its section of the worker's config. The house agent's engine. | 0.5's `rook/plugins/agents-claude-code` (cbe86a47) |
 | `battery` | `battery.status`: no arguments; gives `percent` and `status`, from upower or else `/sys/class/power_supply/BAT*`, on Linux. A machine with no battery answers so, with what to try. | docs/inventory.md CAP-07 (0.5's), H4 |
 
 None of these caps has a timeout, a size cap or a list of what may run (Build rules; Bake, 14 and 17 November). `max_bytes` and `limit` are there for a caller who wants to bound a call, and have no default: with nothing passed, a cap gives everything. A call with an argument the cap does not take is refused, saying which it takes. The shell caps are built for Linux and macOS (the same POSIX calls; only Linux has been run); on Windows each but `shell.env` answers that it is not built there yet (W5). `battery.status` is built for Linux only. The file caps use the standard library only; only Linux has been run.
 
-What a hub does at start, every start (Bake, 17 November: "How else are you going to load new plugins?"). It first loads every installed plugin, then goes through the folders in `defaults/` in name order (`battery`, `file`, `net`, `shell`, `worker`):
+What a hub does at start, every start (Bake, 17 November: "How else are you going to load new plugins?"). It first loads every installed plugin, then goes through the folders in `defaults/` in name order (`agents`, `agents-claude-code`, `battery`, `file`, `net`, `shell`, `worker`):
 
 - **Not installed** (no plugin of that name in the data directory: a new data directory, or one made by a core that did not ship it): it installs it, as any plugin is installed.
 - **Installed at an older version** than the one shipped: it installs the shipped one in its place, as an install of the same name replaces a plugin. Versions are compared as dotted numbers, number by number, a missing place counting as 0 (`0.1` is `0.1.0`). A version that is not dotted numbers is never counted older, so it is left.
@@ -287,8 +324,7 @@ Workers get the worker parts as they get any plugin's, so a worker opted out of 
 ## Not built, and open
 
 - Uninstalling, disabling or enabling a plugin, and what happens to its records and record types.
-- A plugin's hub code calling caps on workers (other than a driver's three network steps).
-- Serving a plugin's skill to agents (PL5).
+- Serving a plugin's `skill` manifest field to agents (PL5). Skills declared in code with `plugin.skill` reach the house agent (brief HA2).
 - Pushing worker parts to forms other than `python`, such as `esp32` (PL3).
 - The files and health families of PL7, and the shell caps 0.4 and 0.5 do not agree on: see the pull request for brief 39.
 - The registry (PL4: LATER).

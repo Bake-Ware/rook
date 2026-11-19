@@ -110,7 +110,7 @@ async def scenario(tmp_path):
             moniker = approved["approved"]["moniker"]
             await eventually(lambda: first.identity)
             await eventually(lambda: hub.get_worker(moniker)["online"])
-            ALL = ["battery.status", "demo.echo", "file.list", "file.read", "file.search", "file.stat", "file.write",
+            ALL = ["agents-claude-code.turn", "battery.status", "demo.echo", "file.list", "file.read", "file.search", "file.stat", "file.write",
                    "net.http", "net.tcp", "net.udp", "shell.env", "shell.exec", "shell.open", "shell.which", "worker.ping"]
             await eventually(lambda: [c["name"] for c in hub.get_worker(moniker)["caps"]] == ALL)   # PL7
             failed, listing = await tool(session, "workers")
@@ -132,7 +132,8 @@ async def scenario(tmp_path):
                 "job.create", "job.update", "job.run", "job.cancel", "job.list", "job.pause", "job.unpause", "job.delete",
                 "event.emit", "secret.create", "secret.set", "secret.delete", "secret.list", "journal.redact",
                 "plugin.install", "plugin.list", "worker.plugins", "device.add", "config.get", "config.set",
-                "backup.run", "backup.list", "backup.verify", "heartbeat.roll-up"]
+                "backup.run", "backup.list", "backup.verify", "heartbeat.roll-up",
+                "agent.chat.read", "agent.chat.send", "agent.list", "agent.site", "agent.skill"]   # the agents plugin (HA2)
             failed, matched = await tool(session, "caps", match="join")
             assert [(g["worker"], [c["name"] for c in g["caps"]]) for g in matched["caps"]] == [
                 ("hub", ["worker.join-token"]), (moniker, [])]

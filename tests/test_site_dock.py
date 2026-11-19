@@ -269,3 +269,43 @@ async def dock(tmp_path):
     finally:
         await hub.stop_serving()
         hub.close()
+
+
+def test_the_dock_with_the_real_house_agent(tmp_path):
+    asyncio.run(real_agent(tmp_path))
+
+
+async def real_agent(tmp_path):
+    """The same dock against the real agent.site, agent.chat.send and agent.chat.read (brief HA2),
+    with a real worker whose engine is HA2's stand-in, tests/plugins/echo-engine: it answers each
+    message by echoing it, so markup typed into the chat comes back in the agent's reply."""
+    from test_house_agent import Rig
+    async with Rig(tmp_path) as rig:
+        async with browser() as client:
+            assert (await login(client, rig.url, "Alice", "a password"))[0] == 200
+            cookie = client.cookie_jar.filter_cookies(yarl.URL(rig.url))["rook_session"].value
+        async with Chrome() as page:
+            await page.cmd("Network.setCookie", name="rook_session", value=cookie, url=rig.url)
+            await page.cmd("Page.navigate", url=rig.url + "/workers")
+            await page.until("document.body.classList.contains('dock-open') && !document.querySelector('#dock').hidden")
+            # The first visit's note went to the real agent, which answered through its engine.
+            await page.until("[...document.querySelectorAll('#dock-log .msg.them .text')].some(t => t.textContent.startsWith('echo 1:'))")
+
+            # Typed: sent with agent.chat.send, answered by a turn, read back with agent.chat.read.
+            await page.type("Hello Rookie")
+            await page.until("[...document.querySelectorAll('#dock-log .msg.them .text')].some(t => t.textContent.startsWith('echo 2:') && t.textContent.includes('Hello Rookie'))")
+            assert await page.js("[...document.querySelectorAll('#dock-log .msg.me .text')].map(t => t.textContent)") == ["Hello Rookie"]
+
+            # Markup in the agent's reply works through the real caps: choices, then a click on one.
+            await page.type("[[choices: Yes | No]] [[say: Echoed]]")
+            await page.until("[...document.querySelectorAll('#dock-log .widget.choices button')].map(b => b.textContent).join('|') === 'Yes|No'")
+            await page.until("document.querySelector('#rookie-say').textContent === 'Echoed'")
+            await page.js("document.querySelector('#dock-log .widget.choices button').click(); true")
+            await page.until("[...document.querySelectorAll('#dock-log .msg.them .text')].some(t => t.textContent.startsWith('echo 4:') && t.textContent.includes('Yes'))")
+            await page.shot("dock-real-agent.png")
+
+            # The conversation is the hub's: read through the door, it has the same turns.
+            events = (await rig.events())["events"]
+            assert [e["data"]["text"].split(":")[0] for e in events if e["type"] == "turn" and e["data"].get("role") == "reply"] == \
+                ["echo 1", "echo 2", "echo 3", "echo 4"]
+            assert [e for e in page.errors if "WebGL" not in e] == []

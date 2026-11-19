@@ -85,7 +85,7 @@ async def lifecycle(tmp_path):
         await eventually(lambda: hub.get_worker(guid)["online"])
         await eventually(lambda: first.interval)
         assert first.interval == DEFAULT_INTERVAL
-        ALL = ["battery.status", "demo.echo", "demo.fail", "file.list", "file.read", "file.search", "file.stat",
+        ALL = ["agents-claude-code.turn", "battery.status", "demo.echo", "demo.fail", "file.list", "file.read", "file.search", "file.stat",
                "file.write", "net.http", "net.tcp", "net.udp", "shell.env", "shell.exec", "shell.open", "shell.which", "worker.ping"]
         await eventually(lambda: [c["name"] for c in hub.get_worker(guid)["caps"]] == ALL)   # with the default plugins (PL7)
         record = hub.get_worker(guid)
