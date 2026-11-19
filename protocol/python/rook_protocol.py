@@ -240,6 +240,11 @@ MESSAGES = {
         "ephemeral": (_link_key, REQ),
         "hub_link_key": (_link_key, REQ),
         "signature": (_signature, REQ),
+        "hub_start": (_positive, OPT),     # the hub's start number: new at every start of the hub (brief 57)
+    },
+    # Hub -> worker, the response to GET /link: the hub's start number now (brief 57).
+    "hub_start": {
+        "hub_start": (_positive, REQ),
     },
     # Hub -> worker (C3, W5).
     "call": {
