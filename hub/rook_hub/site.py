@@ -196,7 +196,8 @@ def journal_choices(hub):
     announced = {c["name"] for c in caps.descriptors(hub)}
     announced.update(c["name"] for w in [*workers, *all_devices] for c in w["caps"])
     return {"kinds": list(KINDS),
-            "users": [{"name": u["name"], "moniker": u["moniker"]} for u in hub.auth.list_users()],
+            "users": [{"name": u["name"], "moniker": u["moniker"]}      # the system owner acts too (its jobs)
+                      for u in [*hub.auth.list_users(), hub.auth.get_user(hub.auth.system)]],
             "workers": [{"name": "hub", "moniker": "hub", "device": False}]
                        + [{"name": w["name"], "moniker": w["moniker"], "device": False} for w in workers]
                        + [{"name": d["name"], "moniker": d["moniker"], "device": True} for d in all_devices],
@@ -558,7 +559,7 @@ def _names(hub):
     """{moniker: name} for every worker, device and user, to show names beside monikers."""
     names = {w["moniker"]: w["name"] for w in hub.list_workers()}
     names.update({d["moniker"]: d["name"] for d in devices.list_devices(hub)})
-    names.update({u["moniker"]: u["name"] for u in hub.auth.list_users()})
+    names.update({u["moniker"]: u["name"] for u in [*hub.auth.list_users(), hub.auth.get_user(hub.auth.system)]})
     return names
 
 
@@ -651,9 +652,10 @@ def secrets_view(hub, token):
 
 
 def auth_view(hub, token, user):
-    """What the Auth page lists (T6): users, and tokens with purpose, scope, owner, times and use."""
+    """What the Auth page lists (T6): users, and tokens with purpose, scope, owner, times and use.
+    Users are the people who can sign in; the system owner is not one (auth.py)."""
     users = hub.auth.list_users()
-    names = {u["guid"]: u["name"] for u in users}
+    names = {u["guid"]: u["name"] for u in [*users, hub.auth.get_user(hub.auth.system)]}
     tokens = hub.auth.list_tokens()
     monikers = {t["guid"]: t["moniker"] for t in tokens}
     session = hub.auth.verify(token)["guid"]

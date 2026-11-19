@@ -154,7 +154,8 @@ async def scenario(tmp_path):
             status, view = await ask(client, "GET", base + "/api/jobs")
             assert status == 200
             listed = {j["title"]: j for j in view["jobs"]}
-            assert list(listed) == ["a", "b", "c", "x", "y"]
+            assert list(listed) == ["Heartbeat roll-up", "a", "b", "c", "x", "y"]   # the system owner's job first
+            assert listed["Heartbeat roll-up"]["owner"] == {"moniker": "hub-system-owner", "name": "system"}
             assert listed["b"]["match"] == {"event": "job.success", "payload": {"job_moniker": m["a"]}}
             assert listed["b"]["call"] == {"worker": box.moniker, "name": "desk", "cap": "demo.fail", "args": {"text": "b"}}
             assert listed["b"]["owner"] == {"moniker": alice["moniker"], "name": "Alice"}

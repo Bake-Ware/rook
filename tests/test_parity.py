@@ -320,7 +320,8 @@ def test_jobs(tmp_path):
         assert (await rig.ok("hub", "job.pause", job=first["moniker"]))["paused"] is True
         await rig.ok("hub", "job.delete", job=second["moniker"])
         listed = (await rig.ok("hub", "job.list"))["jobs"]
-        assert [(j["moniker"], j["paused"]) for j in listed] == [(first["moniker"], True)]
+        assert [(j["moniker"], j["paused"]) for j in listed if j["owner"] != "hub-system-owner"] == \
+            [(first["moniker"], True)]                              # beside the system owner's job (brief 56)
     run(tmp_path, body)
 
 

@@ -20,6 +20,14 @@ join (R3); `webhook` posts to the hub's webhook URL (J2); `session` is a
 person logged in to the site (T4), kept in a cookie they never see (T3).
 Lifetime, one use and scopes come from the hub's stored defaults per purpose,
 never from whoever mints (T2).
+
+Every hub also has one system owner (Bake, 19 Nov: "Make a system role that can
+function as owner."): a row in `users` marked `system`, there from the hub's first
+start, made at the next start on a hub made before it. It owns what needs an owner
+and no person does, such as the built-in heartbeat roll-up job (jobs.py), and what
+it owns runs as it. It is not a person: it has no password, so it cannot log in or
+hold a session, no token is made for it, and the site's setup and Users list leave
+it out. It is not a permission level either: it may do what a user may do, no more.
 """
 
 import base64
@@ -38,9 +46,10 @@ CREATE TABLE IF NOT EXISTS users (
     moniker    TEXT NOT NULL UNIQUE,
     name       TEXT NOT NULL,
     name_key   TEXT NOT NULL UNIQUE,   -- the name as login compares it (_name_key)
-    password   TEXT NOT NULL,          -- salted scrypt hash, never the password
+    password   TEXT NOT NULL,          -- salted scrypt hash, never the password; '' for the system owner
     created_at REAL NOT NULL,
-    revoked_at REAL
+    revoked_at REAL,
+    system     INTEGER NOT NULL DEFAULT 0  -- 1 for the hub's system owner, the one user that is not a person
 );
 CREATE TABLE IF NOT EXISTS token_defaults (
     purpose  TEXT PRIMARY KEY,
@@ -68,6 +77,11 @@ CREATE TABLE IF NOT EXISTS tokens (
 );
 CREATE INDEX IF NOT EXISTS tokens_owner ON tokens (owner);
 """
+
+# The system owner's name and moniker, the same on every hub, so it reads as the system wherever an
+# owner or an actor is shown (the Jobs page, the door, the journal). A person cannot take the name.
+SYSTEM_NAME = "system"
+SYSTEM_MONIKER = "hub-system-owner"
 
 # What each token failure tells the caller to try next (C3).
 _TRY_AGAIN = "Ask the user it belongs to, or an agent of theirs, to mint a new token."
@@ -109,7 +123,27 @@ class Auth:
         self.hub = hub
         self.db = hub._db
         self.db.executescript(SCHEMA)
+        if "system" not in {row["name"] for row in self.db.execute("PRAGMA table_info(users)")}:
+            self.db.execute("ALTER TABLE users ADD COLUMN system INTEGER NOT NULL DEFAULT 0")  # a hub made before it
+        self.system = self._system()
         self._secret = self._load_secret()
+
+    def _system(self):
+        """The system owner's GUID, made on the first start that lacks it, once."""
+        with self.hub._lock, self.db:
+            row = self.db.execute("SELECT guid FROM users WHERE system = 1").fetchone()
+            if row is not None:
+                return row["guid"]
+            guid = str(uuid.uuid4())
+            # A hub made before the system owner may have a person called "system" already; they keep
+            # the name, and the system's name key is then its GUID, which no login name matches.
+            taken = self.db.execute("SELECT 1 FROM users WHERE name_key = ?", (_name_key(SYSTEM_NAME),)).fetchone()
+            self.db.execute("INSERT INTO monikers (moniker, guid) VALUES (?, ?)", (SYSTEM_MONIKER, guid))
+            self.db.execute(
+                "INSERT INTO users (guid, moniker, name, name_key, password, created_at, system) "
+                "VALUES (?, ?, ?, ?, '', ?, 1)",
+                (guid, SYSTEM_MONIKER, SYSTEM_NAME, guid if taken else _name_key(SYSTEM_NAME), self.hub.clock()))
+            return guid
 
     def _load_secret(self):
         path = self.hub.state_dir / "token.secret"
@@ -141,8 +175,9 @@ class Auth:
         return self.get_user(guid)
 
     def has_users(self):
-        """Whether any user was ever made, revoked or not. While none was, the site offers setup."""
-        return self.db.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
+        """Whether any person was ever made a user, revoked or not; the system owner is not one.
+        While none was, the site offers setup."""
+        return self.db.execute("SELECT 1 FROM users WHERE system = 0 LIMIT 1").fetchone() is not None
 
     def login(self, name, password):
         """The user with this name and password (T4), or HubError. A wrong password
@@ -151,7 +186,9 @@ class Auth:
         with self.hub._lock, self.db:
             row = self.db.execute("SELECT * FROM users WHERE name_key = ?", (_name_key(name),)).fetchone()
             if row is not None:
-                if not _password_matches(password, row["password"]):
+                if row["system"]:
+                    outcome = "system"
+                elif not _password_matches(password, row["password"]):
                     outcome = "wrong_password"
                 elif row["revoked_at"] is not None:
                     outcome = "user_revoked"
@@ -161,6 +198,9 @@ class Auth:
         if row is None or outcome == "wrong_password":
             raise HubError("login_failed", "No user has that name and password.",
                            "Check the name and the password, and try again.")
+        if outcome == "system":
+            raise HubError("system_owner", "That is the hub's system owner, which is not a person and has no password.",
+                           "Log in with your own name and password.")
         if outcome == "user_revoked":
             raise HubError("user_revoked", f"User {row['moniker']} was revoked and cannot log in.",
                            "Ask someone on this hub to create a new user for you.")
@@ -176,8 +216,9 @@ class Auth:
             self.hub._journal("auth", actor, None, {"password_changed": row["guid"]})
 
     def _user_record(self, row):
-        """A user as the hub hands it out: never the password hash."""
-        return {name: row[name] for name in ("guid", "moniker", "name", "created_at", "revoked_at")}
+        """A user as the hub hands it out: never the password hash. `system` is true for the system owner."""
+        record = {name: row[name] for name in ("guid", "moniker", "name", "created_at", "revoked_at")}
+        return dict(record, system=bool(row["system"]))
 
     def _user(self, user):
         row = self.db.execute("SELECT * FROM users WHERE guid = ? OR moniker = ?", (user, user)).fetchone()
@@ -191,8 +232,10 @@ class Auth:
             return self._user_record(self._user(user))
 
     def list_users(self):
+        """Every person who is a user, revoked or not; not the system owner (get_user(auth.system))."""
         with self.hub._lock:
-            return [self._user_record(row) for row in self.db.execute("SELECT * FROM users ORDER BY created_at")]
+            return [self._user_record(row) for row in
+                    self.db.execute("SELECT * FROM users WHERE system = 0 ORDER BY created_at")]
 
     def revoke_user(self, target, *, user=None, token=None):
         """Revoke a user and every token that chains back to them (T5)."""

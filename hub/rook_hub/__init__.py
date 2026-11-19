@@ -215,6 +215,7 @@ class Hub:
         self.plugins.load_all()  # every installed plugin, at start (PL3)
         self.plugins.install_defaults()     # core's own caps: any missing or older, at every start (PL7)
         config.make_missing(self)    # a worker approved before there were config records gets one (CF1)
+        jobs.make_built_in(self)     # the system owner's jobs, if not there: the heartbeat roll-up (Bake 19 Nov)
 
     def _load_key(self, name, kind):
         """A key of `kind` kept in the data directory, made on first start (owner-only)."""
