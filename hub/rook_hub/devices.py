@@ -211,7 +211,7 @@ def _eligible(hub, row, cap):
         records = [hub._record(w) for w in on_band]
     eligible, others = [], []
     for w in records:
-        if not w["online"] or w["guid"] not in hub._links:
+        if not w["online"]:                 # online includes a live link (brief 51)
             others.append(f"{w['moniker']} is offline")
         elif w["guid"] in out:
             others.append(f"{w['moniker']} does not serve devices")

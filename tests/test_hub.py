@@ -8,7 +8,7 @@ import urllib.request
 import pytest
 from nacl.signing import SigningKey
 
-from helpers import Clock, link_fields
+from helpers import Clock, eventually, link_fields
 from memory_link import link_pair
 from rook_hub import Hub, HubError
 from rook_protocol import decode, encode
@@ -259,3 +259,72 @@ async def knock_endpoint(hub):
         assert not any(k["name"] == "two-lines" for k in hub.list_pending())
     finally:
         await hub.stop_serving()
+
+
+def worker_events(hub):
+    """The worker.online and worker.offline events emitted so far (the bus is not running here)."""
+    return [(e["name"], e["worker"]) for e in hub.events._queue if e["name"] in ("worker.online", "worker.offline")]
+
+
+def test_a_worker_with_no_link_is_offline_at_once(hub):
+    # Brief 51 (H3 as narrowed after the stress test): a worker the hub holds no link for is offline at
+    # once, wherever `online` is shown or used, with no heartbeat missed; its record and caps are kept.
+    from rook_hub import door, site
+
+    async def go():
+        key, record = approved(hub)
+        guid, token = record["guid"], hub.auth.mint("agent", user=hub.bake)
+        link, _ = await connected(hub, key)
+        assert hub.get_worker(guid)["online"]
+        link.close()
+        await eventually(lambda: guid not in hub._links)
+        assert not hub.get_worker(guid)["online"]                   # the clock has not moved
+        assert [c["name"] for c in hub.get_worker(guid)["caps"]] == ["demo.echo"]
+        [listed] = json.loads(await door.workers(hub, token, {}))["workers"]
+        assert listed["online"] is False and listed["caps"] == ["demo.echo"]
+        view = site.workers_view(hub)
+        assert view["stats"]["online"] == 0 and [w["online"] for g in view["groups"] for w in g["workers"]] == [False]
+        reply = await hub.call(guid, "demo.echo", {}, "call it with no link", user=hub.bake)
+        assert reply["code"] == "worker_offline" and reply["next"]
+        assert worker_events(hub) == [("worker.online", guid), ("worker.offline", guid)]
+
+        link, _ = await connected(hub, key)                          # it links again: online again
+        assert hub.get_worker(guid)["online"]
+        assert worker_events(hub)[2:] == [("worker.online", guid)]
+    asyncio.run(go())
+
+
+def test_a_revoked_worker_is_offline_at_once(hub):
+    # Brief 51: after a revoke the worker is listed offline at once, as calls to it answer worker_offline.
+    async def go():
+        key, record = approved(hub)
+        guid = record["guid"]
+        link, _ = await connected(hub, key)
+        assert hub.revoke(guid, user=hub.bake)["online"] is False
+        reply = await hub.call(guid, "demo.echo", {}, "call it after a revoke", user=hub.bake)
+        assert reply["code"] == "worker_offline"
+        assert worker_events(hub) == [("worker.online", guid), ("worker.offline", guid)]
+    asyncio.run(go())
+
+
+def test_a_frozen_worker_still_goes_offline_by_h3(hub):
+    # H3: a worker whose link is up but which has missed three heartbeats is offline too, and the hub's
+    # tick emits worker.offline for it; the link is kept.
+    async def go():
+        key, record = approved(hub)
+        guid = record["guid"]
+        link, reply = await connected(hub, key)
+        hub.clock.advance(3 * reply["interval"])
+        hub.events.tick()
+        assert hub.get_worker(guid)["online"] and worker_events(hub) == [("worker.online", guid)]
+        hub.clock.advance(1)
+        assert guid in hub._links and not hub.get_worker(guid)["online"]
+        hub.events.tick()
+        assert worker_events(hub) == [("worker.online", guid), ("worker.offline", guid)]
+        reply = await hub.call(guid, "demo.echo", {}, "call it while it is silent", user=hub.bake)
+        assert reply["code"] == "worker_offline"
+        await link.send(encode(heartbeat(key)))                      # it heartbeats again: online again
+        assert decode(await link.recv())["type"] == "heartbeat_reply"
+        assert hub.get_worker(guid)["online"]
+        assert worker_events(hub)[2:] == [("worker.online", guid)]
+    asyncio.run(go())

@@ -2,8 +2,10 @@
 
 Sources: hub state changes (worker.online, worker.offline, token.used), the
 schedule, webhooks, agents (the event.emit hub cap) and workers (the `event`
-protocol message). Every event is journaled (J8), except token.used for now
-(see the pull request). Each event is matched against the jobs (jobs.py).
+protocol message). worker.offline comes as soon as a worker's link closes (brief
+51), or when a linked worker misses three heartbeats (H3). Every event is journaled
+(J8), except token.used for now (see the pull request). Each event is matched
+against the jobs (jobs.py).
 
 `emit` only queues the event, so any code may call it, even while holding the
 hub's lock. One task, started with the hub, journals each event in order and
@@ -33,7 +35,7 @@ class Events:
         self._queue = collections.deque()
         self._wake = None        # an asyncio.Event while running
         self._tasks = set()
-        self._online = set()     # workers the hub has seen come online and not yet go offline
+        self._online = {}        # workers the hub has seen come online and not yet go offline -> event payload
         self._last_tick = None
 
     def emit(self, name, payload, *, user=None, token=None, worker=None, journal=True):
@@ -100,7 +102,7 @@ class Events:
         for guid in list(self._online):
             record = self.hub.get_worker(guid)
             if not record["online"]:
-                self._online.discard(guid)
+                del self._online[guid]
                 self.emit("worker.offline", _worker(record), worker=guid)
         for spec in jobs.schedules(self.hub):
             if jobs.schedule_due(spec, last, now):
@@ -110,9 +112,17 @@ class Events:
 
     def heartbeat(self, record):
         """A worker heartbeated: worker.online if it was not online before."""
-        if record["guid"] not in self._online:
-            self._online.add(record["guid"])
+        online = record["guid"] in self._online
+        self._online[record["guid"]] = _worker(record)
+        if not online:
             self.emit("worker.online", _worker(record), worker=record["guid"])
+
+    def unlinked(self, guid):
+        """A worker's link closed: worker.offline at once if it was online (brief 51). The payload is
+        the one from its last heartbeat, so this reads nothing from the database."""
+        payload = self._online.pop(guid, None)
+        if payload is not None:
+            self.emit("worker.offline", payload, worker=guid)
 
 
 def _worker(record):
