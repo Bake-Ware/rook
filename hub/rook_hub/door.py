@@ -30,12 +30,15 @@ INSTRUCTIONS = (
     "has happened. The hub's own caps (approving new machines, minting join tokens) are "
     "called with worker \"hub\". A call still running after 45 seconds answers {id, running: true, worker, "
     "stream} at once and keeps running: follow it with the stream tool (action read, that stream, wait 40, "
-    "from the last next) until the stream is no longer open; its last entry is the call's reply. Do not call "
-    "again meanwhile, or the work runs twice.")
+    "from the last next) until the stream is no longer open; its last entry is the call's reply. A result "
+    "over about a megabyte answers the same way, at once, and comes in pieces: then the reply has parts n, and "
+    "the stream's first n entries joined are the result, as JSON. Do not call again meanwhile, or the work "
+    "runs twice.")
 
 FOLLOW = ("The call is still running and goes on by itself. Follow it with the stream tool: action \"read\", "
           "stream \"{stream}\", wait 40, from 0 and then each reply's next, until open is false. The last entry "
-          "is the call's reply. Do not call again: that would run the work twice.")
+          "is the call's reply; if it has parts n, the first n entries joined are the result, as JSON. Do not call "
+          "again: that would run the work twice.")
 
 TOOLS = [
     {"name": "workers",
@@ -65,10 +68,12 @@ TOOLS = [
          "\"hub\" for the hub's own caps. cap: a cap name from caps. args: arguments matching that cap's "
          "schema. why: one plain sentence saying why you are doing this; the journal keeps it with your "
          "token and user. The reply is the cap's result, or an error that says what to try next. A call "
-         "still running after 45 seconds answers {id, running: true, worker, stream} instead and keeps "
-         "running: read that stream with the stream tool, wait 40, passing back next as from, until it is "
-         "no longer open. Its last entry is the call's reply as JSON: {type: \"result\", result} or "
-         "{type: \"error\", code, message, next}. Do not call again meanwhile, or the work runs twice."),
+         "still running after 45 seconds, or whose result is over about a megabyte, answers {id, running: true, "
+         "worker, stream} instead and keeps running: read that stream with the stream tool, wait 40, passing "
+         "back next as from, until it is no longer open. Its last entry is the call's reply as JSON: "
+         "{type: \"result\", result} or {type: \"error\", code, message, next}; a result that came in pieces "
+         "is {type: \"result\", result: null, parts: n}, and the first n entries joined are the result, as "
+         "JSON. Do not call again meanwhile, or the work runs twice."),
      "inputSchema": {"type": "object", "required": ["worker", "cap", "why"], "additionalProperties": False,
                      "properties": {
                          "worker": {"type": "string"},

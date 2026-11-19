@@ -322,11 +322,11 @@ class Hub:
             await self._runner.cleanup()
             self._runner = None
 
-    async def waiting(self, future, seconds):
-        """Wait up to `seconds` for `future`, but no longer than until the hub begins to stop: a
-        request waiting on the hub then answers at once, as at the end of its wait. Returns whether
-        `future` is done; it is never cancelled here."""
-        waits = {future}
+    async def waiting(self, future, seconds, *also):
+        """Wait up to `seconds` for `future` (or any of `also`), but no longer than until the hub begins
+        to stop: a request waiting on the hub then answers at once, as at the end of its wait. Returns
+        whether `future` is done; nothing is cancelled here."""
+        waits = {future, *also}
         if self._stopping is not None:
             stop = asyncio.ensure_future(self._stopping.wait())
             waits.add(stop)
@@ -658,6 +658,11 @@ class Hub:
                             record = self.streams.opened(guid, message, pending[2], pending[3])
                             message = dict(message, stream=record["moniker"])
                         pending[1].set_result(message)
+                elif message["type"] == "result_part" and guid is not None:    # a piece of a big result (brief 54)
+                    pending = self._calls.get(message["id"])
+                    if pending and pending[0] == guid and not pending[1].done():
+                        self._piece(message["id"], message["data"])
+                    await link.send(encode({"type": "result_ack", "id": message["id"]}))   # the worker sends the next
                 elif message["type"] == "stream_data" and guid is not None:
                     self.streams.received(guid, message)
                 elif message["type"] == "stream_close" and guid is not None:
@@ -724,7 +729,8 @@ class Hub:
                                       cap, why, job, run)
         except HubError as e:
             return dict(e.message, id=call_id)
-        running = self._running[call_id] = {"actor": actor, "worker": None, "entry": entry, "reply": None}
+        running = self._running[call_id] = {"actor": actor, "worker": None, "entry": entry, "reply": None,
+                                            "cap": cap, "why": why, "stream": None, "pieces": asyncio.Event()}
         try:
             request = encode({"type": "call", "id": call_id, "cap": cap, "args": args})
             if worker == caps.HUB:      # the hub's own caps (caps.py)
@@ -756,6 +762,8 @@ class Hub:
                     try:
                         await link.send(request)
                         reply = await future
+                        if reply.get("parts") and running["stream"] is not None:   # it came in pieces (brief 54)
+                            reply = dict(reply, stream=running["stream"]["moniker"])
                     except EOFError:
                         reply = error("worker_disconnected", f"{moniker}'s link closed before the call was sent.",
                                       "Check whether the worker is online, then call again.", call_id)
@@ -780,7 +788,38 @@ class Hub:
                     self._db.execute("UPDATE journal SET worker = ?, result = ? WHERE id = ? "
                                      "AND json_extract(result, '$.type') = 'running'",
                                      (guid, json.dumps(self._kept(guid, reply)), entry))
+                if running["stream"] is not None:   # its stream ends with its reply (left running: the next start ends it)
+                    self.streams.call_ended(running["stream"]["guid"], self._kept(guid, reply))
         return reply
+
+    def _follow(self, call_id, running):
+        """The stream that carries the reply of call `call_id`, still running: made the first time it
+        is needed (its client stops waiting, or the first piece of a big result comes, brief 54),
+        then the same one. The journal entry, still running, names it."""
+        if running["stream"] is None:
+            stream = running["stream"] = self.streams.for_call(call_id, running["worker"], running["cap"],
+                                                               running["why"], running["actor"])
+            with self._lock, self._db:
+                self._db.execute("UPDATE journal SET worker = ?, result = ? WHERE id = ? "
+                                 "AND json_extract(result, '$.type') = 'running'",
+                                 (running["worker"], json.dumps({"type": "running", "id": call_id,
+                                                                 "stream": stream["moniker"]}), running["entry"]))
+        return running["stream"]
+
+    def _piece(self, call_id, data):
+        """A piece of call `call_id`'s result, in order (brief 54): it goes on the call's stream, and a
+        client still waiting for the call is answered "running" with that stream at once."""
+        running = self._running.get(call_id)
+        if running is not None:
+            self.streams.piece(self._follow(call_id, running)["guid"], data)
+            running["pieces"].set()
+
+    def joined(self, reply):
+        """A `result` reply's value: its `result`, or for one that came in pieces (brief 54), the pieces
+        on its stream joined and read as JSON. For the hub's own callers that need the value."""
+        if not reply.get("parts"):
+            return reply["result"]
+        return json.loads(self.streams.pieces(reply["stream"], reply["parts"]))
 
     def largest_message(self, guid):
         """The largest encoded message the hub may send this worker: 16,000,000 bytes, or the
@@ -804,21 +843,22 @@ class Hub:
         """A call as `call` makes it, for a client that cannot wait long: the MCP door and the site
         (C1, C3; Bake 13 Nov). A reply within CALL_WAIT seconds is returned as it is. Otherwise the
         answer is {"type": "running", id, worker, stream} and the call goes on, once: when it ends,
-        its reply, as the journal keeps it, is the stream's last entry and the hub closes the stream."""
+        its reply, as the journal keeps it, is the stream's last entry and the hub closes the stream.
+        A result that comes in pieces (brief 54) is answered so at its first piece, whenever that
+        comes: the pieces are the stream's entries, in order, before the reply."""
         call_id = uuid.uuid4().hex
         task = asyncio.ensure_future(self.call(worker, cap, args, why, user=user, token=token, call_id=call_id))
-        if await self.waiting(task, CALL_WAIT):     # answered in time
+        await asyncio.sleep(0)                # the call starts, and is in _running until it ends
+        running = self._running.get(call_id)
+        if running is None:                   # refused before it began
+            return await task
+        pieces = asyncio.ensure_future(running["pieces"].wait())
+        try:
+            done = await self.waiting(task, CALL_WAIT, pieces)
+        finally:
+            pieces.cancel()
+        if done and running["stream"] is None:  # answered in time, whole
             return task.result()
-        # Still running after CALL_WAIT, or the hub has begun to stop (stop_serving): answer "running".
-        running = self._running.get(call_id)  # there until the call ends
-        if running is None:                   # it ended in the moment since
-            return task.result()
-        stream = self.streams.for_call(call_id, running["worker"], cap, why, running["actor"])
-        with self._lock, self._db:
-            self._db.execute("UPDATE journal SET worker = ?, result = ? WHERE id = ? "
-                             "AND json_extract(result, '$.type') = 'running'",
-                             (running["worker"], json.dumps({"type": "running", "id": call_id, "stream": stream["moniker"]}),
-                              running["entry"]))
-        task.add_done_callback(lambda _: running.get("left") or self.streams.call_ended(
-            stream["guid"], self._kept(running["worker"], running["reply"])))   # left running: the next start ends it
+        # Still running after CALL_WAIT, or in pieces, or the hub has begun to stop (stop_serving): "running".
+        stream = running["stream"] if done else self._follow(call_id, running)
         return {"type": "running", "id": call_id, "worker": stream["worker"], "stream": stream["moniker"]}
