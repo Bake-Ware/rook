@@ -395,3 +395,201 @@ def test_owner_and_config(tmp_path):
         _, journal = await rig.tool("journal", limit=1000)
         assert "cfg-secret-77" not in json.dumps(journal) and "cfg-secret-77" not in json.dumps(got)
     run(tmp_path, body)
+
+
+# ------------------------------------------------------------------ brief 59: stop, run, change, exit, signal
+
+async def _pid(path):
+    """The process ID a command wrote to `path`, once it has."""
+    while not path.exists() or not path.read_text().strip():
+        await asyncio.sleep(0.02)
+    return int(path.read_text())
+
+
+async def _gone(pid):
+    """Wait until process `pid` no longer exists (a zombie counts as gone: it runs nothing)."""
+    while True:
+        try:
+            with open(f"/proc/{pid}/stat") as stat:
+                if stat.read().rsplit(")", 1)[1].split()[0] == "Z":
+                    return
+        except FileNotFoundError:
+            return
+        await asyncio.sleep(0.02)
+
+
+async def _journal(rig, **filters):
+    """The journal's newest entry that matches `filters`, once one has ended (no longer running)."""
+    while True:
+        entries = (await rig.tool("journal", **filters))[1]["entries"]
+        if entries and entries[0]["result"].get("type") != "running":
+            return entries[0]
+        await asyncio.sleep(0.05)
+
+
+def test_stop_a_running_call(tmp_path, monkeypatch):
+    """Row 28 and Found waits 1 (brief 59): a command that never ends, called through the door, is
+    stopped by closing its call's stream. The command and what it started are gone; the stream's last
+    entry is the reply, call_stopped, naming who stopped it and why; the journal keeps the same."""
+    monkeypatch.setattr(rook_hub, "CALL_WAIT", 0.5)
+
+    async def body(rig):
+        parent, child = tmp_path / "parent.pid", tmp_path / "child.pid"
+        running = await rig.ok(rig.moniker, "shell.exec",
+                               cmd=f"sleep infinity & echo $! > {child}; echo $$ > {parent}; wait")
+        assert running["running"] is True and "close that stream" in running["next"]
+        pids = [await _pid(parent), await _pid(child)]
+
+        failed, refused = await rig.tool("stream", action="write", stream=running["stream"], text="x")
+        assert failed and refused.startswith("call_stream:") and "To stop the call, close the stream." in refused
+        closed = await rig.stream(action="close", stream=running["stream"], why="Parity: it would run for ever.")
+        assert closed["stopped"] == running["id"] and closed["reply"]["code"] == "call_stopped"
+        for pid in pids:
+            await _gone(pid)
+
+        read = await rig.stream(action="read", stream=running["stream"])
+        assert read["open"] is False
+        reply = json.loads(read["entries"][-1]["out"])
+        assert reply["type"] == "error" and reply["code"] == "call_stopped" and reply["next"]
+        assert reply["message"].startswith("Alice (") and "through agent token" in reply["message"]
+        assert "closing stream" in reply["message"] and "Parity: it would run for ever." in reply["message"]
+        entry = (await rig.tool("journal", text=running["id"], kind="call"))[1]["entries"][0]
+        assert entry["result"] == reply and entry["cap"] == "shell.exec"
+
+        failed, again = await rig.tool("stream", action="close", stream=running["stream"], why="Again.")
+        assert failed and again.startswith("stream_closed:")
+        assert (await rig.ok(rig.moniker, "shell.exec", cmd="echo still-serving"))["stdout"] == "still-serving\n"
+    run(tmp_path, body)
+
+
+def test_run_a_job_now(tmp_path):
+    """Row 27 (brief 59): job.run runs a job now, whatever its trigger, even a schedule job that is
+    paused, as its owner, under the run ID it answers with; it ends with job.success like any run."""
+    async def body(rig):
+        job = (await rig.ok("hub", "job.create", title="parity nightly", match={"event": "schedule",
+                                                                                  "payload": {"schedule": "at 03:00"}},
+                            call={"worker": rig.moniker, "cap": "shell.exec", "args": {"cmd": "echo ran-now"}}))["job"]
+        await rig.ok("hub", "job.pause", job=job["moniker"])
+        started = await rig.ok("hub", "job.run", job=job["moniker"])
+        assert started["job"] == job["moniker"] and started["run"]
+        ran = await _journal(rig, kind="job", run=started["run"])
+        assert ran["job"] == job["moniker"] and ran["result"]["result"]["stdout"] == "ran-now\n"
+        assert ran["user"] == rig.user["moniker"] and "run now by Alice" in ran["why"]
+        while not (await rig.tool("journal", kind="event", run=started["run"]))[1]["entries"]:
+            await asyncio.sleep(0.05)
+        event = (await rig.tool("journal", kind="event", run=started["run"]))[1]["entries"][0]
+        assert event["result"]["event"] == "job.success"
+
+        failed, refused = await rig.tool("call", worker="hub", cap="job.run", args={"job": "no-such-job"}, why=WHY)
+        assert failed and refused.startswith("unknown_job:")
+    run(tmp_path, body)
+
+
+def test_stop_a_running_job(tmp_path):
+    """Row 28 (brief 59): job.cancel stops a run still running: its command is gone, the run's
+    journal entry is call_stopped naming who stopped it, and the run ends as job.fail (J3)."""
+    async def body(rig):
+        pidfile = tmp_path / "job.pid"
+        job = (await rig.ok("hub", "job.create", title="parity forever", match={"event": "parity.forever"},
+                            call={"worker": rig.moniker, "cap": "shell.exec",
+                                  "args": {"cmd": f"echo $$ > {pidfile}; exec sleep infinity"}}))["job"]
+        run_id = (await rig.ok("hub", "job.run", job=job["moniker"]))["run"]
+        pid = await _pid(pidfile)
+
+        stopped = await rig.ok("hub", "job.cancel", run=run_id)
+        assert stopped["run"] == run_id and len(stopped["stopped"]) == 1
+        await _gone(pid)
+        ran = await _journal(rig, kind="job", run=run_id)
+        assert ran["result"]["code"] == "call_stopped" and "with job.cancel" in ran["result"]["message"]
+        while not (await rig.tool("journal", kind="event", run=run_id))[1]["entries"]:
+            await asyncio.sleep(0.05)
+        assert (await rig.tool("journal", kind="event", run=run_id))[1]["entries"][0]["result"]["event"] == "job.fail"
+
+        failed, refused = await rig.tool("call", worker="hub", cap="job.cancel", args={"run": run_id}, why=WHY)
+        assert failed and refused.startswith("run_not_running:")
+    run(tmp_path, body)
+
+
+def test_change_a_job(tmp_path):
+    """Row 29 (brief 59): job.update changes a job in place: the same moniker, GUID, owner and
+    created time; its earlier run stays its own in the journal; the next run makes the new call.
+    A change that is not a valid job is refused and leaves the job as it was."""
+    async def body(rig):
+        job = (await rig.ok("hub", "job.create", title="parity old", match={"event": "parity.change"},
+                            call={"worker": rig.moniker, "cap": "shell.exec", "args": {"cmd": "echo old"}}))["job"]
+        await rig.ok("hub", "event.emit", name="parity.change")
+        old = await _journal(rig, kind="job", job=job["moniker"])
+
+        changed = (await rig.ok("hub", "job.update", job=job["moniker"], title="parity new",
+                                call={"worker": rig.moniker, "cap": "shell.exec", "args": {"cmd": "echo new"}}))["job"]
+        assert changed == dict(job, title="parity new",
+                               call=dict(job["call"], args={"cmd": "echo new"}))     # identity, owner, match kept
+        failed, refused = await rig.tool("call", worker="hub", cap="job.update", why=WHY,
+                                         args={"job": job["moniker"], "match": {"event": "schedule"}})
+        assert failed and refused.startswith("bad_message:")
+        assert (await rig.ok("hub", "job.list"))["jobs"] == [changed]
+
+        await rig.ok("hub", "event.emit", name="parity.change")
+        while len(runs := (await rig.tool("journal", kind="job", job=job["moniker"]))[1]["entries"]) < 2 \
+                or runs[0]["result"].get("type") == "running":
+            await asyncio.sleep(0.05)
+        assert [r["result"]["result"]["stdout"] for r in runs] == ["new\n", "old\n"]
+        assert runs[1]["id"] == old["id"]
+    run(tmp_path, body)
+
+
+def test_a_stream_that_ends_says_its_exit_code(tmp_path):
+    """Row 15 (brief 59): a terminal or a process on pipes that exits closes its stream with its
+    exit code, in the read, the stream list and the journal's close entry."""
+    async def body(rig):
+        for pty, code in ((True, 5), (False, 3)):
+            opened = await rig.ok(rig.moniker, "shell.open", cmd=f"echo bye; exit {code}", pty=pty)
+            await rig.read_until(opened["stream"], "bye")
+            while (read := await rig.stream(action="read", stream=opened["stream"]))["open"]:
+                await asyncio.sleep(0.02)
+            assert read["exit_code"] == code
+            listed = {s["moniker"]: s for s in (await rig.stream(action="list"))["streams"]}
+            assert listed[opened["stream"]]["exit_code"] == code and listed[opened["stream"]]["closed_by"] == "worker"
+            closed = (await rig.tool("journal", kind="stream"))[1]["entries"][0]["result"]
+            assert closed["closed"] == listed[opened["stream"]]["guid"] and closed["exit_code"] == code
+    run(tmp_path, body)
+
+
+def test_signals_to_a_stream(tmp_path):
+    """Row 14 (brief 59): 0.5's signals reach the process behind a stream: INT to a command on pipes
+    runs its trap, KILL ends one that ignores the rest, INT on a terminal reaches the program in the
+    foreground. Each stream then closes with the exit code that says so. A signal 0.5 did not take
+    is refused with the ones it can be."""
+    async def body(rig):
+        trapped = (await rig.ok(rig.moniker, "shell.open", pty=False,
+                                cmd="trap 'echo got-INT; exit 7' INT; echo ready; while :; do sleep 0.05; done"))["stream"]
+        _, position = await rig.read_until(trapped, "ready")
+        assert (await rig.stream(action="signal", stream=trapped, signal="INT")) == {"signalled": trapped, "signal": "INT"}
+        await rig.read_until(trapped, "got-INT", position)
+        while (read := await rig.stream(action="read", stream=trapped))["open"]:
+            await asyncio.sleep(0.02)
+        assert read["exit_code"] == 7
+
+        stubborn = (await rig.ok(rig.moniker, "shell.open", pty=False,
+                                 cmd="trap '' INT TERM HUP QUIT; echo ready; exec sleep infinity"))["stream"]
+        await rig.read_until(stubborn, "ready")
+        await rig.stream(action="signal", stream=stubborn, signal="KILL")
+        while (read := await rig.stream(action="read", stream=stubborn))["open"]:
+            await asyncio.sleep(0.02)
+        assert read["exit_code"] == -9
+
+        terminal = (await rig.ok(rig.moniker, "shell.open", argv=["cat"]))["stream"]
+        await rig.stream(action="write", stream=terminal, text="typed\n")
+        await rig.read_until(terminal, "typed")
+        await rig.stream(action="signal", stream=terminal, signal="INT")
+        while (read := await rig.stream(action="read", stream=terminal))["open"]:
+            await asyncio.sleep(0.02)
+        assert read["exit_code"] == -2
+
+        failed, refused = await rig.tool("stream", action="signal", stream=terminal, signal="INT")
+        assert failed and refused.startswith("stream_closed:")
+        other = (await rig.ok(rig.moniker, "shell.open", argv=["cat"]))["stream"]
+        failed, refused = await rig.tool("stream", action="signal", stream=other, signal="USR1")
+        assert failed and refused.startswith("bad_message:") and "INT" in refused
+        await rig.stream(action="close", stream=other, why="Parity: done.")
+    run(tmp_path, body)
