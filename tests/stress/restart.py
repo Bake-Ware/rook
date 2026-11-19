@@ -178,9 +178,15 @@ def linked_lines(worker):
     return sum("Linked to" in line for line in worker.lines)
 
 
-def window(seen, start, end):
-    """Codes of the calls started in [start, end)."""
-    return dict(collections.Counter(code for s, _, code in seen if start <= s < end))
+def window_of(started, ended, edges):
+    """The window a call belongs to, of the five between `edges` (begin, stop sent, workers back, stop sent,
+    workers back, end): a restart's window if the call was in flight at any moment of it, else the window
+    it started in. Brief 63: a call started just before a stop and cut short by it is the restart's, not
+    the quiet window's before it (counted by start alone, it showed as a no_answer in "before" or "between")."""
+    for i in (1, 3):                                   # the two restarts
+        if started < edges[i + 1] and ended >= edges[i]:
+            return i
+    return next(i for i in (0, 2, 4) if started < edges[i + 1] or i == 4)
 
 
 async def restart(band, how, marks):
@@ -247,7 +253,8 @@ async def body(band):
     edges = [t_begin] + [x for m in marks for x in (m["stop_sent"], m["workers_back"])] + [t_end]
     names = ["before", "clean: stopping to workers back", "between", "kill -9: killed to workers back", "after"]
     band.log("result", sub="calls", total=len(calls.seen),
-             by_window={names[i]: window(calls.seen, edges[i], edges[i + 1]) for i in range(5)},
+             by_window={names[i]: dict(collections.Counter(code for s, e, code in calls.seen if window_of(s, e, edges) == i))
+                        for i in range(5)},
              slowest_s=round(max(e - s for s, e, _ in calls.seen), 2))
     term = collections.Counter()
     for t in typists:
