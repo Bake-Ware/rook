@@ -6,6 +6,17 @@ The hub never sees a transport. A worker's link is any object with
 `async recv() -> bytes` (raises EOFError once closed) and `close()`: a
 `TelestheteLink` from the carrier in link.py, or a memory link in the tests.
 Knocks and the link exchange arrive over HTTP (docs/protocol.md, "Carriage"; link.py).
+
+The hub serves everything on one asyncio event loop, and work that can take long does not run on
+it (brief 53): reads that grow with what is stored, a hub cap's work (any code), key work, password
+hashing, plugin files, and the decoding and encoding of anything bigger than a stream piece
+(MAX_STREAM_DATA) run on a thread (`off_loop`), while the loop serves links, the door and the site.
+The short, fixed steps of a request (one token use, one journal row, one heartbeat) stay on the
+loop: each takes tens of microseconds, and handing it to a thread costs more than it saves (moved,
+under a flood of calls, threads contending with the loop for Python's GIL made the calls slower).
+What work on a thread must do on the loop (wake a reader, start a send) it hands back with
+`on_loop`. A long read of the journal or the records runs on a read-only connection of its own
+(`read_only`, as the H4 readings do), so it holds up no other work.
 """
 
 import asyncio
@@ -24,7 +35,7 @@ import uuid
 from nacl.public import PrivateKey
 from nacl.signing import SigningKey
 
-from rook_protocol import MAX_MESSAGE, PROTOCOL, ProtocolError, decode, encode, verify_link_key
+from rook_protocol import MAX_MESSAGE, MAX_STREAM_DATA, PROTOCOL, ProtocolError, decode, encode, verify_link_key
 
 from . import bands, caps, config, devices, history, jobs, link, plugins, records, scrub, site, streams, vault, web
 from .auth import Auth
@@ -164,7 +175,9 @@ class Hub:
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.tightened, self.not_tightened = owner_only(self.state_dir)
         self.clock = clock
-        self._lock = threading.Lock()  # every entry point takes it before touching the database
+        # Every entry point takes it before touching the database, on the loop or on a thread (brief 53);
+        # re-entrant, so a helper that reads (`_moniker`) takes it too, whoever calls it.
+        self._lock = threading.RLock()
         # hub.db is made 0600 before SQLite opens it. SQLite gives the -wal and -shm files it makes
         # beside a database the database's own mode, so they come out 0600 too, on every start.
         os.close(os.open(self.state_dir / "hub.db", os.O_WRONLY | os.O_CREAT, 0o600))
@@ -211,6 +224,7 @@ class Hub:
         self._running = {}  # call id -> {actor, worker, entry, reply, task, job, run, ended, ...}, while Hub.call runs it
         self._stops = {}    # a task running a call that was stopped (brief 59) -> (that call's id, its reply)
         self._runner = None  # the HTTP server, while serving
+        self._loop = None    # the event loop that last handed work to a thread (off_loop)
         self._serving_dir = None  # the open hub.lock while this hub holds its data directory (serve)
         self._stopping = None     # while serving: an event set when stop_serving begins
         self._telling = set()     # the tasks telling linked workers their key was revoked (R5), or a call was stopped
@@ -230,11 +244,53 @@ class Hub:
                 f.write(kind.generate().encode().hex())
         return kind(bytes.fromhex(path.read_text().strip()))
 
+    # ------------------------------------------------------ the event loop (brief 53)
+
+    async def off_loop(self, work, *args, **kwargs):
+        """Run `work(*args, **kwargs)`, which can take long (see the module's docstring), on a thread,
+        and wait for it: the event loop serves links, the door and the site meanwhile. The threads are
+        asyncio's own, as the H4 readings use; when all are busy, work waits for one. Nothing is
+        refused or cut short: the work takes as long as it takes."""
+        self._loop = asyncio.get_running_loop()
+        return await asyncio.to_thread(work, *args, **kwargs)
+
+    async def off_loop_if_big(self, size, work, *args):
+        """`work` on a thread (off_loop) when it handles more than MAX_STREAM_DATA bytes, the most one
+        stream piece carries; here, at once, when it handles less, as the hub's many small messages do."""
+        if size > MAX_STREAM_DATA:
+            return await self.off_loop(work, *args)
+        return work(*args)
+
+    def on_loop(self, step, *args):
+        """Run `step(*args)`, which touches the event loop's own objects (a task, an asyncio.Event), on
+        the loop: at once on a thread running a loop, else, from work that off_loop moved to a thread,
+        as soon as the loop can. The loop runs it before the caller waiting for that work goes on, so
+        the order of effects is the same as before the move."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:            # no loop on this thread: a thread of off_loop's, while the loop runs
+            if self._loop is not None and self._loop.is_running():
+                self._loop.call_soon_threadsafe(step, *args)
+                return
+        step(*args)
+
+    def read_only(self, sql, params=()):
+        """Run one read on a read-only connection of its own, without the hub's lock: the database is
+        in WAL mode, so it reads beside the hub's writes, and a long read (the whole journal) holds up
+        no other work. It sees what is committed, as every read here does. Call it off the loop."""
+        db = sqlite3.connect(self.state_dir.resolve().as_uri() + "/hub.db?mode=ro", uri=True)
+        db.row_factory = sqlite3.Row
+        try:
+            return db.execute(sql, params).fetchall()
+        finally:
+            db.close()
+
     def close(self):
         """Close links and the database, and let go of the data directory. Call stop_serving() first if serving."""
         for link in list(self._links.values()):
             link.close()
-        self._db.close()
+        with self._lock:    # work on a thread whose waiter was cancelled may still be using it (off_loop)
+            self._db.close()
         if self._serving_dir is not None:
             self._serving_dir.close()       # the lock goes with the file
             self._serving_dir = None
@@ -293,9 +349,10 @@ class Hub:
         it over, it ends the calls a previous run of the hub left running."""
         self._take_over()
         self._stopping = asyncio.Event()
+        self._loop = asyncio.get_running_loop()
         await self.carrier.start()
         self._runner, address = await web.serve(self, host, port)
-        self._calls_cut_short()
+        await self.off_loop(self._calls_cut_short)     # it reads the whole journal
         self.events.start()
         return address
 
@@ -377,7 +434,8 @@ class Hub:
                 for guid, found in matches.items()]
 
     def _moniker(self, guid):
-        return self._db.execute("SELECT moniker FROM monikers WHERE guid = ?", (guid,)).fetchone()[0]
+        with self._lock:
+            return self._db.execute("SELECT moniker FROM monikers WHERE guid = ?", (guid,)).fetchone()[0]
 
     def _pending(self, key):
         row = self._db.execute("SELECT * FROM knocks WHERE key = ?", (key,)).fetchone()
@@ -417,8 +475,9 @@ class Hub:
         with self._lock, self._db:
             actor = self.auth.actor(user, token)
             knock = self._pending(key)
-            guid, now = self._resolve(worker)["guid"], self.clock()
-            revoked = [row[0] for row in self._db.execute(
+            row, now = self._resolve(worker), self.clock()
+            guid = row["guid"]
+            revoked = [r[0] for r in self._db.execute(
                 "SELECT key FROM keys WHERE worker = ? AND revoked_at IS NULL ORDER BY attached_at", (guid,))]
             self._db.execute("UPDATE keys SET revoked_at = ? WHERE worker = ? AND revoked_at IS NULL",
                              (now, guid))
@@ -426,7 +485,8 @@ class Hub:
             self._see(guid, "mac", json.loads(knock["macs"]), now)
             self._db.execute("DELETE FROM knocks WHERE key = ?", (key,))
             self._journal("auth", actor, guid, {"attached": key, "revoked": revoked})
-        self._end_revoked(guid, revoked)  # the old key's link ends; the old key is refused from now on
+        # Its link ends; the old key is refused from now on. On the loop: a hub cap runs on a thread.
+        self.on_loop(self._end_revoked, guid, row["moniker"], revoked)
         return self.get_worker(guid)
 
     def revoke(self, worker, *, user=None, token=None):
@@ -436,16 +496,17 @@ class Hub:
         next (C3), and its link and sessions end. Returns the worker's record."""
         with self._lock, self._db:
             actor = self.auth.actor(user, token)
-            guid = self._resolve(worker)["guid"]
+            row = self._resolve(worker)
+            guid = row["guid"]
             revoked = [r[0] for r in self._db.execute(
                 "SELECT key FROM keys WHERE worker = ? AND revoked_at IS NULL ORDER BY attached_at", (guid,))]
             self._db.execute("UPDATE keys SET revoked_at = ? WHERE worker = ? AND revoked_at IS NULL",
                              (self.clock(), guid))
             self._journal("auth", actor, guid, {"revoked": revoked})
-        self._end_revoked(guid, revoked)
+        self.on_loop(self._end_revoked, guid, row["moniker"], revoked)     # on the loop: a hub cap runs on a thread
         return self.get_worker(guid)
 
-    def _end_revoked(self, guid, revoked):
+    def _end_revoked(self, guid, moniker, revoked):
         """Keys of `guid` were just revoked (R5, W7). Their sessions go at once (link design 3.3), but
         for the one a worker is linked under: that worker is first told over its link (docs/protocol.md,
         `error`), so it stops at once with what to do next (C3). From now on that link takes no call
@@ -465,7 +526,6 @@ class Hub:
             return
         self._unlink(guid, link)
         self._revoked_links.add(link)
-        moniker = self.get_worker(guid)["moniker"]
         told = error("key_revoked", f"This key was revoked from {moniker}.",
                      "Generate a new key, knock with it, and ask a person or agent to attach it.")
         task = asyncio.get_running_loop().create_task(self._tell(link, told))
@@ -505,10 +565,12 @@ class Hub:
 
     def _calls_cut_short(self):
         """At start: a call that was running when the hub stopped gets an error saying so, in the
-        journal and on its stream if it had one, so nothing waits on it for ever (C3)."""
+        journal and on its stream if it had one, so nothing waits on it for ever (C3). The journal is
+        read on a connection of its own (read_only), so the scan holds up no other work."""
+        rows = self.read_only("SELECT id, result FROM journal WHERE kind IN ('call', 'job') "
+                              "AND json_extract(result, '$.type') = 'running'")
         with self._lock, self._db:
-            for row in self._db.execute("SELECT id, result FROM journal WHERE kind IN ('call', 'job') "
-                                        "AND json_extract(result, '$.type') = 'running'").fetchall():
+            for row in rows:
                 self._db.execute("UPDATE journal SET result = ? WHERE id = ?",
                                  (json.dumps(error(*RESTARTED, json.loads(row["result"])["id"])), row["id"]))
         self.streams.cut_short(lambda call_id: error(*RESTARTED, call_id))
@@ -628,22 +690,27 @@ class Hub:
         link = self._links.get(guid)
         if link is None:
             return False
-        task = asyncio.get_running_loop().create_task(
-            self._tell(link, {"type": "heartbeat_reply", "protocol": PROTOCOL, "interval": int(seconds)}))
+        # worker.interval runs on a thread (brief 53): the send starts on the loop
+        self.on_loop(self._start_telling, link, {"type": "heartbeat_reply", "protocol": PROTOCOL,
+                                                 "interval": int(seconds)})
+        return True
+
+    def _start_telling(self, link, message):
+        task = asyncio.get_running_loop().create_task(self._tell(link, message))
         self._telling.add(task)
         task.add_done_callback(self._telling.discard)
-        return True
 
     # ----------------------------------------------------------------- link
 
     async def serve_link(self, link):
-        """Serve one worker link until it closes."""
+        """Serve one worker link until it closes. Each message is taken whole before the next is read;
+        a big one is decoded on a thread (brief 53)."""
         guid = None
         try:
             while True:
                 data = await link.recv()
                 try:
-                    message = decode(data)
+                    message = await self.off_loop_if_big(len(data), decode, data)
                 except ProtocolError as e:
                     await link.send(encode(error("bad_message", str(e),
                                                  "Send messages as docs/protocol.md defines them.")))
@@ -681,7 +748,7 @@ class Hub:
                 elif message["type"] == "result_part" and guid is not None:    # a piece of a big result (brief 54)
                     pending = self._calls.get(message["id"])
                     if pending and pending[0] == guid and not pending[1].done():
-                        self._piece(message["id"], message["data"])
+                        await self._piece(message["id"], message["data"])
                     await link.send(encode({"type": "result_ack", "id": message["id"]}))   # the worker sends the next
                 elif message["type"] == "stream_data" and guid is not None:
                     self.streams.received(guid, message)
@@ -731,14 +798,18 @@ class Hub:
 
     # ---------------------------------------------------------------- calls
 
-    async def call(self, worker, cap, args, why, *, user=None, token=None, job=None, run=None, call_id=None):
+    async def call(self, worker, cap, args, why, *, user=None, token=None, job=None, run=None, call_id=None,
+                   size=0):
         """Call `cap` on `worker` (GUID or moniker, or `hub` for the hub's own caps)
         and return the reply message:
         `result`, `stream_open` or `error` (C3, W5). The caller is a user acting
         directly or a client token (T4). Every call is journaled with both (L1);
         a caller who cannot be identified gets an error and no call is made.
         A job's run passes its `job` and `run`; the journal keeps it as kind `job` (J8).
-        The journal entry is written as the call starts, as running, and holds the reply once it ends."""
+        The journal entry is written as the call starts, as running, and holds the reply once it ends.
+        `size` is the size of the request that carried the arguments, when there was one (the door,
+        the site): a call whose request was bigger than a stream piece is checked and encoded on a
+        thread, as a hub cap's work always is (brief 53)."""
         call_id = call_id or uuid.uuid4().hex
         guid, reply = None, None
         try:
@@ -753,33 +824,30 @@ class Hub:
                                             "task": asyncio.current_task(), "job": job, "run": run,
                                             "ended": asyncio.Event()}
         try:
-            request = encode({"type": "call", "id": call_id, "cap": cap, "args": args})
-            if worker == caps.HUB:      # the hub's own caps (caps.py)
-                guid = caps.HUB
-                used = args if cap in caps.KEEP_REFERENCES else self.vault.substitute(args, caps.HUB)
-                result = caps.run(self, cap, used, {"user": user, "token": token})
-                if inspect.isawaitable(result):     # one that waits on more than the hub: a download, a backup
-                    result = await result
-                reply = {"type": "result", "id": call_id, "result": result}
-            elif (device := devices.find(self, worker)) is not None:    # a device is called like a worker (D1)
-                guid = running["worker"] = device["guid"]
-                reply = {"type": "result", "id": call_id, "result": await devices.call(self, device, cap, args)}
+            # What can take long runs on a thread, in one hand-off (brief 53): a hub cap's work (any code),
+            # and checking and encoding big arguments (up to 16,000,000 bytes). A small call is made ready
+            # here: the hand-off would cost more than the work.
+            if worker == caps.HUB or size > MAX_STREAM_DATA:
+                kind, guid, value = await self.off_loop(self._prepare, worker, call_id, cap, args, user, token)
             else:
-                record = self.get_worker(worker)
-                guid, moniker = record["guid"], record["moniker"]
+                kind, guid, value = self._prepare(worker, call_id, cap, args, user, token)
+            if kind == "hub":
+                if inspect.isawaitable(value):  # one that waits on more than the hub: a download, a backup
+                    value = await value         # on the loop, as before; it moves its own long work to a thread
+                reply = {"type": "result", "id": call_id, "result": value}
+            elif kind == "device":      # a device is called like a worker (D1)
                 running["worker"] = guid
+                reply = {"type": "result", "id": call_id, "result": await devices.call(self, value, cap, args)}
+            elif kind == "refused":
+                running["worker"] = guid
+                reply = value
+            else:
+                running["worker"] = guid
+                moniker, request = value
                 link = self._links.get(guid)
-                if link is None or not record["online"]:
-                    reply = error("worker_offline", f"{moniker} is not connected.",
-                                  f"Wait for {moniker} to come back online, or call another worker "
-                                  f"that announces {cap}.", call_id)
-                elif cap not in {c["name"] for c in record["caps"]}:
-                    reply = error("unknown_cap", f"{moniker} does not announce {cap}.",
-                                  f"List the caps {moniker} announces and call one of those.", call_id)
+                if link is None:        # its link closed meanwhile
+                    reply = self._offline(moniker, cap, call_id)
                 else:
-                    request = encode({"type": "call", "id": call_id, "cap": cap,
-                                      "args": self.vault.substitute(args, guid)})   # secret:<name> (X2)
-                    self.check_size(guid, request, "The call")
                     future = asyncio.get_running_loop().create_future()
                     self._calls[call_id] = (guid, future, actor, cap)
                     running["link"] = link
@@ -860,6 +928,40 @@ class Hub:
         task.cancel()
         return reply
 
+    def _prepare(self, worker, call_id, cap, args, user, token):
+        """A call made ready, on a thread: (kind, guid, value). "hub": a hub cap's result, run here;
+        "device": the device's row; "worker": (moniker, the encoded call); "refused": the error, once the
+        hub or the worker is known. A refusal before that (HubError, or ProtocolError for a call that is
+        not well formed) is raised, as before."""
+        encode({"type": "call", "id": call_id, "cap": cap, "args": args})   # well formed, or ProtocolError
+        if worker == caps.HUB:      # the hub's own caps (caps.py)
+            try:
+                used = args if cap in caps.KEEP_REFERENCES else self.vault.substitute(args, caps.HUB)
+                return "hub", caps.HUB, caps.run(self, cap, used, {"user": user, "token": token})
+            except HubError as e:
+                return "refused", caps.HUB, dict(e.message, id=call_id)
+        if (device := devices.find(self, worker)) is not None:
+            return "device", device["guid"], device
+        record = self.get_worker(worker)
+        guid, moniker = record["guid"], record["moniker"]
+        if self._links.get(guid) is None or not record["online"]:
+            return "refused", guid, self._offline(moniker, cap, call_id)
+        if cap not in {c["name"] for c in record["caps"]}:
+            return "refused", guid, error("unknown_cap", f"{moniker} does not announce {cap}.",
+                                          f"List the caps {moniker} announces and call one of those.", call_id)
+        try:
+            request = encode({"type": "call", "id": call_id, "cap": cap,
+                              "args": self.vault.substitute(args, guid)})   # secret:<name> (X2)
+            self.check_size(guid, request, "The call")
+        except HubError as e:
+            return "refused", guid, dict(e.message, id=call_id)
+        return "worker", guid, (moniker, request)
+
+    def _offline(self, moniker, cap, call_id):
+        return error("worker_offline", f"{moniker} is not connected.",
+                     f"Wait for {moniker} to come back online, or call another worker that announces {cap}.",
+                     call_id)
+
     def _follow(self, call_id, running):
         """The stream that carries the reply of call `call_id`, still running: made the first time it
         is needed (its client stops waiting, or the first piece of a big result comes, brief 54),
@@ -874,18 +976,21 @@ class Hub:
                                                                  "stream": stream["moniker"]}), running["entry"]))
         return running["stream"]
 
-    def _piece(self, call_id, data):
+    async def _piece(self, call_id, data):
         """A piece of call `call_id`'s result, in order (brief 54): it goes on the call's stream,
         scrubbed as the journal scrubs a result (L4; a value split across two pieces is missed, as
-        L4 is a reducer), and a client still waiting for the call is answered "running" at once."""
+        L4 is a reducer), and a client still waiting for the call is answered "running" at once.
+        A piece is about a megabyte: it is scrubbed and stored on a thread (brief 53)."""
         running = self._running.get(call_id)
         if running is not None:
-            self.streams.piece(self._follow(call_id, running)["guid"], scrub.scrub_text(data, self.vault))
+            stream = self._follow(call_id, running)["guid"]
+            await self.off_loop(lambda: self.streams.piece(stream, scrub.scrub_text(data, self.vault)))
             running["pieces"].set()
 
     def joined(self, reply):
         """A `result` reply's value: its `result`, or for one that came in pieces (brief 54), the pieces
-        on its stream joined and read as JSON. For the hub's own callers that need the value."""
+        on its stream joined and read as JSON. For the hub's own callers that need the value. A big
+        result's join takes long: call it through off_loop."""
         if not reply.get("parts"):
             return reply["result"]
         return json.loads(self.streams.pieces(reply["stream"], reply["parts"]))
@@ -908,7 +1013,7 @@ class Hub:
                                                 f"at most {limit}.",
                            "Send less at once: split it into smaller pieces, or move the data another way.")
 
-    async def call_or_follow(self, worker, cap, args, why, *, user=None, token=None):
+    async def call_or_follow(self, worker, cap, args, why, *, user=None, token=None, size=0):
         """A call as `call` makes it, for a client that cannot wait long: the MCP door and the site
         (C1, C3; Bake 13 Nov). A reply within CALL_WAIT seconds is returned as it is. Otherwise the
         answer is {"type": "running", id, worker, stream} and the call goes on, once: when it ends,
@@ -916,7 +1021,8 @@ class Hub:
         A result that comes in pieces (brief 54) is answered so at its first piece, whenever that
         comes: the pieces are the stream's entries, in order, before the reply."""
         call_id = uuid.uuid4().hex
-        task = asyncio.ensure_future(self.call(worker, cap, args, why, user=user, token=token, call_id=call_id))
+        task = asyncio.ensure_future(self.call(worker, cap, args, why, user=user, token=token, call_id=call_id,
+                                               size=size))
         await asyncio.sleep(0)                # the call starts, and is in _running until it ends
         running = self._running.get(call_id)
         if running is None:                   # refused before it began

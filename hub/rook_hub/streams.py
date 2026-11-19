@@ -226,6 +226,11 @@ class Streams:
         self._wake(guid)
 
     def _wake(self, guid):
+        """Wake the readers waiting on the stream, on the event loop (Hub.on_loop): a hub cap's work
+        runs on a thread, and asyncio's Event is the loop's."""
+        self.hub.on_loop(self._woken, guid)
+
+    def _woken(self, guid):
         event = self._changed.pop(guid, None)
         if event is not None:
             event.set()
@@ -299,7 +304,9 @@ class Streams:
         """Entries from `position` on (at most `limit`), waiting up to `wait` seconds
         for one if there is none yet and the stream is open. Says where to read next.
         Agents get each entry as text (`out` or `in`). With `raw`, for a terminal, each
-        entry's bytes come exactly as recorded, base64 in `data`, with its `direction`."""
+        entry's bytes come exactly as recorded, base64 in `data`, with its `direction`.
+        The database is read on a thread (brief 53). A reader that may wait is listed as waiting
+        before it reads, so an entry added while it reads wakes it."""
         if isinstance(wait, bool) or not isinstance(wait, (int, float)) or wait < 0:
             raise HubError("bad_message", f"wait {wait!r} is not a number of seconds.",
                            f"Give wait as a number from 0 to {MAX_WAIT}, or leave it out.")
@@ -307,27 +314,41 @@ class Streams:
             raise HubError("bad_message", f"limit {limit!r} is not a whole number of entries.",
                            "Give limit as a whole number of 1 or more, or leave it out.")
         wait = min(wait, MAX_WAIT)
+        guid = await self.hub.off_loop(self._guid, stream) if wait > 0 else None
         while True:
-            with self.hub._lock:
-                row = self._row(stream)
-                end = self.hub._db.execute("SELECT coalesce(max(position) + 1, 0) FROM stream_data WHERE stream = ?",
-                                           (row["guid"],)).fetchone()[0]
-                if not isinstance(position, int) or position < 0 or position > end:
-                    raise HubError("bad_position", f"Stream {row['moniker']} has positions 0 to {end}; "
-                                   f"{position!r} is not one of them.", f"Read from a position between 0 and {end}.")
-                rows = self.hub._db.execute(
-                    "SELECT * FROM stream_data WHERE stream = ? AND position >= ? ORDER BY position LIMIT ?",
-                    (row["guid"], position, limit)).fetchall()
+            changed = self._changed.setdefault(guid, asyncio.Event()) if wait > 0 else None
+            row, rows = await self.hub.off_loop(self._entries, stream, position, limit)
             if rows or row["closed_at"] is not None or wait <= 0:
                 break
-            changed = asyncio.ensure_future(self._changed.setdefault(row["guid"], asyncio.Event()).wait())
+            woken = asyncio.ensure_future(changed.wait())
             try:
-                more = await self.hub.waiting(changed, wait)   # False: the wait is over, or the hub is stopping
+                more = await self.hub.waiting(woken, wait)   # False: the wait is over, or the hub is stopping
             finally:
-                changed.cancel()
+                woken.cancel()
             if not more:
                 break
             wait = 0   # one wait per read
+        return await self.hub.off_loop(self._answer, row, rows, position, raw)
+
+    def _guid(self, stream):
+        with self.hub._lock:
+            return self._row(stream)["guid"]
+
+    def _entries(self, stream, position, limit):
+        """(The stream's row, its entries from `position` on, at most `limit`), or HubError."""
+        with self.hub._lock:
+            row = self._row(stream)
+            end = self.hub._db.execute("SELECT coalesce(max(position) + 1, 0) FROM stream_data WHERE stream = ?",
+                                       (row["guid"],)).fetchone()[0]
+            if not isinstance(position, int) or position < 0 or position > end:
+                raise HubError("bad_position", f"Stream {row['moniker']} has positions 0 to {end}; "
+                               f"{position!r} is not one of them.", f"Read from a position between 0 and {end}.")
+            rows = self.hub._db.execute(
+                "SELECT * FROM stream_data WHERE stream = ? AND position >= ? ORDER BY position LIMIT ?",
+                (row["guid"], position, limit)).fetchall()
+        return row, rows
+
+    def _answer(self, row, rows, position, raw):
         if raw:
             entries = [{"position": r["position"], "direction": r["direction"],
                         "data": base64.b64encode(r["data"]).decode("ascii"),
@@ -353,12 +374,17 @@ class Streams:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
                            "Wait for the worker to come back online, then write again.")
         data = text.encode("utf-8")
+        message = await self.hub.off_loop_if_big(len(data), self._input, row, data)     # brief 53
+        await self._send(link, row, message, "the input", "write again")
+        await self.hub.off_loop_if_big(len(data), self._append, row["guid"], "in", data, actor)
+        return {"written": len(data)}
+
+    def _input(self, row, data):
+        """The stream_data message carrying input `data`, checked against what the worker takes."""
         message = encode({"type": "stream_data", "stream": row["handle"],
                           "data": base64.b64encode(data).decode("ascii")})
         self.hub.check_size(row["worker"], message, "The input")     # docs/protocol.md, "Sizes"
-        await self._send(link, row, message, "the input", "write again")
-        self._append(row["guid"], "in", data, actor)
-        return {"written": len(data)}
+        return message
 
     async def resize(self, stream, cols, rows, *, user=None, token=None):
         """Tell the stream's worker the size of the terminal showing it (Bake 13 Nov). Not recorded."""

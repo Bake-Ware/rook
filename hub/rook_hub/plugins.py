@@ -369,9 +369,12 @@ class Plugins:
             if self._pushed.get(guid) == (link, parts):
                 continue
             self._pushed[guid] = (link, parts)
-            task = asyncio.get_running_loop().create_task(self._send(link, parts))
-            self._sending.add(task)
-            task.add_done_callback(self._sending.discard)
+            self.hub.on_loop(self._start, link, parts)      # push may run on a thread (brief 53)
+
+    def _start(self, link, parts):
+        task = asyncio.get_running_loop().create_task(self._send(link, parts))
+        self._sending.add(task)
+        task.add_done_callback(self._sending.discard)
 
     def connected(self, guid, link, reported):
         """A worker's link is up: send it its worker parts, unless it reports holding none

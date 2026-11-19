@@ -243,14 +243,16 @@ def run_now(hub, args, actor):
         row = _job(hub, _need(args, "job"))
         name = hub.auth._user(user)["name"]
     run_id = uuid.uuid4().hex
-    hub.events._spawn(run(hub, row, {"name": "job.run", "payload": {}}, run_id=run_id,
-                          why=f"Job {row['moniker']} ({row['title']}), run now by {name}."))
+    # A hub cap's work runs on a thread (brief 53): the run's task starts on the loop.
+    hub.on_loop(hub.events._spawn, run(hub, row, {"name": "job.run", "payload": {}}, run_id=run_id,
+                                       why=f"Job {row['moniker']} ({row['title']}), run now by {name}."))
     return {"job": row["moniker"], "run": run_id}
 
 
-def cancel(hub, args, actor):
+async def cancel(hub, args, actor):
     """Stop a run that is still running (0.5's job.cancel): its call ends with call_stopped, saying
-    who stopped it, and its worker ends the work. The run then ends as a failure (J3)."""
+    who stopped it, and its worker ends the work. The run then ends as a failure (J3).
+    It acts on the event loop's tasks, so it runs on the loop: Hub.call awaits it there (brief 53)."""
     run_id = _need(args, "run")
     with hub._lock, hub._db:
         who = hub.auth.actor(**actor)

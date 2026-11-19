@@ -66,10 +66,10 @@ def app(hub):
     async def knock(request):
         """`POST /knock`: a knock in, a knock_reply or error out (docs/protocol.md)."""
         try:
-            message = decode(await request.read())
+            message = await hub.off_loop(decode, await request.read())
             if message["type"] != "knock":
                 raise ProtocolError(f"expected a knock, got {message['type']}")
-            reply = hub.knock(message)
+            reply = await hub.off_loop(hub.knock, message)       # the database (brief 53)
         except ProtocolError as e:
             reply = error("bad_message", str(e), "Send a knock as docs/protocol.md defines it.")
         status = 200 if reply["type"] == "knock_reply" else 400 if reply["code"] == "bad_message" else 403
