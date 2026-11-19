@@ -104,7 +104,7 @@ async def owner_only_throughout(tmp_path):
         running = asyncio.create_task(worker.run())
         try:
             await eventually(lambda: hub.list_pending())
-            [user] = hub._db.execute("SELECT guid FROM users").fetchall()
+            [user] = hub._db.execute("SELECT guid FROM users WHERE system = 0").fetchall()
             approved = hub.approve(worker.key, user=user["guid"])
             await eventually(lambda: hub._db.execute("SELECT count(*) FROM heartbeats").fetchone()[0] >= 1)
             # The health charts read on a read-only connection of their own (history.py): it still opens.
@@ -235,7 +235,7 @@ async def another_users(tmp_path, monkeypatch):
     (plugin / "hub.py").chmod(0o644)
     hub = Hub(data, vault_key_file=key)
     try:
-        [user] = hub._db.execute("SELECT guid FROM users").fetchall()
+        [user] = hub._db.execute("SELECT guid FROM users WHERE system = 0").fetchall()
         refusing(monkeypatch, "hub.py")
         assert hub.plugins.install(plugin, {"user": user["guid"], "token": None})["name"] == "keep"
         assert "keep.put" in hub.plugins.caps

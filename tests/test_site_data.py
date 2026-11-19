@@ -171,12 +171,13 @@ async def scenario(tmp_path):
             # What the filters offer: kinds, users, workers and devices, caps, jobs.
             status, choices = await ask(client, "GET", base + "/api/journal/choices")
             assert choices["kinds"] == ["call", "auth", "band", "event", "job", "stream", "config"]
-            assert {u["name"] for u in choices["users"]} == {"Alice", "Bob"}
+            assert {u["name"] for u in choices["users"]} == {"Alice", "Bob", "system"}   # the system owner acts too
             assert {(w["moniker"], w["device"]) for w in choices["workers"]} >= {
                 ("hub", False), (desk.moniker, False), (added["moniker"], True), (tv["moniker"], True)}
             assert {"shell.exec", "lamp.on", "journal.redact", "note.create"} <= set(choices["caps"])
-            assert choices["jobs"] == [{"title": "door light", "moniker": first["moniker"]},
+            assert choices["jobs"][1:] == [{"title": "door light", "moniker": first["moniker"]},   # after the system's
                                        {"title": "lights out", "moniker": second["moniker"]}]
+            assert choices["jobs"][0]["title"] == "Heartbeat roll-up"
 
             # 5. Redact through the site (L5): a journal.redact call by the user; the value is gone
             #    from the journal and the stream's recording, and is in neither the reply nor the journal.
