@@ -80,7 +80,7 @@ async def setup_run(tmp_path):
             await page.js("[...document.querySelectorAll('#work .look-pick button')].find(b => b.textContent.includes('No sound')).click(); true")
             await page.until("document.querySelector('#work .look-pick').dataset.step === 'rookie'")
             await shot(page, "02-style.png")
-            style = await page.js("document.querySelector('#work .look-pick .looks button span:last-child').textContent")
+            style = await page.until("document.querySelector('#work .look-pick .looks button span:last-child').textContent")
             await page.js("document.querySelector('#work .look-pick .looks button').click(); true")
             await page.until("document.querySelector('#work .look-pick').dataset.step === 'theme'")
             await shot(page, "03-theme.png")
@@ -101,7 +101,8 @@ async def setup_run(tmp_path):
             # 3. The agent opens the Account view: the sign-in name shown, a name and a password typed
             #    there. Saving claims the hub; the agent hears a note the chat never shows as theirs.
             await page.until("document.querySelector('#work').dataset.view === 'account'")
-            assert await page.js("document.querySelector('[data-target=\"account.user\"] b').textContent") == "bake"
+            # The view asks /api/session for the sign-in name before it draws its form.
+            assert await page.until("document.querySelector('[data-target=\"account.user\"] b').textContent") == "bake"
             await shot(page, "05-account.png")
             await page.js("document.querySelector('[data-target=\"account.name\"]').value = 'Bake'; "
                           "document.querySelector('[data-target=\"account.password\"]').value = 'correct horse'; "
@@ -135,7 +136,8 @@ async def setup_run(tmp_path):
             agent.reply = "I need sudo to open the firewall. [[open: vault | new=host_password | for=sudo on this machine]]"
             await page.js("[...document.querySelectorAll('#dock-log .widget.choices button')].find(b => b.textContent === 'Other devices at home').click(); true")
             await page.until("document.querySelector('#work').dataset.view === 'vault'")
-            assert await page.js("document.querySelector('[data-target=\"vault.key\"]').value") == "host_password"
+            # The view lists the vault (secret.list) before it draws its form.
+            assert await page.until("document.querySelector('[data-target=\"vault.key\"]').value") == "host_password"
             assert await page.js("document.activeElement.dataset.target") == "vault.value"
             await shot(page, "08-vault.png")
             await page.js("document.querySelector('[data-target=\"vault.value\"]').value = 'hunter2-sudo'; "
@@ -154,7 +156,7 @@ async def setup_run(tmp_path):
             await page.cmd("Page.navigate", url=base + "/workers")
             await page.until("!document.body.classList.contains('setup') && !document.querySelector('#dock').hidden")
             await page.until("!!document.querySelector('main.main .topbar, main.main h1')")
-            assert await page.js("document.querySelector('#dock-name').textContent") == "Jeeves"
+            await page.until("document.querySelector('#dock-name').textContent === 'Jeeves'")
             await shot(page, "10-done.png")
 
             # 7. Your account on Settings: the look pickers, which change it later (0.5's /account).
