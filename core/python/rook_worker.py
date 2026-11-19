@@ -42,6 +42,16 @@ worked. A request to the hub waits at most HTTP_TIMEOUT seconds. A hub that refu
 the key (`unknown_key`, `key_revoked`), or tells it over the link that its key was revoked
 (R5), stops the worker.
 
+A big result is sent in pieces (brief 54; docs/protocol.md, "A big result"). The worker writes a
+result's JSON text as it goes. A result whose text ends within PIECE characters is sent whole, as
+one `result`, as always. One that goes past PIECE goes as `result_part` messages of about PIECE
+characters each, the next sent only once the hub has acknowledged the last (`result_ack`), so
+the worker holds one piece at a time, and then a `result` with `parts`. PIECE is where a result
+becomes pieces, not a limit: nothing is refused, cut or given a deadline for its size. A cap
+whose output can be big returns `Text` (a string) and `Items` (a list) made as they are sent,
+and awaitables for what it learns last, so it never holds the whole either; a cap that returns
+an ordinary value gets the same pieces, made from the value it holds.
+
 What happens is said in plain words on the `rook_worker` logger (info, and a warning while it
 cannot link): waiting for approval, approved, linked, the link lost, why linking fails. Each is
 said once, until it changes. The start command (`python -m rook_worker HUB_URL`, rook_start.py)
@@ -50,6 +60,7 @@ prints them; nothing else configures that logger.
 
 import asyncio
 import base64
+import inspect
 import json
 import logging
 import os
@@ -72,7 +83,7 @@ from nacl.public import PrivateKey
 from nacl.signing import SigningKey, VerifyKey
 
 import rook_link
-from rook_protocol import (MAX_MESSAGE, MAX_STREAM_DATA, PROTOCOL, ProtocolError, decode, encode, session_psk,
+from rook_protocol import (MAX_STREAM_DATA, PROTOCOL, ProtocolError, decode, encode, session_psk,
                            sign_link_key, sign_link_open, validate, verify_link_accept)
 
 VERSION = "0.1.0"
@@ -86,6 +97,11 @@ log = logging.getLogger("rook_worker")      # what happens, in plain words (rook
 # worker. KeyboardInterrupt and cancellation are not caught: they still stop it.
 FAILS = (Exception, SystemExit)
 
+# Where a result becomes pieces, and about how big each piece is, in characters of its JSON text
+# (brief 54; Bake: "anything big should be chunked", about a megabyte). Not a limit: a result of
+# any size is sent whole, in as many pieces as it takes.
+PIECE = 1_000_000
+
 
 @dataclass
 class Cap:
@@ -97,6 +113,28 @@ class Cap:
     schema: dict
     handler: Callable[..., Awaitable[Any]]
     opens_stream: bool = False
+
+
+class Text:
+    """A string in a cap's result that is made while it is sent (brief 54): `pieces` is an async
+    iterable of str, taken in order as the sending reaches it. A cap whose output can be big
+    returns one, so the worker never holds the whole string."""
+
+    def __init__(self, pieces):
+        self.pieces = pieces
+
+
+class Items:
+    """A list in a cap's result that is made while it is sent (brief 54): `items` is an async
+    iterable of ordinary JSON values, taken in order as the sending reaches it."""
+
+    def __init__(self, items):
+        self.items = items
+
+
+# What an awaitable in a result's object gives to leave its field out, such as `truncated` when
+# nothing was cut (brief 54).
+LEFT_OUT = object()
 
 
 class Stream:
@@ -210,6 +248,7 @@ class Worker:
         self.config_version = None        # its version, reported in every heartbeat once there is one
         self._loads = 0
         self._link = None
+        self._acks = {}                   # call id -> (its link, a future set when the hub acknowledges a piece)
         self._stopped = asyncio.Event()
         self._replied = False             # this session's link has delivered a heartbeat_reply
         self._told = None                 # the last thing said on `log` about linking
@@ -399,9 +438,18 @@ class Worker:
                 pass
 
     async def _serve(self):
+        link = self._link
+        try:
+            await self._serve_link(link)
+        finally:
+            for call_id, (on, acked) in list(self._acks.items()):   # its link is gone: no piece waits on it
+                if on is link and not acked.done():
+                    acked.set_result(False)
+
+    async def _serve_link(self, link):
         while True:
             try:
-                data = await self._link.recv()
+                data = await link.recv()
             except EOFError:
                 return
             try:
@@ -417,6 +465,10 @@ class Worker:
                 self._interval_known.set()
             elif message["type"] == "call":
                 asyncio.create_task(self._answer(message))
+            elif message["type"] == "result_ack":          # the hub has the last piece: send the next
+                waiting = self._acks.get(message["id"])
+                if waiting is not None and not waiting[1].done():
+                    waiting[1].set_result(True)
             elif message["type"] == "stream_data" and message["stream"] in self.streams:
                 self.streams[message["stream"]]._input.put_nowait(base64.b64decode(message["data"]))
             elif message["type"] == "stream_resize" and message["stream"] in self.streams:
@@ -440,14 +492,57 @@ class Worker:
             await self._open_stream(call, cap)
             return
         else:
+            link = self._link       # the call's link: every message of its answer goes on it
             try:
-                reply = {"type": "result", "id": call["id"], "result": await cap.handler(call["args"])}
-                if (size := len(encode(reply))) > MAX_MESSAGE:     # docs/protocol.md, "Sizes"
-                    raise ValueError(f"its result is {size} bytes encoded, over the {MAX_MESSAGE} a message may be")
-            except FAILS as e:
+                reply = await self._result(call["id"], await cap.handler(call["args"]), link)
+                encode(reply)       # a whole result that cannot be sent fails the call here, as always
+            except FAILS as e:      # before any piece, or after some: the call ends with this either way
                 reply = error("cap_failed", f"{call['cap']} failed: {reason(e)}",
                               f"Check the arguments against the schema of {call['cap']}.", call["id"])
+            await self._send(reply, link)
+            return
         await self._send(reply)
+
+    async def _result(self, call_id, value, link):
+        """The `result` that answers call `call_id` with `value` (brief 54). Its JSON text is made as
+        it goes. Ending within PIECE characters, it is sent whole, in the `result` returned, exactly
+        as before. Going past PIECE, it goes as result_part messages of PIECE characters (the last
+        one less), each sent once the hub has acknowledged the one before; the `result` returned
+        then says how many. If the link is lost meanwhile, the rest of the text is still made, and
+        dropped, as a whole result is dropped when its link is gone."""
+        text, held, size, parts, lost = _json(value), [], 0, 0, False
+        try:
+            async for chunk in text:
+                held.append(chunk)
+                size += len(chunk)
+                while size > PIECE:             # past PIECE: it goes in pieces, each sent as it is full
+                    joined = "".join(held)
+                    if not lost:
+                        lost = not await self._piece(call_id, joined[:PIECE], link)
+                    parts += 1
+                    held, size = [joined[PIECE:]], len(joined) - PIECE
+        finally:
+            await text.aclose()
+        if parts == 0:          # it ended within PIECE: whole, as one message, as always
+            return {"type": "result", "id": call_id, "result": json.loads("".join(held))}
+        if size:
+            if not lost:
+                await self._piece(call_id, "".join(held), link)
+            parts += 1
+        return {"type": "result", "id": call_id, "result": None, "parts": parts}
+
+    async def _piece(self, call_id, data, link):
+        """Send one piece of a result and wait until the hub acknowledges it, or the link is gone
+        (then False). The wait has no deadline: a hub that never acknowledges is waited for."""
+        acked = asyncio.get_running_loop().create_future()
+        self._acks[call_id] = (link, acked)
+        try:
+            await link.send(encode({"type": "result_part", "id": call_id, "data": data}))
+            return await acked
+        except EOFError:
+            return False
+        finally:
+            self._acks.pop(call_id, None)
 
     async def _open_stream(self, call, cap):
         """A call on a stream cap: the handler names the stream, the hub hears stream_open (S1)."""
@@ -527,9 +622,9 @@ class Worker:
                 return f"plugin {name}"
         return "this worker"
 
-    async def _send(self, message):
+    async def _send(self, message, link=None):
         try:
-            await self._link.send(encode(message))
+            await (link or self._link).send(encode(message))
         except EOFError:
             pass
 
@@ -685,6 +780,91 @@ def unreachable(e):
     """Why the hub could not be reached, in a few words, from what urllib raised."""
     e = getattr(e, "reason", e)
     return getattr(e, "strerror", None) or str(e) or type(e).__name__
+
+
+async def _json(value):
+    """A result's JSON text, as str chunks, made as it goes (brief 54). The result, or a field of a
+    result that is an object, may be `Text` or `Items`, taken as the sending reaches it, or an
+    awaitable, awaited there; one in a field that gives LEFT_OUT leaves the field out. An object's
+    fields go in the order the cap gave them. Anything that is not JSON fails the call, as an
+    ordinary result that is not JSON always has."""
+    if not isinstance(value, dict):
+        async for chunk in _value(value):
+            yield chunk
+        return
+    yield "{"
+    first = True
+    for key, item in value.items():
+        if inspect.isawaitable(item):
+            item = await item
+            if item is LEFT_OUT:
+                continue
+        yield ("" if first else ",") + json.dumps({key: 0}, ensure_ascii=False, separators=(",", ":"))[1:-3] + ":"
+        first = False
+        async for chunk in _value(item):
+            yield chunk
+    yield "}"
+
+
+async def _value(value):
+    """One value's JSON text, in chunks of about PIECE characters: Text and Items as they come."""
+    if inspect.isawaitable(value):
+        value = await value
+    if isinstance(value, Text):
+        yield '"'
+        async for piece in value.pieces:
+            if not isinstance(piece, str):
+                raise TypeError(f"a Text gives str pieces, not {type(piece).__name__}")
+            for chunk in _string(piece):
+                yield chunk
+        yield '"'
+    elif isinstance(value, Items):
+        held, size, first = ["["], 1, True
+        async for item in value.items:
+            for chunk in _plain(item, "" if first else ","):
+                held.append(chunk)
+                size += len(chunk)
+            first = False
+            if size >= PIECE:
+                yield "".join(held)
+                held, size = [], 0
+        yield "".join(held) + "]"
+    else:
+        held, size = [], 0
+        for chunk in _plain(value):
+            held.append(chunk)
+            size += len(chunk)
+            if size >= PIECE:
+                yield "".join(held)
+                held, size = [], 0
+        yield "".join(held)
+
+
+def _plain(value, before=""):
+    """An ordinary JSON value's text, as str chunks, `before` first; a long string in chunks."""
+    if isinstance(value, str):
+        yield before + '"'
+        yield from _string(value)
+        yield '"'
+    elif isinstance(value, dict):
+        yield before + "{"
+        for i, (key, item) in enumerate(value.items()):
+            yield from _plain(item, ("," if i else "") + json.dumps({key: 0}, ensure_ascii=False,
+                                                                    separators=(",", ":"))[1:-3] + ":")
+        yield "}"
+    elif isinstance(value, (list, tuple)):
+        yield before + "["
+        for i, item in enumerate(value):
+            yield from _plain(item, "," if i else "")
+        yield "]"
+    else:
+        yield before + json.dumps(value, allow_nan=False)    # a number, true, false or null; TypeError otherwise
+
+
+def _string(text):
+    """The inside of a JSON string, escaped, in chunks of PIECE characters of `text`."""
+    for start in range(0, len(text), PIECE):
+        yield json.dumps(text[start:start + PIECE], ensure_ascii=False)[1:-1]
 
 
 def reason(e):
