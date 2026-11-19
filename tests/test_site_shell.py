@@ -8,6 +8,7 @@ import pathlib
 import shutil
 
 from rook_hub import Hub, plugins, site
+from test_asset_versions import version
 from test_site import ask, browser, login
 
 SHELF = pathlib.Path(__file__).parent / "plugins" / "shelf"
@@ -46,7 +47,7 @@ async def shell_files(tmp_path):
             status, reply = await ask(client, "GET", base + "/api/session")
             assert reply["shell"] == [
                 {"plugin": "agents", "kind": "style" if f.endswith(".css") else "script",
-                 "url": f"/plugin-files/agents/{f}"} for f in DOCK_FILES]
+                 "url": f"/plugin-files/agents/{f}?v={version(AGENTS / f)}"} for f in DOCK_FILES]   # at its version (HA5)
 
             # A plugin installed later comes after it, its own files in its order.
             folder = shelf_with_shell(tmp_path, "lamp-dock", {
@@ -55,9 +56,9 @@ async def shell_files(tmp_path):
             assert status == 200, reply
             status, reply = await ask(client, "GET", base + "/api/session")
             assert [(p["plugin"], p["kind"], p["url"]) for p in reply["shell"][len(DOCK_FILES):]] == [
-                ("lamp-dock", "script", "/plugin-files/lamp-dock/shell/b.js"),
-                ("lamp-dock", "style", "/plugin-files/lamp-dock/shell/a.css"),
-                ("lamp-dock", "script", "/plugin-files/lamp-dock/shell/c.js")]
+                ("lamp-dock", "script", f"/plugin-files/lamp-dock/shell/b.js?v={version(folder / 'shell/b.js')}"),
+                ("lamp-dock", "style", f"/plugin-files/lamp-dock/shell/a.css?v={version(folder / 'shell/a.css')}"),
+                ("lamp-dock", "script", f"/plugin-files/lamp-dock/shell/c.js?v={version(folder / 'shell/c.js')}")]
 
             # Served to a session only, a stylesheet as CSS and a script as JavaScript.
             for file, kind in (("shell/a.css", "text/css"), ("shell/b.js", "text/javascript")):

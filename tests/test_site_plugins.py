@@ -14,6 +14,7 @@ from memory_link import connector
 from rook_hub import Hub, journal, site
 from rook_worker import Worker
 from test_plugins import write_plugin
+from test_asset_versions import version
 from test_site import ask, browser, login
 
 PLUGINS = pathlib.Path(__file__).parent / "plugins"
@@ -63,12 +64,13 @@ async def scenario(tmp_path):
             status, reply = await ask(client, "GET", base + "/api/session")
             assert [s["segment"] for s in reply["nav"]] == ["Hub", "Library"]
             assert reply["nav"][1]["pages"] == [{"id": "shelf/shelf", "label": "Shelf", "path": "/plugins/shelf/shelf",
-                                                 "script": "/plugin-files/shelf/site/shelf.js", "plugin": "shelf"}]
-            assert reply["components"] == [{"name": "book-card", "script": "/plugin-files/shelf/site/book-card.js",
+                                                 "script": f"/plugin-files/shelf/site/shelf.js?v={version(SHELF / 'site/shelf.js')}",
+                                                 "plugin": "shelf"}]   # at its version (HA5)
+            assert reply["components"] == [{"name": "book-card", "script": f"/plugin-files/shelf/site/book-card.js?v={version(SHELF / 'site/book-card.js')}",
                                             "plugin": "shelf"}]
             status, reply = await ask(client, "GET", base + "/api/settings")
             assert reply["sections"][-1] == {"id": "shelf/shelf", "label": "Shelf", "plugin": "shelf",
-                                             "script": "/plugin-files/shelf/site/settings.js"}
+                                             "script": f"/plugin-files/shelf/site/settings.js?v={version(SHELF / 'site/settings.js')}"}
             status, reply = await ask(client, "GET", base + "/api/plugins")
             [listed] = [p for p in reply["plugins"] if p["name"] == "shelf"]
             assert listed["pages"][0]["path"] == "/plugins/shelf/shelf" and listed["components"] == ["book-card"]
