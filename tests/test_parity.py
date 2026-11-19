@@ -179,12 +179,19 @@ def test_call_a_command(tmp_path):
 
 
 def test_large_output(tmp_path):
-    """Row 11: 3,000 lines in one reply, and 10 MB of output in one reply."""
+    """Row 11: 3,000 lines in one reply, and 10 MB of output whole: over about a megabyte it comes as a
+    stream of pieces, which the door says how to join (brief 54)."""
     async def body(rig):
         reply = await rig.ok(rig.moniker, "shell.exec", cmd="seq 1 3000")
         assert reply["stdout"].splitlines() == [str(n) for n in range(1, 3001)]
-        reply = await rig.ok(rig.moniker, "shell.exec", cmd="head -c 10000000 /dev/zero | tr '\\0' a")
-        assert len(reply["stdout"]) == 10_000_000
+        running = await rig.ok(rig.moniker, "shell.exec", cmd="head -c 10000000 /dev/zero | tr '\\0' a")
+        assert running["running"] is True
+        texts, position, open_ = [], 0, True
+        while open_:
+            read = await rig.stream(action="read", stream=running["stream"], **{"from": position}, wait=5)
+            texts, position, open_ = texts + [e["out"] for e in read["entries"]], read["next"], read["open"]
+        end = json.loads(texts[-1])
+        assert json.loads("".join(texts[:end["parts"]]))["stdout"] == "a" * 10_000_000
     run(tmp_path, body)
 
 

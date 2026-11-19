@@ -1,6 +1,8 @@
-"""Round 4, large results: calls whose result is 1, 10, 15 and 20 MB (10^6 bytes), as text and as bytes,
-through the door. Records what comes back over the 16,000,000-byte message size (the bound stays as
-it is). `python tests/stress/results.py`"""
+"""Round 4, large results: calls whose result is 1, 10, 15, 20 and 100 MB (10^6 bytes), as text and as
+bytes, through the door. A result over about a megabyte comes as a stream of pieces (brief 54); the
+16,000,000-byte message size stays as it is. Records whether each arrives whole, byte for byte, and
+the worker's memory (VmRSS, and its peak, VmHWM) before and after each.
+`python tests/stress/results.py`"""
 
 import base64
 import json
@@ -9,7 +11,7 @@ import time
 
 import rig
 
-SIZES = [1_000_000, 10_000_000, 15_000_000, 20_000_000]
+SIZES = [1_000_000, 10_000_000, 15_000_000, 20_000_000, 100_000_000]
 
 
 async def body(band):

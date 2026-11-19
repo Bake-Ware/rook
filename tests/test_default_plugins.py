@@ -62,7 +62,7 @@ class Rig:
     async def ok(self, cap, **args):
         reply = await self.call(cap, **args)
         assert reply["type"] == "result", reply
-        return reply["result"]
+        return self.hub.joined(reply)      # a result over about a megabyte comes in pieces (brief 54)
 
     async def refused(self, cap, **args):
         reply = await self.call(cap, **args)

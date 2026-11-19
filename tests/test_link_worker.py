@@ -5,6 +5,7 @@ R5, W7, W2, S2, U8): the `/link` client and its checks against the real hub over
 The links are in-memory: the Telesthete carrier is L5. Backoff waits are recorded, never slept."""
 
 import asyncio
+import json
 import base64
 import socket
 import threading
@@ -20,7 +21,7 @@ from memory_link import connector, link_pair
 from rook_hub import Hub
 from rook_protocol import (MAX_MESSAGE, MAX_STREAM_DATA, ProtocolError, decode, encode, sign_link_accept,
                            sign_link_key)
-from rook_worker import Cap, Refused, Session, Worker
+from rook_worker import PIECE, Cap, Refused, Session, Worker
 from test_hub import heartbeat
 from test_link_exchange import Keys
 
@@ -309,7 +310,7 @@ def test_stop_ends_run_promptly_wherever_it_is(tmp_path):
 # ---------------------------------------------------------------- sizes (docs/protocol.md "Sizes")
 
 
-def test_stream_output_is_split_and_a_result_over_the_limit_fails(tmp_path):
+def test_stream_output_is_split_and_a_result_over_the_limit_goes_in_pieces(tmp_path):
     async def go():
         hub_end, worker_end = link_pair("k")
 
@@ -339,10 +340,16 @@ def test_stream_output_is_split_and_a_result_over_the_limit_fails(tmp_path):
         assert [len(p) for p in pieces] == [MAX_STREAM_DATA] * 3 + [200_000 - 3 * MAX_STREAM_DATA]
         assert b"".join(pieces) == bytes(i % 251 for i in range(200_000))
 
-        # A result over 16,000,000 bytes encoded: cap_failed, and the link carries on.
+        # A result over 16,000,000 bytes encoded goes in pieces, each sent once the last is acknowledged
+        # (brief 54); joined, they are the result. Then a result with parts, and the link carries on.
         await hub_end.send(encode({"type": "call", "id": "c2", "cap": "demo.huge", "args": {}}))
-        failed = await next_of("error")
-        assert failed["id"] == "c2" and failed["code"] == "cap_failed" and str(MAX_MESSAGE) in failed["message"]
+        texts = []
+        while (message := decode(await hub_end.recv()))["type"] == "result_part":
+            assert message["id"] == "c2" and len(message["data"]) <= PIECE
+            texts.append(message["data"])
+            await hub_end.send(encode({"type": "result_ack", "id": "c2"}))
+        assert message == {"type": "result", "id": "c2", "result": None, "parts": len(texts)} and len(texts) == 17
+        assert json.loads("".join(texts)) == "x" * MAX_MESSAGE
         await hub_end.send(encode({"type": "call", "id": "c3", "cap": "demo.echo", "args": {"after": True}}))
         assert await next_of("result") == {"type": "result", "id": "c3", "result": {"after": True}}
         worker.stop()

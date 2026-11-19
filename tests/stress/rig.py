@@ -131,12 +131,14 @@ class WorkerProcess(Process):
 
 
 def stats(pid):
-    """RSS in MB, open file descriptors, threads and CPU seconds used so far of one process, from /proc."""
+    """RSS in MB, its peak so far (VmHWM), open file descriptors, threads and CPU seconds used so far
+    of one process, from /proc."""
     try:
         status = pathlib.Path(f"/proc/{pid}/status").read_text()
         fields = dict(line.split(":", 1) for line in status.splitlines())
         ticks = pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
         return {"rss_mb": round(int(fields["VmRSS"].split()[0]) / 1024, 1),
+                "peak_mb": round(int(fields["VmHWM"].split()[0]) / 1024, 1),
                 "fds": len(os.listdir(f"/proc/{pid}/fd")), "threads": int(fields["Threads"]),
                 "cpu_s": round((int(ticks[11]) + int(ticks[12])) / os.sysconf("SC_CLK_TCK"), 1)}
     except (FileNotFoundError, ProcessLookupError):
@@ -179,23 +181,25 @@ class Door:
 
     async def call(self, worker, cap, args, why=WHY):
         """A call through the door. A reply that is "running" is followed on its stream to its end,
-        as an agent does: the stream's last entry is the reply. Returns (code, reply, followed)."""
+        as an agent does: the stream's last entry is the reply, and a reply with parts n says the
+        first n entries joined are the result (brief 54). Returns (code, reply, followed)."""
         code, reply = await self.tool("call", worker=worker, cap=cap, args=args, why=why)
         if code or not (isinstance(reply, dict) and reply.get("running")):
             return code, reply, False
-        position, last = 0, None
+        position, texts = 0, []
         while True:
             code, read = await self.tool("stream", action="read", stream=reply["stream"], **{"from": position}, wait=40)
             if code:
                 return code, read, True
-            if read["entries"]:
-                last = read["entries"][-1]
+            texts += [entry["out"] for entry in read["entries"]]
             position = read["next"]
             if not read["open"]:
                 break
-        end = json.loads(last["out"])
+        end = json.loads(texts[-1])
         if end["type"] == "error":
             return end["code"], end, True
+        if end.get("parts"):
+            return None, json.loads("".join(texts[:end["parts"]])), True
         return None, end["result"], True
 
 
