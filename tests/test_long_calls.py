@@ -24,7 +24,7 @@ class Slow:
     stream cap. Counts every run of the slow handler."""
 
     def __init__(self):
-        self.runs, self.gate = [], asyncio.Event()
+        self.runs, self.gate, self.cancelled = [], asyncio.Event(), []
 
     def caps(self):
         async def quick(args):
@@ -32,7 +32,11 @@ class Slow:
 
         async def slow(args):
             self.runs.append(args)
-            await self.gate.wait()
+            try:
+                await self.gate.wait()
+            except asyncio.CancelledError:      # stopped (brief 59)
+                self.cancelled.append(args)
+                raise
             if args.get("fail"):
                 raise RuntimeError("the build broke at step 3")
             return {"built": args.get("what"), "with": args.get("key")}
@@ -47,10 +51,10 @@ class Slow:
 
 def test_long_calls(tmp_path, monkeypatch):
     monkeypatch.setattr(rook_hub, "CALL_WAIT", WAIT)
-    asyncio.run(scenario(tmp_path))
+    asyncio.run(scenario(tmp_path, monkeypatch))
 
 
-async def scenario(tmp_path):
+async def scenario(tmp_path, monkeypatch):
     hub = Hub(tmp_path / "hub", vault_key=os.urandom(32))
     host, port = await hub.serve("127.0.0.1", 0)
     base = f"http://{host}:{port}"
@@ -114,8 +118,9 @@ async def scenario(tmp_path):
             assert entry["result"] == {"type": "running", "id": answer["id"], "stream": name}
             assert entry["worker"] == box and entry["why"] == "build the release" and entry["user"] == alice["moniker"]
 
-            # The stream takes no input, and no client closes it.
-            for action, extra in (("write", {"text": "go faster\n"}), ("close", {"why": "impatient"})):
+            # The stream takes no input, no resize and no signal (closing it stops the call: see 7).
+            for action, extra in (("write", {"text": "go faster\n"}), ("resize", {"cols": 80, "rows": 24}),
+                                  ("signal", {"signal": "INT"})):
                 failed, refused = await tool(door, "stream", action=action, stream=name, **extra)
                 assert failed and refused.startswith("call_stream:") and "Next:" in refused, refused
 
@@ -188,6 +193,50 @@ async def scenario(tmp_path):
                 assert len(slow.runs) == 4                     # three through the door, one from the page
                 [entry] = [e for e in await journal_of("demo.slow") if e["result"].get("id") == answer["id"]]
                 assert entry["result"] == reply and entry["why"] == "built from a page"
+
+            # 7. Stopped (brief 59). A call whose caller is still waiting, with no stream yet: the caller
+            #    gets call_stopped at once, and the handler on the worker is cancelled.
+            slow.gate.clear()
+            waiting = asyncio.ensure_future(hub.call(box, "demo.slow", {"what": "never"}, "for a job",
+                                                     user=alice["guid"]))
+            await eventually(lambda: len(slow.runs) == 5)
+            [call_id] = [c for c, r in hub._running.items() if r["cap"] == "demo.slow"]
+            stopped = hub.stop_call(call_id, (alice["guid"], None), "to test stopping")
+            reply = await waiting
+            assert reply == stopped and reply["code"] == "call_stopped" and reply["id"] == call_id
+            assert reply["message"] == f"Alice ({alice['moniker']}) stopped this call, to test stopping."
+            await eventually(lambda: slow.cancelled == [{"what": "never"}])
+            assert call_id not in hub._running and not hub._stops
+            failed, text = await tool(door, "journal", text=call_id)
+            assert text["entries"][0]["result"] == reply
+            refused = None
+            try:
+                hub.stop_call(call_id, (alice["guid"], None), "again")
+            except rook_hub.HubError as e:
+                refused = e.message
+            assert refused["code"] == "call_not_running" and refused["next"]
+            #    The worker goes on serving.
+            failed, answer = await call("demo.quick", "still there")
+            assert not failed and answer == {"quick": True}
+
+            # 8. A call made inside another (a device's call, made through a worker, D1): stopping the outer
+            #    one ends both, each with call_stopped, and the inner one's worker ends its work. A stand-in
+            #    device here: its call is a call to demo.slow on the worker.
+            async def through_worker(hub_, row, cap, args):
+                return hub_.joined(await hub_.call(box, "demo.slow", args, "for the device", user=alice["guid"]))
+            monkeypatch.setattr(rook_hub.devices, "find", lambda hub_, worker: {"guid": "lamp"} if worker == "lamp" else None)
+            monkeypatch.setattr(rook_hub.devices, "call", through_worker)
+            outer = asyncio.ensure_future(hub.call("lamp", "lamp.on", {"what": "inner"}, "turn it on",
+                                                   user=alice["guid"]))
+            await eventually(lambda: len(slow.runs) == 6)
+            ids = {r["cap"]: c for c, r in hub._running.items()}
+            reply = hub.stop_call(ids["lamp.on"], (alice["guid"], None), "to test a nested stop")
+            assert await outer == reply
+            await eventually(lambda: slow.cancelled[-1] == {"what": "inner"})
+            failed, text = await tool(door, "journal", text=ids["demo.slow"])
+            inner = text["entries"][0]["result"]
+            assert inner["code"] == "call_stopped" and inner["id"] == ids["demo.slow"]
+            assert inner["message"] == reply["message"] and not hub._running and not hub._stops
     finally:
         worker.stop()
         await asyncio.gather(running, return_exceptions=True)

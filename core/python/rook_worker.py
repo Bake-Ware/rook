@@ -19,6 +19,12 @@ version, which is how the hub learns it was applied. The config is kept in memor
 never written to the state directory: the hub is the source of truth and sends it again
 at every link, and secrets are never kept on a worker (X5).
 
+A stopped call (brief 59): each call is answered by a task of its own. When the hub
+sends `call_stop` for a call, that task is cancelled: the cap's handler, and whatever
+the answer awaits, gets CancelledError, and nothing more is sent for the call (the hub
+has already ended it). A cap that leaves work running past its handler's return ends
+that work when the call's task ends (shell.exec ends its command).
+
 The worker never sees a transport. Each time it connects it first makes a key for
 that connection with the hub over HTTPS (`link_open`, docs/link-design.md 2), then
 calls `connect(session)` with the result, a `Session`: its identity key, the PSK the
@@ -143,7 +149,11 @@ class Stream:
 
     A stream that is a terminal learns the size it is shown at (Bake 13 Nov): `size`
     is the latest (cols, rows) a client sent, or None, and `await resized()` gives the
-    next new size. A handler that has no use for sizes ignores both; nothing piles up."""
+    next new size. A handler that has no use for sizes ignores both; nothing piles up.
+
+    A stream with a process behind it (brief 59): `await signalled()` gives the next signal a
+    client sent, by name (INT, TERM, KILL, HUP or QUIT), or None once the stream is closed; and
+    `close(exit_code)` says how the process ended. A handler with no process ignores both."""
 
     def __init__(self, worker, handle, cap):
         self.worker, self.handle, self.cap = worker, handle, cap   # the cap that opened it
@@ -151,6 +161,7 @@ class Stream:
         self.size = None
         self._input = asyncio.Queue()
         self._resized = asyncio.Event()
+        self._signals = asyncio.Queue()
         self._ready = asyncio.Event()     # set once the hub has its stream_open, so no data goes first
 
     async def send(self, data):
@@ -180,16 +191,25 @@ class Stream:
         self.size = (cols, rows)
         self._resized.set()
 
-    async def close(self):
+    async def signalled(self):
+        """The next signal a client sent to the stream's process, by name, or None once closed."""
+        return await self._signals.get()
+
+    async def close(self, exit_code=None):
+        """Close the stream; `exit_code`, the process's exit code, goes with it when given."""
         if self.open:
             await self._ready.wait()
-            await self.worker._send({"type": "stream_close", "stream": self.handle})
+            message = {"type": "stream_close", "stream": self.handle}
+            if exit_code is not None:
+                message["exit_code"] = exit_code
+            await self.worker._send(message)
             self._closed()
 
     def _closed(self):
         if self.open:
             self.open = False
             self._input.put_nowait(None)
+            self._signals.put_nowait(None)
             self._resized.set()
             self.worker.streams.pop(self.handle, None)
             self.worker.changed()        # the open count is part of the heartbeat (S4)
@@ -257,6 +277,7 @@ class Worker:
         self._loads = 0
         self._link = None
         self._acks = {}                   # call id -> (its link, a future set when the hub acknowledges a piece)
+        self._calls = {}                  # call id -> the task answering it, until it ends (call_stop, brief 59)
         self._stopped = asyncio.Event()
         self._replied = False             # this session's link has delivered a heartbeat_reply
         self._told = None                 # the last thing said on `log` about linking
@@ -492,7 +513,13 @@ class Worker:
                 self.interval = message["interval"]
                 self._interval_known.set()
             elif message["type"] == "call":
-                asyncio.create_task(self._answer(message))
+                task = self._calls[message["id"]] = asyncio.create_task(self._answer(message))
+                task.add_done_callback(lambda done, call_id=message["id"]: self._calls.pop(call_id, None)
+                                       if self._calls.get(call_id) is done else None)
+            elif message["type"] == "call_stop":            # stopped on purpose: the call's task is cancelled
+                task = self._calls.get(message["id"])
+                if task is not None:
+                    task.cancel()
             elif message["type"] == "result_ack":          # the hub has the last piece: send the next
                 waiting = self._acks.get(message["id"])
                 if waiting is not None and not waiting[1].done():
@@ -503,6 +530,8 @@ class Worker:
                 self.streams[message["stream"]]._resize(message["cols"], message["rows"])
             elif message["type"] == "stream_close" and message["stream"] in self.streams:
                 self.streams[message["stream"]]._closed()
+            elif message["type"] == "stream_signal" and message["stream"] in self.streams:
+                self.streams[message["stream"]]._signals.put_nowait(message["signal"])
             elif message["type"] == "plugins":
                 await self._plugins(message["plugins"])
             elif message["type"] == "config":           # applied, then acknowledged by a heartbeat (CF2)

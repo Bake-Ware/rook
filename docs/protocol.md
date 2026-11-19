@@ -232,6 +232,14 @@ The hub answers each one with `result_ack`, whether or not the call is still wai
 
 The worker waits for it with no deadline. If its link is lost while it waits, the call is over (the hub answered its caller `worker_disconnected`): the worker sends no more of it. Added in v1 as an optional message (U8): the hub sends it only to a worker that sent `result_part`.
 
+### `call_stop`: hub to worker, optional (brief 59)
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `id` | string | yes | The call that was stopped. |
+
+Someone stopped the call on purpose: an agent closed the stream that follows it, or stopped the job run that made it (`job.cancel`). The hub has already ended the call with the error `call_stopped`, which says who stopped it and why; that is what its caller, its stream and the journal get. The worker ends the call's work (the Python worker cancels the task answering it; `shell.exec` then ends its command and what the command started) and sends nothing more for it: anything it still sends for that `id` is ignored. A worker with no such call ignores the message. Nothing sends it on a clock: there is no timeout. Added in v1 as an optional message (U8): a worker that does not know it answers `bad_message`, which the hub ignores, and its work goes on to its end while the call is already over.
+
 ### `error`: either direction (C3, W5)
 
 | Field | Type | Req. | Meaning |
@@ -256,6 +264,7 @@ The hub hands the same message back to whoever made the call. Codes in use:
 | `bad_signature` | hub | A knock's `link_signature` or a `link_open`'s `signature` does not verify. |
 | `hub_stopping` | hub | The hub is stopping, on a `link_open`: it gives no session it could not serve. The worker tries again on its usual wait, and its next `link_open` meets the hub that starts next. |
 | `message_too_large` | hub | A message would exceed the size limit (see "Sizes"). |
+| `call_stopped` | hub | Someone stopped the call on purpose (`call_stop`); the message says who, and why. |
 | `token_invalid` | hub | The knock's token is not one this hub minted. |
 | `token_expired` | hub | The knock's token is past its lifetime. |
 | `token_spent` | hub | The knock's join token was already used. |
@@ -291,6 +300,18 @@ An encoded message is at most 16,000,000 bytes, in either direction, or, hub to 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `stream` | string | yes | Stream handle. Streams live until one side closes them on purpose (S4). |
+| `exit_code` | integer | no | Worker to hub: the stream closes because its process ended, with this exit code; negative for a process ended by a signal (-9 for KILL), as Python gives it. Left out when there is no process, or the stream was closed for another reason. Added in v1 as an optional field (U8; brief 59). |
+
+The hub keeps the exit code with the stream: the stream's record and every read of it once closed, the journal's entry for the close, and the `stream.close` event carry `exit_code` (0.5 put it in the stream's last status event and attributes).
+
+### `stream_signal`: hub to worker, optional (brief 59)
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `stream` | string | yes | Stream handle. |
+| `signal` | string | yes | One of `INT`, `TERM`, `KILL`, `HUP`, `QUIT`: the signals 0.5 took (`input={signal: ...}`). |
+
+A client sends the process behind a stream a signal. The worker passes it on (`shell.open`: on pipes, to the command and everything it started; on a terminal, to the program in the foreground, as a key typed there would) and answers nothing; what the process does with it shows in the stream, and if it ends, the stream closes with its `exit_code`. Like a resize, it is not stream data and is not recorded. A worker whose stream has no process ignores it. Added in v1 as an optional message (U8): a worker that does not know it answers `bad_message`, which the hub ignores.
 
 ### `stream_resize`: hub to worker, optional (S2; Bake 13 Nov)
 

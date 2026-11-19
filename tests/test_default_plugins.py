@@ -401,11 +401,11 @@ async def older_core(tmp_path, monkeypatch):
         hub.close()
         before = kept(data)
 
-        # The next start, by this core: file, battery and worker go in, shell goes to 0.3.0.
+        # The next start, by this core: file, battery and worker go in, shell goes to its version now.
         monkeypatch.setattr(rook_hub.plugins, "DEFAULTS", DEFAULTS)
         hub = Hub(data, vault_key_file=key)
         assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-            "battery": "0.1.0", "file": "0.2.0", "net": "0.1.0", "shell": "0.3.0", "worker": "0.1.0"}
+            name: version for name, (version, _) in SHIPPED.items()}
         await hub.serve(host, port)                  # the same address: the worker's hub URL
         # The worker, never restarted, links again and is sent the new worker parts, as on any install.
         await until(lambda: set(NEW_CAPS + NET_CAPS + SHELL_CAPS) <= announced(), timeout=60)
@@ -441,7 +441,7 @@ SHIPPED = {
     "battery": ("0.1.0", "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"),
     "file": ("0.2.0", "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"),
     "net": ("0.1.0", "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"),
-    "shell": ("0.3.0", "31b456adeaa73e0063c4a8e18b19268d8a21bdba41cd5acdfd8d3770f14b09db"),
+    "shell": ("0.4.0", "d40819a1ad1615bd82667077ebeb5ee6cc14be84684a2832b5d6ed09b157b37f"),
     "worker": ("0.1.0", "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"),
 }
 
@@ -523,7 +523,7 @@ def test_the_version_guard_catches_what_it_should(tmp_path):
     assert any(p.startswith("extra 0.1.0 is a new built-in") for p in problems)
 
 
-def test_a_hub_with_shell_0_2_0_and_file_0_1_0_gets_0_3_0_and_0_2_0(tmp_path, monkeypatch):
+def test_a_hub_with_shell_0_2_0_and_file_0_1_0_gets_the_versions_shipped(tmp_path, monkeypatch):
     asyncio.run(before_brief_54(tmp_path, monkeypatch))
 
 
@@ -558,12 +558,12 @@ async def before_brief_54(tmp_path, monkeypatch):
         await hub.stop_serving()
         hub.close()
 
-        # The next start, by this core: shell 0.3.0 and file 0.2.0, and the worker, never restarted,
-        # is sent them when it links again.
+        # The next start, by this core: shell and file at the versions shipped now (SHIPPED), and the
+        # worker, never restarted, is sent them when it links again.
         monkeypatch.setattr(rook_hub.plugins, "DEFAULTS", DEFAULTS)
         hub = Hub(data)
         assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-            "battery": "0.1.0", "file": "0.2.0", "net": "0.1.0", "shell": "0.3.0", "worker": "0.1.0"}
+            name: version for name, (version, _) in SHIPPED.items()}
         await hub.serve(host, port)
         await until(lambda: {"shell.exec", "file.read"} <= announced() and not {"shell.was", "file.was"} & announced(),
                     timeout=60)
@@ -572,7 +572,7 @@ async def before_brief_54(tmp_path, monkeypatch):
         reply = await hub.call(guid, "file.stat", {"path": str(tmp_path)}, "the new file answers", user=alice)
         assert reply["type"] == "result" and reply["result"]["type"] == "dir", reply
         assert [(p["name"], p["version"]) for p in hub.get_worker(guid)["plugins"]
-                if p["name"] in ("shell", "file")] == [("file", "0.2.0"), ("shell", "0.3.0")]
+                if p["name"] in ("shell", "file")] == [("file", SHIPPED["file"][0]), ("shell", SHIPPED["shell"][0])]
     finally:
         worker.stop()
         await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 30)

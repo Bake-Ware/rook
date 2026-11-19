@@ -25,6 +25,7 @@ from nacl.signing import VerifyKey
 PROTOCOL = 1
 MAX_MESSAGE = 16_000_000    # the largest encoded message, either direction (docs/protocol.md, "Sizes")
 MAX_STREAM_DATA = 65_536     # the most bytes of data one stream_data carries (same section)
+SIGNALS = ("INT", "TERM", "KILL", "HUP", "QUIT")   # what stream_signal sends: 0.5's set (brief 59)
 
 
 class ProtocolError(ValueError):
@@ -267,6 +268,10 @@ MESSAGES = {
     "result_ack": {
         "id": (_string, REQ),
     },
+    # Hub -> worker, optional: call `id` was stopped on purpose; the worker ends its work (brief 59).
+    "call_stop": {
+        "id": (_string, REQ),
+    },
     # Either direction; also what the hub hands back to a caller (C3, W5).
     "error": {
         "id": (_string, OPT),
@@ -286,9 +291,15 @@ MESSAGES = {
         "stream": (_string, REQ),
         "data": (_base64, REQ),
     },
-    # Either direction (S1).
+    # Either direction (S1). From the worker, a stream whose process ended may say how (brief 59).
     "stream_close": {
         "stream": (_string, REQ),
+        "exit_code": (_integer, OPT),
+    },
+    # Hub -> worker, optional: send a signal to the process behind a stream (brief 59; 0.5's names).
+    "stream_signal": {
+        "stream": (_string, REQ),
+        "signal": (_one_of(*SIGNALS), REQ),
     },
     # Hub -> worker, optional: the size of the terminal showing a stream, in characters (Bake 13 Nov).
     "stream_resize": {
