@@ -337,7 +337,7 @@ def test_install_checks_the_worker_section(tmp_path):
                 assert e.message["next"].startswith("Fix ")
             else:
                 raise AssertionError(f"{module!r} was accepted")
-        assert [p["name"] for p in hub.plugins.list()] == ["battery", "file", "net", "shell", "worker"]     # only the defaults (PL7)
+        assert [p["name"] for p in hub.plugins.list()] == ["agents", "battery", "file", "net", "shell", "worker"]     # only the defaults (PL7)
         folder = write_plugin(tmp_path / "esp-only", {"name": "esp-only", "version": "1",
                                                       "worker": {"esp32": {"image": "anything"}}})
         assert hub.plugins.install(folder, actor)["worker"] is True

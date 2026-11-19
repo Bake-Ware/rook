@@ -1,0 +1,13 @@
+{
+  "name": "agents",
+  "version": "0.1.0",
+  "site": {
+    "shell": [
+      {"file": "shell/dock.css"},
+      {"file": "shell/rookie.js"},
+      {"file": "shell/rookie-map.js"},
+      {"file": "shell/chat-widgets.js"},
+      {"file": "shell/dock.js"}
+    ]
+  }
+}

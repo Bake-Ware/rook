@@ -92,14 +92,16 @@ class Rig:
 def test_a_new_hub_has_the_default_plugins_and_a_restart_keeps_them(tmp_path):
     hub = Hub(tmp_path / "hub")
     listed = hub.plugins.list()
-    assert [p["name"] for p in listed] == ["battery", "file", "net", "shell", "worker"]
-    assert all(p["worker"] and p["caps"] == [] and not p["site"] for p in listed)   # worker parts only
+    assert [p["name"] for p in listed] == ["agents", "battery", "file", "net", "shell", "worker"]
+    assert all(p["worker"] and p["caps"] == [] and not p["site"] for p in listed if p["name"] != "agents")   # worker parts only
+    [agents] = [p for p in listed if p["name"] == "agents"]                  # the house agent's site part (HA1)
+    assert agents["site"] and not agents["worker"] and agents["caps"] == []
     first = {p["name"]: p["guid"] for p in listed}
     hub.close()
 
     again = Hub(tmp_path / "hub")                       # present: loaded as installed, nothing reinstalled
     assert {p["name"]: p["guid"] for p in again.plugins.list()} == first
-    assert len(list((tmp_path / "hub" / "plugins").iterdir())) == 5
+    assert len(list((tmp_path / "hub" / "plugins").iterdir())) == 6
     again.close()
 
 
@@ -111,8 +113,8 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     hub.plugins.install(replacement, {"user": hub.auth.create_user("Alice", "a password")["guid"], "token": None})
     hub.close()
     again = Hub(tmp_path / "hub")
-    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"battery": "0.1.0", "file": "0.2.0", "net": "0.1.0",
-                                                                     "shell": "9.0.0", "worker": "0.1.0"}
+    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.1.0", "battery": "0.1.0", "file": "0.2.0",
+                                                                     "net": "0.1.0", "shell": "9.0.0", "worker": "0.1.0"}
     again.close()
 
 
@@ -121,7 +123,7 @@ def test_a_data_directory_made_before_the_default_plugins_gets_them_on_its_next_
     (tmp_path / "hub").mkdir()
     sqlite3.connect(tmp_path / "hub" / "hub.db").close()
     hub = Hub(tmp_path / "hub")
-    assert [p["name"] for p in hub.plugins.list()] == ["battery", "file", "net", "shell", "worker"]
+    assert [p["name"] for p in hub.plugins.list()] == ["agents", "battery", "file", "net", "shell", "worker"]
     hub.close()
 
 
@@ -417,13 +419,13 @@ async def older_core(tmp_path, monkeypatch):
         hub.close()
         assert kept(data) == before                  # records, tokens, workers and secrets untouched
         rows = plugin_rows(data)
-        assert len(list((data / "plugins").iterdir())) == 5   # one copy per plugin: shell 0.1.0's is gone
+        assert len(list((data / "plugins").iterdir())) == len(SHIPPED)   # one copy per plugin: shell 0.1.0's is gone
 
         # A second start with nothing new changes nothing.
         hub = Hub(data, vault_key_file=key)
         hub.close()
         assert plugin_rows(data) == rows and kept(data) == before
-        assert len(list((data / "plugins").iterdir())) == 5
+        assert len(list((data / "plugins").iterdir())) == len(SHIPPED)
     finally:
         worker.stop()
         await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 30)
@@ -438,6 +440,7 @@ async def older_core(tmp_path, monkeypatch):
 # change at the same version never reaches it. When a test below says so, raise the version in the
 # plugin's plugin.json and set its line here to what the test prints.
 SHIPPED = {
+    "agents": ("0.1.0", "194c3aae76480ab6ce98d9a2ef30161996e19588e305cca9121cb3fb0d8fe993"),
     "battery": ("0.1.0", "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"),
     "file": ("0.2.0", "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"),
     "net": ("0.1.0", "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"),
@@ -544,7 +547,7 @@ async def before_brief_54(tmp_path, monkeypatch):
     host, port = await hub.serve("127.0.0.1", 0)
     alice = hub.auth.create_user("Alice", "a password")["guid"]
     assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-        "battery": "0.1.0", "file": "0.1.0", "net": "0.1.0", "shell": "0.2.0", "worker": "0.1.0"}
+        "agents": "0.1.0", "battery": "0.1.0", "file": "0.1.0", "net": "0.1.0", "shell": "0.2.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())
     try:
