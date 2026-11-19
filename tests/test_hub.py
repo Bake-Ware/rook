@@ -177,15 +177,16 @@ def test_caps_are_named_and_described_as_w3_says(hub):
     asyncio.run(go())
 
 
-def test_newer_worker_fields_are_accepted_and_kept_raw(hub):
-    # U8: the hub records the worker's version and ignores fields it does not know.
+def test_newer_worker_fields_are_accepted(hub):
+    # U8: the hub records the worker's version and ignores fields it does not know; the stored
+    # heartbeat keeps its health numbers only (H5, after the stress test).
     async def go():
         key, record = approved(hub)
         link, reply = await connected(hub, key, protocol=2, later_field={"x": 1})
         assert reply == {"type": "heartbeat_reply", "protocol": 1, "interval": 15}
         assert hub.get_worker(record["guid"])["protocol"] == 2
         [body] = hub._db.execute("SELECT body FROM heartbeats").fetchone()
-        assert json.loads(body)["later_field"] == {"x": 1}
+        assert "later_field" not in json.loads(body) and "health" in json.loads(body)
     asyncio.run(go())
 
 
