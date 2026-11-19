@@ -203,7 +203,9 @@ async def scenario(tmp_path):
 
             # 6. Records (K1-K4): types with their plugin, browse by type, search, open, links both ways.
             status, reply = await ask(client, "GET", base + "/api/record-types")
-            assert reply["types"] == [{"type": "blob", "plugin": "core", "count": 2},
+            assert reply["types"] == [{"type": "agent", "plugin": "agents", "count": 1},      # the house agent (HA2)
+                                      {"type": "agent-session", "plugin": "agents", "count": 0},
+                                      {"type": "blob", "plugin": "core", "count": 2},
                                       {"type": "config", "plugin": "core", "count": 2},   # desk's and nas's (CF1)
                                       {"type": "note", "plugin": "notes", "count": 2}]
             status, reply = await ask(client, "GET", base + "/api/records?type=note")
@@ -243,7 +245,7 @@ async def scenario(tmp_path):
             status, reply = await ask(client, "GET", f"{base}/api/records/no-such-record")
             assert status == 400 and reply["code"] == "unknown_record" and reply["next"]
             # 6: the two notes, the two blobs and the config records of desk and nas (CF1)
-            assert records.search(hub, type="note") and len(records.search(hub)) == 6    # nothing changed (K2)
+            assert records.search(hub, type="note") and len(records.search(hub)) == 7    # nothing changed (K2); 7 with the house agent (HA2)
 
             # 7. Devices on the Workers page, in their band, with route, reachability and status (P4, P7, D1, D4, D6).
             status, view = await ask(client, "GET", base + "/api/workers")

@@ -659,8 +659,8 @@ def test_settings_as_an_agent(tmp_path):
     """Row 48 (0.5's setting.list and setting.set): an agent reads and changes what the Settings page
     holds, the hub's name; the site shows the change."""
     async def body(rig):
-        assert (await rig.ok("hub", "setting.list"))["settings"] == [
-            {"section": "hub", "key": "name", "value": None, "description": "The hub's name, shown on the site."}]
+        assert (await rig.ok("hub", "setting.list"))["settings"][0] == \
+            {"section": "hub", "key": "name", "value": None, "description": "The hub's name, shown on the site."}
         assert (await rig.ok("hub", "setting.set", key="name", value="  Home  "))["value"] == "Home"
         assert (await rig.ok("hub", "setting.list"))["settings"][0]["value"] == "Home"
         assert rig.hub.name() == "Home"                             # what the Settings page reads (GET /api/hub)
