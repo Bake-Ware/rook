@@ -70,6 +70,7 @@ Each handler gets a `call`, the plugin library (PL6), which is the plugin's only
 | `call.link(a, b)`, `call.unlink(a, b)`, `call.links(record)` | Links between records (K3). `links` shows only records the plugin may reach. |
 | `call.store_blob(data, mime, title="", description="")`, `call.read_blob(record)` | Blobs (K3). |
 | `call.emit(name, payload)` | Put an event on the bus, as the caller (PL1, J2). |
+| `call.install_facts()` | What the installer wrote about this hub in `<data>/install.json` (brief HA4), as a dict, or None (brief HA3: `agent.setup` gives it to the house agent as `install`). |
 | `call.has_users()` | Whether any person is a user of this hub yet, not counting the system owner (brief HA3: the agents plugin's first load tells a new hub from one made before setup existed). |
 
 Through `call` a plugin reaches only the records of the types it owns, plus blobs. Anything else is refused with `type_not_owned`. To refuse a call itself, a handler raises `Error(code, message, next_step)`. Any other exception becomes an error reply naming the plugin (`plugin_failed`), and the hub carries on (C3).

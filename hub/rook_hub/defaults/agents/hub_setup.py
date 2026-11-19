@@ -72,11 +72,15 @@ def _setup_value(call):
 
 def setup_state(call, install=False):
     """First-run setup: ``{done}``, and with ``install`` the facts the installer left (folder, units,
-    ports, backend). No value at all counts as done, as 0.5's missing setup.json did."""
+    port, backend). No value at all counts as done, as 0.5's missing setup.json did. 0.5's installer
+    wrote the facts into setup.json; core's (brief HA4) writes them to the hub's data directory as
+    install.json, before the hub's first start, so they are read from there."""
     state = _setup_value(call)
     out = {"done": bool(state.get("done", True))}
-    if install and isinstance(state.get("install"), dict):
-        out["install"] = state["install"]
+    if install:
+        facts = state.get("install") if isinstance(state.get("install"), dict) else call.install_facts()
+        if facts is not None:
+            out["install"] = facts
     return out
 
 

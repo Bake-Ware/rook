@@ -111,10 +111,11 @@ it in this conversation).
    **Directive: if they choose anything other than "Just this computer",
    make sure the hub is actually reachable before you say it is. Don't
    assume.**
-   a. Find the port in `agent.setup` `install` (`http`): this hub serves the
-      site, the MCP door (`/mcp`) and its workers' links (`/band`) on that one
-      port, TCP only. Check the hub listens on 0.0.0.0 (its unit's `--host`,
-      in `install`); change it and restart the hub unit if not.
+   a. Find the port in `agent.setup` `install` (`http`, and the address in
+      `site`): this hub serves the site, the MCP door (`/mcp`) and its
+      workers' links (`/band`) on that one port, TCP only. Check the hub
+      listens on 0.0.0.0 (`host`); if not, change `--host` in the hub's unit
+      (`units`) and restart it.
    b. Find this machine's address on the home network
       (`ip -4 route get 1.1.1.1`, the `src` address).
    c. Detect the firewall: `ufw status`, `firewall-cmd --state`,
@@ -167,7 +168,7 @@ it in this conversation).
    skill yet: `backup.list` says what backups it has, `backup.run {to}` writes
    one to a file on the hub's disk, `backup.verify` checks one, and a job
    can run it on a schedule. The vault key is never in a backup: say where
-   it is, from `install`, and that it must be kept apart.)
+   it is (`vault_key` in `install`) and that it must be kept apart.)
 12. **Write it down.** (Not on this hub yet: there is no knowledge page.
    Skip this step.) Make a knowledge page titled "How this hub is set up
    and why" (`knowledge.create`): their look and feel and your name, what they want it for, who they are, how

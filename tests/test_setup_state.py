@@ -26,7 +26,7 @@ class Store:
     """The settings HA2 keeps at the hub: where=hub once, where=person per user."""
 
     def __init__(self):
-        self.where, self.values = {"house_name": "hub"}, {}
+        self.where, self.values, self.install = {"house_name": "hub"}, {}, None
 
     def key(self, name, user):
         return (name, None if self.where[name] == "hub" else user)
@@ -51,6 +51,9 @@ class Call:
 
     def has_users(self):
         return self._people
+
+    def install_facts(self):
+        return self.settings.store.install
 
 
 class Plugin:
@@ -127,6 +130,10 @@ def test_no_value_counts_as_done_and_install_facts_are_returned(plugin):
                                                            "install": {"folder": "/opt/rook", "http": 8740}}
     plugin.caps["agent.setup"](call(plugin), {"done": True})
     assert plugin.store.values[("setup", None)]["install"] == {"folder": "/opt/rook", "http": 8740}  # kept
+    # Core's installer (HA4) writes the facts to the data directory's install.json: read from there.
+    del plugin.store.values[("setup", None)]["install"]
+    plugin.store.install = {"by": "deploy/install/install.sh", "http": "0.0.0.0:8740 (every interface)"}
+    assert plugin.caps["agent.setup"](call(plugin), {})["install"] == plugin.store.install
 
 
 def test_look_steps_in_order(plugin):

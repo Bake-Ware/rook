@@ -38,6 +38,7 @@ three network primitives (D3). It never names a worker; the hub picks the route 
 """
 
 import base64
+import json
 
 from . import records
 from .errors import HubError
@@ -161,6 +162,16 @@ class Call:
         before setup existed (it has people: setup counts as done)."""
         with self._hub._lock:
             return self._hub.auth.has_users()
+
+    def install_facts(self):
+        """What the installer wrote about this hub in `<data>/install.json` (brief HA4: its folder, units,
+        port, AI engine), as a dict; None for a hub no installer made, or a file that is not a JSON
+        object. Brief HA3: agent.setup gives it to the house agent as `install`, as 0.5's setup.json did."""
+        try:
+            facts = json.loads((self._hub.state_dir / "install.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return facts if isinstance(facts, dict) else None
 
     # ------------------------------------------------------------ records
 
