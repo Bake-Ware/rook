@@ -731,9 +731,10 @@ def jobs_secrets_auth_routes(app, hub, logged_in):
     @logged_in
     async def new_token(request, token, user):
         # The person mints it directly (T5: "a user mints directly"), not through the session,
-        # so the token hangs on the person and not on this browser's login.
-        jwt = hub.auth.mint("agent", user=user)
-        return {"token": jwt, "moniker": hub.auth.verify(jwt)["moniker"]}
+        # so the token hangs on the person and not on this browser's login. An agent token, or
+        # with {"purpose": "webhook"} a webhook token (J2), the reply as token.create gives it.
+        purpose = (await _body(request)).get("purpose", "agent") if request.can_read_body else "agent"
+        return caps.token_create(hub, {"purpose": purpose}, {"user": user})
 
     @logged_in
     async def revoke_token(request, token, user):

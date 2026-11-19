@@ -371,10 +371,10 @@ class Auth:
         return row["guid"], None
 
     def revoke_token(self, target, *, user=None, token=None):
-        """Revoke one token by GUID or moniker. It stops verifying at once."""
+        """Revoke one token by GUID or moniker. It stops verifying at once. Returns its moniker."""
         with self.hub._lock, self.db:
             actor = self.actor(user, token)
-            row = self.db.execute("SELECT guid FROM tokens WHERE guid = ? OR moniker = ?",
+            row = self.db.execute("SELECT guid, moniker FROM tokens WHERE guid = ? OR moniker = ?",
                                   (target, target)).fetchone()
             if row is None:
                 raise HubError("unknown_token", f"No token is called {target!r}.",
@@ -382,6 +382,7 @@ class Auth:
             self.db.execute("UPDATE tokens SET revoked_at = ? WHERE guid = ? AND revoked_at IS NULL",
                             (self.hub.clock(), row["guid"]))
             self.hub._journal("auth", actor, None, {"revoked_token": row["guid"]})
+        return row["moniker"]
 
     def _record(self, row):
         return {"guid": row["guid"], "moniker": row["moniker"], "owner": row["owner"],

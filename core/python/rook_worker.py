@@ -380,9 +380,10 @@ class Worker:
             reply = await asyncio.to_thread(self._post, knock)
             if reply["type"] == "error":
                 raise Refused(reply)
-            self._tell("pending", log.info, "Waiting for approval: on the hub, approve the pending worker named %s.",
-                       self.name)
-            if reply["status"] == "approved":
+            if reply["status"] != "approved":
+                self._tell("pending", log.info, "Waiting for approval: on the hub, approve the pending worker "
+                           "named %s.", self.name)
+            else:
                 # R5: check the hub signed our key before keeping the identity.
                 # Raises nacl.exceptions.BadSignatureError if it did not.
                 VerifyKey(bytes.fromhex(reply["hub_key"])).verify(

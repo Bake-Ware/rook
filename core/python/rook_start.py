@@ -6,6 +6,10 @@ when a person or agent approves it. It knocks under this machine's hostname with
 and waits for approval (R2, R4), saying so; then it links and serves (H1) until Ctrl-C or SIGTERM,
 and exits with code 0. Started again, it reuses that state and links at once: no second knock.
 
+`--code TOKEN` (0.5's `enroll --code`) knocks with a join token from the hub (`worker.join-token`, or
+`token.create purpose join`): the knock is approved at once, owned by whoever minted it, with no one
+approving (R3). A worker already approved has no knock to make, and the code is not used.
+
 What happens is printed as one plain line each, from the worker's `rook_worker` log. A hub that
 cannot be reached, a URL that is not a hub, and a key the hub refuses end the command with one
 line saying what happened and what to do, and exit code 1; once approved, a hub that cannot be
@@ -42,7 +46,10 @@ async def serve(worker):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m rook_worker", description="Start a Rook worker on this machine.")
     parser.add_argument("hub_url", metavar="HUB_URL", help="the hub's address, as the hub prints it when it starts")
-    url = parser.parse_args(sys.argv[1:] if argv is None else argv).hub_url
+    parser.add_argument("--code", metavar="TOKEN",
+                        help="a join token from the hub: this worker is approved at once, with no one approving")
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    url = args.hub_url
     parts = urllib.parse.urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         return f"rook worker: {url} is not a hub address. Give the address the hub prints, such as http://127.0.0.1:8700/."
@@ -55,15 +62,19 @@ def main(argv=None):
     logging.getLogger("telesthete").setLevel(logging.ERROR)   # its warnings repeat what those lines say
 
     state = state_dir()
-    worker = rook_worker.Worker(state, url)
+    worker = rook_worker.Worker(state, url, token=args.code)
     print(f"Rook worker {worker.name}, state in {state}", flush=True)
     if worker.identity is None:
-        print(f"  Knocking at {worker.hub_url} with the key in {state / 'key'}.", flush=True)
+        print(f"  Knocking at {worker.hub_url} with the key in {state / 'key'}"
+              f"{' and a join token' if args.code else ''}.", flush=True)
     else:
         print(f"  Approved before as {worker.identity['moniker']}: linking to {worker.hub_url}.", flush=True)
     try:
         asyncio.run(serve(worker))
     except rook_worker.Refused as e:
+        if e.message["code"].startswith("token_"):
+            return (f"rook worker: the hub refused the join token. {e.message['message']} "
+                    "Mint a new join token on the hub (worker.join-token), then start again with it.")
         return (f"rook worker: the hub refused this worker's key. {e.message['message']} {e.message['next']} "
                 f"This worker's keys and identity are in {state}.")
     except (urllib.error.URLError, TimeoutError, ConnectionError) as e:

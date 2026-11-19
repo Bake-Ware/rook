@@ -2,7 +2,8 @@
 
 Only what the plan requires an agent to be able to do: approve a knocking
 worker (R2), attach a knock to a known identity (W7), change a worker's owner
-(W6), revoke a worker's key (R5), mint a join token (R3), manage jobs and emit
+(W6), revoke a worker's key (R5), mint a join token (R3), mint, list and revoke
+tokens and list users (T5, T6; 0.5's token.* and users.list), manage jobs and emit
 events (J7, J2; jobs.py), keep and list secrets (X3; vault.py), redact the
 journal (L5; scrub.py), install and list plugins (PL4; plugins.py), add a
 device (D1; devices.py), read and set a worker's config (CF1 to CF3;
@@ -57,14 +58,67 @@ def revoke(hub, args, actor):
 
 
 def join_token(hub, args, actor):
-    jwt = hub.auth.mint("join", **actor)
+    return minted(hub, "join", actor)
+
+
+# What a token of each purpose is for, as the minting reply says it (C1, C3).
+USES = {
+    "agent": "Give it to an agent as its MCP token: \"Authorization: Bearer <token>\" on POST /mcp. "
+             "It acts as you until it is revoked.",
+    "join": "Give it to one new worker at install: python -m rook_worker <hub url> --code <token>. "
+            "Its knock is approved at once, owned by you. It works once.",
+    "webhook": "POST anything to path with header; the body becomes a webhook event. A job whose match is "
+               "match runs on it.",
+}
+
+
+def minted(hub, purpose, actor):
+    """Mint a token for `purpose` as the actor (T5) and say how to use it. Webhook tokens carry 0.5's
+    job.webhook shape where it applies: the path and the header, and the match a job uses (J2)."""
+    jwt = hub.auth.mint(purpose, **actor)
     record = hub.auth.verify(jwt)
-    expires = record["expires_at"]
-    return {"token": jwt, "moniker": record["moniker"],
-            "expires_at": None if expires is None else
-            datetime.datetime.fromtimestamp(expires, datetime.timezone.utc).isoformat(timespec="seconds"),
-            "use": "Give it to one new worker at install. Its knock is approved at once, owned by you. "
-                   "It works once."}
+    reply = {"token": jwt, "moniker": record["moniker"], "purpose": purpose, "scopes": record["scopes"],
+             "expires_at": _iso(record["expires_at"]), "use": USES[purpose]}
+    if purpose == "webhook":
+        reply.update(path="/webhook", header="Authorization: Bearer <token>",
+                     match={"event": "webhook", "payload": {"token_moniker": record["moniker"]}})
+    return reply
+
+
+def _iso(at):
+    return None if at is None else datetime.datetime.fromtimestamp(at, datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def token_create(hub, args, actor):
+    purpose = args.get("purpose", "agent")
+    if purpose not in USES:
+        raise HubError("bad_message", f"purpose must be one of {', '.join(USES)}; it is {purpose!r}.",
+                       "Mint an agent token for an agent, a webhook token for a webhook, a join token for a new worker.")
+    return minted(hub, purpose, actor)
+
+
+def token_list(hub, args, actor):
+    tokens = hub.auth.list_tokens()
+    monikers = {t["guid"]: t["moniker"] for t in tokens}
+    names = {u["guid"]: u["name"] for u in hub.auth.list_users()}
+    return {"tokens": [{"moniker": t["moniker"], "guid": t["guid"], "purpose": t["purpose"], "scopes": t["scopes"],
+                        "owner": {"moniker": t["owner_moniker"], "name": names[t["owner"]]},
+                        "minted_by": monikers.get(t["minted_by"]),
+                        **{name: _iso(t[name]) for name in ("minted_at", "expires_at", "last_used", "spent_at",
+                                                            "revoked_at")}} for t in tokens]}
+
+
+def token_revoke(hub, args, actor):
+    return {"revoked": hub.auth.revoke_token(_text(args, "id"), **actor)}
+
+
+def users_list(hub, args, actor):
+    return {"users": [{"moniker": u["moniker"], "guid": u["guid"], "name": u["name"],
+                       "created_at": _iso(u["created_at"]), "revoked_at": _iso(u["revoked_at"])}
+                      for u in hub.auth.list_users()]}
+
+
+_NOTHING = {"type": "object", "additionalProperties": False, "properties": {}}
 
 
 CAPS = {
@@ -95,7 +149,27 @@ CAPS = {
     }),
     "worker.join-token": (join_token, {
         "description": "Mint a one-use join token: a new worker that knocks with it is approved at once.",
-        "schema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "schema": _NOTHING,
+    }),
+    "token.create": (token_create, {
+        "description": "Mint a token owned by the person your token belongs to (T5): agent (the default) for an "
+                       "agent's MCP access, webhook for POST /webhook, join for a new worker. Returned once.",
+        "schema": {"type": "object", "additionalProperties": False, "properties": {
+            "purpose": {"type": "string", "enum": list(USES), "description": "agent, webhook or join."}}},
+    }),
+    "token.list": (token_list, {
+        "description": "Every token (never the token itself): purpose, scopes, owner, who minted it, when it was "
+                       "made, ends, was last used, spent or revoked.",
+        "schema": _NOTHING,
+    }),
+    "token.revoke": (token_revoke, {
+        "description": "Revoke a token: it stops working at once.",
+        "schema": {"type": "object", "required": ["id"], "additionalProperties": False, "properties": {
+            "id": {"type": "string", "description": "The token's moniker or GUID, from token.list."}}},
+    }),
+    "users.list": (users_list, {
+        "description": "Every user of this hub: name, moniker, GUID, when made and whether revoked.",
+        "schema": _NOTHING,
     }),
 }
 
