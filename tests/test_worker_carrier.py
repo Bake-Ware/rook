@@ -499,3 +499,41 @@ def test_a_stall_of_20_s_makes_a_new_session(tmp_path):
             assert len(worker.opens) >= 2
             assert (await rig.call("demo.echo", {"after": "20 s"}))["result"] == {"after": "20 s"}
     asyncio.run(go())
+
+
+def test_a_hub_that_is_stopping_gives_no_session_and_the_worker_links_to_the_next_at_once(tmp_path):
+    """Brief 51, fault 4 of docs/stress.md: on a clean stop the worker hears GOODBYE and asks the stopping
+    hub for a new session at once. That hub must not give it one: its carrier has stopped, so the session's
+    key goes with it, and the worker would wait PEER_TIMEOUT on /band of the next hub, which never held
+    the key. Refused with hub_stopping, the worker tries again on its usual wait and links to the next hub."""
+    async def go():
+        async with Rig(tmp_path) as rig:
+            worker = rig.worker()
+            await rig.approved(worker)
+            answers, post = [], worker._post
+
+            def answered(body, path="/knock"):
+                reply = post(body, path)
+                if path == "/link":
+                    answers.append(reply.get("code", reply["type"]))
+                return reply
+            worker._post = answered
+            stop = rig.hub.carrier.stop
+
+            async def stop_then_wait_for_the_workers_link_open():
+                await stop()                        # GOODBYE has gone to the worker; every link is closed
+                await until(lambda: answers)        # the worker asked this hub, still serving HTTP, for a session
+                await rig.proxy.cut()
+            rig.hub.carrier.stop = stop_then_wait_for_the_workers_link_open
+            await rig.hub.stop_serving()
+            rig.hub.close()
+            assert answers and set(answers) == {"hub_stopping"}
+            await rig.serve(rig.port)               # the same data directory and address
+            serving = time.monotonic()
+            await until(rig.online, timeout=2 * rook_link.PEER_TIMEOUT)
+            back = time.monotonic() - serving
+            print(f"worker back {back:.1f} s after the next hub served")
+            assert answers[-1] == "link_accept" and answers.count("link_accept") == 1    # no session wasted
+            assert back < rook_link.PEER_TIMEOUT
+            assert (await rig.call("demo.echo", {"back": True}))["result"] == {"back": True}
+    asyncio.run(go())

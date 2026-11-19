@@ -158,6 +158,11 @@ class Sessions:
 def open_session(hub, message):
     """Answer a `link_open` (docs/protocol.md): a `link_accept`, or an `error` and nothing kept.
     The checks run in the order of link design 2.5."""
+    if hub._stopping is not None and hub._stopping.is_set():
+        # Its carrier stops or has stopped: a session's key would go with it, and the worker would wait
+        # PEER_TIMEOUT on /band of the hub that starts next, which never held it (brief 51).
+        return error("hub_stopping", "The hub is stopping.",
+                     "Try again on your usual wait: the hub that starts next will answer.")
     key = message["key"]
     with hub._lock:
         row = hub._db.execute("SELECT k.revoked_at, k.link_key, w.moniker FROM keys k "
@@ -391,7 +396,8 @@ def add_routes(app, hub):
             reply = open_session(hub, message)
         except ProtocolError as e:
             reply = error("bad_message", str(e), "Send a link_open as docs/protocol.md defines it.")
-        status = 200 if reply["type"] == "link_accept" else 400 if reply["code"] == "bad_message" else 403
+        status = (200 if reply["type"] == "link_accept" else 400 if reply["code"] == "bad_message"
+                  else 503 if reply["code"] == "hub_stopping" else 403)
         return web.Response(body=encode(reply), status=status, content_type="application/json")
 
     app.router.add_post("/link", link)

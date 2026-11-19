@@ -165,7 +165,7 @@ Connecting is the first heartbeat. The worker sends one at the interval the hub 
 | `protocol` | integer | yes | The hub's version (U8). |
 | `interval` | integer | yes | Seconds until the next heartbeat. Set by the hub per worker. |
 
-The hub answers every heartbeat. A worker that misses three intervals is shown offline (H3).
+The hub answers every heartbeat. A worker the hub holds no link for is shown offline at once; one whose link is up but which misses three intervals is shown offline too (H3, as narrowed after the stress test).
 
 ### `call`: hub to worker (C3, W5)
 
@@ -242,6 +242,7 @@ The hub hands the same message back to whoever made the call. Codes in use:
 | `key_revoked` | hub | The key was revoked, by a rekey (W7) or outright (R5), on a knock or a `link_open`; and over the link, at once, to a worker linked under the key (below). |
 | `bad_message` | either | The message could not be decoded or validated. |
 | `bad_signature` | hub | A knock's `link_signature` or a `link_open`'s `signature` does not verify. |
+| `hub_stopping` | hub | The hub is stopping, on a `link_open`: it gives no session it could not serve. The worker tries again on its usual wait, and its next `link_open` meets the hub that starts next. |
 | `message_too_large` | hub | A message would exceed the size limit (see "Sizes"). |
 | `token_invalid` | hub | The knock's token is not one this hub minted. |
 | `token_expired` | hub | The knock's token is past its lifetime. |

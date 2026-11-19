@@ -5,13 +5,13 @@ worker (R2), attach a knock to a known identity (W7), change a worker's owner
 (W6), revoke a worker's key (R5), mint a join token (R3), manage jobs and emit
 events (J7, J2; jobs.py), keep and list secrets (X3; vault.py), redact the
 journal (L5; scrub.py), install and list plugins (PL4; plugins.py), add a
-device (D1; devices.py), and read and set a worker's config (CF1 to CF3;
-config.py). Installed plugins add caps of their own, served the same way (PL1).
+device (D1; devices.py), read and set a worker's config (CF1 to CF3;
+config.py), and roll up the heartbeat history (H5; history.py). Installed plugins add caps of their own, served the same way (PL1).
 """
 
 import datetime
 
-from . import config, devices, jobs, plugins, scrub, vault
+from . import config, devices, history, jobs, plugins, scrub, vault
 from .errors import HubError
 
 HUB = "hub"  # the worker name that addresses the hub's own caps
@@ -106,6 +106,7 @@ CAPS.update(scrub.caps())  # take a value out of the journal (L5)
 CAPS.update(plugins.CAPS)  # install and list plugins (PL4)
 CAPS.update(devices.CAPS)  # add a device (D1)
 CAPS.update(config.CAPS)  # read and set a worker's config (CF1, CF2, CF3)
+CAPS.update(history.CAPS)  # roll heartbeats older than 12 hours into minutes (H5, Bake after the stress test)
 
 
 def descriptors(hub):

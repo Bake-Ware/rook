@@ -81,7 +81,7 @@ async def lifecycle(tmp_path):
         assert json.loads(entry["result"]) == {"approved": first.key}
 
         # 3. The worker heartbeats its full state; the hub stores it, replies
-        #    with the interval and keeps the raw history (H1, H2, H4, H5 raw).
+        #    with the interval and keeps its health numbers in the history (H1, H2, H4, H5).
         await eventually(lambda: hub.get_worker(guid)["online"])
         await eventually(lambda: first.interval)
         assert first.interval == DEFAULT_INTERVAL
@@ -92,9 +92,9 @@ async def lifecycle(tmp_path):
         assert [c["name"] for c in record["caps"]] == ALL
         assert record["facts"]["form"] == "python" and "disk" in record["health"]
         assert "gateway_mac" in record["band"]
-        raw = [decode(row[0].encode()) for row in hub._db.execute(
+        raw = [json.loads(row[0]) for row in hub._db.execute(
             "SELECT body FROM heartbeats WHERE worker = ?", (guid,))]
-        assert raw and raw[0]["identity"]["key"] == first.key
+        assert raw and "disk" in raw[0]["health"] and "caps" not in raw[0] and "identity" not in raw[0]
 
         beats = len(raw)                # the first, and the one after the default plugins loaded (PL7, W5)
         hub.set_interval(guid, 7)       # per worker (H2) ...
@@ -124,13 +124,12 @@ async def lifecycle(tmp_path):
         assert json.loads(rows[0]["result"])["result"] == {"text": "hi"}
         assert json.loads(rows[1]["result"])["code"] == "unknown_cap"
 
-        # 5. The worker stops. After three missed heartbeats it is offline,
-        #    and its record and caps are kept (H3).
+        # 5. The worker stops. Its link is gone, so it is offline at once, with no
+        #    heartbeat missed (brief 51; a linked worker that misses three is offline
+        #    by H3: test_hub.py), and its record and caps are kept (H3).
         first.stop()
         await running
-        clock.advance(3 * 7)
-        assert hub.get_worker(guid)["online"]
-        clock.advance(1)
+        await eventually(lambda: guid not in hub._links)
         record = hub.get_worker(guid)
         assert not record["online"]
         assert [c["name"] for c in record["caps"]] == ALL

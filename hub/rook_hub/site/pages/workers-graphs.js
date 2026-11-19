@@ -3,7 +3,7 @@
      heartbeat and flashes when a new one arrives, with a peak that falls slowly;
      a click finds the worker. Its data is the hub's heartbeat history. Over 30 days
      instead, each bar is a column of days, each coloured by that day's share of the
-     heartbeats the worker's interval asks for (the hub's hourly roll-up, H5).
+     heartbeats the worker's interval asks for (older than 12 hours, the hub's minute roll-up, H5).
    - HealthCharts: a worker's health over the last hour, six hours, day or 30 days,
      one chart per field it reports, from the same history, grouped by the hub.
    - FleetView: the 0.4 3D scene (vendor/rook-scene.js), the hub as a rook and the
@@ -175,9 +175,7 @@ export const HealthCharts = {
   props: { worker: String },
   data() { return { span: 86400, series: null, error: '' }; },
   computed: {
-    /* The window the hub answered: from the roll-up (H5) it is whole hours, a little past now. */
     since() { return this.series ? Date.parse(this.series.since) / 1000 : 0; },
-    window() { return this.series && this.series.source === 'hourly' ? Math.ceil(this.span / this.series.step) * this.series.step : this.span; },
     perPoint() { const s = this.series.step; return s >= 3600 ? Math.round(s / 3600) + ' h' : (Math.round(s / 60) || 1) + ' min'; },
     count() { return this.series ? this.series.buckets.reduce((n, b) => n + b.count, 0) : 0; },
   },
@@ -201,7 +199,7 @@ export const HealthCharts = {
     <p v-if="error" class="note" style="margin:0">{{ error }}</p>
     <template v-else-if="series">
       <div v-if="series.fields.length" class="charts-grid">
-        <health-chart v-for="f in series.fields" :key="f" :field="f" :buckets="series.buckets" :since="since" :span="window" :step="series.step" :note="note(f)"></health-chart>
+        <health-chart v-for="f in series.fields" :key="f" :field="f" :buckets="series.buckets" :since="since" :span="span" :step="series.step" :note="note(f)"></health-chart>
       </div>
       <p v-else-if="series.buckets.length" class="note" style="margin:0">It heartbeats but reports no health.</p>
       <p v-else class="note" style="margin:0">No heartbeats in this span.</p>

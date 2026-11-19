@@ -1,6 +1,7 @@
 """Round 1, call flood: 200 shell.exec calls at once, then 1,000 at once, then 5,000 spread over a
 minute; then, past the brief's numbers, 5,000 and 20,000 at once; mixed short commands, spread over three workers. Counts answers, errors by code, wall time
-and the slowest call. `python tests/stress/flood.py`"""
+and the slowest call. Then (brief 49, fault 1) 10,000 and 20,000 worker.ping at once to one worker.
+`python tests/stress/flood.py`"""
 
 import asyncio
 import collections
@@ -13,25 +14,29 @@ COMMANDS = [{"cmd": "echo flood"}, {"cmd": "true"}, {"cmd": "date +%s.%N"}, {"cm
             {"cmd": "printf '%s\\n' a b c"}, {"cmd": "exit 3"}, {"cmd": "echo to stderr >&2"}]
 
 
-async def one(door, worker, args, results):
+async def one(door, worker, args, results, cap="shell.exec"):
     started = time.monotonic()
     try:
-        code, reply, followed = await door.call(worker, "shell.exec", args)
+        code, reply, followed = await door.call(worker, cap, args)
     except Exception as e:      # the request itself failed: no answer from the door
         code, followed = f"no_answer:{type(e).__name__}: {e}"[:120], False
     results.append((code, time.monotonic() - started, followed))
 
 
-async def flood(band, label, n, spread=0.0):
-    """`n` calls, started all at once (spread 0) or evenly over `spread` seconds. Waits for every
-    one, however long that takes, and logs what came back."""
+async def flood(band, label, n, spread=0.0, one_worker=False):
+    """`n` calls, started all at once (spread 0) or evenly over `spread` seconds: shell.exec over
+    every worker, or worker.ping to the first only. Waits for every one, however long that takes,
+    and logs what came back."""
     band.measure("before", sub=label)
     results, tasks, started = [], [], time.monotonic()
     for i in range(n):
         if spread:
             await asyncio.sleep(max(0.0, started + i * spread / n - time.monotonic()))
-        worker = band.monikers[i % len(band.monikers)]
-        tasks.append(asyncio.create_task(one(band.door, worker, COMMANDS[i % len(COMMANDS)], results)))
+        if one_worker:
+            tasks.append(asyncio.create_task(one(band.door, band.monikers[0], {}, results, "worker.ping")))
+        else:
+            worker = band.monikers[i % len(band.monikers)]
+            tasks.append(asyncio.create_task(one(band.door, worker, COMMANDS[i % len(COMMANDS)], results)))
     await asyncio.gather(*tasks)
     wall = time.monotonic() - started
     codes = collections.Counter(code or "ok" for code, _, _ in results)
@@ -50,6 +55,9 @@ async def body(band):
     # Past the brief's numbers, to find where it gives.
     await flood(band, "5,000 at once", 5000)
     await flood(band, "20,000 at once", 20000)
+    # Brief 49 (fault 1): a burst to one worker waits for its link; every call is answered.
+    await flood(band, "10,000 worker.ping at once, one worker", 10000, one_worker=True)
+    await flood(band, "20,000 worker.ping at once, one worker", 20000, one_worker=True)
 
 
 if __name__ == "__main__":

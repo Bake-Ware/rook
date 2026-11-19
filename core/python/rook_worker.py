@@ -497,8 +497,7 @@ class Worker:
                 reply = await self._result(call["id"], await cap.handler(call["args"]), link)
                 encode(reply)       # a whole result that cannot be sent fails the call here, as always
             except FAILS as e:      # before any piece, or after some: the call ends with this either way
-                reply = error("cap_failed", f"{call['cap']} failed: {reason(e)}",
-                              f"Check the arguments against the schema of {call['cap']}.", call["id"])
+                reply = self._failed(call, e)
             await self._send(reply, link)
             return
         await self._send(reply)
@@ -544,6 +543,14 @@ class Worker:
         finally:
             self._acks.pop(call_id, None)
 
+    def _failed(self, call, e):
+        """`cap_failed` for a handler that raised. The worker cannot tell whether the arguments or
+        the machine caused it, so the next step points at the reason, not at the schema (C3)."""
+        why = reason(e).rstrip()
+        return error("cap_failed", f"{call['cap']} failed: {why}{'' if why.endswith(('.', '!', '?')) else '.'}",
+                     f"Change what the reason names and call again, or call {call['cap']} on another worker "
+                     "that announces it.", call["id"])
+
     async def _open_stream(self, call, cap):
         """A call on a stream cap: the handler names the stream, the hub hears stream_open (S1)."""
         # A fresh random handle, so a stream opened after a restart never takes the
@@ -555,8 +562,7 @@ class Worker:
                      "title": str(named["title"]), "description": str(named["description"])}
             encode(reply)
         except FAILS as e:
-            await self._send(error("cap_failed", f"{call['cap']} failed: {reason(e)}",
-                                   f"Check the arguments against the schema of {call['cap']}.", call["id"]))
+            await self._send(self._failed(call, e))
             return
         self.streams[stream.handle] = stream
         await self._send(reply)
