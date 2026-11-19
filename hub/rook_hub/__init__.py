@@ -807,11 +807,12 @@ class Hub:
         return running["stream"]
 
     def _piece(self, call_id, data):
-        """A piece of call `call_id`'s result, in order (brief 54): it goes on the call's stream, and a
-        client still waiting for the call is answered "running" with that stream at once."""
+        """A piece of call `call_id`'s result, in order (brief 54): it goes on the call's stream,
+        scrubbed as the journal scrubs a result (L4; a value split across two pieces is missed, as
+        L4 is a reducer), and a client still waiting for the call is answered "running" at once."""
         running = self._running.get(call_id)
         if running is not None:
-            self.streams.piece(self._follow(call_id, running)["guid"], data)
+            self.streams.piece(self._follow(call_id, running)["guid"], scrub.scrub_text(data, self.vault))
             running["pieces"].set()
 
     def joined(self, reply):

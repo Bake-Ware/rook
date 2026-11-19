@@ -216,3 +216,9 @@ async def slow_and_broken(tmp_path):
         assert band.hub.joined(reply) == "z" * (3 * PIECE - 2)
         small = await band.hub.call(band.moniker, "big.sized", {"chars": 10}, "small", user=band.alice)
         assert "parts" not in small and band.hub.joined(small) == "z" * 8
+
+        # A vault value in a big result is scrubbed on the stream, as the journal scrubs a result (L4).
+        band.hub.vault.create({"scope": "hub", "name": "deploy-key", "value": "hunter2-correct-horse-battery"},
+                              {"user": band.alice, "token": None})
+        result, *_ = await band.big("shell.exec", cmd="seq 1 300000; echo hunter2-correct-horse-battery")
+        assert result["stdout"].endswith("300000\n(secret:deploy-key)\n")
