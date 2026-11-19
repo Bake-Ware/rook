@@ -441,7 +441,7 @@ SHIPPED = {
     "battery": ("0.1.0", "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"),
     "file": ("0.2.0", "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"),
     "net": ("0.1.0", "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"),
-    "shell": ("0.4.0", "d40819a1ad1615bd82667077ebeb5ee6cc14be84684a2832b5d6ed09b157b37f"),
+    "shell": ("0.5.0", "f57565e2f29bb6eb1ba20b4d33ab3efa329f9699bd9280d3e27b54dac8f73733"),
     "worker": ("0.1.0", "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"),
 }
 
