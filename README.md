@@ -51,6 +51,7 @@ PYTHONPATH=protocol/python:core/python .venv/bin/python -m rook_worker http://12
 - The hub's address is the only input. The worker keeps its keys, and the identity the hub gives it, in `~/.rook-worker`.
 - On the first start it knocks under this machine's hostname and says it is waiting for approval. Approve it on the hub: on the Workers page, or by an agent. It then links, prints `Linked to … as <moniker>.` and serves until you stop it with Ctrl-C.
 - Started again, it links at once as the same worker: no second knock, no second approval.
+- To join with no one approving, add `--code TOKEN` with a join token from the hub (an agent mints one with `worker.join-token`, or `token.create` with `purpose: join`). It is approved at once, owned by whoever minted the token. A join token works once.
 - If the hub cannot be reached, the address is not a hub, or the hub refuses the worker's key, it says so in one line and exits. Once approved, a hub that goes away is waited for: the worker says why it cannot link and links again when the hub is back.
 
 ## Backing up, restoring and moving a hub
