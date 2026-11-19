@@ -8,7 +8,7 @@ protocol message). worker.offline comes as soon as a worker's link closes (brief
 against the jobs (jobs.py).
 
 `emit` only queues the event, so any code may call it, even while holding the
-hub's lock. One task, started with the hub, journals each event in order and
+hub's lock, and from a thread (a hub cap's work runs on one, brief 53). One task, started with the hub, journals each event in order and
 starts the runs of the jobs it matches. A second task wakes every second to
 notice workers that have missed three heartbeats (H3), schedules that are due,
 and device status polls that are due (D6, devices.py).
@@ -39,9 +39,13 @@ class Events:
         self._last_tick = None
 
     def emit(self, name, payload, *, user=None, token=None, worker=None, journal=True):
-        """Put an event on the bus. Never blocks and never touches the database."""
+        """Put an event on the bus. Never blocks and never touches the database. From a thread too:
+        the queue takes it at once, in the order emitted, and the bus is woken on the loop."""
         self._queue.append({"name": name, "payload": payload, "user": user, "token": token,
                             "worker": worker, "journal": journal})
+        self.hub.on_loop(self._woken)
+
+    def _woken(self):
         if self._wake is not None:
             self._wake.set()
 

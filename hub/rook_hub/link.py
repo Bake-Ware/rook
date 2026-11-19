@@ -156,14 +156,26 @@ class Sessions:
             del self._pending[key]
 
 
-def open_session(hub, message):
+async def open_session(hub, message):
     """Answer a `link_open` (docs/protocol.md): a `link_accept`, or an `error` and nothing kept.
-    The checks run in the order of link design 2.5."""
+    The checks run in the order of link design 2.5. The database and the key work run on a thread
+    (brief 53); the session is added on the event loop, which its Endpoint belongs to."""
+    stopping = error("hub_stopping", "The hub is stopping.",
+                     "Try again on your usual wait: the hub that starts next will answer.")
     if hub._stopping is not None and hub._stopping.is_set():
         # Its carrier stops or has stopped: a session's key would go with it, and the worker would wait
         # PEER_TIMEOUT on /band of the hub that starts next, which never held it (brief 51).
-        return error("hub_stopping", "The hub is stopping.",
-                     "Try again on your usual wait: the hub that starts next will answer.")
+        return stopping
+    reply, psk = await hub.off_loop(_exchange, hub, message)
+    if psk is not None:
+        if hub._stopping is not None and hub._stopping.is_set():     # it began to stop meanwhile
+            return stopping
+        hub.sessions.add(message["key"], message["ephemeral"], psk)
+    return reply
+
+
+def _exchange(hub, message):
+    """The checks and the key exchange of a link_open: (link_accept, its session key), or (error, None)."""
     key = message["key"]
     with hub._lock:
         row = hub._db.execute("SELECT k.revoked_at, k.link_key, w.moniker FROM keys k "
@@ -171,31 +183,32 @@ def open_session(hub, message):
         knocking = row is None and hub._db.execute("SELECT 1 FROM knocks WHERE key = ?", (key,)).fetchone()
     if row is None and knocking:
         return error("unknown_key", "This key is still waiting to be approved.",
-                     "Wait until a person or agent approves the knock, then open the link.")
+                     "Wait until a person or agent approves the knock, then open the link."), None
     if row is None:
         return error("unknown_key", "This key was never approved.",
-                     "Knock with it and wait for a person or agent to approve it.")
+                     "Knock with it and wait for a person or agent to approve it."), None
     if row["revoked_at"] is not None:
         return error("key_revoked", f"This key was revoked from {row['moniker']}.",
-                     "Generate a new key, knock with it, and ask a person or agent to attach it.")
+                     "Generate a new key, knock with it, and ask a person or agent to attach it."), None
     if not verify_link_open(hub.public_key, message):
         return error("bad_signature", "The link_open signature does not verify under its key for this hub.",
-                     "Sign link_open with the identity key, over this hub's key, as docs/protocol.md says.")
+                     "Sign link_open with the identity key, over this hub's key, as docs/protocol.md says."), None
     if row["link_key"] is None:
         return error("unknown_key", f"This key of {row['moniker']} was approved before workers had link keys.",
-                     f"Generate a new key, knock with it, and ask a person or agent to attach it to {row['moniker']}.")
+                     "Generate a new key, knock with it, and ask a person or agent to attach it to "
+                     f"{row['moniker']}."), None
     ephemeral = PrivateKey.generate()
     hub_ephemeral = ephemeral.public_key.encode().hex()
     try:
         psk = session_psk("hub", key, message["ephemeral"], hub_ephemeral, ephemeral, hub.link_secret,
                           row["link_key"])
     except ProtocolError as e:
-        return error("bad_message", str(e), "Make a new ephemeral key and send link_open again.")
+        return error("bad_message", str(e), "Make a new ephemeral key and send link_open again."), None
     del ephemeral       # the ephemeral secret is not kept (link design 2.2)
-    hub.sessions.add(key, message["ephemeral"], psk)
     return {"type": "link_accept", "protocol": PROTOCOL, "ephemeral": hub_ephemeral,
             "hub_link_key": hub.link_key, "hub_start": hub.carrier.started,
-            "signature": sign_link_accept(hub._signing_key, key, message["ephemeral"], hub_ephemeral, hub.link_key)}
+            "signature": sign_link_accept(hub._signing_key, key, message["ephemeral"], hub_ephemeral,
+                                          hub.link_key)}, psk
 
 
 class Carrier:
@@ -395,10 +408,10 @@ def add_routes(app, hub):
     async def link(request):
         """`POST /link`: a link_open in, a link_accept or error out (docs/protocol.md)."""
         try:
-            message = decode(await request.read())
+            message = await hub.off_loop(decode, await request.read())
             if message["type"] != "link_open":
                 raise ProtocolError(f"expected a link_open, got {message['type']}")
-            reply = open_session(hub, message)
+            reply = await open_session(hub, message)
         except ProtocolError as e:
             reply = error("bad_message", str(e), "Send a link_open as docs/protocol.md defines it.")
         status = (200 if reply["type"] == "link_accept" else 400 if reply["code"] == "bad_message"

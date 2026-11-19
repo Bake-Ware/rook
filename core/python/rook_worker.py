@@ -58,6 +58,12 @@ whose output can be big returns `Text` (a string) and `Items` (a list) made as t
 and awaitables for what it learns last, so it never holds the whole either; a cap that returns
 an ordinary value gets the same pieces, made from the value it holds.
 
+What can hold the worker's event loop for long runs on a thread (brief 53): decoding a message from
+the hub bigger than a stream piece (a call's arguments can be 16,000,000 bytes), and encoding each
+piece of a big result. Each message is decoded before the next is read, so the hub's order is kept;
+the heartbeat and the stream messages are still built and handed to `send` with no await in
+between (D5).
+
 What happens is said in plain words on the `rook_worker` logger (info, and a warning while it
 cannot link): waiting for approval, approved, linked, the link lost, why linking fails. Each is
 said once, until it changes. The start command (`python -m rook_worker HUB_URL`, rook_start.py)
@@ -499,7 +505,8 @@ class Worker:
             except EOFError:
                 return
             try:
-                message = decode(data)
+                # A big message is decoded on a thread (brief 53); a small one here, where a hand-off costs more.
+                message = await asyncio.to_thread(decode, data) if len(data) > MAX_STREAM_DATA else decode(data)
             except ProtocolError as e:
                 await self._send(error("bad_message", str(e), "Send messages as docs/protocol.md defines them."))
                 continue
@@ -592,7 +599,7 @@ class Worker:
         acked = asyncio.get_running_loop().create_future()
         self._acks[call_id] = (link, acked)
         try:
-            await link.send(encode({"type": "result_part", "id": call_id, "data": data}))
+            await link.send(await asyncio.to_thread(encode, {"type": "result_part", "id": call_id, "data": data}))
             return await acked
         except EOFError:
             return False

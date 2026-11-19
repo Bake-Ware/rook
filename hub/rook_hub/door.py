@@ -11,6 +11,10 @@ and its user (L1).
 
 Five tools, generic on purpose (C2): workers, caps, call, journal, stream. Caps are
 discovered through them, never registered as tools.
+
+What can take long runs on a thread (Hub.off_loop, brief 53), so the hub's event loop serves everyone
+else meanwhile: the workers, caps and journal tools, which read what grows with the hub, and reading a
+request's JSON or encoding a reply bigger than a stream piece. The token's use stays on the loop.
 """
 
 import json
@@ -138,7 +142,7 @@ def _owner(hub, guid):
     return {"name": user["name"], "moniker": user["moniker"]}
 
 
-async def workers(hub, token, args):
+def _workers(hub, token, args):
     band_of, opted_out = bands.membership(hub), devices.opted_out(hub)
     found = [{
         "moniker": w["moniker"], "guid": w["guid"], "name": w["name"], "owner": _owner(hub, w["owner"]),
@@ -160,7 +164,7 @@ async def workers(hub, token, args):
     return _dumps({"workers": found, "knocking": knocking})
 
 
-async def list_caps(hub, token, args):
+def _caps(hub, token, args):
     worker, match = args.get("worker"), args.get("match") or ""
     groups = [] if worker not in (None, caps.HUB) else [("hub", True, caps.descriptors(hub))]
     if worker != caps.HUB:
@@ -176,12 +180,13 @@ async def list_caps(hub, token, args):
         for name, online, announced in groups]})
 
 
-async def call(hub, token, args):
+async def call(hub, token, args, size=0):
     for name in ("worker", "cap", "why"):
         if not isinstance(args.get(name), str) or not args[name]:
             raise HubError("bad_message", f"{name} is required.",
                            "Give worker, cap and why as strings, and args as an object.")
-    reply = await hub.call_or_follow(args["worker"], args["cap"], args.get("args") or {}, args["why"], token=token)
+    reply = await hub.call_or_follow(args["worker"], args["cap"], args.get("args") or {}, args["why"], token=token,
+                                     size=size)      # the request's size: big arguments are encoded on a thread
     if reply["type"] == "running":       # still running: answer now with a stream to follow (Bake 13 Nov)
         return _dumps({"id": reply["id"], "running": True, "worker": reply["worker"], "stream": reply["stream"],
                        "next": FOLLOW.format(stream=reply["stream"])})
@@ -190,10 +195,10 @@ async def call(hub, token, args):
     if reply["type"] == "stream_open":
         return _dumps(dict({name: reply[name] for name in ("stream", "title", "description")},
                            next="Read it with the stream tool, from position 0."))
-    return _dumps(reply["result"])
+    return _dumps(reply["result"])     # a result over about a megabyte came as a stream (brief 54)
 
 
-async def read_journal(hub, token, args):
+def _journal(hub, token, args):
     filters = {name: args.get(name) for name in ("worker", "cap", "user", "kind", "since", "until", "text", "job", "run")}
     return _dumps({"entries": journal.read(hub, **filters, limit=args.get("limit") or 50)})
 
@@ -201,14 +206,16 @@ async def read_journal(hub, token, args):
 async def stream(hub, token, args):
     action, name = args.get("action"), args.get("stream")
     if action == "list":
-        return _dumps({"streams": hub.streams.list(args.get("open"))})
+        return await hub.off_loop(lambda: _dumps({"streams": hub.streams.list(args.get("open"))}))
     if action == "search":
-        return _dumps({"streams": hub.streams.search(args.get("query"), args.get("worker"), args.get("open"))})
+        return await hub.off_loop(lambda: _dumps({"streams": hub.streams.search(args.get("query"), args.get("worker"),
+                                                                                args.get("open"))}))
     if not isinstance(name, str) or not name:
         raise HubError("bad_message", "stream is required for this action.",
                        "Give the stream's moniker or GUID; action \"list\" shows them.")
     if action == "read":
-        return _dumps(await hub.streams.read(name, args.get("from", 0), args.get("wait", 0), args.get("limit", 200)))
+        read = await hub.streams.read(name, args.get("from", 0), args.get("wait", 0), args.get("limit", 200))
+        return await hub.off_loop(_dumps, read)
     if action == "write":
         if not isinstance(args.get("text"), str):
             raise HubError("bad_message", "text is required to write.", "Give the input as text.")
@@ -226,13 +233,29 @@ async def stream(hub, token, args):
                    "Use action list, search, read, write, signal, close or resize.")
 
 
+def _off(tool):
+    """A tool whose whole work blocks (the database, a big encode): run on a thread (brief 53)."""
+    async def run(hub, token, args):
+        return await hub.off_loop(tool, hub, token, args)
+    return run
+
+
+workers, list_caps, read_journal = _off(_workers), _off(_caps), _off(_journal)
+
 HANDLERS = {"workers": workers, "caps": list_caps, "call": call, "journal": read_journal, "stream": stream}
 
 
-def _rpc(message_id, status=200, result=None, error=None):
+async def _rpc(hub, message_id, status=200, result=None, error=None, size=0):
+    """The JSON-RPC answer. One whose tool text is `size` characters, bigger than a stream piece, is
+    encoded on a thread: a reply can be tens of megabytes (the whole journal)."""
     body = {"jsonrpc": "2.0", "id": message_id}
     body.update({"error": error} if error is not None else {"result": result})
-    return web.json_response(body, status=status)
+    encoded = await hub.off_loop_if_big(size, _encoded, body)
+    return web.Response(body=encoded, status=status, content_type="application/json", charset="utf-8")
+
+
+def _encoded(body):
+    return json.dumps(body).encode("utf-8")
 
 
 def _authenticate(hub, request):
@@ -248,13 +271,14 @@ def _authenticate(hub, request):
     return token
 
 
-async def _tool(hub, token, params):
+async def _tool(hub, token, params, size=0):
     handler = HANDLERS[params["name"]]
     arguments = params.get("arguments") or {}
     try:
         if not isinstance(arguments, dict):
             raise HubError("bad_message", "Tool arguments must be an object.", "Send the arguments as an object.")
-        text, failed = await handler(hub, token, arguments), False
+        more = {"size": size} if handler is call else {}
+        text, failed = await handler(hub, token, arguments, **more), False
     except HubError as e:
         text, failed = f"{e.message['code']}: {e.message['message']} Next: {e.message['next']}", True
     return {"content": [{"type": "text", "text": text}], "isError": failed}
@@ -263,18 +287,20 @@ async def _tool(hub, token, params):
 def add_routes(app, hub):
     async def post(request):
         try:
-            message = json.loads(await request.content.read())   # no size limit: arguments carry files
+            raw = await request.content.read()          # no size limit: arguments carry files
+            message = await hub.off_loop_if_big(len(raw), json.loads, raw)
         except ValueError:
-            return _rpc(None, 400, error={"code": -32700, "message": (
+            return await _rpc(hub, None, 400, error={"code": -32700, "message": (
                 "The body is not JSON. Send one JSON-RPC 2.0 message, as JSON, as the body of the POST.")})
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
-            return _rpc(None, 400, error={"code": -32600, "message": "Send one JSON-RPC 2.0 message per request."})
+            return await _rpc(hub, None, 400, error={"code": -32600,
+                                                     "message": "Send one JSON-RPC 2.0 message per request."})
         message_id = message.get("id")
         try:
             token = _authenticate(hub, request)
         except HubError as e:
             status = 403 if e.message["code"] == "token_scope" else 401
-            return _rpc(message_id, status, error={
+            return await _rpc(hub, message_id, status, error={
                 "code": -32001, "message": f"{e.message['message']} {e.message['next']}", "data": e.message})
         method = message.get("method")
         if method is None or message_id is None:  # a notification, or a reply to us: nothing to answer
@@ -282,21 +308,22 @@ def add_routes(app, hub):
         params = message.get("params") or {}
         if method == "initialize":
             asked = params.get("protocolVersion")
-            return _rpc(message_id, result={
+            return await _rpc(hub, message_id, result={
                 "protocolVersion": asked if asked in VERSIONS else VERSIONS[-1],
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "rook-hub", "version": "0.1.0"},
                 "instructions": INSTRUCTIONS})
         if method == "ping":
-            return _rpc(message_id, result={})
+            return await _rpc(hub, message_id, result={})
         if method == "tools/list":
-            return _rpc(message_id, result={"tools": TOOLS})
+            return await _rpc(hub, message_id, result={"tools": TOOLS})
         if method == "tools/call":
             if params.get("name") not in HANDLERS:
-                return _rpc(message_id, error={"code": -32602, "message": (
+                return await _rpc(hub, message_id, error={"code": -32602, "message": (
                     f"No tool is called {params.get('name')!r}. The tools are {', '.join(HANDLERS)}.")})
-            return _rpc(message_id, result=await _tool(hub, token, params))
-        return _rpc(message_id, error={"code": -32601, "message": (
+            answer = await _tool(hub, token, params, len(raw))
+            return await _rpc(hub, message_id, result=answer, size=len(answer["content"][0]["text"]))
+        return await _rpc(hub, message_id, error={"code": -32601, "message": (
             f"This door does not answer {method}. Use one it answers: initialize, ping, tools/list or tools/call.")})
 
     async def no_stream(request):

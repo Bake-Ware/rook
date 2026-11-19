@@ -223,12 +223,14 @@ class Vault:
         return {"created": self._record(guid)}
 
     def _record(self, guid):
-        row = self.hub._db.execute("SELECT * FROM secrets WHERE guid = ?", (guid,)).fetchone()
-        return {"guid": row["guid"], "moniker": row["moniker"], "scope": self._show_scope(row["kind"], row["scope"]),
-                "name": row["name"], "reference": f"secret:{row['name']}",
-                "created_by": self.hub._moniker(row["user"]) if row["user"] else None,
-                "token": self.hub._moniker(row["token"]) if row["token"] else None,
-                "created_at": iso(row["created_at"])}
+        with self.hub._lock:
+            row = self.hub._db.execute("SELECT * FROM secrets WHERE guid = ?", (guid,)).fetchone()
+            return {"guid": row["guid"], "moniker": row["moniker"],
+                    "scope": self._show_scope(row["kind"], row["scope"]),
+                    "name": row["name"], "reference": f"secret:{row['name']}",
+                    "created_by": self.hub._moniker(row["user"]) if row["user"] else None,
+                    "token": self.hub._moniker(row["token"]) if row["token"] else None,
+                    "created_at": iso(row["created_at"])}
 
     def delete(self, args, actor):
         """Delete a secret: the row and its encrypted value go. References to it fail from then on."""

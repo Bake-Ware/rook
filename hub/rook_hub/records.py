@@ -216,10 +216,9 @@ def search(hub, type=None, text=None, limit=50):
         join = "JOIN record_text t ON t.rowid = r.id"
         where.append("record_text MATCH ?")
         params.append(" ".join('"' + word.replace('"', '""') + '"' for word in words))
-    with hub._lock:
-        rows = hub._db.execute(
-            f"SELECT r.* FROM records r {join} {'WHERE ' + ' AND '.join(where) if where else ''} "
-            "ORDER BY r.updated_at DESC, r.id DESC LIMIT ?", (*params, limit)).fetchall()
+    rows = hub.read_only(       # on a connection of its own: a long search holds up no other work (brief 53)
+        f"SELECT r.* FROM records r {join} {'WHERE ' + ' AND '.join(where) if where else ''} "
+        "ORDER BY r.updated_at DESC, r.id DESC LIMIT ?", (*params, limit))
     return [_record(row) for row in rows]
 
 
@@ -291,9 +290,8 @@ def read_blob(hub, record):
 def unlinked_blobs(hub):
     """Blob records with no link to or from any record, oldest first, so an agent
     can decide what to do with them (K4). Nothing is removed."""
-    with hub._lock:
-        rows = hub._db.execute(
-            "SELECT r.* FROM records r WHERE r.type = ? AND NOT EXISTS "
-            "(SELECT 1 FROM record_links l WHERE l.source = r.guid) AND NOT EXISTS "
-            "(SELECT 1 FROM record_links l WHERE l.target = r.guid) ORDER BY r.created_at, r.id", (BLOB,)).fetchall()
+    rows = hub.read_only(       # on a connection of its own: a long read holds up no other work (brief 53)
+        "SELECT r.* FROM records r WHERE r.type = ? AND NOT EXISTS "
+        "(SELECT 1 FROM record_links l WHERE l.source = r.guid) AND NOT EXISTS "
+        "(SELECT 1 FROM record_links l WHERE l.target = r.guid) ORDER BY r.created_at, r.id", (BLOB,))
     return [_record(row) for row in rows]

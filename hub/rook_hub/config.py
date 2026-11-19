@@ -99,10 +99,14 @@ def deliver(hub, guid):
         message = encode({"type": "config", "values": hub.vault.substitute(values, guid), "version": version(values)})
     except HubError as e:
         return e.message
+    hub.on_loop(_start, link, message)      # deliver may run on a thread (brief 53)
+    return None
+
+
+def _start(link, message):
     task = asyncio.get_running_loop().create_task(_send(link, message))
     _sending.add(task)
     task.add_done_callback(_sending.discard)
-    return None
 
 
 async def _send(link, message):

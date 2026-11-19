@@ -29,7 +29,9 @@ def read(hub, worker=None, cap=None, user=None, kind=None, since=None, until=Non
     `worker` and `user` take a GUID or moniker (`hub` for the hub's own caps; a
     device's for a device, D1); `job` takes a GUID or moniker, even of a deleted
     job; `run` a run ID (J5); `text` is found case-insensitively in the why, the
-    cap and the result."""
+    cap and the result. It blocks for as long as the read takes (seconds for the whole of a big
+    journal): call it off the event loop. The entries are read on a read-only connection of their
+    own (Hub.read_only), so the read holds up no other work (brief 53)."""
     where, params = [], []
     with hub._lock:
         if worker is not None:
@@ -56,13 +58,13 @@ def read(hub, worker=None, cap=None, user=None, kind=None, since=None, until=Non
         if text:
             where.append("instr(lower(coalesce(j.why, '') || ' ' || coalesce(j.cap, '') || ' ' || j.result), lower(?)) > 0")
             params.append(text)
-        rows = hub._db.execute(
-            "SELECT j.*, u.moniker AS user_moniker, t.moniker AS token_moniker, w.moniker AS worker_moniker, "
-            "b.moniker AS job_moniker "
-            "FROM journal j LEFT JOIN monikers u ON u.guid = j.user LEFT JOIN monikers t ON t.guid = j.token "
-            "LEFT JOIN monikers w ON w.guid = j.worker LEFT JOIN monikers b ON b.guid = j.job "
-            f"{'WHERE ' + ' AND '.join(where) if where else ''} ORDER BY j.id DESC LIMIT ?",
-            (*params, limit)).fetchall()
+    rows = hub.read_only(
+        "SELECT j.*, u.moniker AS user_moniker, t.moniker AS token_moniker, w.moniker AS worker_moniker, "
+        "b.moniker AS job_moniker "
+        "FROM journal j LEFT JOIN monikers u ON u.guid = j.user LEFT JOIN monikers t ON t.guid = j.token "
+        "LEFT JOIN monikers w ON w.guid = j.worker LEFT JOIN monikers b ON b.guid = j.job "
+        f"{'WHERE ' + ' AND '.join(where) if where else ''} ORDER BY j.id DESC LIMIT ?",
+        (*params, limit))
     return [{"id": row["id"], "at": iso(row["at"]), "kind": row["kind"],
              "user": row["user_moniker"], "token": row["token_moniker"],
              "worker": row["worker_moniker"] or row["worker"], "cap": row["cap"], "why": row["why"],
