@@ -118,7 +118,7 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     hub.plugins.install(replacement, {"user": hub.auth.create_user("Alice", "a password")["guid"], "token": None})
     hub.close()
     again = Hub(tmp_path / "hub")
-    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.1.0", "agents-claude-code": "0.1.0",
+    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.3.0", "agents-claude-code": "0.1.0",
                                                                      "battery": "0.1.0", "file": "0.2.0", "net": "0.1.0",
                                                                      "shell": "9.0.0", "worker": "0.1.0"}
     again.close()
@@ -453,7 +453,9 @@ async def older_core(tmp_path, monkeypatch):
 # built-in whose files change gets a newer version and a new line, which the guard prints. The
 # versions before house-agent's tip were read from its history, each with the files it last had.
 RECORDED = {
-    "agents": {"0.1.0": "a848c4503bd9e67f25b9bfb9c58de5851dc5ad36e1a3bd49af3b7de3041d72a4"},
+    "agents": {"0.1.0": "a848c4503bd9e67f25b9bfb9c58de5851dc5ad36e1a3bd49af3b7de3041d72a4",
+               "0.2.0": "909084182684abe95242f81f66aa119ea74810d347693557fe2e96a23234e76a",
+               "0.3.0": "a21cae8e3453a4b38a9242f235c14df7ea3a1750ac779aee0bf7fd6de374fa68"},
     "agents-claude-code": {"0.1.0": "79653aecb79c275eb65a7f1d5d88081c22f33e3f31767d3ef963aa47c26b8eeb"},
     "battery": {"0.1.0": "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"},
     "file": {"0.1.0": "fabb70ed8cd611a826a9eae004f255cf3c282f7e20fb6853990780182655d216",
@@ -585,10 +587,11 @@ def test_the_version_guard_catches_what_it_should(tmp_path):
     # changed its files and wrote the new hash over 0.1.0's line, and a hub with the first 0.1.0
     # kept it. The record no longer keeps what was merged, so the check of the merged branch fails.
     merged = built_ins(DEFAULTS)
+    version = merged["agents"][0]                             # agents' version now stands in for that 0.1.0
     changed = {name: dict(versions) for name, versions in RECORDED.items()}
-    changed["agents"]["0.1.0"] = "0" * 64                     # the line written over
+    changed["agents"][version] = "0" * 64                     # the line written over
     [problem] = not_kept(merged, changed, MERGED)
-    assert problem.startswith(f"{MERGED} has the built-in plugin agents 0.1.0 with files hashing {merged['agents'][1]}")
+    assert problem.startswith(f"{MERGED} has the built-in plugin agents {version} with files hashing {merged['agents'][1]}")
     assert "never change" in problem
     assert not_kept(merged, RECORDED, MERGED) == []
 
@@ -614,7 +617,7 @@ async def before_brief_54(tmp_path, monkeypatch):
     host, port = await hub.serve("127.0.0.1", 0)
     alice = hub.auth.create_user("Alice", "a password")["guid"]
     assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-        "agents": "0.1.0", "agents-claude-code": "0.1.0",
+        "agents": "0.3.0", "agents-claude-code": "0.1.0",
         "battery": "0.1.0", "file": "0.1.0", "net": "0.1.0", "shell": "0.2.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())

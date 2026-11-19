@@ -1,6 +1,6 @@
 {
   "name": "agents",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "hub": {"module": "hub.py"},
   "site": {
     "shell": [
@@ -8,7 +8,9 @@
       {"file": "shell/rookie.js"},
       {"file": "shell/rookie-map.js"},
       {"file": "shell/chat-widgets.js"},
-      {"file": "shell/dock.js"}
-    ]
+      {"file": "shell/dock.js"},
+      {"file": "shell/setup.js"}
+    ],
+    "settings": [{"title": "Your account", "file": "shell/settings-account.js"}]
   }
 }

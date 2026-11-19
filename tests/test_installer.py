@@ -1,0 +1,386 @@
+"""The installer, deploy/install/install.sh (brief HA4), run for real without systemd: its arguments,
+the files and units it writes, a real hub it starts and a real worker it joins with a join token, and
+an uninstall that removes exactly what it made.
+
+Stand-ins on PATH take the place of what a test cannot use: `systemctl` runs a unit's ExecStart (with its
+Environment and WorkingDirectory) as a background process and stops it again; `journalctl` prints that
+process's output; `claude` answers --version, `auth status` and the probe turn; `uv` makes a "venv" whose
+python is this test's own (Rook's packages are already there). curl, git, tar and the rest are real.
+HOME and XDG_CONFIG_HOME point into the test's folder, so nothing outside it is touched."""
+
+import getpass
+import http.cookiejar
+import json
+import os
+import pathlib
+import signal
+import socket
+import subprocess
+import sys
+import textwrap
+import urllib.error
+import urllib.request
+
+import shutil
+
+import pytest
+
+from test_first_run import ROOT
+
+INSTALL = ROOT / "deploy" / "install" / "install.sh"
+MARK = "# Made by Rook's installer (deploy/install/install.sh) for {}; --uninstall removes it."
+
+SYSTEMCTL = r'''#!/usr/bin/env bash
+# A stand-in for systemctl --user: units run as background processes; what was asked is logged.
+units=${XDG_CONFIG_HOME}/systemd/user state=$STANDIN_STATE
+echo "systemctl $*" >> "$state/calls"
+[ "$1" = --user ] && shift
+cmd=$1; shift
+quiet=0; [ "${1:-}" = --quiet ] && { quiet=1; shift; }
+case $cmd in
+  daemon-reload|enable) exit 0 ;;
+  start)
+    for u in "$@"; do
+      f=$units/$u.service
+      wd=$(sed -n 's/^WorkingDirectory=//p' "$f")
+      exe=$(sed -n 's/^ExecStart=//p' "$f")
+      envs=(); while IFS= read -r line; do envs+=("$line"); done < <(sed -n 's/^Environment=//p' "$f")
+      (cd "$wd" && exec env "${envs[@]}" $exe) >> "$state/$u.out" 2>&1 &
+      echo $! > "$state/$u.pid"
+    done ;;
+  disable|stop)
+    [ "${1:-}" = --now ] && shift
+    for u in "$@"; do
+      [ -f "$state/$u.pid" ] && kill "$(cat "$state/$u.pid")" 2>/dev/null
+      rm -f "$state/$u.pid"
+    done; exit 0 ;;
+  is-failed)
+    u=$1; [ -f "$state/$u.pid" ] && ! kill -0 "$(cat "$state/$u.pid")" 2>/dev/null ;;
+  *) exit 0 ;;
+esac
+'''
+
+JOURNALCTL = r'''#!/usr/bin/env bash
+# A stand-in for journalctl --user -u UNIT ...: the unit's output so far.
+while [ $# -gt 0 ]; do [ "$1" = -u ] && { cat "$STANDIN_STATE/$2.out" 2>/dev/null; exit 0; }; shift; done
+'''
+
+CLAUDE = r'''#!/usr/bin/env bash
+# A stand-in for Claude Code: signed in, and it answers the probe turn.
+echo "claude $*" >> "$STANDIN_STATE/calls"
+case "$*" in
+  --version) echo "9.9.9 (Claude Code)" ;;
+  "auth status") echo '{"loggedIn": true}' ;;
+  -p*) cat > /dev/null; echo '{"type":"result","is_error":false,"result":"ok"}' ;;
+esac
+'''
+
+CURL = r'''#!/usr/bin/env bash
+# curl for this machine's own hub only: a test never reaches the network.
+echo "curl $*" >> "$STANDIN_STATE/calls"
+for a in "$@"; do
+  case $a in
+    http://127.0.0.1:*|http://localhost:*) ;;
+    http://*|https://*) echo "curl stand-in: refused $a (no network in tests)" >&2; exit 7 ;;
+  esac
+done
+exec "$STANDIN_CURL" "$@"
+'''
+
+UV = r'''#!/usr/bin/env bash
+# A stand-in for uv: "uv venv ... DIR" makes DIR/bin/python run this test's python; "uv pip" does nothing.
+echo "uv $*" >> "$STANDIN_STATE/calls"
+if [ "$1" = venv ]; then
+  dir=${!#}; mkdir -p "$dir/bin"
+  printf '#!/bin/sh\nexec %s "$@"\n' "$STANDIN_PYTHON" > "$dir/bin/python"; chmod +x "$dir/bin/python"
+fi
+'''
+
+
+def free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class Box:
+    """A throwaway HOME with the stand-ins on PATH."""
+
+    def __init__(self, tmp):
+        self.home, self.bin, self.state = tmp / "home", tmp / "bin", tmp / "state"
+        for d in (self.home, self.bin, self.state):
+            d.mkdir()
+        for name, text in (("systemctl", SYSTEMCTL), ("journalctl", JOURNALCTL), ("claude", CLAUDE), ("uv", UV),
+                           ("curl", CURL)):
+            (self.bin / name).write_text(text)
+            (self.bin / name).chmod(0o755)
+        self.units = self.home / ".config" / "systemd" / "user"
+        self.env = dict(os.environ, HOME=str(self.home), XDG_CONFIG_HOME=str(self.home / ".config"),
+                        PATH=f"{self.bin}:{os.environ['PATH']}", STANDIN_STATE=str(self.state),
+                        STANDIN_PYTHON=sys.executable, STANDIN_CURL=shutil.which("curl"))
+        for name in ("DISPLAY", "WAYLAND_DISPLAY", "PYTHONPATH"):
+            self.env.pop(name, None)
+
+    def run(self, *args, script=INSTALL):
+        return subprocess.run(["bash", str(script), *args], env=self.env, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True)
+
+    def stop_all(self):
+        for pid in self.state.glob("*.pid"):
+            try:
+                os.kill(int(pid.read_text()), signal.SIGTERM)
+            except (ProcessLookupError, ValueError):
+                pass
+
+    def calls(self):
+        path = self.state / "calls"
+        return path.read_text().splitlines() if path.exists() else []
+
+    def offline(self):
+        """No curl call left this machine."""
+        far = [c for c in self.calls() if c.startswith("curl ") and "://" in c
+               and not any(f"://{h}:" in c for h in ("127.0.0.1", "localhost"))]
+        assert far == [], far
+
+
+@pytest.fixture
+def box(tmp_path):
+    made = Box(tmp_path)
+    yield made
+    made.stop_all()
+
+
+def test_arguments(box):
+    shown = box.run("--help")
+    assert shown.returncode == 0 and "--uninstall" in shown.stdout and "--http-port" in shown.stdout
+    for args, words in ((["--frobnicate"], "unknown option --frobnicate"),
+                        (["--name", "Bad Name"], "--name is lowercase letters, digits and -"),
+                        (["--http-port", "eighty"], "--http-port is a port number"),
+                        (["--dir", "relative/place"], "--dir is a full path")):
+        refused = box.run(*args)
+        assert refused.returncode == 2 and words in refused.stderr, (args, refused.stderr)
+    bad_ai = box.run("--dir", str(box.home / "r"), "--http-port", str(free_port()), "--ai", "telepathy", "--no-browser")
+    assert bad_ai.returncode == 1 and "--ai is one of claude, codex, gemini, api, local, none" in bad_ai.stderr
+    nothing = box.run("--dir", str(box.home / "none-here"), "--open")
+    assert nothing.returncode == 1 and "nothing installed in" in nothing.stderr
+
+
+def test_install_join_and_uninstall(box):
+    root, port = box.home / "rook", free_port()
+    url = f"http://127.0.0.1:{port}"
+    done = box.run("--dir", str(root), "--name", "rooktest", "--http-port", str(port), "--ai", "claude", "--no-browser")
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    out = done.stdout
+    checkout = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"], capture_output=True,
+                              text=True).stdout.strip() == str(ROOT)
+    code = "Code: this checkout, commit " if checkout else f"Code: this folder, {ROOT}"     # how this tree installs
+    for line in ("It works: Claude Code answered \"ok\".", code,
+                 "The hub is running.", "This machine is on the hub, and your house agent's engine (Claude Code) runs on it.",
+                 "Rook starts when you log in.", f"  {url}\n"):
+        assert line in out, (line, out)
+    # The hub starts open until claimed (HA3's --no-password), so the last line hands over to the house agent
+    # and there is no "choose your name and password" line.
+    assert out.rstrip().splitlines()[-1].strip() == "Your house agent will walk you through the rest.", out
+    assert "Choose your name and password there" not in out
+
+    # The folder it made, the facts, and the two units with its mark.
+    assert {p.name for p in root.iterdir()} == {"src", "venv", "hub", "vault.key", "worker", "install.log"}
+    facts = json.loads((root / "hub" / "install.json").read_text())             # where agent.setup reads it (HA3)
+    assert facts["folder"] == str(root) and facts["site"] == url and facts["host"] == "0.0.0.0"
+    assert facts["units"] == ["rooktest-hub", "rooktest-worker"] and facts["ai"]["choice"] == "claude"
+    assert facts["ai"]["claude"] == str(box.bin / "claude") and facts["http"] == f"0.0.0.0:{port} (every interface)"
+    hub_unit, worker_unit = (box.units / f"rooktest-{u}.service" for u in ("hub", "worker"))
+    src, py = root / "src", root / "venv" / "bin" / "python"
+    assert hub_unit.read_text().splitlines()[0] == MARK.format(root)
+    # --no-password: the hub lists it now (HA3), so the installer starts a new hub open until claimed.
+    assert f"ExecStart={py} -m rook_hub --data {root / 'hub'} --vault-key {root / 'vault.key'} --host 0.0.0.0 " \
+           f"--port {port} --no-password\n" in hub_unit.read_text()
+    assert f"Environment=PYTHONPATH={src}/protocol/python:{src}/hub\n" in hub_unit.read_text()
+    assert f"ExecStart={py} -m rook_worker {url} --state {root / 'worker'}\n" in worker_unit.read_text()
+    assert "Restart=always" in worker_unit.read_text() and "After=rooktest-hub.service" in worker_unit.read_text()
+
+    # A real hub, and a real worker joined with the join token: linked, owned by the system owner.
+    worker_out = (box.state / "rooktest-worker.out").read_text()
+    assert "Approved before as " in worker_out and "Linked to " in worker_out
+
+    # Open until claimed (HA3): no setup page; a first visitor is the owner (this computer's login), with no
+    # password yet. Setting a password claims the hub, and the installer's worker becomes the owner's.
+    owner = getpass.getuser()
+    visitor = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+    def ask(path, body=None):
+        request = urllib.request.Request(url + path, data=None if body is None else json.dumps(body).encode(),
+                                         headers={"Content-Type": "application/json"} if body is not None else {})
+        with visitor.open(request) as answer:
+            return json.load(answer)
+    assert ask("/api/setup")["needed"] is False
+    me = ask("/api/session")
+    assert me["user"]["name"] == owner and me["unclaimed"] is True and me["password"] is False
+    [joined] = [w for g in ask("/api/workers")["groups"] for w in g["workers"]]
+    assert joined["owner"]["moniker"] == "hub-system-owner"
+    assert ask("/api/password", {"password": "correct horse"}) == {"changed": True}
+    me = ask("/api/session")
+    assert me["unclaimed"] is False and me["password"] is True
+    [joined] = [w for g in ask("/api/workers")["groups"] for w in g["workers"]]
+    assert joined["owner"]["name"] == owner                              # handed over with the claim
+    try:
+        urllib.request.urlopen(url + "/api/session")                     # a new browser gets the login now
+        raise AssertionError("still open after a password was set")
+    except urllib.error.HTTPError as e:
+        assert e.code == 401
+    assert "--code" not in hub_unit.read_text() + worker_unit.read_text()   # the token is in no file
+    calls = box.calls()
+    assert "systemctl --user start rooktest-hub" in calls and "systemctl --user start rooktest-worker" in calls
+    assert "systemctl --user enable rooktest-hub rooktest-worker" in calls
+    assert any(c.startswith("claude -p --output-format json --permission-mode auto") for c in calls)
+
+    # Once installed, a second install in the same folder is refused; --open opens it again.
+    again = box.run("--dir", str(root), "--name", "rooktest", "--http-port", str(free_port()), "--ai", "claude")
+    assert again.returncode == 1 and "Rook is installed in" in again.stderr
+    opened = box.run("--dir", str(root), "--open", "--no-browser")
+    assert opened.returncode == 0 and url in opened.stdout
+
+    # A unit of the same kind that it did not make is left alone by the uninstall.
+    foreign = box.units / "rooktest-other.service"
+    foreign.write_text("[Service]\nExecStart=/bin/true\n")
+
+    gone = box.run("--dir", str(root), "--name", "rooktest", "--uninstall")
+    assert gone.returncode == 0 and "its units and" in gone.stdout
+    assert not root.exists() and not hub_unit.exists() and not worker_unit.exists() and foreign.exists()
+    assert "systemctl --user disable --now rooktest-worker" in box.calls()
+    assert not list(box.state.glob("*.pid"))                            # both stopped
+    box.offline()
+
+
+def test_no_engine_yet_and_uninstall_takes_only_its_own(box):
+    root, port = box.home / "plain", free_port()
+    done = box.run("--dir", str(root), "--name", "rookplain", "--http-port", str(port), "--ai", "codex",
+                   "--no-boot", "--no-browser")
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    assert "Setting Rook up with that is coming soon." in done.stdout and "This machine is on the hub." in done.stdout
+    assert json.loads((root / "hub" / "install.json").read_text())["ai"]["choice"] == "none"
+    # Open until claimed here too (HA3): the hub unit carries --no-password, and the last line hands over to
+    # the house agent (it starts once Claude Code is set up), with no "choose your name and password" line.
+    assert " --no-password\n" in (box.units / "rookplain-hub.service").read_text()
+    assert done.stdout.rstrip().splitlines()[-1].strip() == "Your house agent will walk you through the rest."
+    assert "Choose your name and password there" not in done.stdout
+    calls = box.calls()
+    assert not any(c.startswith("claude") for c in calls) and not any("enable" in c for c in calls)
+    assert box.run("--dir", str(root), "--name", "rookplain", "--uninstall").returncode == 0 and not root.exists()
+
+    # A folder this installer did not make is never removed, nor are units without its mark.
+    other = box.home / "someone-elses"
+    other.mkdir()
+    (other / "precious").write_text("keep me")
+    unit = box.units / "rookplain-hub.service"
+    unit.write_text(textwrap.dedent("""\
+        [Service]
+        ExecStart=/bin/true
+        """))
+    refused = box.run("--dir", str(other), "--name", "rookplain", "--uninstall")
+    assert refused.returncode == 1 and "was not made by this installer" in refused.stderr
+    assert (other / "precious").exists() and unit.exists()
+    box.offline()
+
+
+def test_join_token_command(tmp_path):
+    """`python -m rook_hub join-token` (added for the installer): one join token on a new hub, owned by
+    the hub's system owner, printed and nothing else; the data directory is made as a start makes it."""
+    from rook_hub import Hub
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(str(ROOT / p) for p in ("protocol/python", "hub")))
+    made = subprocess.run([sys.executable, "-m", "rook_hub", "join-token", "--data", str(tmp_path / "hub"),
+                           "--vault-key", str(tmp_path / "vault.key")], env=env, capture_output=True, text=True)
+    assert made.returncode == 0 and made.stderr == "" and made.stdout.count("\n") == 1, made
+    hub = Hub(tmp_path / "hub", vault_key_file=tmp_path / "vault.key")
+    try:
+        token = hub.auth.verify(made.stdout.strip(), "join")
+        assert token["owner"] == hub.auth.system and token["purpose"] == "join" and token["expires_at"]
+    finally:
+        hub.close()
+
+
+def test_install_from_a_copy_without_git(box, tmp_path):
+    """A script in a Rook source tree with no .git (an export, a copied folder) installs that tree, as
+    it is, and never downloads: only a script with no source beside it does (steward's review of #451)."""
+    copy = tmp_path / "rook-export"
+    shutil.copytree(ROOT, copy, ignore=shutil.ignore_patterns(".git", ".venv", "venv", "__pycache__", ".pytest_cache"))
+    (copy / "hub" / "rook_hub" / "copied-marker").write_text("this copy")
+    root, port = box.home / "from-copy", free_port()
+    done = box.run("--dir", str(root), "--name", "rookcopy", "--http-port", str(port), "--ai", "claude",
+                   "--no-boot", "--no-browser", script=copy / "deploy" / "install" / "install.sh")
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    assert f"Code: this folder, {copy}" in done.stdout and "This machine is on the hub" in done.stdout
+    src = root / "src"
+    assert (src / "hub" / "rook_hub" / "copied-marker").read_text() == "this copy"    # this tree, not another
+    assert (src / ".rook-version").read_text().strip() == f"folder {copy}"
+    assert not (src / ".git").exists()
+    assert "Linked to " in (box.state / "rookcopy-worker.out").read_text()
+    box.offline()
+    assert box.run("--dir", str(root), "--name", "rookcopy", "--uninstall").returncode == 0 and not root.exists()
+
+
+def test_a_system_owned_join_token_and_worker_list_and_reassign(tmp_path):
+    """After `python -m rook_hub join-token` (steward's review of #451): the token is the system owner's,
+    and so is the worker it joins. token.list through the door and the Auth page's API list it with its
+    owner shown as the system owner; the door's workers and the Workers page show the worker's owner the
+    same way; worker.reassign gives it to a person, and every list still answers."""
+    import asyncio
+
+    from helpers import eventually
+    from memory_link import connector
+    from rook_hub import Hub
+    from rook_worker import Worker
+    from test_door import mcp_client, tool
+    from test_site import ask, browser, login
+
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(str(ROOT / p) for p in ("protocol/python", "hub")))
+    data, key = tmp_path / "hub", tmp_path / "vault.key"
+    code = subprocess.run([sys.executable, "-m", "rook_hub", "join-token", "--data", str(data), "--vault-key", str(key)],
+                          env=env, capture_output=True, text=True, check=True).stdout.strip()
+    system = {"moniker": "hub-system-owner", "name": "system"}
+
+    async def go():
+        hub = Hub(data, vault_key_file=key)
+        host, port = await hub.serve("127.0.0.1", 0)
+        base = f"http://{host}:{port}"
+        worker = Worker(tmp_path / "box", base, connector(hub), name="box", caps={}, macs=[], token=code,
+                        knock_every=0.02)
+        running = asyncio.create_task(worker.run())
+        try:
+            await eventually(lambda: hub.list_workers() and hub.list_workers()[0]["online"])
+            moniker = hub.list_workers()[0]["moniker"]
+            alice = hub.auth.create_user("Alice", "a password")
+            async with mcp_client(f"{base}/mcp", hub.auth.mint("agent", user=alice["guid"])) as door:
+                async def call(cap, **args):
+                    failed, reply = await tool(door, "call", worker="hub", cap=cap, args=args, why="after join-token")
+                    assert not failed, reply
+                    return reply
+
+                listed = (await call("token.list"))["tokens"]
+                [join] = [t for t in listed if t["purpose"] == "join"]
+                assert join["owner"] == system and join["spent_at"] is not None       # spent by the worker's knock
+                failed, workers = await tool(door, "workers")
+                assert [w["owner"] for w in workers["workers"] if w["moniker"] == moniker] == [system]
+
+                async with browser() as client:
+                    await login(client, base, "Alice", "a password")
+                    status, page = await ask(client, "GET", base + "/api/auth")
+                    assert status == 200 and [t["owner"] for t in page["tokens"] if t["purpose"] == "join"] == [system]
+                    assert "system" not in {u["name"] for u in page["users"]}           # a token's owner, not a user
+                    status, view = await ask(client, "GET", base + "/api/workers")
+                    assert status == 200
+                    assert [w["owner"] for g in view["groups"] for w in g["workers"]] == [system]
+
+                    # Reassigned to a person: the worker is Alice's; the token stays the system owner's.
+                    moved = await call("worker.reassign", worker=moniker, owner=alice["moniker"])
+                    assert moved["owner"] == {"moniker": alice["moniker"], "name": "Alice"}
+                    assert [t["owner"] for t in (await call("token.list"))["tokens"] if t["purpose"] == "join"] == [system]
+                    status, view = await ask(client, "GET", base + "/api/workers")
+                    assert status == 200 and [w["owner"]["name"] for g in view["groups"] for w in g["workers"]] == ["Alice"]
+                    assert (await ask(client, "GET", base + "/api/auth"))[0] == 200
+        finally:
+            worker.stop()
+            await running
+            await hub.stop_serving()
+            hub.close()
+    asyncio.run(go())

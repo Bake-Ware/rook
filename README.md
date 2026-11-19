@@ -11,6 +11,7 @@ The earlier code (0.4 on `master`, the 0.5 rework on `castling`) is reference on
 - `protocol/`: the protocol library, one per language (U1). `vectors.json` is shared by every language; `python/` is the Python library.
 - `hub/`: the hub, in Python.
 - `core/python/`: the worker core written in Python (U1), and its start command (`rook_start.py`).
+- `deploy/install/install.sh`: the installer: a hub and a worker as systemd user units, in one command.
 - `tests/`: the tests for all of the above.
 
 ## Tests
@@ -24,6 +25,16 @@ python3 -m venv .venv
 ```
 
 `requirements.txt` installs Telesthete from GitHub at the commit Rook pins (`docs/link-design.md`, section 8), so the install needs `git` and network access.
+
+## Installing with the installer
+
+On a Linux machine with systemd, curl and git, one command sets up a hub and a worker for this machine, each as a systemd user unit, and opens the hub's site:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/house-agent/deploy/install/install.sh | bash
+```
+
+or `deploy/install/install.sh` from Rook's source, which installs that tree: a checkout's commit, or a copied folder as it is. Only the curl form downloads. It asks what you use for AI now (Claude Code is set up, signed in and tested; the others are coming soon), puts uv's Python 3.12 and Rook in `~/.rook`, starts the hub on port 8740 on every interface, joins this machine's worker with a join token, and opens the site. `--dir`, `--name` and `--http-port` let it run beside other installs; `--open` opens the site again; `--uninstall` stops it and removes its units and its folder, and nothing else. `--help` lists every option. What a curl install fetches is the `REF=` line near the top of the script: the `house-agent` branch for now.
 
 ## Starting a hub
 
@@ -39,6 +50,8 @@ PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub --data ~/rook-hub --
 - Everything is served at that one address: the site, the MCP door at `/mcp`, and for workers `POST /knock`, `POST /link` and `GET /band`, the WebSocket every worker's link runs over (Telesthete; `docs/link-design.md`). The hub opens no other port, UDP included. Behind HTTPS, the proxy passes `/band` upgrades through with the rest.
 
 Open the address it prints. While the hub has no user, the site shows a setup page: choose a name and a password for the first user, typing the password twice, and you are signed in. After that the site shows the login page. The hub runs until you stop it with Ctrl-C.
+
+Or start a new hub open until claimed, as the installer does: add `--no-password` (and `--owner NAME`, which defaults to this computer's login). With no user yet, the hub makes that owner with no password, and the site lets whoever opens it in as the owner, with no login, until a password is set (the setup wizard asks for one, and the Auth page sets one). Setting any password ends that for good: from then on a new browser gets the login page, while the browser that set it stays signed in. On a hub that has a user already the flag changes nothing. When the first person claims the hub (the setup page makes them, or their password ends open-until-claimed), every worker the system owner owns becomes theirs in the same step, journaled as a reassignment: the installer joins this machine's worker with a join token the system owner holds, since no person exists yet.
 
 Every hub also has a system owner, `system` (moniker `hub-system-owner`): not a person, it cannot log in, and no one can take its name. It owns the one built-in job, "Heartbeat roll-up", which every 12 hours rolls heartbeats older than 12 hours into one-minute buckets. The job is on the Jobs page, where it can be paused or deleted like any other; a deleted one is made again at the next start.
 

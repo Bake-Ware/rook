@@ -27,8 +27,9 @@ def start_command(data, key):
 class Started:
     """`python -m rook_hub` as a person runs it from a clone, on a free port."""
 
-    def __init__(self, data, key, umask=-1):
+    def __init__(self, data, key, umask=-1, extra=()):
         self.args, self.env = start_command(data, key)
+        self.args += list(extra)
         self.umask = umask          # -1 keeps the test's own
 
     async def __aenter__(self):

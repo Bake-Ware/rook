@@ -26,7 +26,9 @@ record keeps the stream and the engine's own session id, which every turn resume
    gets a stream at once, named in the prompt event, so whoever closes it stops the turn (brief
    59). Nothing else stops it: a turn has no timeout.
 
-Any job can send it a message (agent.chat.send as the job's call), and so can anyone at the door.
+Any job can send it a message (agent.chat.send as the job's call), and so can anyone at the door,
+and so can the agent itself from inside a turn: that message is queued and answered after the
+turn, and the send answers {agent, stream, seq} at once whatever `wait` says. Nothing is refused.
 
 Other hub modules beside this one named `hub_*.py` are loaded in name order and their
 `setup(plugin)` called with the same plugin (briefs HA1 and HA3 add theirs: agent.setup,
@@ -275,16 +277,19 @@ async def chat_send(call, args):
     text, wait = args.get("text"), args.get("wait", True)
     if not isinstance(text, str) or not text:
         raise Error("bad_message", "text is required: the message.", "Give the message as text.")
-    if call._actor.get("token") in _turning:
-        # A turn's own door token: the turn would wait on itself (0.5: "an agent can't message itself").
-        raise Error("agent_self", "An agent can't message itself.", "Answer in this turn instead.")
+    # A message from a turn's own door token (the agent messaging itself) is taken like any other:
+    # appended and queued, answered after the turn that sent it. It never waits, whatever `wait`
+    # says, because its reply cannot come before that turn ends; and its own turn runs as the
+    # person the token stood for, since the token is revoked when the sending turn ends.
+    own = call._actor.get("token") in _turning
     person = call.person()
     by = f"person:{person['name']}"
     sess = session(call, person, create=True)
     seq = call.append(sess["body"]["stream"], event("input", by, {"text": text}), by_caller=True) + 1
-    task = call.later(HOUSE, lambda: turn(call, sess["guid"], by, text))
+    runner = call.as_caller(call.user) if own else call
+    task = call.later(HOUSE, lambda: turn(runner, sess["guid"], by, text))
     out = {"agent": record["body"]["name"], "stream": _moniker(call, sess), "seq": seq}
-    if not wait:
+    if not wait or own:
         return out
     got = await asyncio.shield(task)         # a sender that stops waiting leaves the turn to finish
     if "error" in got:
