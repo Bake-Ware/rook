@@ -8,6 +8,8 @@ process's output; `claude` answers --version, `auth status` and the probe turn; 
 python is this test's own (Rook's packages are already there). curl, git, tar and the rest are real.
 HOME and XDG_CONFIG_HOME point into the test's folder, so nothing outside it is touched."""
 
+import getpass
+import http.cookiejar
 import json
 import os
 import pathlib
@@ -16,6 +18,7 @@ import socket
 import subprocess
 import sys
 import textwrap
+import urllib.error
 import urllib.request
 
 import shutil
@@ -175,6 +178,10 @@ def test_install_join_and_uninstall(box):
                  "The hub is running.", "This machine is on the hub, and your house agent's engine (Claude Code) runs on it.",
                  "Rook starts when you log in.", f"  {url}\n"):
         assert line in out, (line, out)
+    # The hub starts open until claimed (HA3's --no-password), so the last line hands over to the house agent
+    # and there is no "choose your name and password" line.
+    assert out.rstrip().splitlines()[-1].strip() == "Your house agent will walk you through the rest.", out
+    assert "Choose your name and password there" not in out
 
     # The folder it made, the facts, and the two units with its mark.
     assert {p.name for p in root.iterdir()} == {"src", "venv", "hub", "vault.key", "worker", "install.log"}
@@ -185,17 +192,42 @@ def test_install_join_and_uninstall(box):
     hub_unit, worker_unit = (box.units / f"rooktest-{u}.service" for u in ("hub", "worker"))
     src, py = root / "src", root / "venv" / "bin" / "python"
     assert hub_unit.read_text().splitlines()[0] == MARK.format(root)
+    # --no-password: the hub lists it now (HA3), so the installer starts a new hub open until claimed.
     assert f"ExecStart={py} -m rook_hub --data {root / 'hub'} --vault-key {root / 'vault.key'} --host 0.0.0.0 " \
-           f"--port {port}\n" in hub_unit.read_text()
+           f"--port {port} --no-password\n" in hub_unit.read_text()
     assert f"Environment=PYTHONPATH={src}/protocol/python:{src}/hub\n" in hub_unit.read_text()
     assert f"ExecStart={py} -m rook_worker {url} --state {root / 'worker'}\n" in worker_unit.read_text()
     assert "Restart=always" in worker_unit.read_text() and "After=rooktest-hub.service" in worker_unit.read_text()
 
     # A real hub, and a real worker joined with the join token: linked, owned by the system owner.
-    with urllib.request.urlopen(url + "/api/setup") as answer:
-        assert json.load(answer)["needed"] is True                      # nobody has claimed it
     worker_out = (box.state / "rooktest-worker.out").read_text()
     assert "Approved before as " in worker_out and "Linked to " in worker_out
+
+    # Open until claimed (HA3): no setup page; a first visitor is the owner (this computer's login), with no
+    # password yet. Setting a password claims the hub, and the installer's worker becomes the owner's.
+    owner = getpass.getuser()
+    visitor = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+    def ask(path, body=None):
+        request = urllib.request.Request(url + path, data=None if body is None else json.dumps(body).encode(),
+                                         headers={"Content-Type": "application/json"} if body is not None else {})
+        with visitor.open(request) as answer:
+            return json.load(answer)
+    assert ask("/api/setup")["needed"] is False
+    me = ask("/api/session")
+    assert me["user"]["name"] == owner and me["unclaimed"] is True and me["password"] is False
+    [joined] = [w for g in ask("/api/workers")["groups"] for w in g["workers"]]
+    assert joined["owner"]["moniker"] == "hub-system-owner"
+    assert ask("/api/password", {"password": "correct horse"}) == {"changed": True}
+    me = ask("/api/session")
+    assert me["unclaimed"] is False and me["password"] is True
+    [joined] = [w for g in ask("/api/workers")["groups"] for w in g["workers"]]
+    assert joined["owner"]["name"] == owner                              # handed over with the claim
+    try:
+        urllib.request.urlopen(url + "/api/session")                     # a new browser gets the login now
+        raise AssertionError("still open after a password was set")
+    except urllib.error.HTTPError as e:
+        assert e.code == 401
     assert "--code" not in hub_unit.read_text() + worker_unit.read_text()   # the token is in no file
     calls = box.calls()
     assert "systemctl --user start rooktest-hub" in calls and "systemctl --user start rooktest-worker" in calls
@@ -227,6 +259,11 @@ def test_no_engine_yet_and_uninstall_takes_only_its_own(box):
     assert done.returncode == 0, (done.stdout, done.stderr)
     assert "Setting Rook up with that is coming soon." in done.stdout and "This machine is on the hub." in done.stdout
     assert json.loads((root / "hub" / "install.json").read_text())["ai"]["choice"] == "none"
+    # Open until claimed here too (HA3): the hub unit carries --no-password, and the last line hands over to
+    # the house agent (it starts once Claude Code is set up), with no "choose your name and password" line.
+    assert " --no-password\n" in (box.units / "rookplain-hub.service").read_text()
+    assert done.stdout.rstrip().splitlines()[-1].strip() == "Your house agent will walk you through the rest."
+    assert "Choose your name and password there" not in done.stdout
     calls = box.calls()
     assert not any(c.startswith("claude") for c in calls) and not any("enable" in c for c in calls)
     assert box.run("--dir", str(root), "--name", "rookplain", "--uninstall").returncode == 0 and not root.exists()
