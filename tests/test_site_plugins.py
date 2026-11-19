@@ -142,7 +142,7 @@ async def scenario(tmp_path):
                 status, reply = await ask(client, "POST", base + "/api/plugins", {"path": str(folder)})
                 assert status == 400 and reply["code"] == code and said in reply["message"], (change, reply)
                 assert reply["next"]
-            assert [p["name"] for p in hub.plugins.list()] == ["battery", "file", "net", "shell", "worker", "shelf"]   # the defaults first (PL7)
+            assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "battery", "file", "net", "shell", "worker", "shelf"]   # the defaults first (PL7)
             # The check before an install already says what to fix in the manifest.
             status, reply = await ask(client, "POST", base + "/api/plugins/check", {"path": str(tmp_path / "other0")})
             assert status == 400 and "leaves the plugin's folder" in reply["message"]

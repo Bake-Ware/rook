@@ -268,4 +268,5 @@ def test_users_and_tokens_have_monikers_unique_hub_wide(hub):
     rows = hub._db.execute("SELECT moniker, guid FROM monikers").fetchall()
     built_in = [r[0] for r in hub._db.execute("SELECT guid FROM jobs")]     # the system owner's job (brief 56)
     assert {r[1] for r in rows} == {alice["guid"], token["guid"], *(p["guid"] for p in hub.plugins.list()),   # PL7
-                                    hub.auth.system, *built_in}
+                                    hub.auth.system, *built_in,
+                                    *(r[0] for r in hub._db.execute("SELECT guid FROM records"))}   # the house agent (HA2)
