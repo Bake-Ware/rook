@@ -100,7 +100,9 @@ def token_create(hub, args, actor):
 def token_list(hub, args, actor):
     tokens = hub.auth.list_tokens()
     monikers = {t["guid"]: t["moniker"] for t in tokens}
-    names = {u["guid"]: u["name"] for u in hub.auth.list_users()}
+    # Owners are people or the system owner, which list_users leaves out (a join token minted by
+    # `python -m rook_hub join-token` is the system owner's), as the Auth page's view does.
+    names = {u["guid"]: u["name"] for u in [*hub.auth.list_users(), hub.auth.get_user(hub.auth.system)]}
     return {"tokens": [{"moniker": t["moniker"], "guid": t["guid"], "purpose": t["purpose"], "scopes": t["scopes"],
                         "owner": {"moniker": t["owner_moniker"], "name": names[t["owner"]]},
                         "minted_by": monikers.get(t["minted_by"]),

@@ -280,3 +280,70 @@ def test_install_from_a_copy_without_git(box, tmp_path):
     assert "Linked to " in (box.state / "rookcopy-worker.out").read_text()
     box.offline()
     assert box.run("--dir", str(root), "--name", "rookcopy", "--uninstall").returncode == 0 and not root.exists()
+
+
+def test_a_system_owned_join_token_and_worker_list_and_reassign(tmp_path):
+    """After `python -m rook_hub join-token` (steward's review of #451): the token is the system owner's,
+    and so is the worker it joins. token.list through the door and the Auth page's API list it with its
+    owner shown as the system owner; the door's workers and the Workers page show the worker's owner the
+    same way; worker.reassign gives it to a person, and every list still answers."""
+    import asyncio
+
+    from helpers import eventually
+    from memory_link import connector
+    from rook_hub import Hub
+    from rook_worker import Worker
+    from test_door import mcp_client, tool
+    from test_site import ask, browser, login
+
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(str(ROOT / p) for p in ("protocol/python", "hub")))
+    data, key = tmp_path / "hub", tmp_path / "vault.key"
+    code = subprocess.run([sys.executable, "-m", "rook_hub", "join-token", "--data", str(data), "--vault-key", str(key)],
+                          env=env, capture_output=True, text=True, check=True).stdout.strip()
+    system = {"moniker": "hub-system-owner", "name": "system"}
+
+    async def go():
+        hub = Hub(data, vault_key_file=key)
+        host, port = await hub.serve("127.0.0.1", 0)
+        base = f"http://{host}:{port}"
+        worker = Worker(tmp_path / "box", base, connector(hub), name="box", caps={}, macs=[], token=code,
+                        knock_every=0.02)
+        running = asyncio.create_task(worker.run())
+        try:
+            await eventually(lambda: hub.list_workers() and hub.list_workers()[0]["online"])
+            moniker = hub.list_workers()[0]["moniker"]
+            alice = hub.auth.create_user("Alice", "a password")
+            async with mcp_client(f"{base}/mcp", hub.auth.mint("agent", user=alice["guid"])) as door:
+                async def call(cap, **args):
+                    failed, reply = await tool(door, "call", worker="hub", cap=cap, args=args, why="after join-token")
+                    assert not failed, reply
+                    return reply
+
+                listed = (await call("token.list"))["tokens"]
+                [join] = [t for t in listed if t["purpose"] == "join"]
+                assert join["owner"] == system and join["spent_at"] is not None       # spent by the worker's knock
+                failed, workers = await tool(door, "workers")
+                assert [w["owner"] for w in workers["workers"] if w["moniker"] == moniker] == [system]
+
+                async with browser() as client:
+                    await login(client, base, "Alice", "a password")
+                    status, page = await ask(client, "GET", base + "/api/auth")
+                    assert status == 200 and [t["owner"] for t in page["tokens"] if t["purpose"] == "join"] == [system]
+                    assert "system" not in {u["name"] for u in page["users"]}           # a token's owner, not a user
+                    status, view = await ask(client, "GET", base + "/api/workers")
+                    assert status == 200
+                    assert [w["owner"] for g in view["groups"] for w in g["workers"]] == [system]
+
+                    # Reassigned to a person: the worker is Alice's; the token stays the system owner's.
+                    moved = await call("worker.reassign", worker=moniker, owner=alice["moniker"])
+                    assert moved["owner"] == {"moniker": alice["moniker"], "name": "Alice"}
+                    assert [t["owner"] for t in (await call("token.list"))["tokens"] if t["purpose"] == "join"] == [system]
+                    status, view = await ask(client, "GET", base + "/api/workers")
+                    assert status == 200 and [w["owner"]["name"] for g in view["groups"] for w in g["workers"]] == ["Alice"]
+                    assert (await ask(client, "GET", base + "/api/auth"))[0] == 200
+        finally:
+            worker.stop()
+            await running
+            await hub.stop_serving()
+            hub.close()
+    asyncio.run(go())
