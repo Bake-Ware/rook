@@ -21,7 +21,6 @@ import time
 import aiohttp
 
 from rook_hub import Hub
-from rook_hub.web import Turns
 from rook_worker import Cap, Worker
 
 CALLS = 400
@@ -133,6 +132,7 @@ def test_turns_take_requests_in_order_one_per_turn_of_the_loop():
 
 
 async def in_turn():
+    from rook_hub.web import Turns
     turns, went, ticks = Turns(), [], [0]
 
     def tick():                     # counts the loop's turns: one call_soon each
