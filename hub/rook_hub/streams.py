@@ -54,6 +54,8 @@ from . import scrub
 from .errors import HubError
 from .journal import iso
 
+HUB = "hub"   # the worker column of a stream a plugin opened at the hub (brief HA2)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS streams (
     guid        TEXT PRIMARY KEY,
@@ -84,6 +86,10 @@ CREATE TABLE IF NOT EXISTS stream_data (    -- the recording
 CREATE TABLE IF NOT EXISTS call_streams (   -- streams that carry the reply of a long call (Bake 13 Nov)
     stream TEXT PRIMARY KEY REFERENCES streams(guid),
     call   TEXT NOT NULL                    -- the call's id
+);
+CREATE TABLE IF NOT EXISTS plugin_streams ( -- streams a plugin opened at the hub and writes (brief HA2)
+    stream TEXT PRIMARY KEY REFERENCES streams(guid),
+    plugin TEXT NOT NULL
 );
 """
 
@@ -197,6 +203,60 @@ class Streams:
         for row in rows:
             self.call_ended(row["stream"], reply_for(row["call"]))
 
+    # ------------------------------------------- a plugin's stream at the hub (brief HA2)
+
+    def open_for_plugin(self, plugin, title, description, actor):
+        """A stream at the hub that plugin `plugin` writes (Call.open_stream): its worker is the
+        hub, and no worker or client writes to it; clients read it as any stream (S2). Kept until
+        closed (S4)."""
+        hub, guid = self.hub, str(uuid.uuid4())
+        with hub._lock, hub._db:
+            hub._db.execute(
+                "INSERT INTO streams (guid, moniker, worker, handle, title, description, cap, user, token, opened_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (guid, hub._new_moniker(guid), HUB, uuid.uuid4().hex, title, description, f"plugin {plugin}",
+                 actor[0], actor[1], hub.clock()))
+            hub._db.execute("INSERT INTO plugin_streams (stream, plugin) VALUES (?, ?)", (guid, plugin))
+            record = self._record(self._row(guid))
+        hub.events.emit("stream.open", self._event(record, record["opened_by"]), user=actor[0], token=actor[1])
+        return record
+
+    def plugin_append(self, plugin, stream, data, actor):
+        """The next entry of plugin `plugin`'s stream: input from `actor` when it names one, else out."""
+        with self.hub._lock:
+            row = self._row(stream)
+        if self._plugin_of(row) != plugin:
+            raise HubError("not_plugin_stream", f"Stream {row['moniker']} is not plugin {plugin}'s.",
+                           "Append only to a stream the plugin opened with open_stream.")
+        if row["closed_at"] is not None:
+            raise HubError("stream_closed", f"Stream {row['moniker']} is closed.", "Open a new stream to go on.")
+        return self._append(row["guid"], "in" if actor[0] or actor[1] else "out", data, actor)
+
+    async def read_all(self, stream, position=0, wait=0, limit=None):
+        """`read` raw, with `limit` None meaning every entry from `position` on, and a wait as long as
+        asked (read waits at most MAX_WAIT seconds at a time; this waits again until it is over)."""
+        until = asyncio.get_running_loop().time() + wait
+        while True:
+            left = max(0.0, until - asyncio.get_running_loop().time())
+            got = await self.read(stream, position, min(left, MAX_WAIT), -1 if limit is None else limit, raw=True)
+            if got["entries"] or not got["open"] or left <= MAX_WAIT or (self.hub._stopping is not None
+                                                                         and self.hub._stopping.is_set()):
+                return got
+
+    def _plugin_of(self, row):
+        """The plugin that writes stream `row`, or None for any other stream."""
+        with self.hub._lock:
+            found = self.hub._db.execute("SELECT plugin FROM plugin_streams WHERE stream = ?", (row["guid"],)).fetchone()
+        return found["plugin"] if found else None
+
+    def _for_plugin(self, row, what):
+        """Refuse input, a resize, a signal or a close through the stream tool on a plugin's stream."""
+        plugin = self._plugin_of(row)
+        if plugin is not None:
+            raise HubError("plugin_stream", f"Stream {row['moniker']} is written by plugin {plugin}; {what} goes "
+                                            "through that plugin's caps.",
+                           f"Read stream {row['moniker']} here; use plugin {plugin}'s caps (caps tool) to add to it.")
+
     def _call_of(self, row):
         """The id of the call whose reply stream `row` carries, or None for any other stream."""
         with self.hub._lock:
@@ -224,6 +284,7 @@ class Streams:
             hub._db.execute("INSERT INTO stream_data (stream, position, at, direction, user, token, data) "
                             "VALUES (?, ?, ?, ?, ?, ?, ?)", (guid, position, hub.clock(), direction, *actor, data))
         self._wake(guid)
+        return position
 
     def _wake(self, guid):
         event = self._changed.pop(guid, None)
@@ -259,7 +320,8 @@ class Streams:
     def _record(self, row):
         hub = self.hub
         return {"guid": row["guid"], "moniker": row["moniker"], "title": row["title"],
-                "description": row["description"], "worker": hub._moniker(row["worker"]), "cap": row["cap"],
+                "description": row["description"],
+                "worker": HUB if row["worker"] == HUB else hub._moniker(row["worker"]), "cap": row["cap"],
                 "opened_by": self._who(row["user"]), "opened_at": iso(row["opened_at"]),
                 "open": row["closed_at"] is None,
                 "closed_by": row["closed_by"] if row["closed_by"] in (None, "worker", "hub") else self._who(row["closed_by"]),
@@ -303,7 +365,7 @@ class Streams:
         if isinstance(wait, bool) or not isinstance(wait, (int, float)) or wait < 0:
             raise HubError("bad_message", f"wait {wait!r} is not a number of seconds.",
                            f"Give wait as a number from 0 to {MAX_WAIT}, or leave it out.")
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        if isinstance(limit, bool) or not isinstance(limit, int) or (limit < 1 and limit != -1):
             raise HubError("bad_message", f"limit {limit!r} is not a whole number of entries.",
                            "Give limit as a whole number of 1 or more, or leave it out.")
         wait = min(wait, MAX_WAIT)
@@ -348,6 +410,7 @@ class Streams:
             raise HubError("stream_closed", f"Stream {row['moniker']} is closed.",
                            "Read it to see what it did; open a new stream to go on.")
         self._for_call(row)
+        self._for_plugin(row, "input")
         link = self.hub._links.get(row["worker"])
         if link is None:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
@@ -373,6 +436,7 @@ class Streams:
             raise HubError("stream_closed", f"Stream {row['moniker']} is closed.",
                            "A closed stream draws nothing more; read it to see what it did.")
         self._for_call(row)
+        self._for_plugin(row, "a resize")
         link = self.hub._links.get(row["worker"])
         if link is None:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
@@ -393,6 +457,7 @@ class Streams:
             raise HubError("stream_closed", f"Stream {row['moniker']} is closed.",
                            "Its process has ended; read the stream to see how.")
         self._for_call(row)
+        self._for_plugin(row, "a signal")
         link = self.hub._links.get(row["worker"])
         if link is None:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
@@ -415,6 +480,7 @@ class Streams:
             reply = self.hub.stop_call(call, actor, f"closing stream {row['moniker']}: {why}")
             await running["ended"].wait()
             return {"closed": row["moniker"], "stopped": call, "reply": reply}
+        self._for_plugin(row, "closing it")
         link = self.hub._links.get(row["worker"])
         if link is None:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",

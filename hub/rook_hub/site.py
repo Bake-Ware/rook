@@ -304,7 +304,7 @@ def add_routes(app, hub):
     def session_view(user):
         person = hub.auth.get_user(user)
         return {"user": {"name": person["name"], "moniker": person["moniker"]}, "hub": {"name": hub.name()},
-                "nav": navigation(hub), "components": plugin_components(hub),
+                "nav": navigation(hub), "components": plugin_components(hub), "shell": plugin_shell(hub),
                 "password": hub.auth.has_password(user), "unclaimed": hub.auth.unclaimed_owner() is not None}
 
     async def me(request):
@@ -891,6 +891,15 @@ def plugin_components(hub):
             for plugin, folder, site in plugins.site_parts(hub) for c in site.get("components", [])]
 
 
+def plugin_shell(hub):
+    """Plugins' shell files (house agent brief HA1; 0.5's manifest `shell:`): each plugin's in its
+    manifest's order, plugins in install order. The shell loads them on every page once a person
+    is signed in: a stylesheet as a <link>, a script as a classic <script>, each after the last."""
+    return [{"plugin": plugin, "kind": plugins.SHELL_KINDS[pathlib.PurePosixPath(entry["file"]).suffix],
+             "url": _file_url(plugin, folder, entry["file"])}
+            for plugin, folder, site in plugins.site_parts(hub) for entry in site.get("shell", [])]
+
+
 def plugin_sections(hub):
     """Plugins' sections on the Settings page, after core's (P4, PL1)."""
     return [{"id": f"{plugin}/{plugins.page_name(s['title'])}", "label": s["title"],
@@ -935,8 +944,9 @@ def plugin_site_routes(app, hub, logged_in, session):
                 files = {plugins.site_file(folder, entry["file"])
                          for part in plugins.SITE_FIELDS for entry in site.get(part, [])}
                 if name == plugin and wanted in files:
+                    kind = "text/css" if wanted.endswith(".css") else "text/javascript"     # a shell file may be CSS
                     return web.FileResponse(folder / wanted, headers={
-                        "Content-Type": "text/javascript; charset=utf-8"})   # no-cache: web.cache_header
+                        "Content-Type": f"{kind}; charset=utf-8"})   # no-cache: web.cache_header
             raise HubError("unknown_file", f"Plugin {plugin} has no site file {wanted}.",
                            "Load the plugin's pages through the site's navigation.")
         except HubError as e:

@@ -141,18 +141,47 @@ SETTINGS = {"name": "The hub's name, shown on the site."}
 
 
 def setting_list(hub, args, actor):
+    """The hub's own settings, then every loaded plugin's (brief HA2; 0.5's setting.list with
+    `plugin`): a where="person" setting shows the caller's own value."""
+    from .library import Call
     with hub._lock:
-        hub.auth.actor(**actor)
+        user, token = hub.auth.actor(**actor)
     values = {"name": hub.name()}
-    return {"settings": [{"section": "hub", "key": key, "value": values[key], "description": description}
-                         for key, description in SETTINGS.items()]}
+    wanted = args.get("plugin")
+    found = [] if wanted else [{"section": "hub", "key": key, "value": values[key], "description": description}
+                               for key, description in SETTINGS.items()]
+    for plugin in sorted(hub.plugins.declared):
+        if (wanted and plugin != wanted) or plugin not in hub.plugins.loaded:
+            continue
+        settings = Call(hub, plugin, actor, user, token).settings
+        for key, spec in hub.plugins.declared_settings(plugin).items():
+            mine = spec["where"] == "hub" or user is not None
+            found.append({"section": plugin, "plugin": plugin, "key": key, "where": spec["where"],
+                          "value": settings.get(key) if mine else spec["default"],
+                          "chosen": settings.chosen(key) if mine else False, "description": spec["doc"]})
+    if wanted and not found:
+        raise HubError("unknown_plugin", f"No loaded plugin {wanted!r} has settings.",
+                       "List the settings with setting.list and no plugin to see whose there are.")
+    return {"settings": found}
 
 
 def setting_set(hub, args, actor):
-    key = _text(args, "key")
+    key, plugin = _text(args, "key"), args.get("plugin")
+    if plugin is not None:              # a plugin's setting (brief HA2); a where="person" one is the caller's own
+        from .library import Call
+        if plugin not in hub.plugins.loaded:
+            raise HubError("unknown_plugin", f"No loaded plugin is called {plugin!r}.",
+                           "List the settings with setting.list; each plugin's are under its name.")
+        with hub._lock:
+            user, token = hub.auth.actor(**actor)
+        settings = Call(hub, plugin, actor, user, token).settings
+        spec = settings._declared(key)
+        return {"section": plugin, "plugin": plugin, "key": key, "where": spec["where"],
+                "value": settings.set(key, args.get("value"))}
     if key not in SETTINGS:
         raise HubError("unknown_setting", f"The hub has no setting {key!r}.",
-                       f"The settings are {', '.join(SETTINGS)}; setting.list shows them with their values.")
+                       f"The settings are {', '.join(SETTINGS)}, and each plugin's under its name; "
+                       "setting.list shows them with their values.")
     return {"section": "hub", "key": key, "value": hub.set_name(args.get("value"), **actor)}
 
 
@@ -215,14 +244,16 @@ CAPS = {
                        "seconds": {"type": "integer", "minimum": 1, "description": "Seconds between heartbeats."}}},
     }),
     "setting.list": (setting_list, {
-        "description": "List the hub's settings, as the Settings page holds them, with their values.",
-        "schema": {"type": "object", "additionalProperties": False, "properties": {}},
+        "description": "List the hub's settings, as the Settings page holds them, and each plugin's, with their values.",
+        "schema": {"type": "object", "additionalProperties": False, "properties": {
+            "plugin": {"type": "string", "description": "Only this plugin's settings (its name)."}}},
     }),
     "setting.set": (setting_set, {
-        "description": "Change one of the hub's settings, as on the Settings page; setting.list names them.",
+        "description": "Change one of the hub's settings, as on the Settings page, or a plugin's; setting.list names them.",
         "schema": {"type": "object", "required": ["key", "value"], "additionalProperties": False, "properties": {
             "key": {"type": "string", "description": "The setting, such as name."},
-            "value": {"description": "Its new value."}}},
+            "plugin": {"type": "string", "description": "The plugin whose setting it is; leave out for the hub's own."},
+            "value": {"description": "Its new value; null forgets a plugin's setting."}}},
     }),
 }
 

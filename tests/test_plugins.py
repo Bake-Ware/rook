@@ -61,7 +61,7 @@ async def scenario(tmp_path):
 
     def installed_folders():
         return sorted(p.name.split(".")[0] for p in (state / "plugins").iterdir()
-                      if p.name.split(".")[0] not in ("battery", "file", "net", "shell", "worker"))      # beside the defaults (PL7)
+                      if p.name.split(".")[0] not in ("agents", "agents-claude-code", "battery", "file", "net", "shell", "worker"))      # beside the defaults (PL7)
 
     try:
         async with mcp_client(f"http://{host}:{port}/mcp", agent) as door:
@@ -73,7 +73,7 @@ async def scenario(tmp_path):
 
             async def listed():
                 return [p for p in (await call("plugin.list", "see the plugins"))[1]["plugins"]
-                        if p["name"] not in ("battery", "file", "net", "shell", "worker")]                 # beside the defaults (PL7)
+                        if p["name"] not in ("agents", "agents-claude-code", "battery", "file", "net", "shell", "worker")]                 # beside the defaults (PL7)
 
             # 1. The agent installs notes from its folder. The reply says what it added; the
             #    caps tool lists its caps on the hub with their schemas; plugin.list shows it (PL3, PL4).
@@ -133,7 +133,7 @@ async def scenario(tmp_path):
                 assert name not in [p["name"] for p in await listed()]
             failed, hub_caps = await tool(door, "caps", worker="hub")
             assert "squatter.sit" not in [c["name"] for c in hub_caps["caps"][0]["caps"]]
-            assert {t["type"] for t in records.list_types(hub)} == {"blob", "config", "note"}     # no "copy"
+            assert {t["type"] for t in records.list_types(hub)} == {"agent", "agent-session", "blob", "config", "note"}     # no "copy"
             assert installed_folders() == ["notes"]
 
             # 5. A handler that asks the library for records of a type it does not own is refused
@@ -202,7 +202,7 @@ async def scenario(tmp_path):
         reply = await hub.call("hub", "note.search", {"text": "groceries"}, "after a restart", user=alice["guid"])
         assert reply["type"] == "result" and reply["result"]["version"] == "1.1"
         assert reply["result"]["notes"][0]["note"] == made["note"]
-        assert [p["name"] for p in hub.plugins.list()] == ["battery", "file", "net", "shell", "worker", "notes", "snoop", "everything"]
+        assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "battery", "file", "net", "shell", "worker", "notes", "snoop", "everything"]
     finally:
         hub.close()
 
@@ -281,7 +281,7 @@ def test_a_plugin_that_fails_at_start_is_skipped(tmp_path, caplog):
     try:
         assert "Plugin frail was not loaded" in caplog.text and "broken on disk" in caplog.text
         assert "note.create" in hub.plugins.caps and "frail.ok" not in hub.plugins.caps
-        assert [p["name"] for p in hub.plugins.list()] == ["battery", "file", "net", "shell", "worker", "notes", "frail"]
+        assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "battery", "file", "net", "shell", "worker", "notes", "frail"]
     finally:
         hub.close()
 
@@ -303,11 +303,11 @@ def test_a_moved_hub_keeps_its_plugins(tmp_path):
         shutil.move(before, after)
         hub = Hub(after)
         try:
-            assert sorted(hub.plugins.caps) == ["note.create", "note.search"]
+            assert sorted(c for c in hub.plugins.caps if not c.startswith("agent.")) == ["note.create", "note.search"]
             found = await hub.call("hub", "note.search", {"text": "boxes"}, "after the move", user=alice)
             assert [n["note"] for n in found["result"]["notes"]] == [made["result"]["note"]]
             hub.plugins.install(str(NOTES), {"user": alice, "token": None})      # a reinstall still swaps folders
-            assert sorted(p.name.split(".")[0] for p in (after / "plugins").iterdir()) == ["battery", "file", "net", "notes", "shell", "worker"]   # PL7
+            assert sorted(p.name.split(".")[0] for p in (after / "plugins").iterdir()) == ["agents", "agents-claude-code", "battery", "file", "net", "notes", "shell", "worker"]   # PL7
         finally:
             hub.close()
     asyncio.run(go())

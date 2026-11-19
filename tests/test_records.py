@@ -34,7 +34,9 @@ def test_records(tmp_path):
         with pytest.raises(HubError) as taken:
             records.declare_type(hub, "note", "other")
         assert taken.value.message["code"] == "type_taken" and taken.value.message["next"]
-        assert records.list_types(hub) == [{"type": "blob", "plugin": "core"}, {"type": "config", "plugin": "core"},
+        assert records.list_types(hub) == [{"type": "agent", "plugin": "agents"},           # the house agent (HA2)
+                                           {"type": "agent-session", "plugin": "agents"},
+                                           {"type": "blob", "plugin": "core"}, {"type": "config", "plugin": "core"},
                                            {"type": "note", "plugin": "notes"}]
 
         # 2. Alice directly and an agent holding Alice's token each create a note (K1, G1).
@@ -119,7 +121,9 @@ def test_records(tmp_path):
         assert [r["guid"] for r in records.search(hub, text="coast")] == [trip["guid"]]
         records.link(hub, trip["guid"], again["guid"])
         assert [r["guid"] for r in records.unlinked_blobs(hub)] == [photo["guid"], manual["guid"]]
-        assert records.list_types(hub) == [{"type": "blob", "plugin": "core"}, {"type": "config", "plugin": "core"},
+        assert records.list_types(hub) == [{"type": "agent", "plugin": "agents"},           # the house agent (HA2)
+                                           {"type": "agent-session", "plugin": "agents"},
+                                           {"type": "blob", "plugin": "core"}, {"type": "config", "plugin": "core"},
                                            {"type": "note", "plugin": "notes"}]
     finally:
         hub.close()
@@ -147,7 +151,7 @@ def test_record_errors(tmp_path):
             with pytest.raises(HubError) as refused:
                 call()
             assert refused.value.message["code"] == code and refused.value.message["next"]
-        assert [r["guid"] for r in records.search(hub)] == [blob["guid"]]
+        assert [r["guid"] for r in records.search(hub) if r["type"] != "agent"] == [blob["guid"]]   # and the house agent
         assert records.get(hub, blob["guid"]) == blob and records.read_blob(hub, blob["guid"]) == b"bytes"
 
         # A blob's title and description may still change.

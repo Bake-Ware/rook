@@ -58,6 +58,15 @@ PYTHONPATH=protocol/python:core/python .venv/bin/python -m rook_worker http://12
 - To join with no one approving, add `--code TOKEN` with a join token from the hub (an agent mints one with `worker.join-token`, or `token.create` with `purpose: join`). It is approved at once, owned by whoever minted the token. A join token works once.
 - If the hub cannot be reached, the address is not a hub, or the hub refuses the worker's key, it says so in one line and exits. Once approved, a hub that goes away is waited for: the worker says why it cannot link and links again when the hub is back.
 
+## Talking to the house agent
+
+Every hub has a house agent, "house" (named Rookie until you name it: setting `house_name` of plugin `agents`). It thinks with Claude Code on a worker, so the machine of one worker needs Claude Code installed and signed in (`claude` on its PATH, or its path set in that worker's config as `agents-claude-code.claude`). With one worker online that is all; with several, say which one with `setting.set {plugin: agents, key: worker, value: <moniker>}`.
+
+- **Talk to it** from any agent at the door: `call worker=hub cap=agent.chat.send args={agent: house, text: "..."}` answers with its reply; `agent.chat.read` reads your conversation with it, which is kept for good and resumed on every message, across restarts.
+- **What it can do on the band**: each turn reaches the door with a token minted for that turn, as you, and revoked when the turn ends.
+- **Wake it on a schedule or an event** with a job whose call is `agent.chat.send`.
+- **Stop a turn** by closing the stream its prompt names (`call` in the prompt event), as any call is stopped. A turn has no timeout.
+
 ## Backing up, restoring and moving a hub
 
 A backup is one file holding everything the hub needs to come back as itself: users and their sessions, tokens, the vault's secrets, installed plugins, records and blob bytes, the journal, stream recordings, heartbeat history, and the hub's own key, so its workers are still accepted. It can be taken while the hub is running: the hub keeps serving, and the backup holds the data as it was at one moment.

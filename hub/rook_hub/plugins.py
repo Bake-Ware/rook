@@ -144,11 +144,14 @@ class Plugins:
         self.loaded = set()  # the plugins loaded at the hub: only theirs are pushed to workers
         self._pushed = {}    # worker guid -> (link, parts): what that link was last sent (PL3)
         self._sending = set()
+        self.declared = {}   # plugin name -> its library.Plugin as loaded: settings, skills, carried skills
+        self._queues = {}    # (plugin, key) -> the last task asked of Call.later with that key
+        self._later = set()  # every such task until it ends
 
     def _load(self, name, folder, manifest):
         """Import the plugin's hub module and run its setup(). Returns the declared Plugin."""
         from . import owner_only     # __init__.py imports this module first
-        declared = Plugin(name)
+        declared = Plugin(name, folder)
         if "hub" not in manifest:
             return declared, None
         path = folder / manifest["hub"]["module"]
@@ -190,6 +193,7 @@ class Plugins:
                                "Give each record type a name, such as \"note\".")
         for driver in declared.drivers.values():
             _check_driver(name, driver)
+        _check_declared(name, folder, declared)
         return declared, module_name
 
     def _clashes(self, declared):
@@ -227,7 +231,17 @@ class Plugins:
         drivers = {name: entry for name, entry in self.drivers.items() if entry[0] != declared.name}
         drivers.update({name: (declared.name, driver) for name, driver in declared.drivers.items()})
         self.drivers = drivers
+        self.declared[declared.name] = declared
         self.loaded.add(declared.name)
+
+    def _loaded(self, declared):
+        """Run what the plugin asked to run once it is loaded (Plugin.on_load), as the system owner."""
+        system = self.hub.auth.system
+        for fn in declared.loaders:
+            try:
+                fn(Call(self.hub, declared.name, {"user": system, "token": None}, system, None))
+            except Exception:
+                log.exception("Plugin %s: what it runs once loaded failed", declared.name)
 
     # ----------------------------------------------------------- install
 
@@ -270,6 +284,7 @@ class Plugins:
             shutil.rmtree(folder, ignore_errors=True)
             raise
         self._serve(declared, module_name)
+        self._loaded(declared)
         if old is not None and old["folder"] != folder.name:
             shutil.rmtree(self.root / old["folder"], ignore_errors=True)   # the replaced code; one copy per plugin
         self.push()
@@ -303,6 +318,7 @@ class Plugins:
                 declared, module_name = self._load(row["name"], self.root / row["folder"], json.loads(row["manifest"]))
                 self._clashes(declared)
                 self._serve(declared, module_name)
+                self._loaded(declared)
             except HubError as e:
                 log.error("Plugin %s was not loaded: %s %s", row["name"], e.message["message"], e.message["next"])
 
@@ -414,6 +430,8 @@ class Plugins:
             user, token = self.hub.auth.actor(**actor)
         try:
             result = handler(Call(self.hub, name, actor, user, token), args)
+            if inspect.isawaitable(result):     # an async handler: awaited by Hub.call, the hub serving meanwhile
+                return self._finish(name, cap, result)
             json.dumps(result)
             return result
         except HubError:
@@ -423,6 +441,108 @@ class Plugins:
             raise HubError("plugin_failed", f"Plugin {name} failed in {cap}: {type(e).__name__}: {e}",
                            f"Check the arguments against {cap}'s schema (caps tool); if they are right, "
                            f"plugin {name} needs fixing and installing again.") from None
+
+    async def _finish(self, name, cap, pending):
+        """An async handler's result, awaited, as `call` gives a plain one: JSON, or plugin_failed."""
+        try:
+            result = await pending
+            json.dumps(result)
+            return result
+        except (HubError, asyncio.CancelledError):
+            raise
+        except Exception as e:
+            log.exception("Plugin %s failed in %s", name, cap)
+            raise HubError("plugin_failed", f"Plugin {name} failed in {cap}: {type(e).__name__}: {e}",
+                           f"Check the arguments against {cap}'s schema (caps tool); if they are right, "
+                           f"plugin {name} needs fixing and installing again.") from None
+
+    # ------------------------------------------------ house agent (brief HA2)
+
+    def declared_settings(self, plugin):
+        """Plugin `plugin`'s settings as it declared them (Plugin.setting): name -> declaration."""
+        declared = self.declared.get(plugin)
+        return declared.settings if declared is not None else {}
+
+    def skills(self):
+        """Every skill a loaded plugin declares (Plugin.skill): name -> (plugin, file). On a name
+        two plugins declare, the one loaded first keeps it."""
+        found = {}
+        for name, declared in self.declared.items():
+            if name in self.loaded:
+                for skill, path in declared.skills.items():
+                    found.setdefault(skill, (name, path))
+        return found
+
+    async def carried(self, actor, user, token):
+        """The skills carried now on a turn for this caller (Plugin.carry): [(skill, lead-in, file)]."""
+        found = []
+        for name, declared in list(self.declared.items()):
+            if name not in self.loaded:
+                continue
+            for skill, when in declared.carried.items():
+                try:
+                    lead = when(Call(self.hub, name, actor, user, token))
+                    if inspect.isawaitable(lead):
+                        lead = await lead
+                except Exception:
+                    log.exception("Plugin %s: the condition carrying skill %s failed", name, skill)
+                    continue
+                path = declared.skills.get(skill) or self.skills().get(skill, (None, None))[1]
+                if lead and path is not None:
+                    found.append((skill, str(lead), path))
+        return found
+
+    def later(self, plugin, key, fn):
+        """Call.later: run `await fn()` after the earlier ones of `plugin` with `key`, one at a time."""
+        before = self._queues.get((plugin, key))
+
+        async def run():
+            if before is not None and not before.done():
+                await asyncio.wait({before})
+            return await fn()
+
+        task = asyncio.get_running_loop().create_task(run())
+        self._queues[(plugin, key)] = task
+        self._later.add(task)
+
+        def ended(task):
+            self._later.discard(task)
+            if self._queues.get((plugin, key)) is task:
+                del self._queues[(plugin, key)]
+            if not task.cancelled():
+                task.exception()          # retrieved: whoever asked has it, or it was logged by the plugin
+        task.add_done_callback(ended)
+        return task
+
+    async def stop(self):
+        """The hub is stopping: end what plugins left running (Call.later)."""
+        tasks = list(self._later)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _check_declared(name, folder, declared):
+    """A plugin's settings, skills and carried skills as the library takes them; else HubError."""
+    fix = "Declare them as docs/plugins.md shows, then install again."
+    for setting, spec in declared.settings.items():
+        if not isinstance(setting, str) or not setting or spec["where"] not in ("hub", "person"):
+            raise HubError("bad_plugin", f"Plugin {name} declares setting {setting!r} with where {spec['where']!r}: "
+                                         "a setting needs a name and where \"hub\" or \"person\".", fix)
+        json.dumps(spec["default"])
+    root = folder.resolve()
+    for skill, path in declared.skills.items():
+        where = (folder / path).resolve() if not isinstance(path, pathlib.Path) else path.resolve()
+        if not isinstance(skill, str) or not skill or not where.is_relative_to(root) or not where.is_file():
+            raise HubError("bad_plugin", f"Plugin {name} declares skill {skill!r} as {path}: it must be a file "
+                                         "inside the plugin's folder.", fix)
+        declared.skills[skill] = where
+    for skill, when in declared.carried.items():
+        if not callable(when):
+            raise HubError("bad_plugin", f"Plugin {name} carries skill {skill!r} with no condition to call.", fix)
+    for fn in declared.loaders:
+        if not callable(fn) or inspect.iscoroutinefunction(fn):
+            raise HubError("bad_plugin", f"Plugin {name}'s on_load function must be a plain (not async) function.", fix)
 
 
 def _check_driver(plugin, driver):
@@ -572,12 +692,16 @@ CAPS = {
 # ------------------------------------------------------------ the site section (PL1, P1, P2, P6)
 #
 # "site": {"pages": [{"segment", "title", "file"}], "settings": [{"title", "file"}],
-#          "components": [{"name", "file"}]}   (docs/plugins.md; Bake 13 Nov)
-# Each file is an ES module in the plugin's folder whose default export is a Vue component.
+#          "components": [{"name", "file"}], "shell": [{"file"}]}   (docs/plugins.md; Bake 13 Nov)
+# Each page, settings or component file is an ES module in the plugin's folder whose default
+# export is a Vue component. A shell file (house agent brief HA1, as 0.5's manifest `shell:`)
+# is a stylesheet (.css) or a classic script (.js) the shell loads on every page, in order.
 # A page's name is its title in lowercase, words joined by hyphens: the plugin's page `notes`
 # is at /plugins/<plugin>/notes, so a pin names the plugin and the page (Bake 13 Nov).
 
-SITE_FIELDS = {"pages": ("segment", "title", "file"), "settings": ("title", "file"), "components": ("name", "file")}
+SITE_FIELDS = {"pages": ("segment", "title", "file"), "settings": ("title", "file"), "components": ("name", "file"),
+               "shell": ("file",)}
+SHELL_KINDS = {".css": "style", ".js": "script"}         # what a shell file may be, by its ending
 _COMPONENT = re.compile(r"[a-z0-9]+(-[a-z0-9]+)+\Z")    # a hyphen, so it is never an HTML element's name
 
 
@@ -611,10 +735,14 @@ def read_site(folder, manifest, path, fix):
             if part == "components" and not _COMPONENT.match(entry["name"]):
                 raise HubError("bad_manifest", f"{where}: name {entry['name']!r} must be lowercase letters and digits "
                                               "with at least one hyphen, such as note-card.", fix)
-            name = entry["name"] if part == "components" else page_name(entry["title"])
+            if part == "shell" and target.suffix not in SHELL_KINDS:
+                raise HubError("bad_manifest", f"{where}: file {entry['file']!r} must end in .css (a stylesheet) "
+                                              "or .js (a script).", fix)
+            name = {"components": entry.get("name"), "shell": site_file(folder, entry["file"])}.get(part) \
+                or page_name(entry["title"])
             if not name or name in names:
-                raise HubError("bad_manifest", f"{where}: {'name' if part == 'components' else 'title'} "
-                                              f"{entry.get('title') or entry.get('name')!r} is empty or used twice in this plugin.", fix)
+                raise HubError("bad_manifest", f"{where}: {'name' if part == 'components' else 'file' if part == 'shell' else 'title'} "
+                                              f"{entry.get('title') or entry.get('name') or entry.get('file')!r} is empty or used twice in this plugin.", fix)
             names.add(name)
 
 
