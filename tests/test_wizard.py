@@ -6,17 +6,11 @@ A hub made by an older core is made as tests/test_default_plugins.py makes one: 
 defaults that core had (no agents plugin), then started with today's."""
 
 import asyncio
+import json
 import shutil
-
-import pytest
 
 from rook_hub import Hub, plugins
 from rook_hub.plugins import DEFAULTS
-
-# The agents plugin's hub part and settings store are brief HA2's (pull request 452); until it is in,
-# tests/test_setup_state.py covers hub_setup.py over a stand-in for them.
-pytestmark = pytest.mark.skipif(not (DEFAULTS / "agents" / "hub.py").exists(),
-                                reason="needs the agents plugin's hub part (brief HA2, pull request 452)")
 
 
 async def hub_cap(hub, cap, args, user):
@@ -83,7 +77,7 @@ async def facts_and_look(tmp_path):
     hub = Hub(tmp_path / "hub")
     facts = {"by": "deploy/install/install.sh", "folder": "/opt/rook", "http": "0.0.0.0:8740 (every interface)",
              "units": ["rook-hub", "rook-worker"], "vault_key": "/opt/rook/vault.key"}
-    (tmp_path / "hub" / "install.json").write_text(__import__("json").dumps(facts))
+    (tmp_path / "hub" / "install.json").write_text(json.dumps(facts))
     alice = hub.auth.open_until_claimed("alice")["guid"]
     bob = hub.auth.create_user("Bob", "battery staple")["guid"]
     assert await hub_cap(hub, "agent.setup", {}, alice) == {"done": False, "install": facts}

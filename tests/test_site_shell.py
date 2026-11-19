@@ -12,7 +12,8 @@ from test_site import ask, browser, login
 
 SHELF = pathlib.Path(__file__).parent / "plugins" / "shelf"
 AGENTS = pathlib.Path(plugins.__file__).parent / "defaults" / "agents"
-DOCK_FILES = ["shell/dock.css", "shell/rookie.js", "shell/rookie-map.js", "shell/chat-widgets.js", "shell/dock.js"]
+DOCK_FILES = ["shell/dock.css", "shell/rookie.js", "shell/rookie-map.js", "shell/chat-widgets.js", "shell/dock.js",
+              "shell/setup.js"]                                  # setup's views and look steps (HA3), after the dock
 
 
 def shelf_with_shell(tmp_path, name, files):
@@ -42,7 +43,7 @@ async def shell_files(tmp_path):
         async with browser() as client, browser() as stranger:
             assert (await login(client, base, "Alice", "correct horse"))[0] == 200
 
-            # Every hub has the agents plugin's five, in the order its manifest lists them.
+            # Every hub has the agents plugin's six, in the order its manifest lists them.
             status, reply = await ask(client, "GET", base + "/api/session")
             assert reply["shell"] == [
                 {"plugin": "agents", "kind": "style" if f.endswith(".css") else "script",

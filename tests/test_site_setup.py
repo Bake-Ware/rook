@@ -22,20 +22,10 @@ import json
 import os
 import pathlib
 
-import pytest
-
+from helpers import eventually
 from rook_hub import Hub
 from rook_hub.auth import UNCLAIMED
-from rook_hub.plugins import DEFAULTS
-
-# The dock (brief HA1, pull request 453) and the agents plugin's hub part (brief HA2, pull request 452)
-# carry these views; until both are in, this test is skipped.
-if not ((DEFAULTS / "agents" / "hub.py").exists() and (DEFAULTS / "agents" / "shell" / "dock.js").exists()):
-    pytest.skip("needs the dock (brief HA1, #453) and the agents plugin's hub part (brief HA2, #452)",
-                allow_module_level=True)
-
-from helpers import eventually  # noqa: E402
-from test_site_dock import CHROME, Chrome, StandIn, pytestmark  # noqa: E402, F401  (skipped without Chrome)
+from test_site_dock import CHROME, Chrome, StandIn, pytestmark  # noqa: F401  (skipped without Chrome)
 
 SHOTS = os.environ.get("ROOK_SETUP_SHOTS")
 
