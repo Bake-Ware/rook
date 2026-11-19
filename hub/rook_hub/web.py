@@ -64,8 +64,25 @@ async def cache_header(request, response):
     page path, `/site/*`, a plugin's pages and files) are `no-cache`: a browser or proxy such as
     Cloudflare may keep a copy but asks the hub before each use, and the ETag answers 304 when nothing
     changed, so a deploy is seen on the next load and old modules never run against a new hub. API
-    answers are `no-store`: a revealed value or a new token is never kept anywhere."""
-    response.headers["Cache-Control"] = "no-store" if _is_api(request.path) else "no-cache"
+    answers are `no-store`: a revealed value or a new token is never kept anywhere.
+
+    A site file asked for at its current version (`?v=`, house agent HA5) may be kept for good: those
+    bytes never change at that address, and a changed file has a new one."""
+    if _is_api(request.path):
+        response.headers["Cache-Control"] = "no-store"
+    elif response.status in (200, 304) and request.query.get("v") and _current(request):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    else:
+        response.headers["Cache-Control"] = "no-cache"
+
+
+def _current(request):
+    """Whether the address's version is the version of the file it is answered with (HA5)."""
+    path = site.served_file(request)
+    try:
+        return path is not None and site.version(path) == request.query["v"]
+    except OSError:
+        return False
 
 
 def _done(future):

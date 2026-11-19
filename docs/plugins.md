@@ -260,6 +260,8 @@ Each part is optional. Every `file` of `pages`, `settings` and `components` is a
 
 The hub serves these files at `/plugin-files/<plugin>/<file>` to a logged-in session only, and serves no file the manifest does not name. They are read from the installed plugin on every page load, so installing or replacing a plugin shows on the next page load, with no restart (PL3).
 
+Every file the site loads carries a version in its address, a short hash of its bytes (`/plugin-files/<plugin>/<file>?v=3fa9c1d2e5b7`, house agent brief HA5), so a proxy in front of the hub never hands out an old copy of a changed file. The session gives a plugin's files at their versioned addresses. Inside a module, import core's modules and the plugin's other files by their plain addresses (`'/site/shell.js'`, `'/plugin-files/<plugin>/<file>'`): the page's import map sends each to its versioned one. A file loaded other than by import (a stylesheet added as a `<link>`, an image) takes its versioned address from `asset(address)` in `/site/shell.js`. At its current version a file may be kept for good (`Cache-Control: public, max-age=31536000, immutable`); without a version it is `no-cache`, as before.
+
 What the hub refuses at install, saying what to fix (an install is all or nothing):
 
 - an entry without its fields, or a `file` that is missing or leaves the plugin's folder (`bad_manifest`);
@@ -290,7 +292,7 @@ export default {
 };
 ```
 
-`/site/shell.js` also gives a page `api` (any of the site's requests), `toast`, `viewHref` and `showView` (a view kept in the address, P6). A pin on a plugin's page names the plugin and the page, so it survives a reinstall and never leads to another plugin's page. If a new version no longer has the page, the pin says it is gone, and so does the page area when it is opened. A page that fails to load says which plugin's page failed, and the rest of the site works. A plugin's page runs in the site as core's pages do: there is no sandbox, and a plugin hooks into nothing in routing, auth or the journal (PL2).
+`/site/shell.js` also gives a page `api` (any of the site's requests), `toast`, `viewHref` and `showView` (a view kept in the address, P6), and `asset` (a site file's versioned address, HA5). A pin on a plugin's page names the plugin and the page, so it survives a reinstall and never leads to another plugin's page. If a new version no longer has the page, the pin says it is gone, and so does the page area when it is opened. A page that fails to load says which plugin's page failed, and the rest of the site works. A plugin's page runs in the site as core's pages do: there is no sandbox, and a plugin hooks into nothing in routing, auth or the journal (PL2).
 
 ## Core's own caps: plugins installed by default (PL7)
 

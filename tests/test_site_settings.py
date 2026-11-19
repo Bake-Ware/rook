@@ -12,6 +12,7 @@ from helpers import Clock, eventually, link_fields
 from memory_link import link_pair
 from rook_hub import Hub, journal
 from rook_protocol import decode, encode
+from test_asset_versions import AGENTS, version
 from test_site import ask, browser, login
 
 PLUGINS = pathlib.Path(__file__).parent / "plugins"
@@ -118,7 +119,8 @@ async def scenario(tmp_path):
                 {"id": "hub", "label": "Hub", "script": "/site/sections/hub.js"},
                 {"id": "plugins", "label": "Plugins", "script": "/site/sections/plugins.js"},
                 {"id": "agents/your-account", "label": "Your account", "plugin": "agents",
-                 "script": "/plugin-files/agents/shell/settings-account.js"}]})
+                 "script": "/plugin-files/agents/shell/settings-account.js"           # at its version (HA5)
+                           f"?v={version(AGENTS / 'shell' / 'settings-account.js')}"}]})
 
             # 2. The installed plugins and what each added (PL1, PL3).
             status, reply = await ask(client, "GET", base + "/api/plugins")
