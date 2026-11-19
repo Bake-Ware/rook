@@ -458,10 +458,9 @@ class Worker:
             # stream messages before and after it on the one ordered link (D5; see the module docstring).
             await self._link.send(encode(self.heartbeat()))
             await self._interval_known.wait()
-            try:
-                await asyncio.wait_for(self._changed.wait(), self.interval)
-            except TimeoutError:
-                pass
+            # Until something changes or the interval passes. Not asyncio.wait_for: on Python 3.11 it can
+            # swallow _session's cancel, and this loop would then outlive its session (brief 64).
+            await rook_link.within(self._changed.wait(), self.interval)
 
     async def _serve(self):
         link = self._link
