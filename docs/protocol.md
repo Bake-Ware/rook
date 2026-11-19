@@ -31,7 +31,7 @@ A message is a JSON object (RFC 8259) encoded as UTF-8, with a string field `typ
 
 ## Minimum worker (W2)
 
-A worker must implement `knock`, `knock_reply`, `link_open`, `link_accept`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, make its link, heartbeat and answer calls. The `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them, and `stream_resize` may be ignored by any worker. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`). So is `config`: a worker that does not know it answers `bad_message`, which the hub ignores.
+A worker must implement `knock`, `knock_reply`, `link_open`, `link_accept`, `heartbeat`, `heartbeat_reply`, `call`, `result` and `error`. That is register, make its link, heartbeat and answer calls. The `stream_*` messages are optional: a worker that announces no cap returning a stream never sees them, and `stream_resize` may be ignored by any worker. `event` is optional too, and so is `plugins`: the hub sends it only to worker forms it pushes plugin worker parts to (today `python`). So is `config`: a worker that does not know it answers `bad_message`, which the hub ignores. `result_part` and `result_ack` are optional too: a worker that never sends a result in pieces never sees `result_ack`.
 
 ## Shared blocks
 
@@ -182,7 +182,43 @@ The worker answers with exactly one `result`, `error` or (for a stream cap) `str
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `id` | string | yes | The call's `id`. |
-| `result` | any JSON | yes | What the cap returned. |
+| `result` | any JSON | yes | What the cap returned; `null` when it went in pieces. |
+| `parts` | integer | no | The result went as this many `result_part` messages before this one (below); `result` is then `null`. Left out for a result sent whole. Added in v1 as an optional field (U8). |
+
+### A big result (brief 54)
+
+Bake: "anything big should be chunked." A worker writes a result's JSON text as it goes. A result whose text ends within about a megabyte (the Python worker: 1,000,000 characters) is sent whole, as one `result`, as always. One that goes past it is sent in pieces: `result_part` messages, in order, each one sent only after the hub has acknowledged the one before with `result_ack`, and then a `result` with `parts`, the number of pieces, and `result` null. The worker holds one piece at a time. Where a result becomes pieces is not a limit: nothing is refused, cut or given a deadline for its size, and a result of any size goes whole, in as many pieces as it takes.
+
+Joined in order, the pieces' `data` are the result as JSON text. It is valid JSON, but not necessarily in the canonical form: an object's fields may come in the order the worker made them, so a field it learns last (a command's exit code) can come last.
+
+The hub puts each piece on the call's stream as the next entry, the same stream a call that outlasts its caller's wait gets, and the caller is answered `running` with that stream at the first piece. The reply the hub keeps, and puts last on the stream, is the worker's `result` with `parts` and `stream` (the stream's moniker): the stream's first `parts` entries joined are the result.
+
+```
+worker                                   hub
+  |<-- call{id, cap, args} ----------------|
+  |--- result_part{id, data} ------------->|   first piece: the call's stream; its caller is told "running"
+  |<-- result_ack{id} ---------------------|
+  |--- result_part{id, data} ------------->|   ... as many as it takes
+  |<-- result_ack{id} ---------------------|
+  |--- result{id, result: null, parts} --->|   the reply, the stream's last entry; the stream closes
+```
+
+### `result_part`: worker to hub, optional (brief 54)
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `id` | string | yes | The call's `id`. |
+| `data` | string | yes | The next piece of the result's JSON text. |
+
+The hub answers each one with `result_ack`, whether or not the call is still waiting for it, so a worker is never left waiting by a call the hub has given up on. Added in v1 as an optional message (U8).
+
+### `result_ack`: hub to worker, optional (brief 54)
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `id` | string | yes | The call's `id`: the hub has the last `result_part` of it, and the worker sends the next. |
+
+The worker waits for it with no deadline. If its link is lost while it waits, the call is over (the hub answered its caller `worker_disconnected`): the worker sends no more of it. Added in v1 as an optional message (U8): the hub sends it only to a worker that sent `result_part`.
 
 ### `error`: either direction (C3, W5)
 
@@ -219,7 +255,7 @@ New codes may be added without a version change; receivers treat an unknown code
 
 ## Sizes
 
-An encoded message is at most 16,000,000 bytes, in either direction, or, hub to worker, the worker's `max_message` if that is smaller. The hub refuses a call or input that would be larger, with `message_too_large`. A worker whose result would be larger answers `cap_failed`. `stream_data` carries at most 65,536 bytes of data; a sender splits larger output.
+An encoded message is at most 16,000,000 bytes, in either direction, or, hub to worker, the worker's `max_message` if that is smaller. The hub refuses a call or input that would be larger, with `message_too_large`. A result is never larger: one over about a megabyte goes in pieces ("A big result"). `stream_data` carries at most 65,536 bytes of data; a sender splits larger output.
 
 ### `stream_open`: worker to hub, answers a call on a stream cap (S1, S3)
 
