@@ -307,7 +307,7 @@ class Streams:
         message = encode({"type": "stream_data", "stream": row["handle"],
                           "data": base64.b64encode(data).decode("ascii")})
         self.hub.check_size(row["worker"], message, "The input")     # docs/protocol.md, "Sizes"
-        await link.send(message)
+        await self._send(link, row, message, "the input", "write again")
         self._append(row["guid"], "in", data, actor)
         return {"written": len(data)}
 
@@ -328,7 +328,8 @@ class Streams:
         if link is None:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
                            "Wait for the worker to come back online, then resize again.")
-        await link.send(encode({"type": "stream_resize", "stream": row["handle"], "cols": cols, "rows": rows}))
+        await self._send(link, row, encode({"type": "stream_resize", "stream": row["handle"], "cols": cols, "rows": rows}),
+                         "the new size", "resize again")
         return {"resized": row["moniker"], "cols": cols, "rows": rows}
 
     async def close(self, stream, why, *, user=None, token=None):
@@ -343,6 +344,17 @@ class Streams:
         if link is None:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
                            "Wait for the worker to come back online, then close it.")
-        await link.send(encode({"type": "stream_close", "stream": row["handle"]}))
+        await self._send(link, row, encode({"type": "stream_close", "stream": row["handle"]}),
+                         "the close", "close it again")
         self._close(row, actor[0], actor, why)
         return {"closed": row["moniker"]}
+
+    async def _send(self, link, row, message, what, again):
+        """Hand `message` to the link of `row`'s worker. A link that closes under the send is the
+        caller's `worker_disconnected`, as for a call (C3), not an EOFError out of the door."""
+        try:
+            await link.send(message)
+        except EOFError:
+            raise HubError("worker_disconnected", f"The link to the worker of stream {row['moniker']} closed "
+                                                  f"before {what} was sent.",
+                           f"Check whether the worker is online, then {again}.") from None

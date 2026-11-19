@@ -442,12 +442,24 @@ class Worker:
         else:
             try:
                 reply = {"type": "result", "id": call["id"], "result": await cap.handler(call["args"])}
-                if (size := len(encode(reply))) > MAX_MESSAGE:     # docs/protocol.md, "Sizes"
-                    raise ValueError(f"its result is {size} bytes encoded, over the {MAX_MESSAGE} a message may be")
+                size = len(encode(reply))
             except FAILS as e:
-                reply = error("cap_failed", f"{call['cap']} failed: {reason(e)}",
-                              f"Check the arguments against the schema of {call['cap']}.", call["id"])
+                reply = self._failed(call, e)
+            else:
+                if size > MAX_MESSAGE:     # docs/protocol.md, "Sizes"
+                    reply = error("cap_failed", f"{call['cap']} failed: its result is {size} bytes encoded, "
+                                                f"and a message may be at most {MAX_MESSAGE} bytes.",
+                                  "Ask for less at once, or have the result written to a file on "
+                                  f"{self.name} and read that file in parts.", call["id"])
         await self._send(reply)
+
+    def _failed(self, call, e):
+        """`cap_failed` for a handler that raised. The worker cannot tell whether the arguments or
+        the machine caused it, so the next step points at the reason, not at the schema (C3)."""
+        why = reason(e).rstrip()
+        return error("cap_failed", f"{call['cap']} failed: {why}{'' if why.endswith(('.', '!', '?')) else '.'}",
+                     f"Change what the reason names and call again, or call {call['cap']} on another worker "
+                     "that announces it.", call["id"])
 
     async def _open_stream(self, call, cap):
         """A call on a stream cap: the handler names the stream, the hub hears stream_open (S1)."""
@@ -460,8 +472,7 @@ class Worker:
                      "title": str(named["title"]), "description": str(named["description"])}
             encode(reply)
         except FAILS as e:
-            await self._send(error("cap_failed", f"{call['cap']} failed: {reason(e)}",
-                                   f"Check the arguments against the schema of {call['cap']}.", call["id"]))
+            await self._send(self._failed(call, e))
             return
         self.streams[stream.handle] = stream
         await self._send(reply)
