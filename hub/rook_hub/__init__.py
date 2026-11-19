@@ -185,6 +185,7 @@ class Hub:
         self._db.executescript(jobs.SCHEMA)
         self._db.executescript(vault.SCHEMA)
         self._db.executescript(streams.SCHEMA)
+        streams.migrate(self._db)
         self.streams = streams.Streams(self)
         self._db.executescript(plugins.SCHEMA)
         self._db.executescript(devices.SCHEMA)
@@ -205,11 +206,12 @@ class Hub:
         self._adjectives, self._nouns = _load_words()
         self._links = {}  # worker guid -> its live link
         self._calls = {}  # call id -> (worker guid, future, actor, cap)
-        self._running = {}  # call id -> {actor, worker, entry, reply}, while Hub.call runs it
+        self._running = {}  # call id -> {actor, worker, entry, reply, task, job, run, ended, ...}, while Hub.call runs it
+        self._stops = {}    # a task running a call that was stopped (brief 59) -> (that call's id, its reply)
         self._runner = None  # the HTTP server, while serving
         self._serving_dir = None  # the open hub.lock while this hub holds its data directory (serve)
         self._stopping = None     # while serving: an event set when stop_serving begins
-        self._telling = set()     # the tasks telling linked workers their key was revoked (R5)
+        self._telling = set()     # the tasks telling linked workers their key was revoked (R5), or a call was stopped
         self._revoked_links = set()   # links whose key was revoked, until their worker leaves (R5)
         self.plugins = plugins.Plugins(self)
         self.plugins.load_all()  # every installed plugin, at start (PL3)
@@ -734,7 +736,9 @@ class Hub:
         except HubError as e:
             return dict(e.message, id=call_id)
         running = self._running[call_id] = {"actor": actor, "worker": None, "entry": entry, "reply": None,
-                                            "cap": cap, "why": why, "stream": None, "pieces": asyncio.Event()}
+                                            "cap": cap, "why": why, "stream": None, "pieces": asyncio.Event(),
+                                            "task": asyncio.current_task(), "job": job, "run": run,
+                                            "ended": asyncio.Event()}
         try:
             request = encode({"type": "call", "id": call_id, "cap": cap, "args": args})
             if worker == caps.HUB:      # the hub's own caps (caps.py)
@@ -763,6 +767,7 @@ class Hub:
                     self.check_size(guid, request, "The call")
                     future = asyncio.get_running_loop().create_future()
                     self._calls[call_id] = (guid, future, actor, cap)
+                    running["link"] = link
                     try:
                         await link.send(request)
                         reply = await future
@@ -778,11 +783,26 @@ class Hub:
         except HubError as e:
             reply = dict(e.message, id=call_id)
         except BaseException as e:   # it raised, or was cancelled, inside the hub: the entry still ends
-            what = "run" if job else "call"
-            reply = error(f"{what}_failed", f"The {what} stopped inside the hub: {type(e).__name__}: {e}",
-                          "Read the hub's log for the details, then call again if it is still needed.", call_id)
-            running["left"] = self._left_running(isinstance(e, asyncio.CancelledError), None)
-            raise
+            stop = self._stops.get(running["task"]) if isinstance(e, asyncio.CancelledError) else None
+            if stop is None:
+                what = "run" if job else "call"
+                reply = error(f"{what}_failed", f"The {what} stopped inside the hub: {type(e).__name__}: {e}",
+                              "Read the hub's log for the details, then call again if it is still needed.", call_id)
+                running["left"] = self._left_running(isinstance(e, asyncio.CancelledError), None)
+                raise
+            # Stopped on purpose (brief 59): this call ends with the stop's reply, and its worker is told to
+            # end the work. The call that was stopped answers it; a call it was making for it (a device's,
+            # on its worker) ends the same way, and the cancel goes on up to the stopped one.
+            reply = dict(stop[1], id=call_id)
+            if running.get("link") is not None:     # it went to a worker
+                task = asyncio.get_running_loop().create_task(self._tell(running["link"],
+                                                                         {"type": "call_stop", "id": call_id}))
+                self._telling.add(task)
+                task.add_done_callback(self._telling.discard)
+            if stop[0] != call_id:
+                raise
+            del self._stops[running["task"]]
+            running["task"].uncancel()
         finally:
             running["reply"] = reply
             running["left"] = running.get("left") or self._left_running(False, reply)
@@ -794,6 +814,35 @@ class Hub:
                                      (guid, json.dumps(self._kept(guid, reply)), entry))
                 if running["stream"] is not None:   # its stream ends with its reply (left running: the next start ends it)
                     self.streams.call_ended(running["stream"]["guid"], self._kept(guid, reply))
+            if self._stops.get(running["task"], (None,))[0] == call_id:    # a stop that came as it ended
+                del self._stops[running["task"]]
+            running["ended"].set()
+        return reply
+
+    def stop_call(self, call_id, actor, how):
+        """Stop call `call_id`, still running, on purpose (brief 59): the call ends at once with
+        `call_stopped`, saying who stopped it and `how`, and its worker is sent `call_stop`, which
+        ends the work there (the process of a shell.exec). Its journal entry and its stream, if it has
+        one, end with that reply, as for any call that ends. `actor` is (user, token) of whoever stops
+        it. Nothing stops a call but this; there is no timeout. Returns the reply it ends with."""
+        running = self._running.get(call_id)
+        if running is None:
+            raise HubError("call_not_running", f"No call {call_id} is running.",
+                           "It has ended: read the journal (text set to its id) for how.")
+        task = running["task"]
+        if task in self._stops:                     # already being stopped
+            return self._stops[task][1]
+        with self._lock:
+            user = self.auth._user(actor[0])
+            through = actor[1] and self._db.execute("SELECT moniker, purpose FROM tokens WHERE guid = ?",
+                                                    (actor[1],)).fetchone()
+        who = f"{user['name']} ({user['moniker']}" + (
+            f", through {through['purpose']} token {through['moniker']})" if through else ")")
+        reply = error("call_stopped", f"{who} stopped this call, {how}.",
+                      "Read the journal for what it did before it stopped, and call again if it is still needed.",
+                      call_id)
+        self._stops[task] = (call_id, reply)
+        task.cancel()
         return reply
 
     def _follow(self, call_id, running):

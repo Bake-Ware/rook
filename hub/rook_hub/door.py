@@ -17,6 +17,8 @@ import json
 
 from aiohttp import web
 
+from rook_protocol import SIGNALS
+
 from . import bands, caps, devices, journal
 from .errors import HubError
 
@@ -33,12 +35,13 @@ INSTRUCTIONS = (
     "from the last next) until the stream is no longer open; its last entry is the call's reply. A result "
     "over about a megabyte answers the same way, at once, and comes in pieces: then the reply has parts n, and "
     "the stream's first n entries joined are the result, as JSON. Do not call again meanwhile, or the work "
-    "runs twice.")
+    "runs twice. To stop a call that is still running, close its stream (stream tool, action close, with a "
+    "why): the work on the worker ends, and the reply says who stopped it.")
 
 FOLLOW = ("The call is still running and goes on by itself. Follow it with the stream tool: action \"read\", "
           "stream \"{stream}\", wait 40, from 0 and then each reply's next, until open is false. The last entry "
           "is the call's reply; if it has parts n, the first n entries joined are the result, as JSON. Do not call "
-          "again: that would run the work twice.")
+          "again: that would run the work twice. To stop it, close that stream with a why.")
 
 TOOLS = [
     {"name": "workers",
@@ -73,7 +76,7 @@ TOOLS = [
          "back next as from, until it is no longer open. Its last entry is the call's reply as JSON: "
          "{type: \"result\", result} or {type: \"error\", code, message, next}; a result that came in pieces "
          "is {type: \"result\", result: null, parts: n}, and the first n entries joined are the result, as "
-         "JSON. Do not call again meanwhile, or the work runs twice."),
+         "JSON. Do not call again meanwhile, or the work runs twice. Closing that stream stops the call."),
      "inputSchema": {"type": "object", "required": ["worker", "cap", "why"], "additionalProperties": False,
                      "properties": {
                          "worker": {"type": "string"},
@@ -105,19 +108,22 @@ TOOLS = [
          "open ones only). action \"read\": what passed through the stream from position `from` (0 is the "
          "start): output from the worker as \"out\", input as \"in\" with who sent it. The reply's `next` "
          "is where to read from next time. With `wait` (seconds, up to 40) a read with nothing new waits for "
-         "more. action \"write\": send `text` as input (end it with \"\\n\" to finish a line). action "
-         "\"close\": close it, with a `why`. action \"resize\": tell the worker the size, in characters "
+         "more; once a process's stream has closed, the reply has its `exit_code`. action \"write\": send `text` "
+         "as input (end it with \"\\n\" to finish a line). action \"signal\": send its process a `signal`: INT (as "
+         "Ctrl-C), TERM, KILL, HUP or QUIT. action \"close\": close it, with a `why`; closing the stream of a "
+         "call that is still running stops the call. action \"resize\": tell the worker the size, in characters "
          "(`cols` and `rows`), of the terminal you show the stream in; use it when a full-screen program in a "
          "terminal stream draws for the wrong width. A terminal cap also takes cols and rows when it opens. "
          "Several clients can read one stream at once; when they resize it, the last resize wins. A stream "
          "stays open until someone closes it, so close it when its work is done."),
      "inputSchema": {"type": "object", "required": ["action"], "additionalProperties": False, "properties": {
-         "action": {"type": "string", "enum": ["list", "read", "write", "close", "resize"]},
+         "action": {"type": "string", "enum": ["list", "read", "write", "signal", "close", "resize"]},
          "stream": {"type": "string", "description": "The stream's moniker or GUID."},
          "from": {"type": "integer", "minimum": 0}, "wait": {"type": "number", "minimum": 0, "maximum": 40},
          "limit": {"type": "integer", "minimum": 1}, "text": {"type": "string"}, "why": {"type": "string"},
          "open": {"type": "boolean"}, "cols": {"type": "integer", "minimum": 1},
-         "rows": {"type": "integer", "minimum": 1}}}},
+         "rows": {"type": "integer", "minimum": 1},
+         "signal": {"type": "string", "enum": list(SIGNALS)}}}},
 ]
 
 
@@ -210,8 +216,10 @@ async def stream(hub, token, args):
         return _dumps(await hub.streams.close(name, args["why"], token=token))
     if action == "resize":
         return _dumps(await hub.streams.resize(name, args.get("cols"), args.get("rows"), token=token))
-    raise HubError("bad_message", f"action {action!r} is not one of list, read, write, close, resize.",
-                   "Use action list, read, write, close or resize.")
+    if action == "signal":
+        return _dumps(await hub.streams.signal(name, args.get("signal"), token=token))
+    raise HubError("bad_message", f"action {action!r} is not one of list, read, write, signal, close, resize.",
+                   "Use action list, read, write, signal, close or resize.")
 
 
 HANDLERS = {"workers": workers, "caps": list_caps, "call": call, "journal": read_journal, "stream": stream}

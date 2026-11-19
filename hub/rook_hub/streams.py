@@ -27,7 +27,15 @@ next entry, in order; otherwise the stream stays empty while the call runs. When
 the call ends, its reply, as the journal keeps it, is the last entry, and the hub
 closes the stream on purpose (S4): the call is over. A reply that came in pieces
 says how many (`parts`): the first that many entries, joined, are its result as
-JSON. The stream takes no input and no client closes it; it is read like any other.
+JSON. The stream takes no input; it is read like any other. A client that closes
+it stops the call (brief 59): the call ends with `call_stopped`, saying who stopped
+it and why, which becomes the stream's last entry, and its worker ends the work.
+
+A stream with a process behind it (brief 59): a client sends the process a signal by
+name (0.5's: INT, TERM, KILL, HUP, QUIT) with `stream_signal`; it goes to the worker
+and is not recorded, as a resize is not. A worker that closes a stream because its
+process ended says the exit code; the stream keeps it (`exit_code`), and so do the
+journal's close entry and the `stream.close` event.
 
 A client showing a stream as a terminal tells its worker the terminal's size with
 a resize (`stream_resize`, Bake 13 Nov). It goes to the worker and nowhere else:
@@ -40,7 +48,7 @@ import base64
 import json
 import uuid
 
-from rook_protocol import encode
+from rook_protocol import SIGNALS, encode
 
 from . import scrub
 from .errors import HubError
@@ -59,7 +67,8 @@ CREATE TABLE IF NOT EXISTS streams (
     token       TEXT,
     opened_at   REAL NOT NULL,
     closed_at   REAL,
-    closed_by   TEXT                    -- "worker", or the user who closed it
+    closed_by   TEXT,                   -- "worker", or the user who closed it
+    exit_code   INTEGER                 -- the exit code of its process, if its worker said (brief 59)
 );
 CREATE INDEX IF NOT EXISTS streams_worker_handle ON streams (worker, handle);
 CREATE TABLE IF NOT EXISTS stream_data (    -- the recording
@@ -84,6 +93,12 @@ MAX_WAIT = 40    # seconds a read may wait for more; well under the minute MCP c
 def _text(data):
     """Bytes as text for an agent: UTF-8, with any byte that is not shown as \\xNN."""
     return data.decode("utf-8", "backslashreplace")
+
+
+def migrate(db):
+    """A data directory made before brief 59 gains the exit_code column."""
+    if "exit_code" not in {row["name"] for row in db.execute("PRAGMA table_info(streams)")}:
+        db.execute("ALTER TABLE streams ADD COLUMN exit_code INTEGER")
 
 
 class Streams:
@@ -116,7 +131,7 @@ class Streams:
     def closed_by_worker(self, worker, message):
         row = self._open_by_handle(worker, message["stream"])
         if row is not None:
-            self._close(row, "worker", (None, None), None)
+            self._close(row, "worker", (None, None), None, message.get("exit_code"))
 
     def still_open(self, worker, handles):
         """A heartbeat's `open_streams` (D5): `handles` are every stream `worker` opened and still has
@@ -182,15 +197,19 @@ class Streams:
         for row in rows:
             self.call_ended(row["stream"], reply_for(row["call"]))
 
-    def _for_call(self, row):
-        """Refuse input and closing on a long call's stream: the hub ends it when the call ends."""
+    def _call_of(self, row):
+        """The id of the call whose reply stream `row` carries, or None for any other stream."""
         with self.hub._lock:
-            follows = self.hub._db.execute("SELECT 1 FROM call_streams WHERE stream = ?", (row["guid"],)).fetchone()
-        if follows:
+            follows = self.hub._db.execute("SELECT call FROM call_streams WHERE stream = ?", (row["guid"],)).fetchone()
+        return follows["call"] if follows else None
+
+    def _for_call(self, row):
+        """Refuse input, a resize and a signal on a long call's stream: it carries the call's reply."""
+        if self._call_of(row) is not None:
             raise HubError("call_stream", f"Stream {row['moniker']} carries the reply of a call; it takes no input "
                                           "and closes itself when the call ends.",
                            f"Read stream {row['moniker']} with a wait until it is no longer open; its last entry "
-                           "is the call's reply.")
+                           "is the call's reply. To stop the call, close the stream.")
 
     def _open_by_handle(self, worker, handle):
         with self.hub._lock:
@@ -211,16 +230,17 @@ class Streams:
         if event is not None:
             event.set()
 
-    def _close(self, row, closed_by, actor, why):
+    def _close(self, row, closed_by, actor, why, exit_code=None):
         hub = self.hub
+        ended = {} if exit_code is None else {"exit_code": exit_code}
         with hub._lock, hub._db:
-            hub._db.execute("UPDATE streams SET closed_at = ?, closed_by = ? WHERE guid = ?",
-                            (hub.clock(), closed_by, row["guid"]))
+            hub._db.execute("UPDATE streams SET closed_at = ?, closed_by = ?, exit_code = ? WHERE guid = ?",
+                            (hub.clock(), closed_by, exit_code, row["guid"]))
             hub._journal("stream", actor, row["worker"], {"closed": row["guid"], "title": row["title"],
-                                                          "closed_by": closed_by}, why=why)
+                                                          "closed_by": closed_by, **ended}, why=why)
             record = self._record(self._row(row["guid"]))
-        hub.events.emit("stream.close", self._event(record, record["closed_by"]), user=actor[0], token=actor[1],
-                        worker=row["worker"])
+        hub.events.emit("stream.close", dict(self._event(record, record["closed_by"]), **ended), user=actor[0],
+                        token=actor[1], worker=row["worker"])
         self._wake(row["guid"])
 
     # ---------------------------------------------------------- records
@@ -243,7 +263,7 @@ class Streams:
                 "opened_by": self._who(row["user"]), "opened_at": iso(row["opened_at"]),
                 "open": row["closed_at"] is None,
                 "closed_by": row["closed_by"] if row["closed_by"] in (None, "worker", "hub") else self._who(row["closed_by"]),
-                "closed_at": iso(row["closed_at"])}
+                "closed_at": iso(row["closed_at"]), "exit_code": row["exit_code"]}
 
     def _event(self, record, by):
         return {"stream": record["guid"], "stream_moniker": record["moniker"], "title": record["title"],
@@ -302,8 +322,9 @@ class Streams:
         else:
             entries = [{"position": r["position"], r["direction"]: _text(r["data"]),
                         **({"from": self._who(r["user"])} if r["direction"] == "in" else {})} for r in rows]
+        ended = {} if row["exit_code"] is None else {"exit_code": row["exit_code"]}   # how its process ended
         return {"stream": row["moniker"], "open": row["closed_at"] is None, "entries": entries,
-                "next": rows[-1]["position"] + 1 if rows else position}
+                "next": rows[-1]["position"] + 1 if rows else position, **ended}
 
     async def write(self, stream, text, *, user=None, token=None):
         """Send input to the worker, recorded with who sent it."""
@@ -347,14 +368,40 @@ class Streams:
                          "the new size", "resize again")
         return {"resized": row["moniker"], "cols": cols, "rows": rows}
 
+    async def signal(self, stream, name, *, user=None, token=None):
+        """Send the process behind a stream a signal, by name (brief 59). Not recorded, as a resize is not."""
+        if name not in SIGNALS:
+            raise HubError("bad_message", f"signal {name!r} is not one of {', '.join(SIGNALS)}.",
+                           "Give signal as INT (as Ctrl-C), TERM (ask it to end), KILL (end it), HUP or QUIT.")
+        with self.hub._lock, self.hub._db:
+            self.hub.auth.actor(user, token)
+            row = self._row(stream)
+        if row["closed_at"] is not None:
+            raise HubError("stream_closed", f"Stream {row['moniker']} is closed.",
+                           "Its process has ended; read the stream to see how.")
+        self._for_call(row)
+        link = self.hub._links.get(row["worker"])
+        if link is None:
+            raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
+                           "Wait for the worker to come back online, then send the signal again.")
+        await self._send(link, row, encode({"type": "stream_signal", "stream": row["handle"], "signal": name}),
+                         "the signal", "send it again")
+        return {"signalled": row["moniker"], "signal": name}
+
     async def close(self, stream, why, *, user=None, token=None):
-        """Close a stream on purpose: tell its worker, record who closed it."""
+        """Close a stream on purpose: tell its worker, record who closed it. Closing a long call's
+        stream stops the call (brief 59), and answers once the call has ended with that."""
         with self.hub._lock, self.hub._db:
             actor = self.hub.auth.actor(user, token)
             row = self._row(stream)
         if row["closed_at"] is not None:
             raise HubError("stream_closed", f"Stream {row['moniker']} is already closed.", "Nothing to do.")
-        self._for_call(row)
+        call = self._call_of(row)
+        if call is not None:
+            running = self.hub._running.get(call)
+            reply = self.hub.stop_call(call, actor, f"closing stream {row['moniker']}: {why}")
+            await running["ended"].wait()
+            return {"closed": row["moniker"], "stopped": call, "reply": reply}
         link = self.hub._links.get(row["worker"])
         if link is None:
             raise HubError("worker_offline", f"The worker of stream {row['moniker']} is not connected.",
