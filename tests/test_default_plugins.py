@@ -4,13 +4,18 @@ rook_worker over its real carrier (Telesthete over loopback WebSocket)."""
 
 import asyncio
 import hashlib
+import io
 import json
 import os
 import pathlib
 import shutil
 import sqlite3
 import stat
+import subprocess
+import tarfile
 import time
+
+import pytest
 
 import rook_hub.plugins
 from rook_hub import Hub, records
@@ -442,15 +447,29 @@ async def older_core(tmp_path, monkeypatch):
 # updates a built-in only when the shipped version is newer (brief 45), so a built-in whose files
 # change at the same version never reaches it. When a test below says so, raise the version in the
 # plugin's plugin.json and set its line here to what the test prints.
-SHIPPED = {
-    "agents": ("0.3.0", "a21cae8e3453a4b38a9242f235c14df7ea3a1750ac779aee0bf7fd6de374fa68"),
-    "agents-claude-code": ("0.1.0", "79653aecb79c275eb65a7f1d5d88081c22f33e3f31767d3ef963aa47c26b8eeb"),
-    "battery": ("0.1.0", "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"),
-    "file": ("0.2.0", "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"),
-    "net": ("0.1.0", "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"),
-    "shell": ("0.5.0", "f57565e2f29bb6eb1ba20b4d33ab3efa329f9699bd9280d3e27b54dac8f73733"),
-    "worker": ("0.1.0", "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"),
+# Every version of every built-in plugin that has been merged, with a SHA-256 of its files (files_hash),
+# oldest first (brief 55; made stricter after the dock's merge, when agents 0.1.0 was merged with new
+# files and a hub that had the old 0.1.0 kept it). A line here is never changed once merged: a
+# built-in whose files change gets a newer version and a new line, which the guard prints. The
+# versions before house-agent's tip were read from its history, each with the files it last had.
+RECORDED = {
+    "agents": {"0.1.0": "a848c4503bd9e67f25b9bfb9c58de5851dc5ad36e1a3bd49af3b7de3041d72a4",
+               "0.2.0": "909084182684abe95242f81f66aa119ea74810d347693557fe2e96a23234e76a",
+               "0.3.0": "a21cae8e3453a4b38a9242f235c14df7ea3a1750ac779aee0bf7fd6de374fa68"},
+    "agents-claude-code": {"0.1.0": "79653aecb79c275eb65a7f1d5d88081c22f33e3f31767d3ef963aa47c26b8eeb"},
+    "battery": {"0.1.0": "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"},
+    "file": {"0.1.0": "fabb70ed8cd611a826a9eae004f255cf3c282f7e20fb6853990780182655d216",
+             "0.2.0": "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"},
+    "net": {"0.1.0": "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"},
+    "shell": {"0.1.0": "df540c027d5e5da20fa01465b0426033570f62fe8b59a6cc2edcc10f574817b7",
+              "0.2.0": "95a8ed17f73d6d3e5baa8107031c8ff1b5ed7ed3230accb1493c37372259f633",
+              "0.3.0": "31b456adeaa73e0063c4a8e18b19268d8a21bdba41cd5acdfd8d3770f14b09db",
+              "0.4.0": "d40819a1ad1615bd82667077ebeb5ee6cc14be84684a2832b5d6ed09b157b37f",
+              "0.5.0": "f57565e2f29bb6eb1ba20b4d33ab3efa329f9699bd9280d3e27b54dac8f73733"},
+    "worker": {"0.1.0": "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"},
 }
+SHIPPED = {name: next(reversed(versions.items())) for name, versions in RECORDED.items()}   # each one's newest
+MERGED = "origin/house-agent"   # the branch whose merged built-ins the record must keep
 
 
 def files_hash(folder):
@@ -462,72 +481,119 @@ def files_hash(folder):
     return digest.hexdigest()
 
 
-def unversioned_changes(defaults, shipped):
-    """Each way the built-ins in `defaults` differ from the record `shipped`, saying what to do."""
-    found = {f.name: f for f in defaults.iterdir() if (f / "plugin.json").is_file()}
+def built_ins(defaults):
+    """{name: (version, files hash)} of the built-in plugins in a defaults folder."""
+    return {f.name: (json.loads((f / "plugin.json").read_text())["version"], files_hash(f))
+            for f in defaults.iterdir() if (f / "plugin.json").is_file()}
+
+
+def unversioned_changes(defaults, recorded):
+    """Each way the built-ins in `defaults` differ from the record, saying what to do."""
+    found = built_ins(defaults)
     problems = []
-    for name in sorted(set(found) | set(shipped)):
+    for name in sorted(set(found) | set(recorded)):
         if name not in found:
-            problems.append(f"{name} is in SHIPPED but not under {defaults}: take its line out of SHIPPED.")
+            problems.append(f"{name} is in RECORDED but not under {defaults}: take it out of RECORDED.")
             continue
-        version, digest = json.loads((found[name] / "plugin.json").read_text())["version"], files_hash(found[name])
-        line = f"    {name!r}: ({version!r}, {digest!r}),"
-        if name not in shipped:
-            problems.append(f"{name} {version} is a new built-in: add this line to SHIPPED in "
-                            f"tests/test_default_plugins.py:\n{line}")
-        elif (version, digest) != shipped[name]:
-            was = shipped[name][0]
-            if version == was:
-                problems.append(f"The files of the built-in plugin {name} changed, but its version is still {version}, "
-                                f"so a hub that already exists keeps its old files (brief 45). Raise the version in "
-                                f"hub/rook_hub/defaults/{name}/plugin.json, then set its line in SHIPPED in "
-                                f"tests/test_default_plugins.py to what this test then prints.")
-            elif not older(was, version):
-                problems.append(f"The built-in plugin {name} went from {was} to {version}, which is not newer, so a hub "
-                                f"that has {was} keeps it. Give it a version newer than {was}.")
-            else:
-                problems.append(f"The built-in plugin {name} is now {version}: set its line in SHIPPED in "
-                                f"tests/test_default_plugins.py to\n{line}")
+        version, digest = found[name]
+        versions = recorded.get(name, {})
+        if not versions:
+            problems.append(f"{name} {version} is a new built-in: add it to RECORDED in tests/test_default_plugins.py:\n"
+                            f"    {name!r}: {{{version!r}: {digest!r}}},")
+        elif version in versions:
+            if versions[version] != digest:
+                problems.append(f"The files of the built-in plugin {name} differ from those recorded for its version "
+                                f"{version}, so a hub that already has {version} keeps its old files (briefs 45, 55). "
+                                f"Raise the version in hub/rook_hub/defaults/{name}/plugin.json and add the line this "
+                                f"test then prints; never change a recorded line.")
+        elif any(not older(was, version) for was in versions):
+            newest = next(reversed(versions))
+            problems.append(f"The built-in plugin {name} is {version}, which is not newer than {newest}, recorded "
+                            f"before, so a hub that has {newest} keeps it. Give it a version newer than {newest}.")
+        else:
+            problems.append(f"The built-in plugin {name} is now {version}: add this to its versions in RECORDED in "
+                            f"tests/test_default_plugins.py, after the others:\n    {version!r}: {digest!r},")
     return problems
 
 
+def not_kept(merged, recorded, where):
+    """Each built-in `merged` (from built_ins) whose version the record does not keep with those files."""
+    return [f"{where} has the built-in plugin {name} {version} with files hashing {digest}, but RECORDED "
+            f"{'says ' + recorded[name][version] if version in recorded.get(name, {}) else 'has no ' + version} for it. "
+            f"Once merged, a version's files and its line never change: put the line back and give your changes a "
+            f"newer version."
+            for name, (version, digest) in sorted(merged.items()) if recorded.get(name, {}).get(version) != digest]
+
+
 def test_a_built_in_plugin_whose_files_changed_has_a_new_version():
-    problems = unversioned_changes(DEFAULTS, SHIPPED)
+    problems = unversioned_changes(DEFAULTS, RECORDED)
+    assert not problems, "\n\n".join(problems)
+    for name, versions in RECORDED.items():      # oldest first, each newer than the one before
+        listed = list(versions)
+        assert all(older(a, b) for a, b in zip(listed, listed[1:])), (name, listed)
+
+
+def test_the_record_keeps_what_was_merged(tmp_path):
+    """The built-ins on house-agent, as merged, are in the record with their files unchanged, so a
+    pull request cannot change a merged version's files by changing its line. Needs a git checkout
+    that has origin/house-agent; a git archive export has none, and skips it."""
+    root = DEFAULTS.parents[2]
+    git = ["git", "-C", str(root)]
+    if subprocess.run([*git, "rev-parse", "--verify", "--quiet", MERGED + "^{commit}"], capture_output=True).returncode:
+        pytest.skip(f"no git checkout with {MERGED} here (a git archive export, say): nothing merged to compare with")
+    archive = subprocess.run([*git, "archive", MERGED, "hub/rook_hub/defaults"], capture_output=True, check=True).stdout
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        tar.extractall(tmp_path, filter="data")
+    problems = not_kept(built_ins(tmp_path / "hub" / "rook_hub" / "defaults"), RECORDED, MERGED)
     assert not problems, "\n\n".join(problems)
 
 
 def test_the_version_guard_catches_what_it_should(tmp_path):
     shipped = tmp_path / "defaults"
     shutil.copytree(DEFAULTS, shipped, ignore=shutil.ignore_patterns("__pycache__"))
-    assert unversioned_changes(shipped, SHIPPED) == []
+    assert unversioned_changes(shipped, RECORDED) == []
 
     # Core cec3ea0e's state: brief 54's files, at the versions from before them.
     for name, version in (("shell", "0.2.0"), ("file", "0.1.0")):
         manifest = json.loads((shipped / name / "plugin.json").read_text())
         (shipped / name / "plugin.json").write_text(json.dumps(dict(manifest, version=version)))
-    problems = unversioned_changes(shipped, SHIPPED)
-    assert len(problems) == 2 and all("which is not newer" in p for p in problems), problems
+    problems = unversioned_changes(shipped, RECORDED)
+    assert len(problems) == 2 and all("differ from those recorded for its version" in p for p in problems), problems
     shutil.rmtree(shipped)
     shutil.copytree(DEFAULTS, shipped, ignore=shutil.ignore_patterns("__pycache__"))
 
     # A file changed at the same version: raise the version.
     with open(shipped / "net" / "worker.py", "a") as f:
         f.write("# changed\n")
-    [problem] = unversioned_changes(shipped, SHIPPED)
-    assert "files of the built-in plugin net changed, but its version is still 0.1.0" in problem
+    [problem] = unversioned_changes(shipped, RECORDED)
+    assert "files of the built-in plugin net differ from those recorded for its version 0.1.0" in problem
     assert "Raise the version in hub/rook_hub/defaults/net/plugin.json" in problem
 
-    # Raised: then the record is to be set, and the line to set it to is given.
+    # Raised: the line to add is given; going back to an older version is refused.
     (shipped / "net" / "plugin.json").write_text((shipped / "net" / "plugin.json").read_text().replace("0.1.0", "0.1.1"))
-    [problem] = unversioned_changes(shipped, SHIPPED)
-    assert f"'net': ('0.1.1', '{files_hash(shipped / 'net')}')," in problem
+    [problem] = unversioned_changes(shipped, RECORDED)
+    assert f"'0.1.1': '{files_hash(shipped / 'net')}'," in problem
+    (shipped / "shell" / "plugin.json").write_text((shipped / "shell" / "plugin.json").read_text().replace("0.5.0", "0.4.5"))
+    assert any("shell is 0.4.5, which is not newer than 0.5.0" in p for p in unversioned_changes(shipped, RECORDED))
 
     # A new built-in, and one gone.
     shutil.copytree(shipped / "worker", shipped / "extra")
     shutil.rmtree(shipped / "battery")
-    problems = unversioned_changes(shipped, SHIPPED)
-    assert any(p.startswith("battery is in SHIPPED but not under") for p in problems)
+    problems = unversioned_changes(shipped, RECORDED)
+    assert any(p.startswith("battery is in RECORDED but not under") for p in problems)
     assert any(p.startswith("extra 0.1.0 is a new built-in") for p in problems)
+
+    # The fault this was made stricter for: house-agent merged agents 0.1.0 (HA2), then a merge
+    # changed its files and wrote the new hash over 0.1.0's line, and a hub with the first 0.1.0
+    # kept it. The record no longer keeps what was merged, so the check of the merged branch fails.
+    merged = built_ins(DEFAULTS)
+    version = merged["agents"][0]                             # agents' version now stands in for that 0.1.0
+    changed = {name: dict(versions) for name, versions in RECORDED.items()}
+    changed["agents"][version] = "0" * 64                     # the line written over
+    [problem] = not_kept(merged, changed, MERGED)
+    assert problem.startswith(f"{MERGED} has the built-in plugin agents {version} with files hashing {merged['agents'][1]}")
+    assert "never change" in problem
+    assert not_kept(merged, RECORDED, MERGED) == []
 
 
 def test_a_hub_with_shell_0_2_0_and_file_0_1_0_gets_the_versions_shipped(tmp_path, monkeypatch):
