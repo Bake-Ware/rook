@@ -155,6 +155,13 @@ class Call:
                 "SELECT type FROM record_types WHERE plugin = ?", (self.plugin,))} | {records.BLOB}
         return [r for r in found if r["type"] in owned]
 
+    def has_users(self):
+        """Whether any person is a user of this hub yet (not the system owner). Brief HA3: the agents
+        plugin's first load on a data directory tells a new hub (none: it starts in setup) from one made
+        before setup existed (it has people: setup counts as done)."""
+        with self._hub._lock:
+            return self._hub.auth.has_users()
+
     # ------------------------------------------------------------ records
 
     def create(self, type, title, description="", body=None, *, owner=None):
