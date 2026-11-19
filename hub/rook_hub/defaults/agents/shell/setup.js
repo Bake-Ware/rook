@@ -333,6 +333,9 @@ function lookStart() {
   if (!look || !look.next || !setupMode()) return false;
   VIEWS.look();
   bubble("them", lookLine(look.next, look));
-  setTimeout(() => speak(LOOK_SAY[look.next]), rookie.entering ? 1800 : 700);
+  // Said a moment later, and only if that step is still open: one answered by then keeps its own line
+  // (0.5 said it regardless, so a quick first click left "Sound?" beside Rookie afterwards).
+  const step = look.next;
+  setTimeout(() => { if (site.look && site.look.next === step) speak(LOOK_SAY[step]); }, rookie.entering ? 1800 : 700);
   return true;
 }
