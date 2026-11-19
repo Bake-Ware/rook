@@ -168,7 +168,10 @@ def test_install_join_and_uninstall(box):
     done = box.run("--dir", str(root), "--name", "rooktest", "--http-port", str(port), "--ai", "claude", "--no-browser")
     assert done.returncode == 0, (done.stdout, done.stderr)
     out = done.stdout
-    for line in ("It works: Claude Code answered \"ok\".", "Code: this checkout, commit ",
+    checkout = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"], capture_output=True,
+                              text=True).stdout.strip() == str(ROOT)
+    code = "Code: this checkout, commit " if checkout else f"Code: this folder, {ROOT}"     # how this tree installs
+    for line in ("It works: Claude Code answered \"ok\".", code,
                  "The hub is running.", "This machine is on the hub, and your house agent's engine (Claude Code) runs on it.",
                  "Rook starts when you log in.", f"  {url}\n"):
         assert line in out, (line, out)
