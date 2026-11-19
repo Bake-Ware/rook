@@ -21,6 +21,7 @@
 #include "buttons.h"
 #include "chat.h"
 #include "dev.h"
+#include "ir.h"
 #include "lan.h"
 #include "osk.h"
 #include "ota.h"
@@ -41,7 +42,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.11.3"
+#define FW_VERSION "0.11.4"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -968,8 +969,72 @@ static bool hex_bytes(const std::string& hex, std::string& out) {
     return hi < 0;
 }
 
+// remote.ir pin / send: the IR LED on one of this board's GPIOs (src/ir.cpp).
+static bool cap_ir_led(const std::string& action, JsonObjectConst a, JsonObject r, std::string& err) {
+    if (action == "pin") {
+        if (!a["pin"].is<int>()) { err = "bad args: pin (a GPIO number, -1 for none) is needed"; return false; }
+        std::string warn;
+        if (!ir::set_pin(a["pin"].as<int>(), err, warn)) return false;
+        r["pin"] = ir::pin();
+        if (!warn.empty()) r["warning"] = warn;
+        logf("ir: pin %d%s", ir::pin(), warn.empty() ? "" : " (strapping pin)");
+        return true;
+    }
+    ir::Sent s;
+    std::string what;
+    bool ok;
+    if (!a["raw"].isNull()) {
+        JsonArrayConst raw = a["raw"].as<JsonArrayConst>();
+        if (raw.isNull() || raw.size() == 0 || raw.size() > 1024) {
+            err = "bad args: raw is a list of 1..1024 durations in microseconds";
+            return false;
+        }
+        std::vector<uint32_t> d;
+        d.reserve(raw.size());
+        for (JsonVariantConst v : raw) {
+            if (!v.is<long long>() || v.as<long long>() < 1 || v.as<long long>() > 1000000) {
+                err = "bad args: raw durations are whole microseconds, 1..1000000";
+                return false;
+            }
+            d.push_back((uint32_t)v.as<long long>());
+        }
+        int carrier = a["carrier"] | 38000;
+        ok = ir::send_raw((uint32_t)carrier, d, s, err);
+        what = "raw, " + std::to_string(d.size()) + " durations at " + std::to_string(carrier) + " Hz";
+    } else {
+        std::string proto = a["protocol"] | "";
+        if (proto != "nec") { err = "bad args: send takes protocol nec (address, command) or raw"; return false; }
+        if (!a["address"].is<int>() || !a["command"].is<int>()) {
+            err = "bad args: nec needs address (0..65535) and command (0..255)";
+            return false;
+        }
+        int addr = a["address"].as<int>(), cmd = a["command"].as<int>(), rep = a["repeats"] | 0;
+        if (addr < 0 || addr > 0xFFFF || cmd < 0 || cmd > 0xFF || rep < 0) {
+            err = "bad args: address is 0..65535, command 0..255, repeats 0..4";
+            return false;
+        }
+        ok = ir::send_nec((uint16_t)addr, (uint8_t)cmd, rep, s, err);
+        char b[96];
+        snprintf(b, sizeof b, "nec address 0x%0*X command 0x%02X, %d repeat%s", addr > 0xFF ? 4 : 2, addr, cmd, rep,
+                 rep == 1 ? "" : "s");
+        what = b;
+    }
+    if (!ok) {
+        logf("ir: send failed: %s", err.c_str());
+        return false;
+    }
+    r["sent"] = what;
+    r["pin"] = s.pin;
+    r["duration_us"] = s.duration_us;
+    r["carrier_hz"] = s.carrier_hz;
+    r["edges"] = (int)s.edges;
+    logf("ir: sent %s on GPIO %d, %u us", what.c_str(), s.pin, (unsigned)s.duration_us);
+    return true;
+}
+
 static bool cap_ir(JsonObjectConst a, JsonObject r, std::string& err) {
     std::string action = a["action"] | "";
+    if (action == "pin" || action == "send") return cap_ir_led(action, a, r, err);
     std::string code;
     if (!hex_bytes(a["code"] | "", code)) { err = "bad args: code is hex bytes"; return false; }
     std::vector<std::string> steps;
@@ -992,9 +1057,10 @@ static bool cap_ir(JsonObjectConst a, JsonObject r, std::string& err) {
         steps = bt::ir_suppress(keys);
         if (action == "clear") bt::ir_forget_events();
     } else if (!action.empty() && action != "status") {
-        err = "bad args: action is write, program, suppress or clear";
+        err = "bad args: action is pin, send, write, program, suppress or clear";
         return false;
     }
+    r["ir_pin"] = ir::pin();
     if (!steps.empty()) delay(300);                 // long enough for a key event the writes set off
     r["ready"] = bt::ir_ready();
     JsonArray w = r["writes"].to<JsonArray>();
@@ -1539,6 +1605,7 @@ void setup() {
     ev_mu = xSemaphoreCreateMutex();
     wifi_mu = xSemaphoreCreateMutex();
     settings::begin();
+    ir::begin();                  // the IR LED's pin LOW before anything else
 #ifdef ROOK_GAMEPAD
     devweb_mu = xSemaphoreCreateMutex();
     seed_wifi();
