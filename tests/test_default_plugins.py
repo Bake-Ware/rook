@@ -112,7 +112,7 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     hub.plugins.install(replacement, {"user": hub.auth.create_user("Alice", "a password")["guid"], "token": None})
     hub.close()
     again = Hub(tmp_path / "hub")
-    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.1.0", "agents-claude-code": "0.1.0",
+    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.1.1", "agents-claude-code": "0.1.0",
                                                                      "battery": "0.1.0", "file": "0.2.0", "net": "0.1.0",
                                                                      "shell": "9.0.0", "worker": "0.1.0"}
     again.close()
@@ -442,7 +442,7 @@ async def older_core(tmp_path, monkeypatch):
 # change at the same version never reaches it. When a test below says so, raise the version in the
 # plugin's plugin.json and set its line here to what the test prints.
 SHIPPED = {
-    "agents": ("0.1.0", "e49a011d63b193af68d4d7c16c3103ee949b25eafab7fb498874f4d9ba0d4698"),
+    "agents": ("0.1.1", "7cfb788378102b8aa4a97acb34f62a828013a56713141bdf8119effaf238fa1c"),
     "agents-claude-code": ("0.1.0", "79653aecb79c275eb65a7f1d5d88081c22f33e3f31767d3ef963aa47c26b8eeb"),
     "battery": ("0.1.0", "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"),
     "file": ("0.2.0", "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"),
@@ -550,7 +550,7 @@ async def before_brief_54(tmp_path, monkeypatch):
     host, port = await hub.serve("127.0.0.1", 0)
     alice = hub.auth.create_user("Alice", "a password")["guid"]
     assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-        "agents": "0.1.0", "agents-claude-code": "0.1.0",
+        "agents": "0.1.1", "agents-claude-code": "0.1.0",
         "battery": "0.1.0", "file": "0.1.0", "net": "0.1.0", "shell": "0.2.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())
