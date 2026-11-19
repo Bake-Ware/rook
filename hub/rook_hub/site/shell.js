@@ -271,6 +271,38 @@ function mountArt() {
    sidebar holds it while someone is logged in (the login page has no sidebar). */
 const artToggle = Object.assign(document.createElement('button'), { className: 'art-toggle', type: 'button', hidden: true, textContent: 'Pause artwork' });
 
+/* ---------------- Plugins' shell parts (house agent brief HA1) ---------------- */
+/* 0.5's manifest `shell:`, on core: files a plugin's site section lists under `shell`, loaded on
+   every page once a person is signed in, in order: a stylesheet as a <link>, a script as a
+   classic <script> (not a module, so the parts share one scope, as 0.5's did). They hook in
+   through window.shellHooks.starting (run once all have loaded) and reach the shell through
+   window.rookShell. The shell gives every page two places for them: #work, a pane at the head
+   of the page area (empty and hidden until a part fills it), and #shell-dock, beside the page.
+   A part that fails to load is said in the toast line; the rest of the site works. */
+window.shellHooks = { starting: [] };
+let shellParts = null;
+function loadShellParts(parts, page) {
+  if (shellParts) return shellParts;
+  window.rookShell = { api, call, follow, toast, store, page,
+    async reloadNav() { store.nav = (await api('GET', '/api/session')).nav; } };
+  shellParts = (async () => {
+    for (const part of parts) {
+      await new Promise(done => {
+        const node = part.kind === 'style'
+          ? Object.assign(document.createElement('link'), { rel: 'stylesheet', href: part.url })
+          : Object.assign(document.createElement('script'), { src: part.url, async: false });
+        node.onload = done;
+        node.onerror = () => { toast(`Plugin ${part.plugin}'s shell file ${part.url} failed to load.`); done(); };
+        (part.kind === 'style' ? document.head : document.body).append(node);
+      });
+    }
+    for (const hook of window.shellHooks.starting) {
+      try { await hook(); } catch (e) { toast(e.message); }
+    }
+  })();
+  return shellParts;
+}
+
 /* ---------------- The app ---------------- */
 /* Plugins' pages and components (PL1, P1) load like core's. One that fails to load, or a
    plugin page that is gone, is said in the page area; the rest of the site works. */
@@ -295,6 +327,10 @@ const App = {
         if (location.pathname === '/') showView(this.page.path + location.search);
         try { this.component = markRaw((await import(this.page.script)).default); }
         catch (e) { if (!this.page.plugin) throw e; this.failed = `Plugin ${this.page.plugin}'s page ${this.page.label} failed to load: ${e.message}`; }
+        if ((session.shell || []).length) {
+          const page = { id: this.page.id, label: this.page.label, path: this.page.path };
+          this.$nextTick(() => loadShellParts(session.shell, page));   // once #work and #shell-dock are drawn
+        }
       } catch (e) {
         if (store.user) toast(e.message);
       } finally {
@@ -305,8 +341,9 @@ const App = {
   template: `<template v-if="store.ready">
       <login-view v-if="!store.user" @in="load"></login-view>
       <div v-else class="layout"><side-bar :active="page && page.id"></side-bar>
-        <main class="main"><component v-if="component" :is="component"></component>
-          <div v-else-if="failed" class="wrap"><p class="callout bad page-failed" role="alert">{{ failed }}</p></div></main></div>
+        <main class="main"><section id="work" hidden></section><component v-if="component" :is="component"></component>
+          <div v-else-if="failed" class="wrap"><p class="callout bad page-failed" role="alert">{{ failed }}</p></div></main>
+        <div id="shell-dock"></div></div>
     </template><toast-line></toast-line>`,
 };
 

@@ -2,7 +2,7 @@
 
 A plugin is how anything above core reaches Rook: tasks, knowledge, device drivers, and core's own caps too (PL7, K5). It is one folder with a manifest that says what runs at the hub, what runs on workers and what it adds to the site (PL3). Plugins add, never replace (PL1), and none hooks into routing, auth or the journal (PL2).
 
-What is built so far: the manifest, installing from a folder, hot loading, the library a plugin's hub code uses (with settings, skills, calls to workers, ordered work and its own streams, brief HA2), the worker part for Python workers, pushed to them and hot loaded there, the site section (pages, settings sections and Vue components), and core's own caps as plugins installed by default, the house agent among them.
+What is built so far: the manifest, installing from a folder, hot loading, the library a plugin's hub code uses (with settings, skills, calls to workers, ordered work and its own streams, brief HA2), the worker part for Python workers, pushed to them and hot loaded there, the site section (pages, settings sections, Vue components and shell files), and core's own caps as plugins installed by default, the house agent among them.
 
 ## The folder
 
@@ -240,15 +240,21 @@ A plugin's worker caps are called and journaled exactly as any worker cap (PL2).
 "site": {
   "pages":      [{"segment": "Notes", "title": "Notes", "file": "site/notes.js"}],
   "settings":   [{"title": "Notes", "file": "site/settings.js"}],
-  "components": [{"name": "note-card", "file": "site/note-card.js"}]
+  "components": [{"name": "note-card", "file": "site/note-card.js"}],
+  "shell":      [{"file": "shell/dock.css"}, {"file": "shell/dock.js"}]
 }
 ```
 
-Each part is optional. Every `file` is an ES module in the plugin's folder whose default export is a Vue 3 component, as core's pages are: no build step, Vue is the page's global `Vue` (P1).
+Each part is optional. Every `file` of `pages`, `settings` and `components` is an ES module in the plugin's folder whose default export is a Vue 3 component, as core's pages are: no build step, Vue is the page's global `Vue` (P1).
 
 - `pages` are shown in the navigation under their `segment`, after core's pages, by the same mechanism core's pages use. A segment appears with the first page installed into it (P2). A page's name is its title in lowercase with hyphens between the words (`Notes` is `notes`), and the page is at `/plugins/<plugin>/<page>`.
 - `settings` are sections added to the Settings page as tabs after core's Plugins section (P4).
-- `components` are registered with the site by `name`, so any page, core's or a plugin's, can use them as `<note-card>`. A name is lowercase letters and digits with at least one hyphen, so it is never an HTML element's name. The Agents chat pane (P5) arrives this way.
+- `components` are registered with the site by `name`, so any page, core's or a plugin's, can use them as `<note-card>`. A name is lowercase letters and digits with at least one hyphen, so it is never an HTML element's name.
+- `shell` (house agent brief HA1, as 0.5's manifest `shell:`): files the shell loads on every page once a person is signed in, after the page itself. They load in the manifest's order, each plugin's after the plugins installed before it. A `.css` file loads as a stylesheet. A `.js` file loads as a classic script, not a module, so a plugin's shell files share one scope, as 0.5's did. A shell script:
+  - reaches the shell through `window.rookShell`: `api`, `call`, `follow` and `toast` as a page imports them, `store`, `page` (the page this load shows: `id`, `label`, `path`) and `reloadNav()`;
+  - hooks in by pushing an `async` function to `window.shellHooks.starting`, run once every shell file has loaded.
+
+  The shell gives every page two places for it: `#work`, a pane at the head of the page area, empty and hidden until a shell part fills it (with the body class `working`, the page itself is hidden while the pane shows); and `#shell-dock`, a column beside the page. The house agent's chat dock (P5) arrives this way, in the built-in `agents` plugin.
 
 The hub serves these files at `/plugin-files/<plugin>/<file>` to a logged-in session only, and serves no file the manifest does not name. They are read from the installed plugin on every page load, so installing or replacing a plugin shows on the next page load, with no restart (PL3).
 
@@ -256,6 +262,7 @@ What the hub refuses at install, saying what to fix (an install is all or nothin
 
 - an entry without its fields, or a `file` that is missing or leaves the plugin's folder (`bad_manifest`);
 - a page, settings section or component name used twice in the plugin, or a component name without a hyphen (`bad_manifest`). A settings section's name is made from its title as a page's is;
+- a shell file named twice, or one that ends neither in `.css` nor in `.js` (`bad_manifest`);
 - a page name that core or another plugin already has (`page_taken`);
 - a component name that core or another plugin already has (`component_taken`). Core's are `side-bar`, `login-view`, `pin-view`, `row-menu` and `toast-line`.
 
@@ -285,7 +292,7 @@ export default {
 
 ## Core's own caps: plugins installed by default (PL7)
 
-Core's own caps ship as plugins in the one format above, in `hub/rook_hub/defaults/`. Each has a worker part for Python workers and nothing at the hub or on the site, except `agents`, the house agent, which is a hub part only (brief HA2).
+Core's own caps ship as plugins in the one format above, in `hub/rook_hub/defaults/`. Each has a worker part for Python workers and nothing at the hub or on the site, except `agents`, the house agent, which has a hub part (brief HA2) and a site part, the chat dock (brief HA1).
 
 | Plugin | Caps | From |
 |---|---|---|
@@ -293,7 +300,7 @@ Core's own caps ship as plugins in the one format above, in `hub/rook_hub/defaul
 | `shell` | `shell.exec` (run a command and wait for it: `argv`, or `cmd` in `sh`, `bash` or `powershell`; gives `ok`, `code`, `stdout`, `stderr`, and `shell` when it was not `sh`), `shell.which` (a program's path on PATH, or null), `shell.env` (one variable by `name`, its value or `default`, or every variable whose name starts with `prefix`, as an object; values as they are), `shell.open` (a command, a login shell unless given, as a stream: on a terminal of `cols` by `rows`, resized by `stream_resize`, or on pipes with `pty` false; it closes when the command ends, with its exit code, and closing it ends the command; a signal sent to the stream goes to the command and everything it started). Stopping a `shell.exec` call ends its command the same way. Every command starts with INT, TERM, HUP and QUIT at their defaults, whatever the worker itself ignores (brief 65). | docs/inventory.md CAP-01, CAP-02 (0.5's), CAP-03, WRK4-070 |
 | `file` | `file.read` (`path`, `encoding`: a codec or `base64`, `max_bytes`; gives `content`, `size`, `encoding`, and `truncated` when `max_bytes` cut it; anything that opens, a FIFO or a device too, read for as long as it takes), `file.write` (`path`, `content`, `encoding`, `append`, `create_parents`; gives `path`, `written`), `file.list` (`path`, `recursive`, `hidden`, `limit`; gives `entries` of `name`, `type`, `size`, `modified`, `mode`, and `path` when recursive), `file.search` (`pattern`, a regex, in the files under `path`, with `recursive`, `glob`, `ignore_case`, `limit`; gives `matches` of `path`, `line`, `text`; binary files skipped; the pattern runs in a child Python, so a slow one never stops the worker), `file.stat` (`path`; gives `exists`, and `type`, `size`, `modified`, `mode`). | docs/inventory.md CAP-04 (0.5's) |
 | `worker` | `worker.ping`: no arguments; gives `pong: true` and `at`, the worker's clock. | docs/inventory.md CAP-05 (0.5's) |
-| `agents` | The house agent (brief HA2; 0.5's agents plugin). `agent.chat.send {agent, text, wait}` messages it in your conversation with it, waking a turn; with `wait` (the default) it answers `{agent, stream, seq, text, reply_seq}`, without `{agent, stream, seq}`. `agent.chat.read {agent, after, limit, wait, party}` gives `{stream, events, next, closed}`: 0.5's events `{seq, at, type, by, data}` of type `input`, `turn` (role `prompt`, then `reply`) and `status` (an error), after the cursor `after`. A message the agent sends itself from inside a turn (through that turn's door token) is taken like any other: it is queued and answered after that turn, and the send answers `{agent, stream, seq}` at once whatever `wait` says, since the reply cannot come before the turn ends; its turn runs as the person the token stood for. `agent.skill {name}`, `agent.list`, and `agent.site` (what the site's dock needs). Settings: `house_name`, `dock`, `backend`, `worker`. A hub part only; how it works is at the top of its `hub.py`. | 0.5's `rook/plugins/agents` (cbe86a47) |
+| `agents` | The house agent (brief HA2; 0.5's agents plugin). `agent.chat.send {agent, text, wait}` messages it in your conversation with it, waking a turn; with `wait` (the default) it answers `{agent, stream, seq, text, reply_seq}`, without `{agent, stream, seq}`. `agent.chat.read {agent, after, limit, wait, party}` gives `{stream, events, next, closed}`: 0.5's events `{seq, at, type, by, data}` of type `input`, `turn` (role `prompt`, then `reply`) and `status` (an error), after the cursor `after`. A message the agent sends itself from inside a turn (through that turn's door token) is taken like any other: it is queued and answered after that turn, and the send answers `{agent, stream, seq}` at once whatever `wait` says, since the reply cannot come before the turn ends; its turn runs as the person the token stood for. `agent.skill {name}`, `agent.list`, and `agent.site` (what the site's dock needs). Settings: `house_name`, `dock`, `backend`, `worker`. A hub part only; how it works is at the top of its `hub.py`. Its site part (brief HA1) is the chat dock beside every page, ported from 0.5 (`cbe86a47:rook/plugins/agents/shell/`): the conversation with the house agent through `agent.chat.send` (`wait: false`) and `agent.chat.read`, Rookie (`rookie.js`, vendored unchanged; `rookie-map.js`), the work pane, the chat markup (`chat-widgets.js`: `[[choices: ...]]`, `[[open: ...]]`, `[[point: ...]]`, `[[say: ...]]`) and "Getting ready" while no engine answers. | 0.5's `rook/plugins/agents` (cbe86a47) |
 | `agents-claude-code` | `agents-claude-code.turn {prompt, session, cwd, model, effort, system, door}`: one agent turn in the Claude Code CLI on this worker, `claude -p --output-format json`, resumed by `session`, with the prompt on stdin. Its settings are its section of the worker's config. The house agent's engine. | 0.5's `rook/plugins/agents-claude-code` (cbe86a47) |
 | `battery` | `battery.status`: no arguments; gives `percent` and `status`, from upower or else `/sys/class/power_supply/BAT*`, on Linux. A machine with no battery answers so, with what to try. | docs/inventory.md CAP-07 (0.5's), H4 |
 

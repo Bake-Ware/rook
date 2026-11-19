@@ -1,5 +1,14 @@
 {
   "name": "agents",
-  "version": "0.1.1",
-  "hub": {"module": "hub.py"}
+  "version": "0.2.0",
+  "hub": {"module": "hub.py"},
+  "site": {
+    "shell": [
+      {"file": "shell/dock.css"},
+      {"file": "shell/rookie.js"},
+      {"file": "shell/rookie-map.js"},
+      {"file": "shell/chat-widgets.js"},
+      {"file": "shell/dock.js"}
+    ]
+  }
 }
