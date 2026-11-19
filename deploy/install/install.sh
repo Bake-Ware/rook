@@ -2,7 +2,7 @@
 # Rook: install a hub on this computer and open it in your browser.
 #
 #   curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/house-agent/deploy/install/install.sh | bash
-#   deploy/install/install.sh                 # from a checkout: installs that checkout's commit
+#   deploy/install/install.sh                 # from Rook's source: installs that tree (a checkout: its commit)
 #
 # It asks what you use for AI now and sets that up and tests it (Claude Code on
 # this machine; the others are coming soon), installs the hub site and a worker
@@ -199,12 +199,22 @@ if ! command -v uv >/dev/null; then
     command -v uv >/dev/null || die "uv installed but isn't on PATH (see $LOG)"
     UV_INSTALLED=true
 fi
+# A script in a Rook source tree installs that tree: its commit when the tree is a git checkout,
+# else the folder as it is. Only a script with no source beside it (curl | bash) downloads.
 here=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)
+top=""
+if [ -n "$here" ] && [ -f "$here/../../hub/rook_hub/__main__.py" ]; then top=$(cd "$here/../.." && pwd); fi
 mkdir -p "$SRC"
-if [ -n "$here" ] && [ -f "$here/../../hub/rook_hub/__main__.py" ] && git -C "$here" rev-parse HEAD >/dev/null 2>&1; then
-    sha=$(git -C "$here" rev-parse HEAD)
+if [ -n "$top" ] && [ "$(git -C "$top" rev-parse --show-toplevel 2>/dev/null)" = "$top" ]; then
+    sha=$(git -C "$top" rev-parse HEAD)
     say "Code: this checkout, commit ${sha:0:8}"
-    git -C "$(git -C "$here" rev-parse --show-toplevel)" archive "$sha" | tar -x -C "$SRC"
+    git -C "$top" archive "$sha" | tar -x -C "$SRC"
+elif [ -n "$top" ]; then
+    say "Code: this folder, $top"
+    skip=(--exclude=./.git --exclude=./.venv --exclude=./venv --exclude=__pycache__ --exclude=.pytest_cache)
+    case $ROOT/ in "$top"/*) skip+=("--exclude=./${ROOT#"$top"/}") ;; esac     # the install folder, if it is inside
+    tar -C "$top" "${skip[@]}" -cf - . | tar -x -C "$SRC" || die "couldn't copy Rook from $top"
+    sha="folder $top"
 else
     say "Code: Bake-Ware/rook $REF"
     curl -fsSL "https://codeload.github.com/Bake-Ware/rook/tar.gz/$REF" | tar -xz -C "$SRC" --strip-components=1 ||

@@ -34,7 +34,7 @@ On a Linux machine with systemd, curl and git, one command sets up a hub and a w
 curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/house-agent/deploy/install/install.sh | bash
 ```
 
-or `deploy/install/install.sh` from a checkout, which installs that checkout's commit. It asks what you use for AI now (Claude Code is set up, signed in and tested; the others are coming soon), puts uv's Python 3.12 and Rook in `~/.rook`, starts the hub on port 8740 on every interface, joins this machine's worker with a join token, and opens the site. `--dir`, `--name` and `--http-port` let it run beside other installs; `--open` opens the site again; `--uninstall` stops it and removes its units and its folder, and nothing else. `--help` lists every option. What a curl install fetches is the `REF=` line near the top of the script: the `house-agent` branch for now.
+or `deploy/install/install.sh` from Rook's source, which installs that tree: a checkout's commit, or a copied folder as it is. Only the curl form downloads. It asks what you use for AI now (Claude Code is set up, signed in and tested; the others are coming soon), puts uv's Python 3.12 and Rook in `~/.rook`, starts the hub on port 8740 on every interface, joins this machine's worker with a join token, and opens the site. `--dir`, `--name` and `--http-port` let it run beside other installs; `--open` opens the site again; `--uninstall` stops it and removes its units and its folder, and nothing else. `--help` lists every option. What a curl install fetches is the `REF=` line near the top of the script: the `house-agent` branch for now.
 
 ## Starting a hub
 

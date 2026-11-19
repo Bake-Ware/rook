@@ -18,6 +18,8 @@ import sys
 import textwrap
 import urllib.request
 
+import shutil
+
 import pytest
 
 from test_first_run import ROOT
@@ -70,6 +72,18 @@ case "$*" in
 esac
 '''
 
+CURL = r'''#!/usr/bin/env bash
+# curl for this machine's own hub only: a test never reaches the network.
+echo "curl $*" >> "$STANDIN_STATE/calls"
+for a in "$@"; do
+  case $a in
+    http://127.0.0.1:*|http://localhost:*) ;;
+    http://*|https://*) echo "curl stand-in: refused $a (no network in tests)" >&2; exit 7 ;;
+  esac
+done
+exec "$STANDIN_CURL" "$@"
+'''
+
 UV = r'''#!/usr/bin/env bash
 # A stand-in for uv: "uv venv ... DIR" makes DIR/bin/python run this test's python; "uv pip" does nothing.
 echo "uv $*" >> "$STANDIN_STATE/calls"
@@ -93,18 +107,19 @@ class Box:
         self.home, self.bin, self.state = tmp / "home", tmp / "bin", tmp / "state"
         for d in (self.home, self.bin, self.state):
             d.mkdir()
-        for name, text in (("systemctl", SYSTEMCTL), ("journalctl", JOURNALCTL), ("claude", CLAUDE), ("uv", UV)):
+        for name, text in (("systemctl", SYSTEMCTL), ("journalctl", JOURNALCTL), ("claude", CLAUDE), ("uv", UV),
+                           ("curl", CURL)):
             (self.bin / name).write_text(text)
             (self.bin / name).chmod(0o755)
         self.units = self.home / ".config" / "systemd" / "user"
         self.env = dict(os.environ, HOME=str(self.home), XDG_CONFIG_HOME=str(self.home / ".config"),
                         PATH=f"{self.bin}:{os.environ['PATH']}", STANDIN_STATE=str(self.state),
-                        STANDIN_PYTHON=sys.executable)
+                        STANDIN_PYTHON=sys.executable, STANDIN_CURL=shutil.which("curl"))
         for name in ("DISPLAY", "WAYLAND_DISPLAY", "PYTHONPATH"):
             self.env.pop(name, None)
 
-    def run(self, *args):
-        return subprocess.run(["bash", str(INSTALL), *args], env=self.env, stdin=subprocess.DEVNULL,
+    def run(self, *args, script=INSTALL):
+        return subprocess.run(["bash", str(script), *args], env=self.env, stdin=subprocess.DEVNULL,
                               capture_output=True, text=True)
 
     def stop_all(self):
@@ -117,6 +132,12 @@ class Box:
     def calls(self):
         path = self.state / "calls"
         return path.read_text().splitlines() if path.exists() else []
+
+    def offline(self):
+        """No curl call left this machine."""
+        far = [c for c in self.calls() if c.startswith("curl ") and "://" in c
+               and not any(f"://{h}:" in c for h in ("127.0.0.1", "localhost"))]
+        assert far == [], far
 
 
 @pytest.fixture
@@ -193,6 +214,7 @@ def test_install_join_and_uninstall(box):
     assert not root.exists() and not hub_unit.exists() and not worker_unit.exists() and foreign.exists()
     assert "systemctl --user disable --now rooktest-worker" in box.calls()
     assert not list(box.state.glob("*.pid"))                            # both stopped
+    box.offline()
 
 
 def test_no_engine_yet_and_uninstall_takes_only_its_own(box):
@@ -218,6 +240,7 @@ def test_no_engine_yet_and_uninstall_takes_only_its_own(box):
     refused = box.run("--dir", str(other), "--name", "rookplain", "--uninstall")
     assert refused.returncode == 1 and "was not made by this installer" in refused.stderr
     assert (other / "precious").exists() and unit.exists()
+    box.offline()
 
 
 def test_join_token_command(tmp_path):
@@ -234,3 +257,23 @@ def test_join_token_command(tmp_path):
         assert token["owner"] == hub.auth.system and token["purpose"] == "join" and token["expires_at"]
     finally:
         hub.close()
+
+
+def test_install_from_a_copy_without_git(box, tmp_path):
+    """A script in a Rook source tree with no .git (an export, a copied folder) installs that tree, as
+    it is, and never downloads: only a script with no source beside it does (steward's review of #451)."""
+    copy = tmp_path / "rook-export"
+    shutil.copytree(ROOT, copy, ignore=shutil.ignore_patterns(".git", ".venv", "venv", "__pycache__", ".pytest_cache"))
+    (copy / "hub" / "rook_hub" / "copied-marker").write_text("this copy")
+    root, port = box.home / "from-copy", free_port()
+    done = box.run("--dir", str(root), "--name", "rookcopy", "--http-port", str(port), "--ai", "claude",
+                   "--no-boot", "--no-browser", script=copy / "deploy" / "install" / "install.sh")
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    assert f"Code: this folder, {copy}" in done.stdout and "This machine is on the hub" in done.stdout
+    src = root / "src"
+    assert (src / "hub" / "rook_hub" / "copied-marker").read_text() == "this copy"    # this tree, not another
+    assert (src / ".rook-version").read_text().strip() == f"folder {copy}"
+    assert not (src / ".git").exists()
+    assert "Linked to " in (box.state / "rookcopy-worker.out").read_text()
+    box.offline()
+    assert box.run("--dir", str(root), "--name", "rookcopy", "--uninstall").returncode == 0 and not root.exists()
