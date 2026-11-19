@@ -101,6 +101,8 @@ fi
 
 if [ $ONLY_OPEN = 1 ]; then
     [ -f "$FACTS" ] || die "nothing installed in $ROOT"
+    URL=$(sed -n 's/^ *"site": "\(.*\)",*$/\1/p' "$FACTS")     # the address it was installed with
+    [ -n "$URL" ] || die "$FACTS doesn't say where the site is"
     open_site
     exit 0
 fi
@@ -235,7 +237,7 @@ path, sha, root, name, http, worker, ai, claude, claude_installed, uv_installed,
 facts = {
     "by": "deploy/install/install.sh", "when": time.strftime("%Y-%m-%d %H:%M %Z"), "version": sha,
     "folder": root, "hub_data": f"{root}/hub", "vault_key": f"{root}/vault.key", "worker_state": f"{root}/worker",
-    "machine": worker, "units": [f"{name}-hub", f"{name}-worker"],
+    "machine": worker, "units": [f"{name}-hub", f"{name}-worker"], "site": f"http://127.0.0.1:{http}",
     "http": f"0.0.0.0:{http} (every interface)", "open_until_claimed": bool(no_password),
     "ai": ({"choice": "claude", "engine": "claude-code", "claude": claude, "permission_mode": "auto",
             "note": "Claude Code on this machine, under the Claude subscription it is signed in with."}
