@@ -12,9 +12,12 @@ Bake wants a forever wait caught (RULES.md, 17 November)."""
 
 import asyncio
 import json
+import os
+import signal
 import time
 
 import aiohttp
+import pytest
 
 import rook_hub
 from rook_hub import Hub
@@ -812,4 +815,59 @@ def test_cap_failed_says_what_to_do(tmp_path):
             texts, position, open_ = texts + [e["out"] for e in read["entries"]], read["next"], read["open"]
         end = json.loads(texts[-1])
         assert end["type"] == "result" and json.loads("".join(texts[:end["parts"]]))["stdout"] == "b" * 20_000_000
+    run(tmp_path, body)
+
+
+
+# ------------------------------------------------------------------ brief 65: signals reach what the worker starts
+
+@pytest.fixture
+def ignoring_int_quit_hup():
+    """This process, and so the worker the test runs in it, ignores INT, QUIT and HUP, as a worker
+    started with `nohup ... &` from a script does; put back as they were afterwards."""
+    before = {number: signal.signal(number, signal.SIG_IGN) for number in (signal.SIGINT, signal.SIGQUIT, signal.SIGHUP)}
+    try:
+        yield
+    finally:
+        for number, handler in before.items():
+            signal.signal(number, handler)
+
+
+def _running(argv):
+    """The process IDs whose command line is exactly `argv`."""
+    found = []
+    for entry in os.listdir("/proc"):
+        try:
+            with open(f"/proc/{entry}/cmdline", "rb") as cmdline:
+                if cmdline.read().split(b"\0")[:-1] == [a.encode() for a in argv]:
+                    found.append(int(entry))
+        except (OSError, ValueError):
+            pass
+    return found
+
+
+def test_signals_reach_a_command_when_the_worker_ignores_them(tmp_path, ignoring_int_quit_hup):
+    """Brief 65: a worker that ignores INT, QUIT and HUP still starts its commands with them at their
+    defaults. A stream signal INT ends a trapped `sh` with its trap's exit code, and Ctrl-C typed
+    into a terminal interrupts the `sleep` in its foreground, after which the shell answers again."""
+    async def body(rig):
+        trapped = (await rig.ok(rig.moniker, "shell.open", pty=False,
+                                cmd="trap 'echo got-INT; exit 7' INT; echo ready; while :; do sleep 0.05; done"))["stream"]
+        _, position = await rig.read_until(trapped, "ready")
+        await rig.stream(action="signal", stream=trapped, signal="INT")
+        await rig.read_until(trapped, "got-INT", position)
+        while (read := await rig.stream(action="read", stream=trapped))["open"]:
+            await asyncio.sleep(0.02)
+        assert read["exit_code"] == 7
+
+        nap = ["sleep", f"{os.getpid()}.5"]            # a command line no other process has
+        terminal = (await rig.ok(rig.moniker, "shell.open", argv=["sh"]))["stream"]
+        await rig.stream(action="write", stream=terminal, text=" ".join(nap) + "\n")
+        while not (pids := _running(nap)):
+            await asyncio.sleep(0.02)
+        await rig.stream(action="write", stream=terminal, text="\x03")       # Ctrl-C
+        await _gone(pids[0])
+        await rig.stream(action="write", stream=terminal, text="echo back-$((6*7))\n")
+        await rig.read_until(terminal, "back-42")
+        await rig.stream(action="close", stream=terminal, why="Parity: done.")
     run(tmp_path, body)
