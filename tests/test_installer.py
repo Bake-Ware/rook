@@ -153,8 +153,9 @@ def test_install_join_and_uninstall(box):
         assert line in out, (line, out)
 
     # The folder it made, the facts, and the two units with its mark.
-    assert {p.name for p in root.iterdir()} == {"src", "venv", "hub", "vault.key", "worker", "install.json", "install.log"}
-    facts = json.loads((root / "install.json").read_text())
+    assert {p.name for p in root.iterdir()} == {"src", "venv", "hub", "vault.key", "worker", "install.log"}
+    facts = json.loads((root / "hub" / "install.json").read_text())             # where agent.setup reads it (HA3)
+    assert facts["folder"] == str(root) and facts["site"] == url and facts["host"] == "0.0.0.0"
     assert facts["units"] == ["rooktest-hub", "rooktest-worker"] and facts["ai"]["choice"] == "claude"
     assert facts["ai"]["claude"] == str(box.bin / "claude") and facts["http"] == f"0.0.0.0:{port} (every interface)"
     hub_unit, worker_unit = (box.units / f"rooktest-{u}.service" for u in ("hub", "worker"))
@@ -200,7 +201,7 @@ def test_no_engine_yet_and_uninstall_takes_only_its_own(box):
                    "--no-boot", "--no-browser")
     assert done.returncode == 0, (done.stdout, done.stderr)
     assert "Setting Rook up with that is coming soon." in done.stdout and "This machine is on the hub." in done.stdout
-    assert json.loads((root / "install.json").read_text())["ai"]["choice"] == "none"
+    assert json.loads((root / "hub" / "install.json").read_text())["ai"]["choice"] == "none"
     calls = box.calls()
     assert not any(c.startswith("claude") for c in calls) and not any("enable" in c for c in calls)
     assert box.run("--dir", str(root), "--name", "rookplain", "--uninstall").returncode == 0 and not root.exists()

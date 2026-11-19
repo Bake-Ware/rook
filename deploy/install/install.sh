@@ -57,7 +57,7 @@ die() { printf '\n\033[31mRook install stopped:\033[0m %s\n' "$*" >&2; exit 1; }
 
 SRC=$ROOT/src VENV=$ROOT/venv PY=$ROOT/venv/bin/python
 HUB_DATA=$ROOT/hub VAULT_KEY=$ROOT/vault.key WORKER_STATE=$ROOT/worker
-FACTS=$ROOT/install.json LOG=$ROOT/install.log
+FACTS=$HUB_DATA/install.json LOG=$ROOT/install.log
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 URL="http://127.0.0.1:$HTTP_PORT"
 MARK="# Made by Rook's installer (deploy/install/install.sh) for $ROOT; --uninstall removes it."
@@ -76,9 +76,9 @@ open_site() {
 
 if [ $UNINSTALL = 1 ]; then
     # Exactly what this installer made: unit files carrying its mark for this folder, and
-    # the folder, which it made whole (its install.json says so).
+    # the folder, which it made whole (its hub/install.json says so).
     if [ -d "$ROOT" ] && [ ! -f "$FACTS" ]; then
-        die "$ROOT was not made by this installer (it has no install.json); nothing was removed."
+        die "$ROOT was not made by this installer (it has no hub/install.json); nothing was removed."
     fi
     removed=0
     for u in "$NAME-worker" "$NAME-hub"; do
@@ -229,7 +229,8 @@ CODE=$(PYTHONPATH=$HUB_PATH "$PY" -m rook_hub join-token --data "$HUB_DATA" --va
 say "Hub set up in $HUB_DATA."
 WORKER_NAME=$(hostname -s 2>/dev/null || hostname)
 
-# The install facts, for the house agent (setup) and for --open and --uninstall.
+# The install facts, 0.5's setup.json "install" object for core: in the hub's data, where agent.setup
+# hands them to the house agent (brief HA3), and for --open and --uninstall.
 "$PY" - "$FACTS" "$sha" "$ROOT" "$NAME" "$HTTP_PORT" "$WORKER_NAME" "$AI" "$CLAUDE" \
     "$CLAUDE_INSTALLED" "$UV_INSTALLED" "${NO_PASSWORD:-}" <<'EOF'
 import json, sys, time
@@ -238,7 +239,7 @@ facts = {
     "by": "deploy/install/install.sh", "when": time.strftime("%Y-%m-%d %H:%M %Z"), "version": sha,
     "folder": root, "hub_data": f"{root}/hub", "vault_key": f"{root}/vault.key", "worker_state": f"{root}/worker",
     "machine": worker, "units": [f"{name}-hub", f"{name}-worker"], "site": f"http://127.0.0.1:{http}",
-    "http": f"0.0.0.0:{http} (every interface)", "open_until_claimed": bool(no_password),
+    "host": "0.0.0.0", "http": f"0.0.0.0:{http} (every interface)", "open_until_claimed": bool(no_password),
     "ai": ({"choice": "claude", "engine": "claude-code", "claude": claude, "permission_mode": "auto",
             "note": "Claude Code on this machine, under the Claude subscription it is signed in with."}
            if ai == "claude" else {"choice": "none", "note": "No AI yet: the others are coming soon."}),
