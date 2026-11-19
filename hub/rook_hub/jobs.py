@@ -10,8 +10,16 @@ beyond the match, no retries, no timeouts, no steps (J6).
 
 A match is an event name plus, optionally, values the payload must have:
 every key in `payload` must be present in the event's payload with an equal value.
+
+Brief 59, with 0.5's names: `job.run` runs a job now, whatever its trigger, as its
+owner, and the run ends with job.success or job.fail like any other; `job.cancel`
+stops a run that is still running: its call ends with `call_stopped` and its
+worker ends the work (Hub.stop_call), and the run then ends as a failure (J3);
+`job.update` changes a job in place, keeping its GUID, moniker, owner, pause and
+created time, so its runs in the journal stay its own.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -133,7 +141,9 @@ def _all(hub):
 
 # ------------------------------------------------------------- hub caps (J7)
 
-def create(hub, args, actor):
+def _checked(args):
+    """A job's fields from job.create's arguments, checked: (title, description, event, payload,
+    worker as given, cap, call args)."""
     title, description = _need(args, "title"), args.get("description", "")
     match, call = _need(args, "match", dict), _need(args, "call", dict)
     event, payload = _need(match, "event"), match.get("payload", {})
@@ -148,11 +158,21 @@ def create(hub, args, actor):
         validate({"type": "call", "id": "-", "cap": cap, "args": call_args})
     except ProtocolError as e:
         raise HubError("bad_message", str(e), "Fix the cap name or arguments.") from None
+    return title, description, event, payload, worker, cap, call_args
+
+
+def _target(hub, worker):
+    """The GUID a job's call goes to: a device's (D1), a worker's, or "hub". The lock is held."""
+    device = hub._db.execute("SELECT guid FROM devices WHERE guid = ? OR moniker = ?", (worker, worker)).fetchone()
+    return worker if worker == "hub" else device["guid"] if device else hub._resolve(worker)["guid"]
+
+
+def create(hub, args, actor):
+    title, description, event, payload, worker, cap, call_args = _checked(args)
     guid = str(uuid.uuid4())
     with hub._lock, hub._db:
         user, _ = hub.auth.actor(**actor)
-        device = hub._db.execute("SELECT guid FROM devices WHERE guid = ? OR moniker = ?", (worker, worker)).fetchone()
-        target = worker if worker == "hub" else device["guid"] if device else hub._resolve(worker)["guid"]   # D1
+        target = _target(hub, worker)
         hub._db.execute(
             "INSERT INTO jobs (guid, moniker, title, description, owner, event, payload, worker, cap, args, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -162,6 +182,58 @@ def create(hub, args, actor):
         warnings = _loops(rows)
         record = _record(hub, _job(hub, guid), warnings)
     return {"job": record, "warnings": [warnings[guid]] if guid in warnings else []}
+
+
+def update(hub, args, actor):
+    """Change a job (0.5's job.update): what is given of title, description, match and call replaces
+    what the job had, each whole; the rest stays. Its identity, owner, pause and created time stay,
+    so its past runs in the journal stay its own (J7, J8)."""
+    with hub._lock, hub._db:
+        hub.auth.actor(**actor)
+        row = _job(hub, _need(args, "job"))
+    had = {"title": row["title"], "description": row["description"],
+           "match": {"event": row["event"], "payload": json.loads(row["payload"])},
+           "call": {"worker": row["worker"], "cap": row["cap"], "args": json.loads(row["args"])}}
+    title, description, event, payload, worker, cap, call_args = _checked(
+        dict(had, **{name: args[name] for name in had if name in args}))
+    with hub._lock, hub._db:
+        _job(hub, row["guid"])     # still there
+        hub._db.execute("UPDATE jobs SET title = ?, description = ?, event = ?, payload = ?, worker = ?, cap = ?, "
+                        "args = ? WHERE guid = ?",
+                        (title, description, event, json.dumps(payload), _target(hub, worker), cap,
+                         json.dumps(call_args), row["guid"]))
+        warnings = _loops(_all(hub))
+        record = _record(hub, _job(hub, row["guid"]), warnings)
+    return {"job": record, "warnings": [warnings[row["guid"]]] if row["guid"] in warnings else []}
+
+
+def run_now(hub, args, actor):
+    """Run a job now (0.5's job.run), whatever its trigger and even if it is paused: a run of its own,
+    as its owner, ending with job.success or job.fail (J3). Answers at once with the run's ID."""
+    with hub._lock, hub._db:
+        user, _ = hub.auth.actor(**actor)
+        row = _job(hub, _need(args, "job"))
+        name = hub.auth._user(user)["name"]
+    run_id = uuid.uuid4().hex
+    hub.events._spawn(run(hub, row, {"name": "job.run", "payload": {}}, run_id=run_id,
+                          why=f"Job {row['moniker']} ({row['title']}), run now by {name}."))
+    return {"job": row["moniker"], "run": run_id}
+
+
+def cancel(hub, args, actor):
+    """Stop a run that is still running (0.5's job.cancel): its call ends with call_stopped, saying
+    who stopped it, and its worker ends the work. The run then ends as a failure (J3)."""
+    run_id = _need(args, "run")
+    with hub._lock, hub._db:
+        who = hub.auth.actor(**actor)
+    calls = [call_id for call_id, running in list(hub._running.items())
+             if running["run"] == run_id and running["task"] is not asyncio.current_task()]
+    if not calls:
+        raise HubError("run_not_running", f"No run {run_id} is running.",
+                       "List its steps with the journal (run set to it) to see how it ended.")
+    for call_id in calls:
+        hub.stop_call(call_id, who, "with job.cancel")
+    return {"run": run_id, "stopped": calls}
 
 
 def list_jobs(hub, args, actor):
@@ -231,6 +303,26 @@ CAPS = {
                            "cap": {"type": "string"},
                            "args": {"type": "object"}}}}},
     }),
+    "job.update": (update, {
+        "description": "Change a job: title, description, match or call, each given replaces the job's whole; "
+                       "its moniker, owner, pause and past runs stay.",
+        "schema": {"type": "object", "required": ["job"], "additionalProperties": False, "properties": {
+            "job": {"type": "string", "description": "The job's moniker or GUID."},
+            "title": {"type": "string"}, "description": {"type": "string"},
+            "match": {"type": "object", "description": "As job.create's match."},
+            "call": {"type": "object", "description": "As job.create's call."}}},
+    }),
+    "job.run": (run_now, {
+        "description": "Run a job now, whatever its trigger, as its owner. Answers at once with the run's ID; "
+                       "the journal (run set to it) shows the run, and job.cancel stops it.",
+        "schema": _JOB_ARG,
+    }),
+    "job.cancel": (cancel, {
+        "description": "Stop a job's run that is still running: its call ends, saying you stopped it, and the "
+                       "work on the worker ends.",
+        "schema": {"type": "object", "required": ["run"], "additionalProperties": False, "properties": {
+            "run": {"type": "string", "description": "The run's ID, from job.run or the journal."}}},
+    }),
     "job.list": (list_jobs, {
         "description": "List every job with its match, call, owner and whether it is paused, and a warning on "
                        "any job that is part of a loop.",
@@ -265,13 +357,15 @@ def schedules(hub):
     return sorted({json.loads(row[0]).get("schedule") for row in rows} - {None})
 
 
-async def run(hub, job, event):
+async def run(hub, job, event, run_id=None, why=None):
     """One run: the job's call as its owner, then job.success or job.fail (J3).
-    A run started by a completion joins that chain's run ID; any other starts one (J5)."""
-    run_id = event["payload"].get("run") if event["name"] in COMPLETIONS else None
+    A run started by a completion joins that chain's run ID; any other starts one (J5),
+    unless `run_id` is given (job.run)."""
+    if run_id is None:
+        run_id = event["payload"].get("run") if event["name"] in COMPLETIONS else None
     if not isinstance(run_id, str) or not run_id:
         run_id = uuid.uuid4().hex
-    why = f"Job {job['moniker']} ({job['title']}) on event {event['name']}."
+    why = why or f"Job {job['moniker']} ({job['title']}) on event {event['name']}."
     try:
         reply = await hub.call(job["worker"], job["cap"], json.loads(job["args"]), why,
                                user=job["owner"], job=job["guid"], run=run_id)

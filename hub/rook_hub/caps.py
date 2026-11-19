@@ -20,7 +20,7 @@ HUB = "hub"  # the worker name that addresses the hub's own caps
 # as written and resolved when the stored call runs (X2: a job stores the reference;
 # a device's config keeps it and its driver gets the value each time, D7; a worker's config
 # keeps it and the worker gets the value each time its config is sent, CF3).
-KEEP_REFERENCES = {"job.create", "device.add", "config.set"}
+KEEP_REFERENCES = {"job.create", "job.update", "device.add", "config.set"}
 
 
 def _text(args, name):
@@ -100,7 +100,7 @@ CAPS = {
 }
 
 
-CAPS.update(jobs.CAPS)  # create, list, pause, un-pause and delete jobs; emit an event (J7, J2)
+CAPS.update(jobs.CAPS)  # create, list, change, pause, un-pause, run, stop and delete jobs; emit an event (J7, J2; brief 59)
 CAPS.update(vault.caps())  # create and list secrets, never their values (X3)
 CAPS.update(scrub.caps())  # take a value out of the journal (L5)
 CAPS.update(plugins.CAPS)  # install and list plugins (PL4)
