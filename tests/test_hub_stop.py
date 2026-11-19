@@ -12,7 +12,7 @@ import time
 
 import aiohttp
 
-from rook_hub import Hub, link
+from rook_hub import Hub
 from test_first_run import Started
 from test_hub import heartbeat
 from test_link_carrier import CAPS, Played, Setup
@@ -100,9 +100,9 @@ def test_stop_with_a_client_that_never_reads(tmp_path):
             while not setup.hub.carrier._requests and time.monotonic() < deadline:
                 await asyncio.sleep(0.02)
             [path] = setup.hub.carrier._requests
-            # Hand it more than its buffers hold; it reads none of it.
+            # Hand it more than its buffers hold (40 MB); it reads none of it.
             for _ in range(40):
-                for _ in range(link.QUEUE):
+                for _ in range(16):
                     setup.hub.carrier._send(path, b"\x01" * 65536)
                 await asyncio.sleep(0.01)
             transport = setup.hub.carrier._requests[path].transport
