@@ -13,7 +13,13 @@ Nothing here bounds a command: no timeout, no size cap, no list of what may run.
 The plan defers all of that (Build rules). shell.exec's output is sent as the command
 writes it, so a command that says a lot is never held whole (brief 54): a result over
 about a megabyte goes in pieces (docs/protocol.md, "A big result"), and one under it is
-the same reply as ever."""
+the same reply as ever.
+
+Stopping (brief 59): a shell.exec call that is stopped ends its command and everything the
+command started (each runs in a session of its own). A signal sent to a shell.open stream goes
+to its command: on pipes, to the command and everything it started; on a terminal, to the
+program in the foreground, as a key typed there would. The stream closes with the command's
+exit code."""
 
 import asyncio
 import codecs
@@ -127,10 +133,13 @@ async def run(args):
     errors = tempfile.TemporaryFile()
     try:
         proc = await _start(argv, args, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=errors)
+                            stdout=subprocess.PIPE, stderr=errors, start_new_session=True)
     except BaseException:
         errors.close()
         raise
+    # The call's task ends when the reply is sent, or when the call is stopped (brief 59): the
+    # command, and everything it started, ends with it if it has not ended by itself.
+    asyncio.current_task().add_done_callback(lambda _: _end(proc))
     if stdin is not None:
         _running.add(feeding := asyncio.ensure_future(_feed(proc, stdin.encode("utf-8"))))
         feeding.add_done_callback(_running.discard)
@@ -269,7 +278,7 @@ def _resize(fd, cols, rows):
 async def _serve(stream, proc, master):
     """Output to the stream and input from it, until the process's output ends; then the
     stream closes. A stream closed by a client (or by the plugin going) ends the process."""
-    jobs = [asyncio.create_task(_typed(stream, proc, master))]
+    jobs = [asyncio.create_task(_typed(stream, proc, master)), asyncio.create_task(_signalled(stream, proc, master))]
     if master is not None:
         jobs.append(asyncio.create_task(_sizes(stream, master)))
     try:
@@ -286,7 +295,7 @@ async def _serve(stream, proc, master):
         if master is not None:
             os.close(master)
         _end(proc)
-        await stream.close()
+        await stream.close(proc.returncode)     # how it ended, when it ended by itself (brief 59)
 
 
 async def _terminal_output(stream, master):
@@ -339,6 +348,22 @@ async def _write(fd, data):
                 await ready
             finally:
                 loop.remove_writer(fd)
+
+
+async def _signalled(stream, proc, master):
+    """A signal a client sends to the stream (brief 59) goes to the command's process group: on a
+    terminal, the group in the foreground, as a key typed there would; on pipes, the command's own."""
+    while (name := await stream.signalled()) is not None:
+        group = proc.pid
+        if master is not None:
+            try:
+                group = os.tcgetpgrp(master)
+            except OSError:
+                pass
+        try:
+            os.killpg(group, getattr(signal, "SIG" + name))
+        except (ProcessLookupError, PermissionError):
+            pass                        # it has already ended
 
 
 async def _sizes(stream, master):
