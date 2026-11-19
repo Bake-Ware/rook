@@ -11,6 +11,7 @@ The earlier code (0.4 on `master`, the 0.5 rework on `castling`) is reference on
 - `protocol/`: the protocol library, one per language (U1). `vectors.json` is shared by every language; `python/` is the Python library.
 - `hub/`: the hub, in Python.
 - `core/python/`: the worker core written in Python (U1), and its start command (`rook_start.py`).
+- `deploy/install/install.sh`: the installer: a hub and a worker as systemd user units, in one command.
 - `tests/`: the tests for all of the above.
 
 ## Tests
@@ -24,6 +25,16 @@ python3 -m venv .venv
 ```
 
 `requirements.txt` installs Telesthete from GitHub at the commit Rook pins (`docs/link-design.md`, section 8), so the install needs `git` and network access.
+
+## Installing with the installer
+
+On a Linux machine with systemd, curl and git, one command sets up a hub and a worker for this machine, each as a systemd user unit, and opens the hub's site:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/house-agent/deploy/install/install.sh | bash
+```
+
+or `deploy/install/install.sh` from Rook's source, which installs that tree: a checkout's commit, or a copied folder as it is. Only the curl form downloads. It asks what you use for AI now (Claude Code is set up, signed in and tested; the others are coming soon), puts uv's Python 3.12 and Rook in `~/.rook`, starts the hub on port 8740 on every interface, joins this machine's worker with a join token, and opens the site. `--dir`, `--name` and `--http-port` let it run beside other installs; `--open` opens the site again; `--uninstall` stops it and removes its units and its folder, and nothing else. `--help` lists every option. What a curl install fetches is the `REF=` line near the top of the script: the `house-agent` branch for now.
 
 ## Starting a hub
 

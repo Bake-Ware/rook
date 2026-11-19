@@ -10,6 +10,9 @@ and exits with code 0. Started again, it reuses that state and links at once: no
 `token.create purpose join`): the knock is approved at once, owned by whoever minted it, with no one
 approving (R3). A worker already approved has no knock to make, and the code is not used.
 
+`--state DIR` keeps the state in DIR instead of `~/.rook-worker`, for a second worker on one machine
+under the same user, as the installer's (deploy/install/install.sh, brief HA4).
+
 What happens is printed as one plain line each, from the worker's `rook_worker` log. A hub that
 cannot be reached, a URL that is not a hub, and a key the hub refuses end the command with one
 line saying what happened and what to do, and exit code 1; once approved, a hub that cannot be
@@ -48,6 +51,8 @@ def main(argv=None):
     parser.add_argument("hub_url", metavar="HUB_URL", help="the hub's address, as the hub prints it when it starts")
     parser.add_argument("--code", metavar="TOKEN",
                         help="a join token from the hub: this worker is approved at once, with no one approving")
+    parser.add_argument("--state", metavar="DIR",
+                        help="where this worker keeps its keys and identity (default ~/.rook-worker)")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     url = args.hub_url
     parts = urllib.parse.urlsplit(url)
@@ -61,7 +66,7 @@ def main(argv=None):
     rook_worker.log.propagate = False
     logging.getLogger("telesthete").setLevel(logging.ERROR)   # its warnings repeat what those lines say
 
-    state = state_dir()
+    state = pathlib.Path(args.state).expanduser() if args.state else state_dir()
     worker = rook_worker.Worker(state, url, token=args.code)
     print(f"Rook worker {worker.name}, state in {state}", flush=True)
     if worker.identity is None:
