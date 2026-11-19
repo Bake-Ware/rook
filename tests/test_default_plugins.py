@@ -95,6 +95,7 @@ def test_a_new_hub_has_the_default_plugins_and_a_restart_keeps_them(tmp_path):
     assert [p["name"] for p in listed] == ["agents", "agents-claude-code", "battery", "file", "net", "shell", "worker"]
     assert all(p["worker"] and p["caps"] == [] and not p["site"] for p in listed[1:])   # worker parts only
     assert not listed[0]["worker"] and "agent.chat.send" in listed[0]["caps"]          # but agents: the hub's (HA2)
+    assert listed[0]["site"]                                                          # and its site part, the dock (HA1)
     first = {p["name"]: p["guid"] for p in listed}
     hub.close()
 
@@ -442,7 +443,7 @@ async def older_core(tmp_path, monkeypatch):
 # change at the same version never reaches it. When a test below says so, raise the version in the
 # plugin's plugin.json and set its line here to what the test prints.
 SHIPPED = {
-    "agents": ("0.1.0", "e49a011d63b193af68d4d7c16c3103ee949b25eafab7fb498874f4d9ba0d4698"),
+    "agents": ("0.1.0", "a848c4503bd9e67f25b9bfb9c58de5851dc5ad36e1a3bd49af3b7de3041d72a4"),
     "agents-claude-code": ("0.1.0", "79653aecb79c275eb65a7f1d5d88081c22f33e3f31767d3ef963aa47c26b8eeb"),
     "battery": ("0.1.0", "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"),
     "file": ("0.2.0", "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"),

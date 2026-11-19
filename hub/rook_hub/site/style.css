@@ -28,7 +28,10 @@ button{font:inherit;color:inherit}
 
 /* ---------- Shell ---------- */
 body{isolation:isolate}
-.layout{position:relative;z-index:1;display:grid;grid-template-columns:var(--side-w) minmax(0,1fr);height:100vh}
+.layout{position:relative;z-index:1;display:grid;grid-template-columns:var(--side-w) minmax(0,1fr) auto;height:100vh}
+/* Places for plugins' shell parts (HA1): #work fills the page area while it is shown; #shell-dock is the column beside it */
+#shell-dock{display:contents}
+body.working .main>:not(#work){display:none}
 .main{overflow:auto;min-width:0}
 
 .sidebar{background:var(--sidebar);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 14px 14px;gap:18px;overflow:auto}

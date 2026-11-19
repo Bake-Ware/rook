@@ -692,12 +692,16 @@ CAPS = {
 # ------------------------------------------------------------ the site section (PL1, P1, P2, P6)
 #
 # "site": {"pages": [{"segment", "title", "file"}], "settings": [{"title", "file"}],
-#          "components": [{"name", "file"}]}   (docs/plugins.md; Bake 13 Nov)
-# Each file is an ES module in the plugin's folder whose default export is a Vue component.
+#          "components": [{"name", "file"}], "shell": [{"file"}]}   (docs/plugins.md; Bake 13 Nov)
+# Each page, settings or component file is an ES module in the plugin's folder whose default
+# export is a Vue component. A shell file (house agent brief HA1, as 0.5's manifest `shell:`)
+# is a stylesheet (.css) or a classic script (.js) the shell loads on every page, in order.
 # A page's name is its title in lowercase, words joined by hyphens: the plugin's page `notes`
 # is at /plugins/<plugin>/notes, so a pin names the plugin and the page (Bake 13 Nov).
 
-SITE_FIELDS = {"pages": ("segment", "title", "file"), "settings": ("title", "file"), "components": ("name", "file")}
+SITE_FIELDS = {"pages": ("segment", "title", "file"), "settings": ("title", "file"), "components": ("name", "file"),
+               "shell": ("file",)}
+SHELL_KINDS = {".css": "style", ".js": "script"}         # what a shell file may be, by its ending
 _COMPONENT = re.compile(r"[a-z0-9]+(-[a-z0-9]+)+\Z")    # a hyphen, so it is never an HTML element's name
 
 
@@ -731,10 +735,14 @@ def read_site(folder, manifest, path, fix):
             if part == "components" and not _COMPONENT.match(entry["name"]):
                 raise HubError("bad_manifest", f"{where}: name {entry['name']!r} must be lowercase letters and digits "
                                               "with at least one hyphen, such as note-card.", fix)
-            name = entry["name"] if part == "components" else page_name(entry["title"])
+            if part == "shell" and target.suffix not in SHELL_KINDS:
+                raise HubError("bad_manifest", f"{where}: file {entry['file']!r} must end in .css (a stylesheet) "
+                                              "or .js (a script).", fix)
+            name = {"components": entry.get("name"), "shell": site_file(folder, entry["file"])}.get(part) \
+                or page_name(entry["title"])
             if not name or name in names:
-                raise HubError("bad_manifest", f"{where}: {'name' if part == 'components' else 'title'} "
-                                              f"{entry.get('title') or entry.get('name')!r} is empty or used twice in this plugin.", fix)
+                raise HubError("bad_manifest", f"{where}: {'name' if part == 'components' else 'file' if part == 'shell' else 'title'} "
+                                              f"{entry.get('title') or entry.get('name') or entry.get('file')!r} is empty or used twice in this plugin.", fix)
             names.add(name)
 
 
