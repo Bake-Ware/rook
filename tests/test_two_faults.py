@@ -11,7 +11,7 @@ import asyncio
 from helpers import eventually
 from memory_link import connector
 from rook_hub import Hub
-from rook_protocol import MAX_MESSAGE
+from rook_protocol import MAX_MESSAGE, decode
 from rook_worker import Cap, Worker
 from test_door import mcp_client, tool
 from test_site import ask, browser, login
@@ -56,11 +56,15 @@ async def start(tmp_path):
 
 
 def close_under_send(hub, guid):
-    """The next send on `guid`'s link finds it closing: it closes and raises EOFError, as
-    link.py does when the Channel resets mid-send. Returns that link."""
+    """The next stream message sent on `guid`'s link finds it closing: it closes and raises EOFError,
+    as link.py does when the Channel resets mid-send. Returns that link. The hub's other sends on it
+    (a heartbeat reply, config, plugins) go through: they can come first, and are not the send under test."""
     link = hub._links[guid]
+    send_as_built = link.send
 
     async def send(data):
+        if decode(data)["type"] not in ("stream_data", "stream_resize", "stream_close"):
+            return await send_as_built(data)
         link.close()
         raise EOFError
     link.send = send
