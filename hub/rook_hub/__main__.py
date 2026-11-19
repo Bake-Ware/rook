@@ -9,6 +9,12 @@ Back the data up, and restore it, here or on another machine (F3; backup.py):
     python -m rook_hub backup  --data DIR --vault-key FILE --to BACKUP
     python -m rook_hub restore --from BACKUP --data DIR --vault-key FILE
 
+Mint one join token, for the installer to join its first worker before anyone has signed in
+(R3; deploy/install/install.sh, brief HA4). It is owned by the hub's system owner, so the worker it
+joins is too until someone reassigns it (W6):
+
+    python -m rook_hub join-token --data DIR --vault-key FILE
+
 README.md has the commands from a fresh clone.
 """
 
@@ -82,8 +88,26 @@ def restore_command(argv):
     print(f"  python -m rook_hub --data {args.data} --vault-key {args.vault_key}")
 
 
+def join_token_command(argv):
+    parser = argparse.ArgumentParser(prog="python -m rook_hub join-token",
+                                     description="Print one join token, owned by the hub's system owner.")
+    parser.add_argument("--data", required=True, help="the hub's data directory; made if it is new")
+    parser.add_argument("--vault-key", required=True, help="the vault key file, outside the data directory")
+    args = parser.parse_args(argv)
+    try:
+        hub = Hub(args.data, vault_key_file=args.vault_key)
+    except HubError as e:
+        sys.exit(f"rook hub join-token: {e.message['message']} {e.message['next']}")
+    try:
+        print(hub.auth.mint("join", user=hub.auth.system))
+    finally:
+        hub.close()
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["join-token"]:
+        return join_token_command(argv[1:])
     if argv[:1] == ["backup"]:
         return backup_command(argv[1:])
     if argv[:1] == ["restore"]:
