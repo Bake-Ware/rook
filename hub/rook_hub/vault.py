@@ -136,6 +136,22 @@ class Vault:
             by_offset = self.index.setdefault(value[offset:offset + GRAM], {})
             by_offset.setdefault(offset, {}).setdefault(len(value), {})[value] = name
 
+    def _forget(self, value):
+        """Take one value out of the scrubber's index, unless another secret still holds it."""
+        if len(value) < HEAD or self.hub._db.execute("SELECT 1 FROM secrets WHERE hash = ?",
+                                                     (self.keyed_hash(value),)).fetchone():
+            return
+        for offset in range(len(value) - GRAM + 1):
+            gram = value[offset:offset + GRAM]
+            values = self.index.get(gram, {}).get(offset, {}).get(len(value), {})
+            values.pop(value, None)
+            if not values:
+                self.index[gram][offset].pop(len(value), None)
+                if not self.index[gram][offset]:
+                    del self.index[gram][offset]
+                if not self.index[gram]:
+                    del self.index[gram]
+
     def _open(self):
         if self.state == "locked":
             raise HubError(*_LOCKED)
@@ -170,12 +186,10 @@ class Vault:
 
     # ------------------------------------------------------- hub caps (X3)
 
-    def create(self, args, actor):
-        """A new secret. Its value is encrypted and never returned or journaled."""
-        name, value = args.get("name"), args.get("value")
-        if not isinstance(name, str) or not NAME.match(name):
-            raise HubError("bad_message", "args.name is required: letters, digits, dot, dash and underscore.",
-                           "Give a name like deploy-key; calls refer to it as secret:deploy-key.")
+    def create(self, args, actor, replace=False):
+        """A new secret, or with `replace` (secret.set) a new value for the one of that scope and name.
+        Its value is encrypted and never returned or journaled."""
+        name, value = _name(args), args.get("value")
         if not isinstance(value, str) or not value:
             raise HubError("bad_message", "args.value is required and must be a string.", "Give the value as text.")
         self._open()
@@ -184,11 +198,21 @@ class Vault:
             user, token = self.hub.auth.actor(**actor)
             kind, scope = self._scope(args.get("scope"))
             shown = self._show_scope(kind, scope)
-            if self.hub._db.execute("SELECT 1 FROM secrets WHERE kind = ? AND scope = ? AND name = ?",
-                                    (kind, scope, name)).fetchone():
-                raise HubError("secret_exists", f"{shown} already has a secret called {name}.",
-                               "Choose another name; secrets are not replaced.")
+            old = self.hub._db.execute("SELECT * FROM secrets WHERE kind = ? AND scope = ? AND name = ?",
+                                       (kind, scope, name)).fetchone()
             head, full = self.keyed_hash(value[:HEAD]), self.keyed_hash(value)
+            if old is not None and replace:      # the same secret, GUID and moniker, with its new value
+                self.hub._db.execute("UPDATE secrets SET value = ?, head = ?, hash = ?, length = ?, user = ?, token = ?, "
+                                     "created_at = ? WHERE guid = ?",
+                                     (self._box.encrypt(value.encode("utf-8")), head, full, len(value), user, token,
+                                      self.hub.clock(), old["guid"]))
+                self._forget(self._box.decrypt(old["value"]).decode("utf-8"))
+                if len(value) >= HEAD:
+                    self._learn(name, value)
+                return {"replaced": self._record(old["guid"])}
+            if old is not None:
+                raise HubError("secret_exists", f"{shown} already has a secret called {name}.",
+                               "Choose another name, or give it a new value with secret.set.")
             self.hub._db.execute(
                 "INSERT INTO secrets (guid, moniker, kind, scope, name, value, head, hash, length, user, token, created_at)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -205,6 +229,23 @@ class Vault:
                 "created_by": self.hub._moniker(row["user"]) if row["user"] else None,
                 "token": self.hub._moniker(row["token"]) if row["token"] else None,
                 "created_at": iso(row["created_at"])}
+
+    def delete(self, args, actor):
+        """Delete a secret: the row and its encrypted value go. References to it fail from then on."""
+        name = _name(args)
+        self._open()
+        with self.hub._lock, self.hub._db:
+            self.hub.auth.actor(**actor)
+            kind, scope = self._scope(args.get("scope"))
+            row = self.hub._db.execute("SELECT * FROM secrets WHERE kind = ? AND scope = ? AND name = ?",
+                                       (kind, scope, name)).fetchone()
+            if row is None:
+                raise HubError("unknown_secret", f"{self._show_scope(kind, scope)} has no secret called {name}.",
+                               "List the secrets with secret.list and give a scope and name from there.")
+            record = self._record(row["guid"])
+            self.hub._db.execute("DELETE FROM secrets WHERE guid = ?", (row["guid"],))
+            self._forget(self._box.decrypt(row["value"]).decode("utf-8"))
+        return {"deleted": record}
 
     def list(self, args, actor):
         """Every secret's scope, name and moniker, who made it and when; never a value."""
@@ -301,6 +342,14 @@ class Vault:
         return put(args)
 
 
+def _name(args):
+    name = args.get("name")
+    if not isinstance(name, str) or not NAME.match(name):
+        raise HubError("bad_message", "args.name is required: letters, digits, dot, dash and underscore.",
+                       "Give a name like deploy-key; calls refer to it as secret:deploy-key.")
+    return name
+
+
 def caps():
     """The vault's hub caps (X3); reveal is not one of them."""
     scope = {"type": "string", "description": "\"hub\", \"worker:<moniker or GUID>\", \"band:<moniker or GUID>\", "
@@ -312,6 +361,18 @@ def caps():
                            "scope, then its band's, then the hub's. The value is never shown or journaled.",
             "schema": {"type": "object", "required": ["scope", "name", "value"], "additionalProperties": False,
                        "properties": {"scope": scope, "name": {"type": "string"}, "value": {"type": "string"}}},
+        }),
+        "secret.set": (lambda hub, args, actor: hub.vault.create(args, actor, replace=True), {
+            "description": "Keep a secret in the hub's vault, or give the one of that scope and name a new value "
+                           "(its moniker and references stay). The value is never shown or journaled.",
+            "schema": {"type": "object", "required": ["scope", "name", "value"], "additionalProperties": False,
+                       "properties": {"scope": scope, "name": {"type": "string"}, "value": {"type": "string"}}},
+        }),
+        "secret.delete": (lambda hub, args, actor: hub.vault.delete(args, actor), {
+            "description": "Delete a secret from the hub's vault. A call that refers to it afterwards is refused "
+                           "with unknown_secret, unless another scope it looks in has one by that name.",
+            "schema": {"type": "object", "required": ["scope", "name"], "additionalProperties": False,
+                       "properties": {"scope": scope, "name": {"type": "string"}}},
         }),
         "secret.list": (lambda hub, args, actor: hub.vault.list(args, actor), {
             "description": "List the vault's secrets: scope, name, moniker, who made each and when. Never a value.",

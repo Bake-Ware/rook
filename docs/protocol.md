@@ -177,7 +177,7 @@ Connecting is the first heartbeat. The worker sends one at the interval the hub 
 | `protocol` | integer | yes | The hub's version (U8). |
 | `interval` | integer | yes | Seconds until the next heartbeat. Set by the hub per worker. |
 
-The hub answers every heartbeat. A worker the hub holds no link for is shown offline at once; one whose link is up but which misses three intervals is shown offline too (H3, as narrowed after the stress test).
+The hub answers every heartbeat. When the hub changes a linked worker's interval (`worker.interval`, brief 61) it also sends a `heartbeat_reply` unasked, so the worker follows the new interval at once; a worker that takes a different interval as a change heartbeats at once (H1). One that does not still gets the new interval in the reply to its next heartbeat. A worker the hub holds no link for is shown offline at once; one whose link is up but which misses three intervals is shown offline too (H3, as narrowed after the stress test).
 
 ### `call`: hub to worker (C3, W5)
 

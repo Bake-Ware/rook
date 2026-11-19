@@ -396,3 +396,222 @@ def test_owner_and_config(tmp_path):
         _, journal = await rig.tool("journal", limit=1000)
         assert "cfg-secret-77" not in json.dumps(journal) and "cfg-secret-77" not in json.dumps(got)
     run(tmp_path, body)
+
+
+# ------------------------------------------------------------------ brief 61: the gaps the checklist found
+
+def test_replace_and_delete_a_secret(tmp_path):
+    """Row 56 (0.5's secret.set and secret.delete): a secret given a new value keeps its moniker and its
+    references, and the worker gets the new value; neither value is journaled. A deleted secret is gone from
+    the list, and a call that refers to it is refused with what to do."""
+    async def body(rig):
+        made = (await rig.ok("hub", "secret.create", scope="hub", name="rotating", value="first-Value-0001"))["created"]
+        failed, refused = await rig.tool("call", worker="hub", cap="secret.create", why=WHY,
+                                         args={"scope": "hub", "name": "rotating", "value": "x"})
+        assert failed and "secret.set" in refused
+        replaced = (await rig.ok("hub", "secret.set", scope="hub", name="rotating", value="second-Value-0002"))["replaced"]
+        assert (replaced["moniker"], replaced["reference"]) == (made["moniker"], "secret:rotating")
+        reply = await rig.ok(rig.moniker, "shell.exec", cmd="echo got:$X", env={"X": "secret:rotating"})
+        assert reply["stdout"] == "got:second-Value-0002\n"
+        new = (await rig.ok("hub", "secret.set", scope="hub", name="fresh", value="made-by-set-0003"))
+        assert new["created"]["name"] == "fresh"                 # set makes one that does not exist yet
+        _, journal = await rig.tool("journal", limit=1000)
+        for value in ("first-Value-0001", "second-Value-0002", "made-by-set-0003"):
+            assert value not in json.dumps(journal)
+
+        deleted = (await rig.ok("hub", "secret.delete", scope="hub", name="rotating"))["deleted"]
+        assert deleted["moniker"] == made["moniker"]
+        assert [s["name"] for s in (await rig.ok("hub", "secret.list"))["secrets"]] == ["fresh"]
+        failed, refused = await rig.tool("call", worker=rig.moniker, cap="shell.exec", why=WHY,
+                                         args={"cmd": "echo $X", "env": {"X": "secret:rotating"}})
+        assert failed and refused.startswith("unknown_secret") and "secret.create" in refused
+        failed, refused = await rig.tool("call", worker="hub", cap="secret.delete", why=WHY,
+                                         args={"scope": "hub", "name": "rotating"})
+        assert failed and refused.startswith("unknown_secret") and "secret.list" in refused
+        # The scrubber forgets a value no secret holds any more, and learns the new one (L4).
+        held = {v for by_offset in rig.hub.vault.index.values() for by_len in by_offset.values()
+                for values in by_len.values() for v in values}
+        assert held == {"made-by-set-0003"}
+    run(tmp_path, body)
+
+
+def test_stream_search(tmp_path):
+    """Row 45 (0.5's stream.search): the stream tool's action search finds streams by any part of their
+    title, description, cap, worker or opener, in any case; worker and open narrow it."""
+    async def body(rig):
+        deploy = (await rig.ok(rig.moniker, "shell.open", argv=["sh"], title="Deploy the website"))["stream"]
+        logs = (await rig.ok(rig.moniker, "shell.open", argv=["sh"], title="Tail the logs"))["stream"]
+        found = (await rig.stream(action="search", query="WEBSITE"))["streams"]
+        assert [s["moniker"] for s in found] == [deploy]
+        assert {s["moniker"] for s in (await rig.stream(action="search", query="shell.open"))["streams"]} == {deploy, logs}
+        assert {s["moniker"] for s in (await rig.stream(action="search", query="the", worker=rig.moniker))["streams"]} \
+            == {deploy, logs}
+        await rig.stream(action="close", stream=logs, why="Parity: done with the logs.")
+        assert [s["moniker"] for s in (await rig.stream(action="search", query="the", open=True))["streams"]] == [deploy]
+        assert (await rig.stream(action="search", query="nothing like it"))["streams"] == []
+        failed, refused = await rig.tool("stream", action="search")
+        assert failed and refused.startswith("bad_message")
+    run(tmp_path, body)
+
+
+def test_settings_as_an_agent(tmp_path):
+    """Row 48 (0.5's setting.list and setting.set): an agent reads and changes what the Settings page
+    holds, the hub's name; the site shows the change."""
+    async def body(rig):
+        assert (await rig.ok("hub", "setting.list"))["settings"] == [
+            {"section": "hub", "key": "name", "value": None, "description": "The hub's name, shown on the site."}]
+        assert (await rig.ok("hub", "setting.set", key="name", value="  Home  "))["value"] == "Home"
+        assert (await rig.ok("hub", "setting.list"))["settings"][0]["value"] == "Home"
+        assert rig.hub.name() == "Home"                             # what the Settings page reads (GET /api/hub)
+        failed, refused = await rig.tool("call", worker="hub", cap="setting.set", why=WHY,
+                                         args={"key": "colour", "value": "red"})
+        assert failed and refused.startswith("unknown_setting") and "name" in refused
+    run(tmp_path, body)
+
+
+def test_backups_as_an_agent(tmp_path):
+    """Row 53 (0.5's backup.run, backup.list, backup.verify): an agent backs up the running hub to a file
+    on its disk, finds it, and proves it; a changed byte is refused; the command restores it into a hub
+    that holds the same secret. A file that exists is never written over."""
+    from rook_hub import backup
+
+    async def body(rig):
+        await rig.ok("hub", "secret.create", scope="hub", name="kept", value="kept-through-backup")
+        folder = tmp_path / "backups"
+        made = await rig.ok("hub", "backup.run", to=str(folder / "one.rookbackup"))
+        assert made["bytes"] > 0 and made["path"] == str((folder / "one.rookbackup").resolve())
+        (folder / "notes.txt").write_text("not a backup")
+        listed = (await rig.ok("hub", "backup.list", folder=str(folder)))["backups"]
+        assert [b["path"] for b in listed] == [made["path"]] and listed[0]["bytes"] == made["bytes"]
+        verified = await rig.ok("hub", "backup.verify", path=made["path"])
+        assert verified["verified"] is True and verified["files"] >= 4
+
+        failed, refused = await rig.tool("call", worker="hub", cap="backup.run", why=WHY, args={"to": made["path"]})
+        assert failed and refused.startswith("backup_exists")
+        changed = bytearray((folder / "one.rookbackup").read_bytes())
+        changed[len(changed) // 2] ^= 1
+        (folder / "changed.rookbackup").write_bytes(bytes(changed))
+        failed, refused = await rig.tool("call", worker="hub", cap="backup.verify", why=WHY,
+                                         args={"path": str(folder / "changed.rookbackup")})
+        assert failed and refused.startswith("backup_changed")
+
+        key_file = tmp_path / "vault.key"
+        key_file.write_text(bytes(32).hex())                      # the key this rig's hub was started with
+        backup.restore(made["path"], tmp_path / "restored", key_file)
+        restored = Hub(tmp_path / "restored", vault_key=bytes(32))
+        try:
+            assert restored.vault.substitute({"x": "secret:kept"}, "hub") == {"x": "kept-through-backup"}
+        finally:
+            restored.close()
+    run(tmp_path, body)
+
+
+def test_heartbeat_interval(tmp_path):
+    """Row 59 (H2): an agent sets a worker's heartbeat interval; the linked worker is sent it at once and
+    heartbeats on it. Reading the heartbeats table is the one step an agent would read on the Workers page's
+    chart instead."""
+    async def body(rig):
+        def beats():
+            with rig.hub._lock:
+                return rig.hub._db.execute("SELECT COUNT(*) FROM heartbeats").fetchone()[0]
+        reply = await rig.ok("hub", "worker.interval", worker=rig.moniker, seconds=1)
+        assert reply["sent"] is True and reply["interval"] == 1
+        await asyncio.sleep(0.5)
+        before = beats()
+        await asyncio.sleep(3.2)
+        assert beats() - before >= 3                              # every second, not every 15
+        assert rig.worker.interval == 1
+        await rig.ok("hub", "worker.interval", worker=rig.moniker, seconds=600)
+        while rig.worker.interval != 600:
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.5)
+        before = beats()
+        await asyncio.sleep(2)
+        assert beats() == before
+        failed, refused = await rig.tool("call", worker="hub", cap="worker.interval", why=WHY,
+                                         args={"worker": rig.moniker, "seconds": 0})
+        assert failed and refused.startswith("bad_message")
+    run(tmp_path, body)
+
+
+def test_install_a_plugin_from_a_url(tmp_path):
+    """Row 43 (PL4: "a folder or a URL"): an agent installs a plugin from the URL of a tar.gz holding its
+    folder, and of a zip with plugin.json at its top; its cap is callable at once. A URL that answers 404,
+    and one that is not an archive, are refused with what to do."""
+    import io
+    import tarfile
+    import zipfile
+    from aiohttp import web
+
+    def plugin(name):
+        files = {"plugin.json": json.dumps({"name": name, "version": "1.0.0", "hub": {"module": "hub.py"}}),
+                 "hub.py": "def setup(plugin):\n"
+                           f"    @plugin.cap('{name}.hello', 'Say hello.', {{'type': 'object'}})\n"
+                           "    def hello(call, args):\n"
+                           f"        return '{name} says hello'\n"}
+        return files
+
+    def targz(name):
+        out = io.BytesIO()
+        with tarfile.open(fileobj=out, mode="w:gz") as tar:
+            for file, text in plugin(name).items():
+                data = text.encode()
+                info = tarfile.TarInfo(f"{name}-main/{file}")
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        return out.getvalue()
+
+    def zipped(name):
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            for file, text in plugin(name).items():
+                z.writestr(file, text)
+        return out.getvalue()
+
+    served = {"/tarred.tar.gz": targz("tarred"), "/zipped.zip": zipped("zipped"), "/page.html": b"<html></html>"}
+
+    async def serve(request):
+        return web.Response(body=served[request.path]) if request.path in served else web.Response(status=404)
+
+    async def body(rig):
+        app = web.Application()
+        app.router.add_get("/{file}", serve)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        await web.TCPSite(runner, "127.0.0.1", 0).start()
+        base = "http://127.0.0.1:%d" % runner.addresses[0][1]
+        try:
+            for name, path in (("tarred", "/tarred.tar.gz"), ("zipped", "/zipped.zip")):
+                reply = await rig.ok("hub", "plugin.install", url=base + path)
+                assert reply["installed"]["name"] == name and reply["from"] == base + path
+                assert await rig.ok("hub", f"{name}.hello") == f"{name} says hello"
+            failed, refused = await rig.tool("call", worker="hub", cap="plugin.install", why=WHY,
+                                             args={"url": base + "/missing.zip"})
+            assert failed and refused.startswith("plugin_download_failed") and "404" in refused
+            failed, refused = await rig.tool("call", worker="hub", cap="plugin.install", why=WHY,
+                                             args={"url": base + "/page.html"})
+            assert failed and refused.startswith("plugin_archive_bad")
+        finally:
+            await runner.cleanup()
+    run(tmp_path, body)
+
+
+def test_cap_failed_says_what_to_do(tmp_path):
+    """Rows 11, 38: a cap that fails says why and what to try, not "check the arguments against the schema";
+    a result of 20 MB, refused before brief 54, comes whole as pieces of a stream."""
+    async def body(rig):
+        failed, refused = await rig.tool("call", worker=rig.moniker, cap="worker.ping", why=WHY, args={"loud": True})
+        assert failed and refused.startswith("cap_failed") and "it takes none" in refused
+        assert "against the schema" not in refused and "another worker" in refused
+        failed, refused = await rig.tool("call", worker=rig.moniker, cap="file.read", why=WHY,
+                                         args={"path": str(tmp_path / "no-such-file")})
+        assert failed and "file.stat" in refused and "against the schema" not in refused
+
+        running = await rig.ok(rig.moniker, "shell.exec", cmd="head -c 20000000 /dev/zero | tr '\\0' b")
+        texts, position, open_ = [], 0, True
+        while open_:
+            read = await rig.stream(action="read", stream=running["stream"], **{"from": position}, wait=5)
+            texts, position, open_ = texts + [e["out"] for e in read["entries"]], read["next"], read["open"]
+        end = json.loads(texts[-1])
+        assert end["type"] == "result" and json.loads("".join(texts[:end["parts"]]))["stdout"] == "b" * 20_000_000
+    run(tmp_path, body)

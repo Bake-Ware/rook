@@ -487,6 +487,8 @@ class Worker:
                 if not self._replied:
                     self._tell("linked", log.info, "Linked to %s as %s.", self.hub_url, self.identity["moniker"])
                 self._replied = True
+                if self.interval is not None and message["interval"] != self.interval:
+                    self._changed.set()         # a new interval (H2): heartbeat now, then wait the new one
                 self.interval = message["interval"]
                 self._interval_known.set()
             elif message["type"] == "call":

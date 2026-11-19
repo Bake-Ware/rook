@@ -128,9 +128,11 @@ async def scenario(tmp_path):
             failed, hub_caps = await tool(session, "caps", worker="hub")
             assert [c["name"] for c in hub_caps["caps"][0]["caps"]] == [
                 "worker.approve", "worker.attach", "worker.reassign", "worker.revoke", "worker.join-token",
-                "token.create", "token.list", "token.revoke", "users.list", "job.create", "job.list", "job.pause", "job.unpause", "job.delete", "event.emit",
-                "secret.create", "secret.list", "journal.redact", "plugin.install", "plugin.list", "worker.plugins",
-                "device.add", "config.get", "config.set", "heartbeat.roll-up"]
+                "token.create", "token.list", "token.revoke", "users.list", "worker.interval", "setting.list", "setting.set",
+                "job.create", "job.list", "job.pause", "job.unpause", "job.delete", "event.emit",
+                "secret.create", "secret.set", "secret.delete", "secret.list", "journal.redact", "plugin.install",
+                "plugin.list", "worker.plugins", "device.add", "config.get", "config.set",
+                "backup.run", "backup.list", "backup.verify", "heartbeat.roll-up"]
             failed, matched = await tool(session, "caps", match="join")
             assert [(g["worker"], [c["name"] for c in g["caps"]]) for g in matched["caps"]] == [
                 ("hub", ["worker.join-token"]), (moniker, [])]

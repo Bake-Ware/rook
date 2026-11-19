@@ -1,7 +1,11 @@
 """Plugins, the hub side (PL1 to PL4, PL6, K2). The format is in docs/plugins.md.
 
 A plugin is a folder with a manifest, `plugin.json`. The hub installs it from a
-folder on its own disk (`plugin.install`): it checks the manifest, copies the
+folder on its own disk, or from a URL (`plugin.install`, PL4): a URL names a zip or tar
+archive (gzip, bzip2 or xz, or none) holding the folder, either at the archive's top or as
+its one top-level folder, as a GitHub release or branch archive has it. The hub downloads it
+off its loop, as long as that takes, and unpacks it into a new temporary folder, which goes
+once the install ends. Then, as for a folder, it checks the manifest, copies the
 folder into `<state dir>/plugins/`, imports the plugin's hub module and calls
 its `setup(plugin)` (library.py). Installing loads it at once, with no restart,
 and installing a plugin whose name is already installed replaces its code at
@@ -36,6 +40,11 @@ module under a name of its own, so reinstalling one plugin cannot disturb anothe
 
 import asyncio
 import importlib.util
+import tarfile
+import tempfile
+import urllib.error
+import urllib.request
+import zipfile
 import inspect
 import json
 import logging
@@ -449,11 +458,78 @@ def older(installed, shipped):
 # ------------------------------------------------------------ hub caps (PL4)
 
 def install(hub, args, actor):
-    path = args.get("path")
-    if not isinstance(path, str) or not path:
-        raise HubError("bad_message", "args.path is required and must be a string.",
-                       "Give the path of the plugin's folder on the hub's disk.")
+    path, url = args.get("path"), args.get("url")
+    if (path is None) == (url is None) or not isinstance(path or url, str) or not (path or url):
+        raise HubError("bad_message", "Give args.path or args.url, one of them, as a string.",
+                       "Give the path of the plugin's folder on the hub's disk, or the URL of an archive of it.")
+    if url is not None:
+        return _install_from(hub, url, actor)
     return {"installed": hub.plugins.install(path, actor)}
+
+
+async def _install_from(hub, url, actor):
+    if not url.startswith(("http://", "https://")):
+        raise HubError("bad_message", f"{url} is not an http or https URL.",
+                       "Give the URL of a zip or tar archive of the plugin's folder.")
+    with hub._lock:
+        hub.auth.actor(**actor)
+    work = pathlib.Path(tempfile.mkdtemp(prefix="rook-plugin-"))
+    try:
+        folder = await asyncio.to_thread(fetch, url, work)
+        return {"installed": hub.plugins.install(folder, actor), "from": url}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def fetch(url, work):
+    """Download the archive at `url` into the folder `work`, unpack it there and return the plugin's
+    folder in it. No timeout and no size limit: it takes as long as it takes (brief 61)."""
+    archive = work / "download"
+    request = urllib.request.Request(url, headers={"User-Agent": "rook-hub"})
+    try:
+        with urllib.request.urlopen(request) as response, open(archive, "wb") as out:
+            shutil.copyfileobj(response, out)
+    except urllib.error.HTTPError as e:
+        raise HubError("plugin_download_failed", f"{url} answered HTTP {e.code} {e.reason}.",
+                       "Check the URL in a browser; give one that downloads the archive itself.") from None
+    except (OSError, ValueError) as e:
+        raise HubError("plugin_download_failed", f"{url} could not be downloaded: {getattr(e, 'reason', e)}.",
+                       "Check the URL and that the hub's machine can reach it, then install again.") from None
+    unpacked = work / "unpacked"
+    unpacked.mkdir()
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as z:
+            for name in z.namelist():
+                _check_member(url, name)
+            z.extractall(unpacked)
+    elif tarfile.is_tarfile(archive):
+        with tarfile.open(archive) as tar:
+            for member in tar.getmembers():
+                _check_member(url, member.name)
+                if not (member.isfile() or member.isdir()):
+                    raise HubError("plugin_archive_bad", f"The archive at {url} holds {member.name}, a link or "
+                                   "device, which a plugin folder never holds.", "Give an archive of plain files.")
+            if hasattr(tarfile, "data_filter"):     # Python 3.11.4 and later
+                tar.extractall(unpacked, filter="data")
+            else:
+                tar.extractall(unpacked)            # its members were checked above: plain files and folders inside it
+    else:
+        raise HubError("plugin_archive_bad", f"What {url} gives is not a zip or tar archive.",
+                       "Give the URL of a .zip or .tar.gz of the plugin's folder (a release asset, or a branch archive).")
+    if (unpacked / MANIFEST).is_file():
+        return unpacked
+    inside = [p for p in unpacked.iterdir() if not p.name.startswith(".")]
+    if len(inside) == 1 and (inside[0] / MANIFEST).is_file():
+        return inside[0]
+    raise HubError("plugin_archive_bad", f"The archive at {url} has no {MANIFEST} at its top or in its one top folder.",
+                   f"Give an archive of the plugin's folder, the one that holds {MANIFEST}.")
+
+
+def _check_member(url, name):
+    path = pathlib.PurePosixPath(name)
+    if path.is_absolute() or ".." in path.parts:
+        raise HubError("plugin_archive_bad", f"The archive at {url} holds {name}, outside its own folder.",
+                       "Give an archive of the plugin's folder only.")
 
 
 def list_plugins(hub, args, actor):
@@ -471,10 +547,12 @@ def receives(hub, args, actor):
 
 CAPS = {
     "plugin.install": (install, {
-        "description": "Install a plugin from a folder on the hub's disk, or replace it if one by that name is "
-                       "installed; it loads at once.",
-        "schema": {"type": "object", "required": ["path"], "additionalProperties": False, "properties": {
-            "path": {"type": "string", "description": "The plugin's folder, holding plugin.json."}}},
+        "description": "Install a plugin from a folder on the hub's disk or from a URL, or replace it if one by "
+                       "that name is installed; it loads at once. Give path or url.",
+        "schema": {"type": "object", "additionalProperties": False, "properties": {
+            "path": {"type": "string", "description": "The plugin's folder on the hub's disk, holding plugin.json."},
+            "url": {"type": "string", "description": "An http or https URL of a zip or tar archive of the plugin's "
+                                                     "folder (plugin.json at its top or in its one top folder)."}}},
     }),
     "plugin.list": (list_plugins, {
         "description": "List the installed plugins: version, the caps and record types each added, whether "

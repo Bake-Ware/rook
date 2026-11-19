@@ -121,6 +121,7 @@ These are the driver's only way to the network, and it never names a worker. The
 Agents install through MCP with the hub caps (PL4):
 
 - `plugin.install {path}` takes a plugin's folder on the hub's disk. The hub checks the manifest, copies the folder to `<state dir>/plugins/` and loads it at once, with no restart. A plugin of the same name is replaced at once, and its records stay.
+- `plugin.install {url}` takes the http or https URL of a zip or tar archive (plain, gzip, bzip2 or xz) of a plugin's folder: `plugin.json` at the archive's top, or in its one top-level folder, as a GitHub release asset or branch archive (`…/archive/refs/heads/main.zip`) has it (PL4; brief 61). The hub downloads it off its loop, with no time or size limit, unpacks it into a temporary folder (refusing anything outside it, and links), installs from there as from a folder, and removes the temporary folder. The Settings page takes a URL in the same field as a folder.
 - `plugin.list` shows each plugin: name, GUID, moniker, version, the caps and record types it added, whether it has a worker section, a site section and a skill, and the workers that loaded its worker part (`loaded_on`) or failed to (`failed_on`, with the error).
 
 When the hub starts it loads every installed plugin. One that fails to load is logged (logger `rook_hub.plugins`) and skipped, and the hub carries on. A skipped plugin's worker part is not pushed to workers either.
@@ -275,7 +276,6 @@ Workers get the worker parts as they get any plugin's, so a worker opted out of 
 
 ## Not built, and open
 
-- Install from a URL (PL4): a URL to what is not decided.
 - Uninstalling, disabling or enabling a plugin, and what happens to its records and record types.
 - A plugin's hub code calling caps on workers (other than a driver's three network steps).
 - Serving a plugin's skill to agents (PL5).
