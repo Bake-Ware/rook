@@ -615,8 +615,8 @@ def test_a_hub_that_gives_no_start_number_is_never_asked(tmp_path, monkeypatch):
     from rook_hub import link
     open_session = link.open_session
 
-    def older(hub, message):
-        reply = open_session(hub, message)
+    async def older(hub, message):
+        reply = await open_session(hub, message)
         reply.pop("hub_start", None)
         return reply
     monkeypatch.setattr(link, "open_session", older)
