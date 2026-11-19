@@ -11,7 +11,7 @@ import asyncio
 from helpers import eventually
 from memory_link import connector
 from rook_hub import Hub
-from rook_protocol import MAX_MESSAGE
+from rook_protocol import MAX_MESSAGE, decode
 from rook_worker import Cap, Worker
 from test_door import mcp_client, tool
 from test_site import ask, browser, login
@@ -56,14 +56,25 @@ async def start(tmp_path):
 
 
 def close_under_send(hub, guid):
-    """The next send on `guid`'s link finds it closing: it closes and raises EOFError, as
-    link.py does when the Channel resets mid-send."""
+    """The next stream message sent on `guid`'s link finds it closing: it closes and raises EOFError,
+    as link.py does when the Channel resets mid-send. Returns that link. The hub's other sends on it
+    (a heartbeat reply, config, plugins) go through: they can come first, and are not the send under test."""
     link = hub._links[guid]
+    send_as_built = link.send
 
     async def send(data):
+        if decode(data)["type"] not in ("stream_data", "stream_resize", "stream_close"):
+            return await send_as_built(data)
         link.close()
         raise EOFError
     link.send = send
+    return link
+
+
+async def linked_again(hub, guid, closed):
+    """Wait until `guid` has a link that is none of the `closed` ones. A closed link stays in the hub's
+    table until its serve_link has seen it end, so "any link" can still be the one that just closed."""
+    await eventually(lambda: hub._links.get(guid) not in (None, *closed))
 
 
 def test_link_closed_under_a_stream_write(tmp_path):
@@ -77,26 +88,27 @@ def test_link_closed_under_a_stream_write(tmp_path):
                 stream = opened["stream"]
 
                 # Through the door: write, resize and close each answer the code and a next step.
+                closed = []
                 for action, extra, what, again in (
                         ("write", {"text": "hello\n"}, "the input", "write again"),
                         ("resize", {"cols": 80, "rows": 24}, "the new size", "resize again"),
                         ("close", {"why": "done with it"}, "the close", "close it again")):
-                    await eventually(lambda: hub._links.get(box["guid"]) is not None)
-                    close_under_send(hub, box["guid"])
+                    await linked_again(hub, box["guid"], closed)
+                    closed.append(close_under_send(hub, box["guid"]))
                     failed, text = await tool(mcp, "stream", action=action, stream=stream, **extra)
                     assert failed and text == (
                         f"worker_disconnected: The link to the worker of stream {stream} closed before {what} "
                         f"was sent. Next: Check whether the worker is online, then {again}."), (action, text)
 
                 # The worker links again by itself; the stream is still open, and a write goes through.
-                await eventually(lambda: hub._links.get(box["guid"]) is not None)
+                await linked_again(hub, box["guid"], closed)
                 failed, wrote = await tool(mcp, "stream", action="write", stream=stream, text="again\n")
                 assert not failed and wrote == {"written": 6}
 
             # On the site: the same refusal as JSON, not HTTP 500.
             async with browser() as client:
                 await login(client, base, "Alice", "correct horse")
-                await eventually(lambda: hub._links.get(box["guid"]) is not None)
+                await linked_again(hub, box["guid"], closed)
                 close_under_send(hub, box["guid"])
                 status, body = await ask(client, "POST", f"{base}/api/streams/{stream}/input", {"text": "hi\n"})
                 assert status == 400 and body["code"] == "worker_disconnected" and body["next"], (status, body)
