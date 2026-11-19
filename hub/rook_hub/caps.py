@@ -12,7 +12,7 @@ config.py), and roll up the heartbeat history (H5; history.py). Installed plugin
 
 import datetime
 
-from . import config, devices, history, jobs, plugins, scrub, vault
+from . import backup, config, devices, history, jobs, plugins, scrub, vault
 from .errors import HubError
 
 HUB = "hub"  # the worker name that addresses the hub's own caps
@@ -121,6 +121,41 @@ def users_list(hub, args, actor):
 _NOTHING = {"type": "object", "additionalProperties": False, "properties": {}}
 
 
+def interval(hub, args, actor):
+    seconds = args.get("seconds")
+    if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 1:
+        raise HubError("bad_message", "args.seconds is required: a whole number of seconds, 1 or more.",
+                       "Give seconds, such as 60.")
+    with hub._lock:
+        hub.auth.actor(**actor)
+    record = hub.get_worker(_text(args, "worker"))
+    sent = hub.set_interval(record["guid"], seconds)
+    return {"worker": _worker(record), "interval": seconds, "sent": sent,
+            "next": "It heartbeats on this interval from now on." if sent else
+                    f"{record['moniker']} is not connected: it gets this interval when it links."}
+
+
+# The Settings page's values, for an agent (0.5's setting.list and setting.set; P4). Today the page
+# holds one: the hub's name ("Hubs have names"). Plugins keep their own settings behind their own caps.
+SETTINGS = {"name": "The hub's name, shown on the site."}
+
+
+def setting_list(hub, args, actor):
+    with hub._lock:
+        hub.auth.actor(**actor)
+    values = {"name": hub.name()}
+    return {"settings": [{"section": "hub", "key": key, "value": values[key], "description": description}
+                         for key, description in SETTINGS.items()]}
+
+
+def setting_set(hub, args, actor):
+    key = _text(args, "key")
+    if key not in SETTINGS:
+        raise HubError("unknown_setting", f"The hub has no setting {key!r}.",
+                       f"The settings are {', '.join(SETTINGS)}; setting.list shows them with their values.")
+    return {"section": "hub", "key": key, "value": hub.set_name(args.get("value"), **actor)}
+
+
 CAPS = {
     "worker.approve": (approve, {
         "description": "Approve a knocking worker as a new machine on this hub; you become its owner.",
@@ -171,15 +206,34 @@ CAPS = {
         "description": "Every user of this hub: name, moniker, GUID, when made and whether revoked.",
         "schema": _NOTHING,
     }),
+    "worker.interval": (interval, {
+        "description": "Set how often a worker heartbeats, in seconds (H2). A linked worker follows it at once; "
+                       "it is offline after missing three.",
+        "schema": {"type": "object", "required": ["worker", "seconds"], "additionalProperties": False,
+                   "properties": {
+                       "worker": {"type": "string", "description": "The worker's moniker or GUID."},
+                       "seconds": {"type": "integer", "minimum": 1, "description": "Seconds between heartbeats."}}},
+    }),
+    "setting.list": (setting_list, {
+        "description": "List the hub's settings, as the Settings page holds them, with their values.",
+        "schema": {"type": "object", "additionalProperties": False, "properties": {}},
+    }),
+    "setting.set": (setting_set, {
+        "description": "Change one of the hub's settings, as on the Settings page; setting.list names them.",
+        "schema": {"type": "object", "required": ["key", "value"], "additionalProperties": False, "properties": {
+            "key": {"type": "string", "description": "The setting, such as name."},
+            "value": {"description": "Its new value."}}},
+    }),
 }
 
 
 CAPS.update(jobs.CAPS)  # create, list, pause, un-pause and delete jobs; emit an event (J7, J2)
-CAPS.update(vault.caps())  # create and list secrets, never their values (X3)
+CAPS.update(vault.caps())  # create, replace, delete and list secrets, never their values (X3)
 CAPS.update(scrub.caps())  # take a value out of the journal (L5)
 CAPS.update(plugins.CAPS)  # install and list plugins (PL4)
 CAPS.update(devices.CAPS)  # add a device (D1)
 CAPS.update(config.CAPS)  # read and set a worker's config (CF1, CF2, CF3)
+CAPS.update(backup.CAPS)  # back up the hub, list and verify backups (F3, X4; 0.5's backup.*)
 CAPS.update(history.CAPS)  # roll heartbeats older than 12 hours into minutes (H5, Bake after the stress test)
 
 

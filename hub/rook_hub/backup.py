@@ -29,8 +29,15 @@ neither a backup nor a restore holds the data in memory.
 A restore unpacks into a new directory beside the target and moves it into
 place only once the whole file has been read and proven. Anything wrong
 leaves nothing behind.
+
+An agent does the same through the hub caps at the end of this file (0.5's `backup.*`):
+`backup.run` writes a backup of the running hub, `backup.list` finds backups in a folder and
+`backup.verify` reads one through and proves it, writing nothing. Each runs off the hub's loop and
+takes as long as it takes. A restore makes a hub that is not running, so it stays the command's.
 """
 
+import asyncio
+import datetime
 import fcntl
 import hashlib
 import os
@@ -43,7 +50,7 @@ import tempfile
 from nacl import bindings as sodium
 from nacl.exceptions import CryptoError
 
-from . import owner_only, vault
+from . import vault
 from .errors import HubError
 
 MAGIC = b"rook-backup 1\n"
@@ -147,10 +154,11 @@ class _Opening:
 
 # ------------------------------------------------------------------- backup
 
-def backup(data, vault_key_file, to):
-    """Write a backup of the hub data directory `data` to the new file `to`. Returns its size."""
+def backup(data, vault_key_file, to, key=None):
+    """Write a backup of the hub data directory `data` to the new file `to`. Returns its size. A hub
+    that holds its vault key passes it as `key`; `vault_key_file` then only names it in messages."""
     data, to = pathlib.Path(data), pathlib.Path(to)
-    key = read_key(vault_key_file)
+    key = read_key(vault_key_file) if key is None else key
     if not (data / "hub.db").is_file():
         raise HubError("not_hub_data", f"{data} is not a hub's data directory: it has no hub.db.",
                        "Give the --data directory the hub's start command uses.")
@@ -243,6 +251,7 @@ def restore(source, data, vault_key_file):
                 raise opening._cut()
         if not (work / "hub.db").is_file() or not all((work / name).is_file() for name in FILES):
             raise HubError("not_a_backup", f"{source} does not hold a hub's data.", "Give the file the backup command wrote.")
+        from . import owner_only    # __init__.py imports caps.py, and so this module, first
         owner_only(work)            # the folders mkdir made above a file (plugins/) got the umask's mode, not 0700
         if data.exists():
             data.rmdir()            # empty, checked above
@@ -273,3 +282,128 @@ def _unpack(tar, member, work, source):
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tar.extractfile(member) as part, open(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
         shutil.copyfileobj(part, out, CHUNK)
+
+
+# ------------------------------------------------------------------ verify
+
+def verify(source, key):
+    """Read the backup file `source` through and prove it, writing nothing: every chunk opens under
+    `key`, and it holds a hub's data. Returns how many files it holds."""
+    source = pathlib.Path(source)
+    if not source.is_file():
+        raise HubError("no_backup", f"{source} is not a file.", "Give the path of a backup file.")
+    names = set()
+    try:
+        with open(source, "rb") as f:
+            opening = _Opening(f, _key(key), source)
+            with tarfile.open(fileobj=opening, mode="r|") as tar:
+                for member in tar:
+                    path = pathlib.PurePosixPath(member.name)
+                    if path.is_absolute() or ".." in path.parts or not (member.isfile() or member.isdir()):
+                        raise HubError("not_a_backup", f"{source} holds {member.name!r}, which no backup holds.",
+                                       "Give a file backup.run or the backup command wrote.")
+                    if member.isfile():
+                        names.add(member.name)
+                        with tar.extractfile(member) as part:
+                            while part.read(CHUNK):
+                                pass
+            opening.read()
+            if not opening.done:
+                raise opening._cut()
+    except tarfile.TarError:
+        raise HubError("not_a_backup", f"{source} opens, but does not hold a hub's data.",
+                       "Give a file backup.run or the backup command wrote.") from None
+    if not {"hub.db", *FILES} <= names:
+        raise HubError("not_a_backup", f"{source} does not hold a hub's data.",
+                       "Give a file backup.run or the backup command wrote.")
+    return len(names)
+
+
+# ------------------------------------------------------------ hub caps (F3, X4; 0.5's backup.*)
+
+def _held_key(hub):
+    if hub._vault_key is None:
+        raise HubError("vault_locked", "The vault is locked: this hub was started without its vault key, "
+                                       "and a backup is sealed with it (X4).",
+                       "Start the hub with its vault key, or back up with the command and the key file.")
+    return hub._vault_key
+
+
+def _path(args, name):
+    value = args.get(name)
+    if not isinstance(value, str) or not value:
+        raise HubError("bad_message", f"args.{name} is required: a path on the hub's disk.",
+                       f"Give {name} as a path, such as /srv/backups/hub-2026-11-19.rookbackup.")
+    return pathlib.Path(value).expanduser()
+
+
+def _actor(hub, actor):
+    with hub._lock:
+        hub.auth.actor(**actor)
+
+
+async def run_backup(hub, args, actor):
+    to, key = _path(args, "to"), _held_key(hub)
+    _actor(hub, actor)
+    label = hub.vault_key_file or "the vault key this hub was started with"
+    size = await asyncio.to_thread(backup, hub.state_dir, label, to, key)
+    return {"path": str(to.resolve()), "bytes": size,
+            "next": "Keep the vault key file apart from the backup: without it the backup cannot be opened. "
+                    "Restore it with: python -m rook_hub restore --from <file> --data <new folder> --vault-key <key file>."}
+
+
+def _when(seconds):
+    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def _list(folder):
+    if not folder.is_dir():
+        raise HubError("not_a_folder", f"{folder} is not a folder on the hub's disk.",
+                       "Give the folder the backups were written to.")
+    found = []
+    for path in sorted(folder.iterdir()):
+        try:
+            if not path.is_file():
+                continue
+            with open(path, "rb") as f:
+                if f.read(len(MAGIC)) != MAGIC:
+                    continue
+            info = path.stat()
+        except OSError:         # gone meanwhile, or not readable: not one of the hub's backups to list
+            continue
+        found.append({"path": str(path.resolve()), "bytes": info.st_size, "written_at": _when(info.st_mtime)})
+    return sorted(found, key=lambda b: b["written_at"], reverse=True)
+
+
+async def list_backups(hub, args, actor):
+    folder = _path(args, "folder")
+    _actor(hub, actor)
+    return {"folder": str(folder.resolve()), "backups": await asyncio.to_thread(_list, folder)}
+
+
+async def verify_backup(hub, args, actor):
+    path, key = _path(args, "path"), _held_key(hub)
+    _actor(hub, actor)
+    files = await asyncio.to_thread(verify, path, key)
+    return {"path": str(path.resolve()), "verified": True, "files": files}
+
+
+CAPS = {
+    "backup.run": (run_backup, {
+        "description": "Write an encrypted backup of this hub's data, while it serves, to a new file on the hub's "
+                       "disk (F3). It is sealed with the vault key, which is never in it (X4).",
+        "schema": {"type": "object", "required": ["to"], "additionalProperties": False, "properties": {
+            "to": {"type": "string", "description": "The backup file to write, on the hub's disk; it must not exist yet."}}},
+    }),
+    "backup.list": (list_backups, {
+        "description": "List the backups in a folder on the hub's disk, newest first, with their sizes.",
+        "schema": {"type": "object", "required": ["folder"], "additionalProperties": False, "properties": {
+            "folder": {"type": "string", "description": "The folder on the hub's disk."}}},
+    }),
+    "backup.verify": (verify_backup, {
+        "description": "Read a backup through and prove it opens whole with this hub's vault key and holds a hub's "
+                       "data. Nothing is written.",
+        "schema": {"type": "object", "required": ["path"], "additionalProperties": False, "properties": {
+            "path": {"type": "string", "description": "The backup file, on the hub's disk."}}},
+    }),
+}

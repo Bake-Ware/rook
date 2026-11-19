@@ -10,6 +10,7 @@ Knocks and the link exchange arrive over HTTP (docs/protocol.md, "Carriage"; lin
 
 import asyncio
 import fcntl
+import inspect
 import json
 import os
 import pathlib
@@ -194,6 +195,7 @@ class Hub:
         if vault_key_file is not None:
             vault_key = vault.key_from_file(self, vault_key_file)
         self.vault = vault.Vault(self, vault_key)
+        self._vault_key = vault_key      # what a backup is sealed with (X4; backup.py), never written here
         self.events = Events(self)
         self.auth = Auth(self)
         self._signing_key = self._load_key("hub.key", SigningKey)
@@ -615,10 +617,20 @@ class Hub:
         return name
 
     def set_interval(self, worker, seconds):
-        """Set one worker's heartbeat interval; it gets it in the next heartbeat reply (H2)."""
+        """Set one worker's heartbeat interval (H2). A linked worker is sent it at once, as a
+        heartbeat_reply; one that is not linked gets it in the reply to its first heartbeat.
+        Returns whether it was sent now."""
         with self._lock, self._db:
-            self._db.execute("UPDATE workers SET interval = ? WHERE guid = ?",
-                             (int(seconds), self._resolve(worker)["guid"]))
+            guid = self._resolve(worker)["guid"]
+            self._db.execute("UPDATE workers SET interval = ? WHERE guid = ?", (int(seconds), guid))
+        link = self._links.get(guid)
+        if link is None:
+            return False
+        task = asyncio.get_running_loop().create_task(
+            self._tell(link, {"type": "heartbeat_reply", "protocol": PROTOCOL, "interval": int(seconds)}))
+        self._telling.add(task)
+        task.add_done_callback(self._telling.discard)
+        return True
 
     # ----------------------------------------------------------------- link
 
@@ -742,6 +754,8 @@ class Hub:
                 guid = caps.HUB
                 used = args if cap in caps.KEEP_REFERENCES else self.vault.substitute(args, caps.HUB)
                 result = caps.run(self, cap, used, {"user": user, "token": token})
+                if inspect.isawaitable(result):     # one that waits on more than the hub: a download, a backup
+                    result = await result
                 reply = {"type": "result", "id": call_id, "result": result}
             elif (device := devices.find(self, worker)) is not None:    # a device is called like a worker (D1)
                 guid = running["worker"] = device["guid"]
