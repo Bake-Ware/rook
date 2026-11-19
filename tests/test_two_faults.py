@@ -11,7 +11,7 @@ import asyncio
 from helpers import eventually
 from memory_link import connector
 from rook_hub import Hub
-from rook_protocol import MAX_MESSAGE, encode
+from rook_protocol import MAX_MESSAGE
 from rook_worker import Cap, Worker
 from test_door import mcp_client, tool
 from test_site import ask, browser, login
@@ -111,14 +111,10 @@ def test_cap_failed_wording(tmp_path):
     async def go():
         hub, base, alice, worker, running, box = await start(tmp_path)
         try:
-            # Over the message size: both sizes, a full stop, and a next step that helps.
+            # Over the message size: not refused since brief 54; it comes whole, in pieces.
             reply = await hub.call(box["moniker"], "demo.huge", {}, "a result too big", user=alice["guid"])
-            size = len(encode({"type": "result", "id": reply["id"], "result": "a" * BIG}))
-            assert reply["code"] == "cap_failed", reply
-            assert reply["message"] == (f"demo.huge failed: its result is {size} bytes encoded, "
-                                        f"and a message may be at most {MAX_MESSAGE} bytes.")
-            assert reply["next"] == ("Ask for less at once, or have the result written to a file on box "
-                                     "and read that file in parts.")
+            assert reply["type"] == "result" and reply["parts"] >= 2, reply
+            assert hub.joined(reply) == "a" * BIG
 
             # A failure that is not the arguments' fault, for a plain cap and a stream cap: the
             # reason ends in a full stop, and the next step does not name the schema.

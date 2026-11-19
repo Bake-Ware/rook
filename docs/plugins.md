@@ -185,6 +185,12 @@ CAPS = {
 - `Cap(description, schema, handler, opens_stream=False)`: a one-line description, a JSON Schema object for the arguments and an `async` handler (W3). The name follows W3.
 - A plain cap's handler is `handler(args)` and returns any JSON value. A stream cap's handler is `handler(args, stream)` and returns `{"title", "description"}`. It keeps `stream` to `send` output, `read` input and `close` it (S1 to S4).
 - A handler that raises, or calls `sys.exit()`, fails that call with the error `cap_failed`, as for the worker's own caps; the worker keeps running. Ctrl-C and cancellation still stop the worker.
+- **A big result** (brief 54; [protocol.md](protocol.md#a-big-result-brief-54)). A plugin author has nothing to do: a result of any size arrives whole, and one over about a megabyte is sent in pieces, which the caller follows on a stream. The handler still holds the value it returns. To hold no more than a piece of it, as the built-in caps do, return any of these, from `rook_worker`, as the result itself or as a field of a result that is an object; the worker takes them as it sends:
+  - `Text(pieces)`: a string, from an async iterable of `str`;
+  - `Items(items)`: a list, from an async iterable of ordinary JSON values;
+  - an awaitable (a task, a future): awaited when the sending reaches it, for what is known last, such as an exit code. In a field, one that gives `LEFT_OUT` leaves the field out.
+
+  A field's place is the order the handler gave them, so put what is known last at the end. A result under about a megabyte is sent as one `result`, the same as an ordinary value, so callers see no difference.
 - The worker runs the module's source inside its own process (not sandboxed, PL2), as a module with a name of its own each load, so a replaced version starts fresh.
 
 A plugin's worker caps are called and journaled exactly as any worker cap (PL2). Nothing else is needed yet. The shared helper library (PL6) is where anything that plugin worker code repeats will go.

@@ -240,7 +240,7 @@ async def _primitive(hub, guid, cap, args, why):
         else:
             reply = await hub.call(row["via"], cap, args, why, user=row["owner"])
             if reply["type"] == "result":
-                return reply["result"]
+                return hub.joined(reply)       # a big result came in pieces (brief 54)
             tried = [(moniker, f"{moniker}: {reply['message']}")]
         raise HubError("device_unreachable", f"{label} is pinned to {moniker} and could not be reached: "
                                              f"{tried[0][1]}.",
@@ -253,7 +253,7 @@ async def _primitive(hub, guid, cap, args, why):
         if reply["type"] == "result":
             with hub._lock, hub._db:
                 hub._db.execute("UPDATE devices SET last_worker = ? WHERE guid = ?", (worker["guid"], guid))
-            return reply["result"]
+            return hub.joined(reply)       # a big result came in pieces (brief 54)
         failures.append(f"{worker['moniker']}: {reply['message']}")
     tried = "; ".join(failures) if failures else "no worker was eligible"
     raise HubError("device_unreachable", f"{label} could not be reached on band {band}. Tried: {tried}."

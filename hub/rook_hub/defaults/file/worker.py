@@ -5,9 +5,11 @@ Bake's answer of 17 November.
 
 Nothing here bounds a call (Bake, 14 and 17 November). `max_bytes` (file.read) and `limit`
 (file.list, file.search) are 0.5's arguments a caller may pass, with no default: with nothing
-passed, a cap gives everything. There is no deadline, no size cap and no cut of a line. A result
-over the largest message is answered `cap_failed` by the worker, as for every cap (docs/protocol.md,
-"Sizes"). Paths are as given: relative to the worker's folder, no `~` expansion, as in 0.5.
+passed, a cap gives everything. There is no deadline, no size cap and no cut of a line. What can
+be big is made as it is sent (brief 54): file.read's content a piece at a time, file.list's entries
+a folder at a time, file.search's matches as the search finds them; a result over about a megabyte
+goes in pieces (docs/protocol.md, "A big result"), and one under it is the same reply as ever.
+Paths are as given: relative to the worker's folder, no `~` expansion, as in 0.5.
 
 file.search runs the pattern in a child Python, as 0.5 does: Python's `re` holds the interpreter
 for a whole match, so a pattern that takes long would otherwise stop the worker, heartbeats and all.
@@ -16,6 +18,7 @@ The child runs until it is done."""
 import asyncio
 import base64
 import binascii
+import codecs
 import json
 import os
 import pathlib
@@ -23,7 +26,7 @@ import re
 import stat as st
 import sys
 
-from rook_worker import Cap
+from rook_worker import LEFT_OUT, PIECE, Cap, Items, Text
 
 
 # ------------------------------------------------------------------- arguments
@@ -85,30 +88,56 @@ def _meta(s):
 
 # -------------------------------------------------------------------- the caps
 
-def read(args):
+async def read(args):
     _check(args, "file.read", ("path", "encoding", "max_bytes"), ("path",))
     path, encoding, most = _text(args, "path"), _text(args, "encoding", "utf-8"), _count(args, "max_bytes", 0)
     try:
         # Anything that opens is read, a FIFO or a device too, for as long as it takes (Bake, 17 November:
         # a call that can wait for ever is allowed to). 0.5 refused all but regular files; not here.
-        with open(path, "rb") as f:
-            info = os.fstat(f.fileno())
-            raw = f.read() if most is None else f.read(most + 1)
+        f = await asyncio.to_thread(open, path, "rb")
+        info = os.fstat(f.fileno())
     except OSError as e:
         raise _failed(e, path) from None
-    out = {"size": info.st_size, "encoding": encoding}
-    if most is not None and len(raw) > most:
-        raw = raw[:most]
-        out["truncated"] = True
-    if encoding == "base64":
-        out["content"] = base64.b64encode(raw).decode("ascii")
-    else:
+    if encoding != "base64":
         try:
-            out["content"] = raw.decode(encoding, errors="replace")
+            b"".decode(encoding)        # a codec that is not a text codec is refused as an unknown one
+            decoder = codecs.getincrementaldecoder(encoding)(errors="replace")
         except LookupError:
+            f.close()
             raise ValueError(f"unknown encoding: {encoding}; give a Python codec such as utf-8 or latin-1, "
                              "or base64 for bytes") from None
-    return out
+    cut = asyncio.get_running_loop().create_future()      # whether max_bytes cut it: known at the end
+    content = _content(f, path, most, cut, None if encoding == "base64" else decoder)
+    return {"content": Text(content), "encoding": encoding, "size": info.st_size, "truncated": cut}
+
+
+async def _content(f, path, most, cut, decoder):
+    """The file's content as text, or base64 when `decoder` is None, a piece at a time."""
+    got, carry, truncated = 0, b"", False
+    try:
+        while True:
+            chunk = await asyncio.to_thread(f.read, PIECE if most is None else min(PIECE, most + 1 - got))
+            if not chunk:
+                break
+            got += len(chunk)
+            if most is not None and got > most:
+                chunk, truncated = chunk[:len(chunk) - (got - most)], True
+            if decoder is not None:
+                yield decoder.decode(chunk)
+            else:
+                data = carry + chunk
+                whole = len(data) // 3 * 3        # base64 of whole 3-byte groups, the rest carried
+                yield base64.b64encode(data[:whole]).decode("ascii")
+                carry = data[whole:]
+            if truncated:
+                break
+        yield decoder.decode(b"", final=True) if decoder is not None else base64.b64encode(carry).decode("ascii")
+    except OSError as e:
+        raise _failed(e, path) from None
+    finally:
+        f.close()
+        if not cut.done():
+            cut.set_result(True if truncated else LEFT_OUT)
 
 
 def write(args):
@@ -140,38 +169,63 @@ def write(args):
     return {"path": str(pathlib.Path(path)), "written": written}
 
 
-def list_(args):
+async def list_(args):
     _check(args, "file.list", ("path", "recursive", "hidden", "limit"), ("path",))
     path, recursive = _text(args, "path"), _flag(args, "recursive", False)
     hidden, limit = _flag(args, "hidden", True), _count(args, "limit", 1)
-    if not os.path.isdir(path):
+    if not await asyncio.to_thread(os.path.isdir, path):
         raise ValueError(f"{'not a folder' if os.path.exists(path) else 'not found'}: {path}; "
                          "give a folder's path; describe a file with file.stat")
-    entries = []
-    try:
-        for full in _under(path, recursive):
+    first = await _folder(path, path)       # the folder itself is read now, so a refusal comes as ever
+    cut = asyncio.get_running_loop().create_future()      # whether limit cut it: known at the end
+    return {"entries": Items(_entries(path, first, recursive, hidden, limit, cut)), "truncated": cut}
+
+
+async def _entries(path, first, recursive, hidden, limit, cut):
+    """Every entry under `path`, in the order 0.5 gives them: each entry, then (recursive) what is under it."""
+    count, truncated = 0, False
+
+    async def walk(listed):
+        nonlocal count, truncated
+        for full, meta, deeper in listed:
             relative = os.path.relpath(full, path)
-            if not hidden and any(part.startswith(".") for part in relative.split(os.sep)):
-                continue
-            if limit is not None and len(entries) >= limit:
-                return {"entries": entries, "truncated": True}
+            if hidden or not any(part.startswith(".") for part in relative.split(os.sep)):
+                if limit is not None and count >= limit:
+                    truncated = True
+                    return
+                if meta is not None:      # None: gone, or not readable, since the folder was read
+                    count += 1
+                    yield {"name": os.path.basename(full), **meta, **({"path": relative} if recursive else {})}
+            if recursive and deeper:
+                async for entry in walk(await _folder(full, path)):
+                    yield entry
+                if truncated:
+                    return
+
+    try:
+        async for entry in walk(first):
+            yield entry
+    finally:
+        if not cut.done():
+            cut.set_result(True if truncated else LEFT_OUT)
+
+
+async def _folder(folder, path):
+    """One folder's entries, read in a thread: (full path, its _meta or None, whether to go into it)."""
+    def read():
+        listed = []
+        for name in os.listdir(folder):
+            full = os.path.join(folder, name)
             try:
                 meta = _meta(os.lstat(full))
             except OSError:
-                continue                  # gone, or not readable, since the folder was read
-            entries.append({"name": os.path.basename(full), **meta, **({"path": relative} if recursive else {})})
+                meta = None
+            listed.append((full, meta, os.path.isdir(full) and not os.path.islink(full)))
+        return listed
+    try:
+        return await asyncio.to_thread(read)
     except OSError as e:
         raise _failed(e, path) from None
-    return {"entries": entries}
-
-
-def _under(path, recursive):
-    """Every path in a folder; with `recursive`, in every folder under it, not following links."""
-    for name in os.listdir(path):
-        full = os.path.join(path, name)
-        yield full
-        if recursive and os.path.isdir(full) and not os.path.islink(full):
-            yield from _under(full, True)
 
 
 def stat(args):
@@ -185,8 +239,9 @@ def stat(args):
         raise _failed(e, path) from None
 
 
-# The search itself, run as `python -I -c SCAN` with its job as JSON on stdin and the result as
-# JSON on stdout. A file with a NUL byte is binary and skipped, as in 0.5.
+# The search itself, run as `python -I -c SCAN` with its job as JSON on stdin. It writes each match
+# as a line of JSON on stdout as it finds it, then a last line {"truncated": ...}. A file with a NUL
+# byte is binary and skipped, as in 0.5.
 SCAN = r'''
 import json, re, sys
 from pathlib import Path
@@ -196,7 +251,7 @@ def scan(pattern, path, recursive, glob, ignore_case, limit):
     root = Path(path)
     files = [root] if root.is_file() else (f for f in (root.rglob(glob) if recursive else root.glob(glob))
                                            if f.is_file())
-    matches = []
+    count = 0
     for found in files:
         try:
             data = found.read_bytes()
@@ -206,12 +261,13 @@ def scan(pattern, path, recursive, glob, ignore_case, limit):
             continue
         for number, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
             if rx.search(line):
-                if limit is not None and len(matches) >= limit:
-                    return {"matches": matches, "truncated": True}
-                matches.append({"path": str(found), "line": number, "text": line})
-    return {"matches": matches}
+                if limit is not None and count >= limit:
+                    return True
+                print(json.dumps({"path": str(found), "line": number, "text": line}))
+                count += 1
+    return False
 
-print(json.dumps(scan(**json.load(sys.stdin))))
+print(json.dumps({"truncated": scan(**json.load(sys.stdin))}))
 '''
 
 
@@ -228,16 +284,34 @@ async def search(args):
         raise ValueError(f"not found: {job['path']}; give a folder or a file to search")
     child = await asyncio.create_subprocess_exec(sys.executable, "-I", "-c", SCAN, stdin=asyncio.subprocess.PIPE,
                                                  stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    child.stdin.write(json.dumps(job).encode("utf-8"))
+    child.stdin.close()
+    said = asyncio.ensure_future(child.stderr.read())     # what it says if it fails, read alongside
+    cut = asyncio.get_running_loop().create_future()      # whether limit cut it: known at the end
+    return {"matches": Items(_matches(child, said, cut)), "truncated": cut}
+
+
+async def _matches(child, said, cut):
+    """Each match as the child finds it. Lines are split here, not by readline, which has a longest line."""
+    last, held = None, b""
     try:
-        out, err = await child.communicate(json.dumps(job).encode("utf-8"))
+        while chunk := await child.stdout.read(PIECE):
+            *lines, held = (held + chunk).split(b"\n")
+            for line in lines:
+                item = json.loads(line)
+                if "path" not in item:
+                    last = item
+                else:
+                    yield item
+        await child.wait()
+        if last is None:
+            raise ValueError(f"search failed: {(await said).decode('utf-8', 'replace').strip()}")
     finally:
-        if child.returncode is None:         # the call was cancelled: the search goes with it
+        if child.returncode is None:         # the call ended early: the search goes with it
             child.kill()
             await child.wait()
-    try:
-        return json.loads(out)
-    except ValueError:
-        raise ValueError(f"search failed: {err.decode('utf-8', 'replace').strip()}") from None
+        if not cut.done():
+            cut.set_result(True if last and last["truncated"] else LEFT_OUT)
 
 
 def _thread(function):
@@ -257,7 +331,7 @@ CAPS = {
             "path": _PATH, "encoding": _ENCODING,
             "max_bytes": {"type": "integer", "minimum": 0,
                           "description": "Read at most this many bytes; the whole file unless given."}}},
-        _thread(read)),
+        read),
     "file.write": Cap(
         "Write content to a file, replacing it (or append true); encoding base64 writes bytes; create_parents makes missing folders. Gives path, written.",
         {"type": "object", "required": ["path", "content"], "additionalProperties": False, "properties": {
@@ -274,7 +348,7 @@ CAPS = {
             "hidden": {"type": "boolean", "description": "Include dot files; true unless given."},
             "limit": {"type": "integer", "minimum": 1,
                       "description": "At most this many entries, then truncated; all of them unless given."}}},
-        _thread(list_)),
+        list_),
     "file.search": Cap(
         "Lines matching a regex in the files under path (glob narrows them; binary files are skipped): matches of path, line, text.",
         {"type": "object", "required": ["pattern"], "additionalProperties": False, "properties": {

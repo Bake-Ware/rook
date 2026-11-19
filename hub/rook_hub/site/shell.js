@@ -41,17 +41,24 @@ export async function call(worker, cap, args, why) {
 
 /* A long call's stream, read with waits until the hub closes it at the call's end. Resolves to
    what call() would have returned had the call been quick, or throws its error the same way.
-   Following starts nothing: the call runs once, whoever follows it. */
+   A result that came in pieces (brief 54; its reply has `parts`) is the first `parts` entries
+   joined, as JSON. Following starts nothing: the call runs once, whoever follows it. */
 export async function follow(stream) {
-  let from = 0, last = null;
+  let from = 0;
+  const entries = [];
   for (;;) {
     const read = await api('GET', `/api/streams/${encodeURIComponent(stream)}/read?from=${from}&wait=25`);
-    if (read.entries.length) last = read.entries[read.entries.length - 1];
+    entries.push(...read.entries);
     from = read.next;
     if (!read.open) break;
   }
-  const bytes = Uint8Array.from(atob(last.data), c => c.charCodeAt(0));
-  const reply = JSON.parse(new TextDecoder().decode(bytes));
+  const bytes = entry => Uint8Array.from(atob(entry.data), c => c.charCodeAt(0));
+  const reply = JSON.parse(new TextDecoder().decode(bytes(entries[entries.length - 1])));
+  if (reply.type === 'result' && reply.parts) {
+    const text = new TextDecoder();
+    const joined = entries.slice(0, reply.parts).map((entry, i) => text.decode(bytes(entry), { stream: i + 1 < reply.parts })).join('');
+    return JSON.parse(joined);
+  }
   if (reply.type === 'error') {
     const error = new Error(reply.message + (reply.next ? ' ' + reply.next : ''));
     error.data = reply;

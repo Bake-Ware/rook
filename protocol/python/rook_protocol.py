@@ -251,6 +251,16 @@ MESSAGES = {
     "result": {
         "id": (_string, REQ),
         "result": (_any, REQ),
+        "parts": (_positive, OPT),     # the result went as this many result_part messages; result is null (brief 54)
+    },
+    # Worker -> hub, optional: the next piece of a call's result, as JSON text, for a big result (brief 54).
+    "result_part": {
+        "id": (_string, REQ),
+        "data": (_string, REQ),
+    },
+    # Hub -> worker, optional: the hub has the last result_part of call `id`; the worker sends the next.
+    "result_ack": {
+        "id": (_string, REQ),
     },
     # Either direction; also what the hub hands back to a caller (C3, W5).
     "error": {

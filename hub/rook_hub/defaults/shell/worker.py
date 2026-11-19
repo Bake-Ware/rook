@@ -10,18 +10,22 @@ shell at all. Only Linux and macOS are built: on Windows each cap but shell.env 
 that it is not built there yet (W5).
 
 Nothing here bounds a command: no timeout, no size cap, no list of what may run.
-The plan defers all of that (Build rules). A result over the largest message is
-answered `cap_failed` by the worker, as for every cap (docs/protocol.md, "Sizes")."""
+The plan defers all of that (Build rules). shell.exec's output is sent as the command
+writes it, so a command that says a lot is never held whole (brief 54): a result over
+about a megabyte goes in pieces (docs/protocol.md, "A big result"), and one under it is
+the same reply as ever."""
 
 import asyncio
+import codecs
 import os
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 
 from rook_protocol import MAX_STREAM_DATA
-from rook_worker import Cap
+from rook_worker import PIECE, Cap, Text
 
 WINDOWS = sys.platform == "win32"
 SHELLS = ("sh", "bash", "powershell", "cmd")
@@ -31,7 +35,7 @@ SAME_SHELL = {"pwsh": "powershell", "pwsh.exe": "powershell", "powershell.exe": 
 # records, UTF-8 output, and the exit code of the last command.
 PS_BEFORE = "$ProgressPreference = 'SilentlyContinue'\n[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\n"
 PS_AFTER = "\nif ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 }"
-_running = set()   # each open terminal's task, kept until it ends
+_running = set()   # each open terminal's task, and each stdin being fed, kept until it ends
 
 
 # ------------------------------------------------------------------- arguments
@@ -111,23 +115,65 @@ async def _start(argv, args, **pipes):
         raise ValueError(f"this worker's user may not run that: {e}") from None
 
 
-def _decode(data):
-    return data.decode("utf-8", errors="replace")
-
-
 # ------------------------------------------------------------------- shell.exec
 
 async def run(args):
+    """stdout is sent as the command writes it (brief 54). stderr goes to a file as it comes, and is
+    sent once the command has ended, then its code: a command that writes much to both is never
+    stopped on a full pipe, and neither is held whole. Text as UTF-8, a bad byte as U+FFFD."""
     _check(args, "shell.exec", ("argv", "cmd", "shell", "stdin", "cwd", "env"))
     argv, ran = _command(args)
     stdin = _text(args, "stdin")
-    proc = await _start(argv, args, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out, err = await proc.communicate(stdin.encode("utf-8") if stdin is not None else None)
-    reply = {"ok": proc.returncode == 0, "code": proc.returncode, "stdout": _decode(out), "stderr": _decode(err)}
+    errors = tempfile.TemporaryFile()
+    try:
+        proc = await _start(argv, args, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=errors)
+    except BaseException:
+        errors.close()
+        raise
+    if stdin is not None:
+        _running.add(feeding := asyncio.ensure_future(_feed(proc, stdin.encode("utf-8"))))
+        feeding.add_done_callback(_running.discard)
+    exited = asyncio.ensure_future(proc.wait())
+    reply = {"stdout": Text(_output(proc.stdout)), "stderr": Text(_errors(errors, exited)),
+             "code": exited, "ok": asyncio.ensure_future(_ok(exited))}
     if ran is not None and ran != "sh":
         reply["shell"] = ran            # a reply names the shell that ran cmd, unless it was sh
     return reply
+
+
+async def _feed(proc, data):
+    """Give the command its stdin, then close it, as communicate() does."""
+    try:
+        proc.stdin.write(data)
+        await proc.stdin.drain()
+    except (BrokenPipeError, ConnectionResetError):
+        pass                            # it ended, or closed its stdin, without reading it all
+    finally:
+        proc.stdin.close()
+
+
+async def _output(reader):
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    while chunk := await reader.read(PIECE):
+        yield decoder.decode(chunk)
+    yield decoder.decode(b"", final=True)
+
+
+async def _errors(errors, exited):
+    try:
+        await exited
+        errors.seek(0)
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        while chunk := await asyncio.to_thread(errors.read, PIECE):
+            yield decoder.decode(chunk)
+        yield decoder.decode(b"", final=True)
+    finally:
+        errors.close()
+
+
+async def _ok(exited):
+    return await exited == 0
 
 
 # ------------------------------------------------------------------ shell.which

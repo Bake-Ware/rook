@@ -21,10 +21,13 @@ hub emits `stream.open` and `stream.close` (J2).
 
 A call that is still running when its client stops waiting (Bake 13 Nov; see
 `Hub.call_or_follow`) gets a stream of its own on the called worker, titled with
-the cap and the worker, described with the call's why (S3). It stays empty while
-the call runs. When the call ends, its reply, as the journal keeps it, is the
-last entry, and the hub closes the stream on purpose (S4): the call is over. It
-takes no input and no client closes it; it is read like any other.
+the cap and the worker, described with the call's why (S3). So does a call whose
+result comes in pieces (brief 54), at its first piece: each piece is the stream's
+next entry, in order; otherwise the stream stays empty while the call runs. When
+the call ends, its reply, as the journal keeps it, is the last entry, and the hub
+closes the stream on purpose (S4): the call is over. A reply that came in pieces
+says how many (`parts`): the first that many entries, joined, are its result as
+JSON. The stream takes no input and no client closes it; it is read like any other.
 
 A client showing a stream as a terminal tells its worker the terminal's size with
 a resize (`stream_resize`, Bake 13 Nov). It goes to the worker and nowhere else:
@@ -158,6 +161,18 @@ class Streams:
         self._append(stream, "out", json.dumps(reply, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
                      (None, None))
         self._close(row, "hub", (None, None), "The call ended; its reply is the stream's last entry.")
+
+    def piece(self, stream, data):
+        """The next piece of a big result (brief 54), a str of its JSON text, as the stream's next entry."""
+        self._append(stream, "out", data.encode("utf-8"), (None, None))
+
+    def pieces(self, stream, parts):
+        """The first `parts` entries of a long call's stream joined: a big result's JSON text (brief 54)."""
+        with self.hub._lock:
+            row = self._row(stream)
+            return b"".join(r[0] for r in self.hub._db.execute(
+                "SELECT data FROM stream_data WHERE stream = ? AND position < ? ORDER BY position",
+                (row["guid"], parts))).decode("utf-8")
 
     def cut_short(self, reply_for):
         """At start: end each long call's stream still open, with `reply_for(call id)` as its last entry."""

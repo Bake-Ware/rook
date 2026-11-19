@@ -181,23 +181,25 @@ class Door:
 
     async def call(self, worker, cap, args, why=WHY):
         """A call through the door. A reply that is "running" is followed on its stream to its end,
-        as an agent does: the stream's last entry is the reply. Returns (code, reply, followed)."""
+        as an agent does: the stream's last entry is the reply, and a reply with parts n says the
+        first n entries joined are the result (brief 54). Returns (code, reply, followed)."""
         code, reply = await self.tool("call", worker=worker, cap=cap, args=args, why=why)
         if code or not (isinstance(reply, dict) and reply.get("running")):
             return code, reply, False
-        position, last = 0, None
+        position, texts = 0, []
         while True:
             code, read = await self.tool("stream", action="read", stream=reply["stream"], **{"from": position}, wait=40)
             if code:
                 return code, read, True
-            if read["entries"]:
-                last = read["entries"][-1]
+            texts += [entry["out"] for entry in read["entries"]]
             position = read["next"]
             if not read["open"]:
                 break
-        end = json.loads(last["out"])
+        end = json.loads(texts[-1])
         if end["type"] == "error":
             return end["code"], end, True
+        if end.get("parts"):
+            return None, json.loads("".join(texts[:end["parts"]])), True
         return None, end["result"], True
 
 
