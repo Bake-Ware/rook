@@ -80,7 +80,7 @@ async def scenario(tmp_path):
             for name in ("shelf.js", "book-card.js", "settings.js"):
                 async with client.get(f"{base}/plugin-files/shelf/site/{name}") as response:
                     assert response.status == 200 and response.headers["Content-Type"].startswith("text/javascript")
-                    assert response.headers["Cache-Control"] == "no-store"
+                    assert response.headers["Cache-Control"] == "no-cache"
                     assert await response.read() == (SHELF / "site" / name).read_bytes()
                 async with stranger.get(f"{base}/plugin-files/shelf/site/{name}") as response:
                     assert response.status == 401 and (await response.json())["code"] == "no_session"
