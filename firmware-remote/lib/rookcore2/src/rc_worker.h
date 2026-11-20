@@ -48,7 +48,14 @@ public:
     // max: blocking calls only; unset, a "timeout" (s) argument + 30 s, else 120 s.
     void on(const char* cap, Handler h, bool blocking = false, MaxTime max = nullptr);
     // Queue an event this worker's plugin declares in its manifest's emits.
-    void emit(const char* event, JsonObjectConst payload);
+    // False: not queued (its payload is over EVENT_MAX, or there is no memory
+    // for it); it is counted in dropped, which rides the next batch.
+    bool emit(const char* event, JsonObjectConst payload);
+    // Events: one payload at most EVENT_MAX bytes as JSON; the queue holds at
+    // most OUTBOX_MAX of them and OUTBOX_BYTES of payload (the oldest not in
+    // flight go first); a batch carries at most BATCH_MAX and BATCH_BYTES.
+    static const size_t EVENT_MAX = 3072, OUTBOX_BYTES = 12288, BATCH_BYTES = 8192;
+    static const int OUTBOX_MAX = 100, BATCH_MAX = 50;
     // Fills the announce/heartbeat status object for the plugin namespace.
     std::function<void(JsonObject)> status;
     std::function<void(const char*)> log;    // one-line diagnostics
@@ -63,6 +70,8 @@ public:
     uint32_t calls() const { return calls_; }
     uint32_t events_sent() const { return events_sent_; }
     size_t events_queued() const { return outbox_.size(); }
+    size_t events_bytes() const { return outbox_bytes_; }          // payload bytes queued
+    uint32_t events_dropped() const { return dropped_total_; }     // since boot
     int slow_running();                       // blocking calls still counted as running
     uint32_t slow_abandoned() const { return slow_abandoned_; }   // answered by the watchdog
 
@@ -106,7 +115,8 @@ private:
     uint32_t next_hb_ = 0, last_announce_ = 0, calls_ = 0, events_sent_ = 0;
     bool announce_due_ = true, had_contact_ = false;
     std::deque<Event> outbox_;
-    uint32_t dropped_ = 0;
+    size_t outbox_bytes_ = 0;                 // under lock_
+    uint32_t dropped_ = 0, dropped_total_ = 0;
     std::string batch_id_;
     size_t batch_n_ = 0;
     uint32_t batch_sent_ = 0, batch_backoff_ = 1000;

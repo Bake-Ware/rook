@@ -21,6 +21,23 @@ const uint32_t HEARD_KEEP_MS = 20000;       // not heard for this long: off the 
 NimBLEClient* client = nullptr;
 std::string saved_addr, saved_name, cand_addr, cand_name, last_hex, held_name;
 uint8_t saved_type = 0, cand_type = 0;
+// The remotes bonded with, most recently used first (at most MAX_BONDS, as
+// many as NimBLE keeps keys for). One is connected at a time: when another
+// bonded remote wakes and advertises, the bridge lets the one connected go
+// and takes it (the remote in the hand wins). saved_*: the first of them.
+// Kept in the settings as "addr,type,name" lines (prefs "bonds"). Under mu.
+struct Bond { std::string addr, name; uint8_t type; };
+std::vector<Bond> bonds;
+const size_t MAX_BONDS = 3;
+std::string conn_addr;                      // the one connected now (under mu)
+uint32_t last_switch = 0;                   // when the bridge last moved to another bonded remote
+const uint32_t SWITCH_GAP_MS = 4000;
+// A remote let go for another usually advertises at once to get back: it is
+// parked (its adverts ignored) for PARK_MS, and a switch only happens when the
+// remote connected has been quiet (no key) for QUIET_MS.
+std::string parked;                         // under mu
+uint32_t parked_until = 0;
+const uint32_t PARK_MS = 20000, QUIET_MS = 2000;
 QueueHandle_t keys;
 SemaphoreHandle_t mu;
 std::function<void(const char*)> logger;
@@ -437,6 +454,77 @@ void on_report(NimBLERemoteCharacteristic* c, uint8_t* d, size_t len, bool) {
     xQueueSend(keys, name, 0);
 }
 
+// saved_* follow the first bond. Under mu.
+void sync_front() {
+    saved_addr = bonds.empty() ? "" : bonds[0].addr;
+    saved_name = bonds.empty() ? "" : bonds[0].name;
+    saved_type = bonds.empty() ? 0 : bonds[0].type;
+}
+
+void save_bonds() {                         // under mu
+    std::string out;
+    for (auto& b : bonds) {
+        std::string n = b.name;
+        for (auto& c : n) if (c == '\n' || c == '\r') c = ' ';
+        out += b.addr + "," + std::to_string(b.type) + "," + n + "\n";
+    }
+    prefs.putString("bonds", out.c_str());
+}
+
+void load_bonds() {                         // at begin
+    std::string all = prefs.getString("bonds", "").c_str();
+    if (all.empty() && !prefs.getString("addr", "").isEmpty()) {          // a single bond from before 0.12.4
+        bonds.push_back({prefs.getString("addr", "").c_str(), prefs.getString("name", "").c_str(), prefs.getUChar("type", 0)});
+        save_bonds();
+        prefs.remove("addr");
+        prefs.remove("name");
+        prefs.remove("type");
+    }
+    size_t at = 0;
+    while (at < all.size() && bonds.size() < MAX_BONDS) {
+        size_t nl = all.find('\n', at);
+        std::string line = all.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+        at = nl == std::string::npos ? all.size() : nl + 1;
+        size_t c1 = line.find(','), c2 = c1 == std::string::npos ? c1 : line.find(',', c1 + 1);
+        if (c2 == std::string::npos) continue;
+        bonds.push_back({line.substr(0, c1), line.substr(c2 + 1), (uint8_t)atoi(line.c_str() + c1 + 1)});
+    }
+    sync_front();
+}
+
+int bond_index(const std::string& a) {      // under mu
+    for (size_t i = 0; i < bonds.size(); i++)
+        if (bonds[i].addr == a) return (int)i;
+    return -1;
+}
+
+// a just bonded with (or reconnected): first in the list. A new one past
+// MAX_BONDS pushes the least recently used out, and its keys with it.
+void use_bond(const std::string& a, const std::string& name, uint8_t type, bool is_new) {
+    Bond gone;
+    bool evict = false;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    int i = bond_index(a);
+    Bond b{a, name, type};
+    if (i >= 0) {
+        if (!is_new && !bonds[i].name.empty()) b.name = bonds[i].name;
+        bonds.erase(bonds.begin() + i);
+    }
+    bonds.insert(bonds.begin(), b);
+    if (bonds.size() > MAX_BONDS) {
+        gone = bonds.back();
+        bonds.pop_back();
+        evict = true;
+    }
+    sync_front();
+    if (is_new || i != 0) save_bonds();
+    xSemaphoreGive(mu);
+    if (evict) {
+        NimBLEDevice::deleteBond(NimBLEAddress(gone.addr, gone.type));
+        logf("bt: %s (%s) let go to make room", gone.name.c_str(), gone.addr.c_str());
+    }
+}
+
 bool is_hid(NimBLEAdvertisedDevice* d) {
     if (d->isAdvertisingService(NimBLEUUID(HID_SERVICE))) return true;
     if (!d->haveAppearance()) return false;
@@ -471,21 +559,40 @@ class Seen : public NimBLEAdvertisedDeviceCallbacks {
         bool hid = is_hid(d);
         bool in_pairing = (d->getAdvFlags() & (BLE_HS_ADV_F_DISC_LTD | BLE_HS_ADV_F_DISC_GEN)) != 0;
         if (listing && hid) note_heard(d, a, in_pairing);
-        if (connected || want_connect) return;
+        if (want_connect) return;
         bool take = false;
-        if (pairing) {
+        std::string bonded_name;
+        if (connected) {
+            // Another bonded remote woke up (a key pressed on it): it takes over.
+            if (pairing || millis() - last_switch < SWITCH_GAP_MS) return;
+            if (millis() - last_hid_ms < QUIET_MS) return;          // the one in use is being used
+            xSemaphoreTake(mu, portMAX_DELAY);
+            int i = bond_index(a);
+            take = i >= 0 && a != conn_addr && !(a == parked && (int32_t)(millis() - parked_until) < 0);
+            if (take) {
+                bonded_name = bonds[i].name;
+                parked = conn_addr;                                   // the one let go
+                parked_until = millis() + PARK_MS;
+            }
+            xSemaphoreGive(mu);
+            if (take) last_switch = millis() | 1;
+        } else if (pairing) {
             xSemaphoreTake(mu, portMAX_DELAY);
             std::string pick = pick_addr;
             xSemaphoreGive(mu);
             if (!pick.empty()) take = a == pick;                       // the one picked from the list
             else if (!listing) take = hid && d->getRSSI() > -85 && (!need_mode || in_pairing);
         } else {
-            take = !saved_addr.empty() && a == saved_addr;
+            xSemaphoreTake(mu, portMAX_DELAY);
+            int i = bond_index(a);
+            take = i >= 0;
+            if (take) bonded_name = bonds[i].name;
+            xSemaphoreGive(mu);
         }
         if (!take) return;
         cand_addr = a;
         cand_type = d->getAddress().getType();
-        cand_name = d->haveName() ? d->getName() : (pairing ? std::string("remote") : saved_name);
+        cand_name = d->haveName() ? d->getName() : !bonded_name.empty() ? bonded_name : std::string("remote");
         want_connect = true;
         NimBLEDevice::getScan()->stop();
     }
@@ -652,6 +759,9 @@ void task(void*) {
         }
         if (connected && !(client && client->isConnected())) {
             connected = false;
+            xSemaphoreTake(mu, portMAX_DELAY);
+            conn_addr.clear();
+            xSemaphoreGive(mu);
             v_ready = false;
             if (v_open) {
                 v_open = false;
@@ -687,21 +797,20 @@ void task(void*) {
             xSemaphoreTake(mu, portMAX_DELAY);
             bool picked = !pick_addr.empty();
             xSemaphoreGive(mu);
+            if (connected) {
+                xSemaphoreTake(mu, portMAX_DELAY);
+                conn_addr = addr;
+                xSemaphoreGive(mu);
+            }
             if (connected && was_pairing) {
                 xSemaphoreTake(mu, portMAX_DELAY);
-                std::string old = saved_addr;
-                uint8_t old_type = saved_type;
-                saved_addr = addr;
-                saved_name = nm;
-                saved_type = type;
                 pick_addr.clear();
                 pair_err.clear();
                 xSemaphoreGive(mu);
-                prefs.putString("addr", addr.c_str());
-                prefs.putString("name", nm.c_str());
-                prefs.putUChar("type", type);
+                use_bond(addr, nm, type, true);      // kept beside the others (up to MAX_BONDS)
                 pairing = false;
-                if (!old.empty() && old != addr) NimBLEDevice::deleteBond(NimBLEAddress(old, old_type));   // the remote it replaced
+            } else if (connected) {
+                use_bond(addr, nm, type, false);
             } else if (was_pairing && picked) {                    // the one picked would not bond: say why, and stop
                 xSemaphoreTake(mu, portMAX_DELAY);
                 pick_addr.clear();
@@ -713,7 +822,8 @@ void task(void*) {
         }
         if (paused) {
             if (NimBLEDevice::getScan()->isScanning()) NimBLEDevice::getScan()->stop();
-        } else if (listing || (!connected && (pairing || !saved_addr.empty()))) {
+        } else if (listing || (!connected && (pairing || !saved_addr.empty())) || (connected && bonds.size() > 1)) {
+            // (Connected, with other remotes bonded: still listening, passively, for one of them waking.)
             NimBLEScan* s = NimBLEDevice::getScan();
             if (!s->isScanning()) {
                 s->setActiveScan(pairing || listing);
@@ -733,9 +843,7 @@ void begin(std::function<void(const char*)> log) {
     ir_mu = xSemaphoreCreateMutex();
     keys = xQueueCreate(16, 20);
     prefs.begin("rook-bt", false);
-    saved_addr = prefs.getString("addr", "").c_str();
-    saved_name = prefs.getString("name", "").c_str();
-    saved_type = prefs.getUChar("type", 0);
+    load_bonds();
     if (!saved_addr.empty()) radio_on();
     xTaskCreatePinnedToCore(task, "bt", 8192, nullptr, 1, nullptr, 0);
 }
@@ -829,12 +937,56 @@ void forget() {
         NimBLEDevice::deleteAllBonds();
     }
     xSemaphoreTake(mu, portMAX_DELAY);
-    saved_addr.clear();
-    saved_name.clear();
+    bonds.clear();
+    sync_front();
     xSemaphoreGive(mu);
+    prefs.remove("bonds");
     prefs.remove("addr");
     prefs.remove("name");
     prefs.remove("type");
+}
+
+bool forget(const std::string& address) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    int i = bond_index(address);
+    if (i < 0) {
+        xSemaphoreGive(mu);
+        return false;
+    }
+    Bond b = bonds[i];
+    bonds.erase(bonds.begin() + i);
+    sync_front();
+    save_bonds();
+    bool was = conn_addr == address;
+    xSemaphoreGive(mu);
+    if (inited) {
+        if (was && client && client->isConnected()) client->disconnect();
+        NimBLEDevice::deleteBond(NimBLEAddress(b.addr, b.type));
+    }
+    logf("bt: forgot %s (%s)", b.name.c_str(), b.addr.c_str());
+    return true;
+}
+
+std::vector<BondInfo> bonded() {
+    std::vector<BondInfo> out;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    for (auto& b : bonds) out.push_back({b.addr, b.name, connected && b.addr == conn_addr});
+    xSemaphoreGive(mu);
+    return out;
+}
+
+bool bonds_full() {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    bool f = bonds.size() >= MAX_BONDS;
+    xSemaphoreGive(mu);
+    return f;
+}
+
+std::string oldest_bond() {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    std::string n = bonds.empty() ? "" : bonds.back().name.empty() ? bonds.back().addr : bonds.back().name;
+    xSemaphoreGive(mu);
+    return n;
 }
 
 bool saved() { return !saved_addr.empty(); }
@@ -846,16 +998,18 @@ std::string state() {
     return saved_addr.empty() ? "idle" : "waiting";
 }
 
-std::string name() {
+std::string name() {          // the one connected, else the one used last
     xSemaphoreTake(mu, portMAX_DELAY);
     std::string n = saved_name;
+    int i = conn_addr.empty() ? -1 : bond_index(conn_addr);
+    if (i >= 0) n = bonds[i].name;
     xSemaphoreGive(mu);
     return n;
 }
 
 std::string address() {
     xSemaphoreTake(mu, portMAX_DELAY);
-    std::string a = saved_addr;
+    std::string a = conn_addr.empty() ? saved_addr : conn_addr;
     xSemaphoreGive(mu);
     return a;
 }

@@ -123,6 +123,33 @@ static std::string request(const std::string& id, const std::string& nonce, cons
 
 static std::vector<std::string> got;      // replies the hub heard to the call watched
 static std::string watching;
+// core.event batches the hub heard: each parsed (bad: not JSON), its size and events.
+struct Batch { bool bad; size_t bytes, events; long dropped; std::vector<std::string> payloads; };
+static std::vector<Batch> batches;
+static bool answer_events = true;          // the hub answers each batch ok
+static const char* HUB_NODE = "feedfacefeedfacefeedfacefeedface";
+static long long announce_seq = 0;
+
+// A signed hub announce: the worker has hub contact and knows the hub's node.
+static std::string hub_announce() {
+    JsonDocument d;
+    JsonObject m = d.to<JsonObject>();
+    m["kind"] = "announce";
+    m["typ"] = "rook-announce";
+    m["v"] = 2;
+    m["hub"] = hub_id;
+    m["kid"] = rc::key_id(op_pub);
+    m["band"] = band_hex;
+    m["ts"] = (long long)time(nullptr);
+    m["seq"] = ++announce_seq;
+    m["worker_id"] = HUB_NODE;
+    m["core"] = "2.0";
+    sign(m, op_sec);
+    m["hubkey"] = grant.as<JsonObjectConst>();
+    std::string out;
+    serializeJson(d, out);
+    return out;
+}
 
 static void run(rc::Worker& w, rc::Band& hub, int rounds = 20) {
     for (int i = 0; i < rounds; i++) {
@@ -174,13 +201,37 @@ int main() {
         return true;
     });
     rc::Band hub;
-    hub.on_message = [](const uint8_t* m, size_t n) {
+    hub.on_message = [&hub](const uint8_t* m, size_t n) {
         size_t limit = alloc_limit;      // the hub's side is a PC: the limit is the worker's
         alloc_limit = 0;
         std::string s((const char*)m, n);
         if (!watching.empty() && s.find("\"id\":\"" + watching + "\"") != std::string::npos &&
             s.find("\"from\"") != std::string::npos)
             got.push_back(s);
+        if (s.find("\"cap\":\"core.event\"") != std::string::npos) {
+            JsonDocument d;
+            Batch b{(bool)deserializeJson(d, s), s.size(), 0, 0, {}};
+            if (!b.bad) {
+                b.dropped = d["args"]["dropped"] | 0L;
+                for (JsonObjectConst e : d["args"]["events"].as<JsonArrayConst>()) {
+                    std::string p;
+                    serializeJson(e["payload"], p);
+                    b.payloads.push_back(p);
+                }
+                b.events = b.payloads.size();
+                if (answer_events) {
+                    JsonDocument r;
+                    r["id"] = d["id"];
+                    r["from"] = HUB_NODE;
+                    r["ok"] = true;
+                    r["result"].to<JsonObject>();
+                    std::string out;
+                    serializeJson(r, out);
+                    hub.send(out);
+                }
+            }
+            batches.push_back(std::move(b));
+        }
         alloc_limit = limit;
     };
     hub.begin(PSK, "relay:7000");
@@ -323,6 +374,136 @@ int main() {
         hub.send(request(watching, rand_hex(16), "core.manifests", pa));
         run(w, hub);
         expect(got.size() == 2 && full_manifest(got[1]), "a re-minted ticket for the same id: answered as a new call");
+    }
+    // ---- events (core.event): what restarted the C3 in 0.12.3 ----
+    hub.send(hub_announce());
+    run(w, hub);
+    expect(w.hub_ok(), "events: the worker has hub contact (a signed hub announce)");
+    auto voice_part = [](int seq) {
+        JsonDocument p;
+        p["id"] = "0a0b0c0d";
+        p["seq"] = seq;
+        p["data"] = std::string(2400, 'A' + seq % 26);       // base64 of 1800 bytes of audio: 2439 bytes in all
+        return p;
+    };
+    // 10. A big payload is refused at the door, counted, and reported in the next batch.
+    {
+        batches.clear();
+        JsonDocument p;
+        p["blob"] = std::string(5000, 'x');
+        bool queued = w.emit("remote.button", p.as<JsonObjectConst>());
+        expect(!queued && w.events_dropped() == 1, "a 5 KB payload is refused at emit and counted");
+        JsonDocument b;
+        b["button"] = "ok";
+        w.emit("remote.button", b.as<JsonObjectConst>());
+        run(w, hub);
+        expect(batches.size() == 1 && !batches[0].bad && batches[0].events == 1 && batches[0].dropped == 1,
+               "the next batch carries the event and dropped 1");
+    }
+    // 11. Voice: 16 parts of 2439 bytes queued while the hub is away (no answers).
+    {
+        batches.clear();
+        answer_events = false;
+        for (int i = 0; i < 16; i++) w.emit("remote.voice.part", voice_part(i).as<JsonObjectConst>());
+        expect(w.events_bytes() <= rc::Worker::OUTBOX_BYTES, "16 voice parts: the queue stays under " +
+                                                                std::to_string(rc::Worker::OUTBOX_BYTES) + " bytes (" +
+                                                                std::to_string(w.events_bytes()) + ")");
+        run(w, hub);
+        bool ok = !batches.empty();
+        for (auto& b : batches) ok = ok && !b.bad && b.bytes <= rc::Worker::BATCH_BYTES + 1024 && b.events >= 1;
+        expect(ok, "voice batches are whole JSON and at most " + std::to_string(rc::Worker::BATCH_BYTES) +
+                       " bytes of payload (" + (batches.empty() ? std::string("none") : std::to_string(batches[0].bytes)) + " bytes)");
+        bool intact = !batches.empty() && batches[0].payloads.size() > 0;
+        if (intact) {
+            JsonDocument d;
+            deserializeJson(d, batches[0].payloads[0]);
+            intact = std::string(d["data"] | "").size() == 2400;
+        }
+        expect(intact, "the payloads arrive as queued");
+        answer_events = true;
+    }
+    // Time moves on (the worker resends an unanswered batch after 15 s, then backs off).
+    auto drain = [&](int rounds) {
+        for (int k = 0; k < rounds && w.events_queued(); k++) {
+            host_skip(31000);
+            hub.send(hub_announce());         // hub contact stays fresh
+            run(w, hub, 5);
+        }
+    };
+    // 12. The hub answers again: the batch it ignored goes again, and the rest after it; the queue empties.
+    {
+        batches.clear();
+        size_t queued = w.events_queued();
+        drain(30);
+        size_t got_events = 0;
+        bool ok = true;
+        for (auto& b : batches) {
+            got_events += b.events;
+            ok = ok && !b.bad;
+        }
+        expect(ok && w.events_queued() == 0 && got_events >= queued,
+               "the hub back: " + std::to_string(queued) + " queued events go in " + std::to_string(batches.size()) +
+                   " batches and the queue empties (" + std::to_string(w.events_queued()) + " left)");
+    }
+    // 13. Memory short: no block over 6 KB. Batches get small, nothing escapes.
+    {
+        batches.clear();
+        ESP.max_block = 6000;
+        for (int i = 0; i < 6; i++) w.emit("remote.voice.part", voice_part(i).as<JsonObjectConst>());
+        bool threw = false;
+        alloc_limit = 6000;
+        try {
+            drain(20);
+        } catch (...) {
+            threw = true;
+        }
+        alloc_limit = 0;
+        ESP.max_block = 20000;
+        bool small = !batches.empty() && w.events_queued() == 0;
+        for (auto& b : batches) small = small && !b.bad && b.events <= 1;
+        expect(!threw, "no block over 6 KB: building batches allocates nothing that big");
+        expect(small, "no block over 6 KB: one voice part a batch (" + std::to_string(batches.size()) + " batches)");
+    }
+    // 14. Almost no memory: emit refuses and counts; no batch, nothing escapes.
+    {
+        batches.clear();
+        ESP.max_block = 2500;
+        uint32_t before = w.events_dropped();
+        bool queued = w.emit("remote.voice.part", voice_part(1).as<JsonObjectConst>());
+        bool threw = false;
+        alloc_limit = 2500;
+        try {
+            run(w, hub, 20);
+        } catch (...) {
+            threw = true;
+        }
+        alloc_limit = 0;
+        ESP.max_block = 20000;
+        expect(!queued && w.events_dropped() == before + 1, "no block over 2.5 KB: a voice part is dropped and counted, not queued");
+        expect(!threw, "no block over 2.5 KB: nothing escapes");
+    }
+    // 15. Many small events: at most 100 queued, at most 50 a batch, the rest dropped and counted.
+    {
+        batches.clear();
+        answer_events = false;
+        uint32_t before = w.events_dropped();
+        for (int i = 0; i < 130; i++) {
+            JsonDocument b;
+            b["button"] = "vol_up";
+            b["seq"] = i;
+            w.emit("remote.button", b.as<JsonObjectConst>());
+        }
+        drain(1);
+        expect(w.events_queued() <= (size_t)rc::Worker::OUTBOX_MAX, "130 events: at most 100 queued (" + std::to_string(w.events_queued()) + ")");
+        expect(w.events_dropped() > before, "130 events: the rest counted as dropped (" + std::to_string(w.events_dropped() - before) + ")");
+        bool ok = !batches.empty();
+        for (auto& b : batches) ok = ok && !b.bad && b.events <= (size_t)rc::Worker::BATCH_MAX;
+        expect(ok, "130 events: batches of at most 50, whole JSON");
+        answer_events = true;
+        batches.clear();
+        drain(20);
+        expect(w.events_queued() == 0 && !batches.empty() && batches.back().dropped == 0,
+               "130 events: the hub answering, the queue empties and dropped is cleared once reported");
     }
     printf("%d passed, %d failed (%u packets sent, %u lost on purpose)\n", passes, fails, NET.sent, NET.lost);
     return fails ? 1 : 0;

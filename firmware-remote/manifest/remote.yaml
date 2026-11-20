@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.12.3
+version: 0.12.4
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -14,7 +14,7 @@ source: https://github.com/Bake-Ware/rook
 
 caps:
   state:
-    doc: The remote's buttons (names, which are held), the last presses, the device its buttons are for (target, of targets), its mode (remote, menu, chat or game) and the menu tab open (tab, of Devices, Assistant, Games, Settings), what the screen shows, Wi-Fi and hub status, the device on its own network it is driving (local), the IR profile its buttons are for (profile) and how many profiles it keeps (profiles), free memory, the firmware update's state, and the firmware's version and build (a three-word moniker derived from its sources, the same for the same sources).
+    doc: "The remote's buttons, the last presses, the device its buttons are for (target), its mode and menu tab, what the screen shows, Wi-Fi and hub status, the network device it drives (local), the IR profile picked and how many it keeps, free memory (heap, heap_block, stack_free: the least the band task's stack has had), the event queue (events_sent, events_queued, events_bytes, events_dropped), the update's state, the firmware's version and build, and its health: reset (why it last started: power_on, software, panic, task_watchdog, brownout...), boots and crashes (starts, and those after a crash, kept across restarts), and coredump {size, summary} when a crash left one (summary: task, pc, cause, the code addresses on its stack and the build; remote.coredump reads it out)."
     risk: read
     scope: local
     idempotent: true
@@ -68,13 +68,13 @@ caps:
       buttons: { type: list, items: { type: str } }
     result: { type: map }
   bt:
-    doc: "The Bluetooth remote paired to this one (most Android TV remotes). Its keys arrive as remote.button events with source bt: named as this remote's buttons where they mean the same, else bt_c<usage> or bt_k<code>; names renames raw keys (name one settings to make it the gear key; HID Menu 0x40, 0x9F and AL Control Panel 0x19F already are). action pair bonds with the first remote heard in pairing mode within 30 s, or with address (from heard); forget drops it; find makes it beep (level 1-3, Google's Find My Remote), quiet stops it. Blank answers state (off, idle, pairing, waiting, connected), name, address, last_report, pair_error, services, voice, find, and heard (address, name, rssi, pairing) while the remote's Settings > Pair BT list is open. On the remote that list shows the HID remotes heard with their signal; OK bonds, back leaves. A bridge with nothing bonded bonds by itself with the first HID remote in pairing mode, never while one is bonded."
+    doc: "The Bluetooth remotes bonded to this one (most Android TV remotes; up to 3, one connected at a time: another bonded remote that wakes takes over once the one connected has been quiet 2 s, and the one let go is not taken back for 20 s). Keys arrive as remote.button events with source bt: named as this remote's buttons where they mean the same, else bt_c<usage> or bt_k<code>; names renames raw keys (name one settings to make it the gear key). action pair bonds with the first remote heard in pairing mode within 30 s, or with address (from heard); a fourth pushes out the one used least lately. forget drops address, or every remote when address is left out. find makes the connected one beep (level 1-3), quiet stops it. Blank answers state (off, idle, pairing, waiting, connected), name and address (the one connected, else the one used last), bonds (address, name, connected), last_report, pair_error, services, voice, find, and heard (address, name, rssi, pairing) while Settings > Pair BT is open. That list shows the bonded remotes (*) then the others heard; OK bonds with a new one (asking first when it would push one out), the settings key on a bonded one offers Forget. A bridge with nothing bonded bonds by itself with the first HID remote in pairing mode."
     risk: write
     scope: local
     args:
       action: { type: str, enum: [status, pair, forget, find, quiet], default: status }
       level: { type: int, min: 1, max: 3, default: 3 }
-      address: { type: str, max: 17, doc: "For pair: the remote to bond with (aa:bb:cc:dd:ee:ff, as heard lists it); left out, the first one heard in pairing mode." }
+      address: { type: str, max: 17, doc: "For pair: the remote to bond with (aa:bb:cc:dd:ee:ff, as heard lists it; left out, the first heard in pairing mode). For forget: the one to drop (left out: all)." }
       names: { type: map, doc: "What its keys are called, raw key name (bt_c3) to the name it is sent under (up). Merged into the names kept: each name given adds or replaces that key's, a blank or null one takes that key's name out; keys not given keep theirs." }
     result: { type: map }
   ir:
@@ -152,6 +152,15 @@ caps:
       sha256: { type: str }
     result: { type: map }
 
+  coredump:
+    doc: "The core dump the last crash left in the remote's coredump partition (ESP-IDF ELF format; remote.state's coredump has its size and a summary). Answers length bytes of it from offset as base64 data, with size (0: there is none); read it piece by piece, then erase it with erase true (answers erased)."
+    risk: write
+    scope: self
+    args:
+      offset: { type: int, min: 0, max: 1048576, default: 0 }
+      length: { type: int, min: 1, max: 3072, default: 1536, doc: "Bytes in this piece (base64 makes it a third bigger)." }
+      erase: { type: bool, default: false }
+    result: { type: map }
 emits:
   remote.update.check:
     doc: Someone picked Update in the remote's menu and the remote could not read the update feed itself (feed_error says why). The hub's remote-update plugin answers over the band, with remote.update when it holds a newer build for this board.

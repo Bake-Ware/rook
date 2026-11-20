@@ -9,10 +9,16 @@
 #include <string.h>
 #include <chrono>
 
+// The test moves time on with host_skip(ms) (a resend waits 15 s).
+inline uint32_t& host_skipped() {
+    static uint32_t s = 0;
+    return s;
+}
+inline void host_skip(uint32_t ms) { host_skipped() += ms; }
 inline uint32_t millis() {
     using namespace std::chrono;
     static auto t0 = steady_clock::now();
-    return (uint32_t)duration_cast<milliseconds>(steady_clock::now() - t0).count();
+    return (uint32_t)duration_cast<milliseconds>(steady_clock::now() - t0).count() + host_skipped();
 }
 inline void delay(uint32_t) {}
 

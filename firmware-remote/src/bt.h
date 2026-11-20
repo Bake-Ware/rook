@@ -30,8 +30,16 @@ std::vector<Heard> heard();           // in the order first heard
 // No scanning while on (a firmware download wants the radio); a remote already
 // connected stays connected.
 void pause(bool on);
-void forget();                        // drop the remembered remote and its bond
-bool saved();
+void forget();                        // drop every remote bonded with
+// Up to 3 remotes stay bonded (a new one past that pushes out the one used
+// least lately); one is connected at a time, and another bonded remote that
+// wakes takes over from it.
+struct BondInfo { std::string address, name; bool connected; };
+std::vector<BondInfo> bonded();       // most recently used first
+bool forget(const std::string& address);   // drop that one; false: not bonded
+bool bonds_full();                    // a new one would push one out
+std::string oldest_bond();            // the one it would push out
+bool saved();                         // any remote bonded
 std::string state();                  // off | idle | pairing | waiting | connected
 std::string name();                   // the remembered remote
 std::string address();

@@ -21,6 +21,7 @@
 #include "buttons.h"
 #include "chat.h"
 #include "dev.h"
+#include "diag.h"
 #include "ir.h"
 #include "lan.h"
 #include "osk.h"
@@ -43,7 +44,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.12.3"
+#define FW_VERSION "0.12.4"
 #ifndef BUILD_MONIKER
 #define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
 #endif
@@ -69,6 +70,7 @@ static const uint8_t PCF_ADDR = 0x20, OLED_ADDR = 0x3C;
 
 static rc::Worker worker;
 static bool worker_on = false;
+static TaskHandle_t rook_task_h = nullptr;      // for its stack's low-water mark in remote.state
 static WiFiMulti wifi;
 static SemaphoreHandle_t ev_mu;
 static std::deque<ButtonEvent> recent;      // last presses, for state and wait
@@ -99,8 +101,9 @@ static void active() { last_active = millis(); }
 // can have; MENU_BT: the Bluetooth remotes heard (Settings > Pair BT);
 // MENU_SLEEP: the two rest times (Settings > Sleep), MENU_SLEEP_PICK: the
 // choices for one of them.
+// MENU_BT_REPLACE: yes or no to a new remote pushing out a bonded one.
 enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS, MENU_OPTS, MENU_CONFIRM, MENU_ICON, MENU_BT, MENU_SLEEP,
-                MENU_SLEEP_PICK };
+                MENU_SLEEP_PICK, MENU_BT_REPLACE };
 // The main menu's tabs, left to right (left and right step through them, round).
 enum Tab { TAB_DEVICES, TAB_ASSIST, TAB_GAMES, TAB_SETTINGS, TAB_COUNT };
 static const char* const TAB_NAMES[TAB_COUNT] = {"Devices", "Assistant", "Games", "Settings"};
@@ -654,9 +657,14 @@ static bool is_profile_key(const ButtonEvent& e) {
 
 static bool is_options_key(const std::string& n) { return n == "settings" || n == "bt_menu"; }
 
+static void open_bt_list(bool keep_cursor);
+
 // The menu the options came from, again (its cursor on subject, when it is there).
 static void reopen(MenuKind from, const std::string& subject = "") {
-    if (from == MENU_WIFI) {
+    if (from == MENU_BT) {
+        bt::look(true);                     // it stopped when the list closed
+        open_bt_list(false);
+    } else if (from == MENU_WIFI) {
         open_wifi_menu(subject.rfind("w:", 0) == 0 ? subject.substr(2) : "");
     } else if (from == MENU_DEVS) {
         open_devs_menu();
@@ -678,6 +686,9 @@ static void open_options(int sel) {
     if (devs && v.rfind("p:", 0) == 0) {
         items = {"Rename", "Icon", "Delete"};
         opts_subject = v;
+    } else if (menu_kind == MENU_BT && v.rfind("b:", 0) == 0) {
+        items = {"Forget"};
+        opts_subject = v;
     } else if (menu_kind == MENU_WIFI && !v.empty()) {
         items = {"Join"};
         if (wifi_saved(v)) items.insert(items.end(), {"Move up", "Move down", "Forget"});
@@ -687,6 +698,7 @@ static void open_options(int sel) {
     }
     opts_label = menu_labels[sel];
     if (!opts_label.empty() && opts_label[0] == '*') opts_label.erase(0, 1);
+    if (opts_label.size() > 5 && opts_label.compare(opts_label.size() - 5, 5, " (on)") == 0) opts_label.erase(opts_label.size() - 5);
     opts_from = menu_kind;
     ui::menu_end();
     show_menu(MENU_OPTS, opts_label, items, items, 0);
@@ -743,50 +755,73 @@ static void open_sleep_pick(bool screen) {
     show_menu(MENU_SLEEP_PICK, screen ? "SCREEN OFF" : "SLEEP", labels, values, sel);
 }
 
-// The Bluetooth remotes heard (bt::look), in the order they turned up, with
-// their signal; the cursor stays on the one it was on as the list changes.
-// Nothing heard yet: one row saying it is looking.
-static std::vector<std::string> bt_list_addrs;      // what the list shows now, to tell when it changed
+// Settings > Pair BT: the remotes bonded first (* marks them; "on": the one
+// connected), then the HID remotes heard (bt::look) that are not, in the order
+// they turned up, each with its signal. The cursor stays on the row it was on
+// as the list changes. Nothing at all yet: one row saying it is looking.
+// Values: b:<address> for a bonded one, the address for a new one.
+static std::string bt_list_key;              // what the list shows now, to tell when it changed
+static std::string bt_list_signature(std::vector<int8_t>* bars, std::vector<std::string>* labels,
+                                     std::vector<std::string>* values) {
+    std::string key;
+    auto hs = bt::heard();
+    for (auto& b : bt::bonded()) {
+        int8_t lv = -1;
+        for (auto& h : hs)
+            if (h.address == b.address) lv = wifi_bars(h.rssi);
+        std::string n = "*" + (b.name.empty() ? b.address : b.name) + (b.connected ? " (on)" : "");
+        key += n + "|";
+        if (labels) labels->push_back(n);
+        if (values) values->push_back("b:" + b.address);
+        if (bars) bars->push_back(lv);
+    }
+    for (auto& h : hs) {
+        bool bonded = false;
+        for (auto& b : bt::bonded()) bonded = bonded || b.address == h.address;
+        if (bonded) continue;
+        std::string n = h.name.empty() ? h.address : h.name;
+        key += h.address + n + "|";
+#ifdef ROOK_BRIDGE
+        if (labels) labels->push_back(n);
+#else
+        if (labels) labels->push_back(std::to_string(wifi_bars(h.rssi)) + n);     // no room for bars
+#endif
+        if (values) values->push_back(h.address);
+        if (bars) bars->push_back(wifi_bars(h.rssi));
+    }
+    return key;
+}
+
 static void open_bt_list(bool keep_cursor) {
     std::string at = keep_cursor && ui::menu_selected() < (int)menu_values.size() ? menu_values[ui::menu_selected()] : "";
-    std::vector<std::string> labels, values, addrs;
+    std::vector<std::string> labels, values;
     std::vector<int8_t> bars;
+    bt_list_key = bt_list_signature(&bars, &labels, &values);
     int sel = 0;
-    for (auto& h : bt::heard()) {
-        std::string n = h.name.empty() ? h.address : h.name;
-        if (h.address == at) sel = (int)labels.size();
-#ifdef ROOK_BRIDGE
-        labels.push_back(n);
-#else
-        labels.push_back(std::to_string(wifi_bars(h.rssi)) + n);         // no room for bars
-#endif
-        values.push_back(h.address);
-        bars.push_back(wifi_bars(h.rssi));
-        addrs.push_back(h.address + "|" + h.name);
-    }
-    if (labels.empty()) {
-        labels.push_back("Looking...");
-        values.push_back("");
-    }
-    bt_list_addrs = addrs;
+    for (size_t i = 0; i < values.size(); i++)
+        if (!at.empty() && values[i] == at) sel = (int)i;
+    labels.push_back("Looking...");          // last: it is still looking for more
+    values.push_back("");
     uint32_t until = menu_until;
     show_menu(MENU_BT, "PAIR BT", labels, values, sel);
     menu_until = keep_cursor ? until : millis() + BT_LIST_IDLE_MS;
     ui::menu_bars_set(bars);
 }
 
-// The list open: brought up to date when a remote turns up, goes or names
-// itself, and its bars as the signals change.
+// The list open: brought up to date when a remote turns up, goes, names
+// itself or connects, and its bars as the signals change.
 static void refresh_bt_list() {
-    std::vector<std::string> addrs;
     std::vector<int8_t> bars;
-    auto hs = bt::heard();
-    for (auto& h : hs) {
-        addrs.push_back(h.address + "|" + h.name);
-        bars.push_back(wifi_bars(h.rssi));
-    }
-    if (addrs != bt_list_addrs) open_bt_list(true);
-    else if (!hs.empty()) ui::menu_bars_set(bars);
+    if (bt_list_signature(&bars, nullptr, nullptr) != bt_list_key) open_bt_list(true);
+    else ui::menu_bars_set(bars);
+}
+
+// A remote picked from the list: bonded with (the list closes and says how it went).
+static void bt_pair_with(const std::string& addr, const std::string& label) {
+    bt_auto = false;
+    bt::pair(30, addr);
+    bt::look(false);
+    ui::card("BLUETOOTH", "pairing " + label, -2);
 }
 
 // A row's name as it shows: a profile's, or a Wi-Fi network's.
@@ -803,6 +838,10 @@ static void options_pick(const std::string& label) {
         open_icon_menu(subject_name(subj));
     } else if (label == "Delete") {
         show_menu(MENU_CONFIRM, "DELETE?", {"No, keep it", "Delete " + subject_name(subj)}, {"no", "yes"}, 0);
+    } else if (subj.rfind("b:", 0) == 0 && label == "Forget") {
+        bool ok = bt::forget(subj.substr(2));
+        reopen(MENU_BT);
+        ui::flash(ok ? "forgot\n" + opts_label : std::string("not\nbonded"), 1200, true);
     } else if (subj.rfind("w:", 0) == 0) {
         std::string ssid = subj.substr(2);
         if (label == "Join") {
@@ -912,13 +951,32 @@ static void menu_pick(int i) {
     }
     if (kind == MENU_BT) {
         if (value.empty()) {                 // still looking
+            bt::look(true);
             open_bt_list(false);
             return;
         }
-        bt_auto = false;
-        bt::pair(30, value);
-        bt::look(false);
-        ui::card("BLUETOOTH", "pairing " + label, -2);
+        if (value.rfind("b:", 0) == 0) {     // bonded already: nothing to do but say so
+            bt::look(true);
+            open_bt_list(false);
+            ui::flash(label.find(" (on)") != std::string::npos ? std::string("in use") : std::string("paired:\npress a key\non it"), 1500, true);
+            return;
+        }
+        if (bt::bonds_full()) {              // a fourth: one has to go, so ask first
+            opts_subject = value;
+            opts_label = label;
+            show_menu(MENU_BT_REPLACE, "REPLACE?", {"No, keep it", "Replace " + bt::oldest_bond()}, {"no", "yes"}, 0);
+            return;
+        }
+        bt_pair_with(value, label);
+        return;
+    }
+    if (kind == MENU_BT_REPLACE) {
+        if (value == "yes") {
+            bt_pair_with(opts_subject, opts_label);
+        } else {
+            bt::look(true);
+            open_bt_list(false);
+        }
         return;
     }
     if (kind == MENU_CONFIRM) {
@@ -1150,6 +1208,11 @@ static void on_button(const ButtonEvent& ev) {
             else show_tab(TAB_SETTINGS);
             return;
         }
+        if (menu_kind == MENU_BT_REPLACE && e.name == "back") {
+            bt::look(true);
+            open_bt_list(false);
+            return;
+        }
         // Back from the remotes heard: nothing is paired, and the looking stops.
         if (menu_kind == MENU_BT && e.name == "back") {
             bt::look(false);
@@ -1302,6 +1365,13 @@ static void fill_bt(JsonObject o) {
     }
     if (!bt::last_report().empty()) o["last_report"] = bt::last_report();
     if (!bt::pair_error().empty()) o["pair_error"] = bt::pair_error();
+    JsonArray bs = o["bonds"].to<JsonArray>();        // every remote bonded, most recently used first
+    for (auto& b : bt::bonded()) {
+        JsonObject e = bs.add<JsonObject>();
+        e["address"] = b.address;
+        if (!b.name.empty()) e["name"] = b.name;
+        e["connected"] = b.connected;
+    }
     if (bt::looking()) {                    // the remote's Pair BT list is open: what it has heard
         JsonArray hs = o["heard"].to<JsonArray>();
         for (auto& h : bt::heard()) {
@@ -1377,6 +1447,10 @@ static void fill_state(JsonObject r) {
     r["hub_contact"] = worker.hub_ok();
     r["events_sent"] = worker.events_sent();
     r["events_queued"] = (unsigned)worker.events_queued();
+    r["events_bytes"] = (unsigned)worker.events_bytes();
+    if (worker.events_dropped()) r["events_dropped"] = worker.events_dropped();
+    if (rook_task_h) r["stack_free"] = (unsigned)uxTaskGetStackHighWaterMark(rook_task_h);   // the band task's, least seen
+    diag::fill(r);                          // reset, boots, crashes, coredump
     r["uptime_s"] = millis() / 1000;
 }
 
@@ -1500,7 +1574,9 @@ static bool cap_bt(JsonObjectConst a, JsonObject r, std::string& err) {
         bt::pair(30, addr);
         ui::text(addr.empty() ? std::string(BT_PAIR_TEXT) : "Pairing with\n" + addr, 35);
     } else if (action == "forget") {
-        bt::forget();
+        std::string addr = a["address"] | "";        // one remote; left out, all of them
+        if (addr.empty()) bt::forget();
+        else if (!bt::forget(addr)) { err = "no remote bonded at " + addr; return false; }
     } else if (action == "find" || action == "quiet") {
         if (!bt::find_ready()) { err = "the paired remote has no find-me service, or is not connected"; return false; }
         bt::find(action == "find" ? (int)(a["level"] | 3) : 0);
@@ -1856,6 +1932,29 @@ static bool cap_device(JsonObjectConst a, JsonObject r, std::string& err) {
     lan::Device now;
     if (lan::find(d.id, now)) dev::fill(now, r["device"].to<JsonObject>());
     if (!local_id.empty()) r["selected"] = local_id;
+    return true;
+}
+
+// The core dump kept from the last crash, in pieces (base64) small enough for
+// the band; erase drops it once it has been read.
+static bool cap_coredump(JsonObjectConst a, JsonObject r, std::string& err) {
+    if (a["erase"] | false) {
+        if (!diag::coredump_erase(err)) return false;
+        r["erased"] = true;
+        return true;
+    }
+    size_t size = 0;
+    if (!diag::coredump_size(size)) {
+        r["size"] = 0;
+        return true;
+    }
+    size_t off = (size_t)(a["offset"] | 0), len = (size_t)(a["length"] | 1536);
+    std::string data;
+    if (!diag::coredump_read(off, len, data, err)) return false;
+    r["size"] = (unsigned)size;
+    r["offset"] = (unsigned)off;
+    r["length"] = (unsigned)len;
+    r["data"] = data;
     return true;
 }
 
@@ -2343,6 +2442,7 @@ void setup() {
     ev_mu = xSemaphoreCreateMutex();
     wifi_mu = xSemaphoreCreateMutex();
     settings::begin();
+    diag::begin();                // why it started, and what the last crash left
     ir::begin();                  // the IR LED's pin LOW before anything else
 #ifdef ROOK_GAMEPAD
     devweb_mu = xSemaphoreCreateMutex();
@@ -2452,12 +2552,13 @@ void setup() {
             worker.on("remote.devices", cap_devices);
             worker.on("remote.device", cap_device, true);
             worker.on("remote.update", cap_update);
+            worker.on("remote.coredump", cap_coredump);
             worker_on = true;
         } else {
             logf("enrollment is unusable (hub root key or manifest); enroll again");
         }
     }
-    xTaskCreatePinnedToCore(rook_task, "rook", 16384, nullptr, 1, nullptr, APP_CORE);
+    xTaskCreatePinnedToCore(rook_task, "rook", 16384, nullptr, 1, &rook_task_h, APP_CORE);
     xTaskCreatePinnedToCore(wifi_task, "wifi", 4096, nullptr, 1, nullptr, 0);
     bt_names_mu = xSemaphoreCreateMutex();
     load_bt_names();
@@ -2658,7 +2759,8 @@ void loop() {
         bool down = is_name(held, {"assistant", "search", "voice"});
         if (down && ms - voice_started > 600) voice_hold = true;      // held while talking: letting go ends it
         if (voice_hold && !down) bt::voice_stop();
-        if (worker_on && worker.events_queued() > 16) bt::voice_stop();   // the hub is not keeping up
+        // The hub is not keeping up: stop before the queue has to drop parts of what is said.
+        if (worker_on && worker.events_bytes() > rc::Worker::OUTBOX_BYTES * 3 / 4) bt::voice_stop();
     }
     voice_was_open = voice_open;
     // Listening and thinking move on the screen: the meter, the dots, the clock.

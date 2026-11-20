@@ -311,6 +311,10 @@ bool looking() { return false; }
 std::vector<Heard> heard() { return {}; }
 void pause(bool) {}
 void forget() {}
+bool forget(const std::string&) { return false; }
+std::vector<BondInfo> bonded() { return {}; }
+bool bonds_full() { return false; }
+std::string oldest_bond() { return ""; }
 bool saved() { return true; }        // nothing to pair: whatever is plugged in is it
 std::string state() { return on ? "connected" : "waiting"; }
 

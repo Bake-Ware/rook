@@ -18,6 +18,10 @@ static std::string rand_hex(size_t bytes) {
     return hex(b, bytes);
 }
 
+// Room to allocate n bytes, with some to spare. On the C3 a failed allocation
+// is an abort (exceptions there do not unwind), so sizes are checked first.
+static bool room_for(size_t n) { return ESP.getMaxAllocHeap() > n + 2048; }
+
 static const void* find(const uint8_t* hay, size_t n, const std::string& needle) {
     if (needle.empty() || needle.size() > n) return nullptr;
     return memmem(hay, n, needle.data(), needle.size());
@@ -170,7 +174,13 @@ void Worker::reply_raw(const std::string& id, const std::string& result_json) {
 }
 
 void Worker::reply_ok(const std::string& id, JsonVariantConst result) {
+    size_t n = measureJson(result);
+    if (!room_for(n)) {
+        out_of_memory(id, ("for a reply of " + std::to_string(n) + " bytes").c_str());
+        return;
+    }
     std::string res;
+    res.reserve(n);
     serializeJson(result, res);
     reply_raw(id, res.empty() ? "null" : res);
 }
@@ -340,21 +350,52 @@ void Worker::unreadable(const uint8_t* data, size_t len, const char* why) {
 
 // ---- events (core.event) ----------------------------------------------------
 
-void Worker::emit(const char* event, JsonObjectConst payload) {
+// Nothing here may throw: on the C3 bridge a C++ exception does not unwind,
+// it aborts (0.12.3 restarted so, building a batch of voice parts: each
+// payload copied twice, 50 at a time, past the heap). So every allocation is
+// sized first and checked against the largest free block, and the batch goes
+// out in pieces taken from the queue, never copied.
+
+bool Worker::emit(const char* event, JsonObjectConst payload) {
+    size_t n = measureJson(payload);
+    bool fits = n <= EVENT_MAX && room_for(n + 64);
     Event e;
-    e.id = rand_hex(8);
-    e.event = event;
-    serializeJson(payload, e.payload);
-    xSemaphoreTake(lock_, portMAX_DELAY);
-    if (outbox_.size() >= 100) {
-        // the batch in flight stays; drop the oldest queued after it
-        size_t victim = batch_id_.empty() ? 0 : batch_n_;
-        if (victim < outbox_.size()) { outbox_.erase(outbox_.begin() + victim); dropped_++; }
+    if (fits) {
+        e.id = rand_hex(8);
+        e.event = event;
+        e.payload.reserve(n);
+        serializeJson(payload, e.payload);
     }
-    outbox_.push_back(e);
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    if (!fits) {
+        dropped_++;
+        dropped_total_++;
+        xSemaphoreGive(lock_);
+        if (log) log((std::string("event ") + event + " dropped: " + std::to_string(n) + " bytes (max " +
+                      std::to_string(EVENT_MAX) + ", largest block " + std::to_string(ESP.getMaxAllocHeap()) + ")").c_str());
+        return false;
+    }
+    // The batch in flight stays; the oldest queued after it go to make room.
+    size_t keep = batch_id_.empty() ? 0 : batch_n_;
+    while (outbox_.size() > keep &&
+           ((int)outbox_.size() >= OUTBOX_MAX || outbox_bytes_ + e.payload.size() > OUTBOX_BYTES)) {
+        outbox_bytes_ -= outbox_[keep].payload.size();
+        outbox_.erase(outbox_.begin() + keep);
+        dropped_++;
+        dropped_total_++;
+    }
+    outbox_bytes_ += e.payload.size();
+    outbox_.push_back(std::move(e));
     xSemaphoreGive(lock_);
+    return true;
 }
 
+// The batch: {"id":..,"cap":"core.event","target":..,"args":{"worker_id":..,
+// "events":[{"id":..,"event":..,"plugin":..,"payload":<as queued>},...],
+// "dropped":N}}, put together as pieces (the punctuation and names in one
+// small buffer, the payloads where they lie in the queue) and sent under
+// lock_, so the queue cannot change under it. As many events as fit
+// BATCH_BYTES (at least one), fewer when memory is short.
 void Worker::pump_events() {
     uint32_t ms = millis();
     xSemaphoreTake(lock_, portMAX_DELAY);
@@ -366,30 +407,60 @@ void Worker::pump_events() {
     bool can = batch_id_.empty() && !outbox_.empty() && !gate.hub_node().empty() && hub_ok() &&
                (batch_sent_ == 0 || ms - batch_sent_ > batch_backoff_);
     if (!can) { xSemaphoreGive(lock_); return; }
-    JsonDocument req;
-    batch_id_ = rand_hex(16);
-    req["id"] = batch_id_;
-    req["cap"] = "core.event";
-    req["target"] = gate.hub_node();
-    JsonObject a = req["args"].to<JsonObject>();
-    a["worker_id"] = cfg_.worker_id;
-    JsonArray evs = a["events"].to<JsonArray>();
-    batch_n_ = 0;
+    size_t budget = BATCH_BYTES;
+    if (!room_for(8192)) budget = 2048;       // memory short: small batches
+    size_t n = 0, bytes = 0;
     for (auto& e : outbox_) {
-        if (batch_n_ >= 50) break;
-        JsonObject o = evs.add<JsonObject>();
-        o["id"] = e.id;
-        o["event"] = e.event;
-        o["plugin"] = plugin_;
-        o["payload"] = serialized(e.payload);
-        batch_n_++;
+        if (n >= (size_t)BATCH_MAX || (n && bytes + e.payload.size() > budget)) break;
+        bytes += e.payload.size();
+        n++;
     }
-    if (dropped_) a["dropped"] = dropped_;
+    // The glue: about 90 bytes an event, and the head.
+    size_t glue_size = 220 + cfg_.worker_id.size() + gate.hub_node().size() + n * 96;
+    std::string glue;
+    std::vector<Band::Piece> ps;
+    if (!room_for(glue_size + (2 * n + 2) * sizeof(Band::Piece))) {
+        batch_sent_ = ms;                     // no memory now: try again after the backoff
+        batch_backoff_ = batch_backoff_ * 2 > 30000 ? 30000 : batch_backoff_ * 2;
+        xSemaphoreGive(lock_);
+        if (log) log("events wait: no memory for a batch");
+        return;
+    }
+    glue.reserve(glue_size);
+    ps.reserve(2 * n + 2);
+    std::string id = rand_hex(16);
+    // Pieces point into glue, which never grows past what was reserved: offsets first, pointers after.
+    std::vector<std::pair<size_t, size_t>> at;          // glue spans, in order; payloads between them
+    at.reserve(n + 1);
+    size_t from = 0;
+    glue += "{\"id\":\"" + id + "\",\"cap\":\"core.event\",\"target\":\"" + gate.hub_node() +
+            "\",\"args\":{\"worker_id\":\"" + cfg_.worker_id + "\",\"events\":[";
+    for (size_t i = 0; i < n; i++) {
+        const Event& e = outbox_[i];
+        glue += i ? ",{\"id\":\"" : "{\"id\":\"";
+        glue += e.id;
+        glue += "\",\"event\":\"";
+        glue += e.event;
+        glue += "\",\"plugin\":\"";
+        glue += plugin_;
+        glue += "\",\"payload\":";
+        at.push_back({from, glue.size() - from});
+        from = glue.size();
+        glue += "}";
+    }
+    glue += "]";
+    if (dropped_) glue += ",\"dropped\":" + std::to_string(dropped_);
+    glue += "}}";
+    at.push_back({from, glue.size() - from});
+    for (size_t i = 0; i < at.size(); i++) {
+        ps.push_back({glue.data() + at[i].first, at[i].second});
+        if (i < n) ps.push_back({outbox_[i].payload.data(), outbox_[i].payload.size()});
+    }
+    batch_id_ = id;
+    batch_n_ = n;
     batch_sent_ = ms;
+    band_.send(ps.data(), ps.size());
     xSemaphoreGive(lock_);
-    std::string out;
-    serializeJson(req, out);
-    band_.send(out);
 }
 
 void Worker::on_reply(JsonObjectConst rep) {
@@ -397,7 +468,10 @@ void Worker::on_reply(JsonObjectConst rep) {
     if (batch_id_.empty() || batch_id_ != rep["id"].as<const char*>()) { xSemaphoreGive(lock_); return; }
     batch_id_.clear();
     if (rep["ok"].as<bool>()) {
-        for (size_t i = 0; i < batch_n_ && !outbox_.empty(); i++) outbox_.pop_front();
+        for (size_t i = 0; i < batch_n_ && !outbox_.empty(); i++) {
+            outbox_bytes_ -= outbox_.front().payload.size();
+            outbox_.pop_front();
+        }
         events_sent_ += batch_n_;
         dropped_ = 0;
         batch_backoff_ = 1000;
@@ -552,9 +626,16 @@ void Worker::run_job(BlockingJob* j) {
     try {
         JsonDocument res;
         ok = j->h(j->args.as<JsonObjectConst>(), res.to<JsonObject>(), err);
+        if (ok && res.overflowed()) { ok = false; err = "worker error: out of memory for the result"; }
         if (ok) {
-            serializeJson(res, out);
-            if (res.overflowed()) { ok = false; err = "worker error: out of memory for the result"; }
+            size_t n = measureJson(res);
+            if (!room_for(n)) {
+                ok = false;
+                err = "worker error: out of memory for a result of " + std::to_string(n) + " bytes";
+            } else {
+                out.reserve(n);
+                serializeJson(res, out);
+            }
         }
     } catch (const std::bad_alloc&) {
         ok = false;
@@ -798,8 +879,9 @@ void Worker::handle_request(JsonObjectConst req) {
             return;
         }
         JsonDocument res;
-        if (r.h(a.as<JsonObjectConst>(), res.to<JsonObject>(), err)) reply_ok(id, res.as<JsonVariantConst>());
-        else reply_err(id, err);
+        if (!r.h(a.as<JsonObjectConst>(), res.to<JsonObject>(), err)) reply_err(id, err);
+        else if (res.overflowed()) out_of_memory(id, ("answering " + std::string(cap)).c_str());
+        else reply_ok(id, res.as<JsonVariantConst>());
         return;
     }
     reply_err(id, std::string("unknown capability: ") + cap);
