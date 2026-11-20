@@ -213,6 +213,7 @@ const uint8_t IC_DOT[] PROGMEM = {0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00
 const uint8_t IC_UPD[] PROGMEM = {0x18, 0x18, 0x18, 0x7E, 0x3C, 0x18, 0x00, 0x7E};
 const uint8_t IC_RING[] PROGMEM = {0x00, 0x3C, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00};
 const uint8_t IC_GEAR[] PROGMEM = {0x18, 0x7E, 0x66, 0xC3, 0xC3, 0x66, 0x7E, 0x18};
+const uint8_t IC_MOON[] PROGMEM = {0x3C, 0x70, 0xE0, 0xE0, 0xE0, 0x70, 0x3C, 0x00};
 const uint8_t IC_PLUS[] PROGMEM = {0x00, 0x18, 0x18, 0x7E, 0x7E, 0x18, 0x18, 0x00};
 
 // The profiles' pictures, by prof::Icon (0, none, draws the generic one).
@@ -256,6 +257,7 @@ const uint8_t* icon_for(const std::string& label) {
     if (has("forget")) return IC_X;
     if (has(" bt") || has("bluetooth")) return IC_BT;
     if (has("update")) return IC_UPD;
+    if (has("sleep") || has("screen off")) return IC_MOON;
     if (has("find") || has("scan")) return IC_FIND;
     if (has("assistant")) return IC_CHAT;
     if (has(" (")) return IC_RING;               // found, but nothing here drives it: name (what it answered as)

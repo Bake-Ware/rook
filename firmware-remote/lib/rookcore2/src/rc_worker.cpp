@@ -126,9 +126,12 @@ void Worker::send_heartbeat() {
     band_.send(out);
 }
 
-// The reply is put together in one allocation: a big result copied three times
-// over (as it was) is more than a small chip has in one piece.
-void Worker::reply_parts(const std::string& id, const char* pre, const char* body, size_t body_len, const char* post) {
+// The reply goes to the band in pieces (head, result, tail), never joined: the
+// result may be the manifest, 20 KB kept in flash, and a small chip has not
+// that much in one piece to spare (0.12.1 joined it, and then could not). A
+// small reply is joined once, to be kept for a resent request.
+void Worker::reply_parts(const std::string& id, const char* pre, const char* body, size_t body_len, const char* post,
+                         Again again) {
     JsonDocument r;
     r["id"] = id;
     r["from"] = cfg_.worker_id;
@@ -136,15 +139,30 @@ void Worker::reply_parts(const std::string& id, const char* pre, const char* bod
     std::string head;
     serializeJson(r, head);
     head.pop_back();                       // its closing brace: the result goes in before it
-    std::string out;
-    out.reserve(head.size() + strlen(pre) + body_len + strlen(post) + 12);
-    out += head;
-    out += ",\"result\":";
-    out += pre;
-    out.append(body, body_len);
-    out += post;
-    out += "}";
-    send_reply(id, out);
+    static const char RESULT[] = ",\"result\":";
+    Band::Piece ps[] = {{head.data(), head.size()}, {RESULT, sizeof RESULT - 1}, {pre, strlen(pre)},
+                        {body, body_len},           {post, strlen(post)},         {"}", 1}};
+    size_t size = 0;
+    for (auto& p : ps) size += p.n;
+    band_.send(ps, sizeof ps / sizeof ps[0]);
+    std::string keep;
+    bool kept = false;
+    if (again == AGAIN_NONE && size <= RECENT_REPLY && ESP.getFreeHeap() > KEEP_MIN_FREE &&
+        ESP.getMaxAllocHeap() > KEEP_MIN_BLOCK) {
+        try {
+            keep.reserve(size);
+            for (auto& p : ps) keep.append(p.p, p.n);
+            kept = true;
+        } catch (const std::bad_alloc&) {
+        }
+    }
+    note_reply(id, kept ? &keep : nullptr, size, again);
+}
+
+// core.manifests: this plugin's manifest (include) or none, straight from flash.
+void Worker::send_manifests(const std::string& id, bool include) {
+    reply_parts(id, "{\"manifests\":[", manifest_text_, include ? manifest_len_ : 0, "]}",
+                include ? AGAIN_MANIFESTS : AGAIN_NO_MANIFESTS);
 }
 
 void Worker::reply_raw(const std::string& id, const std::string& result_json) {
@@ -170,12 +188,24 @@ void Worker::reply_err(const std::string& id, const std::string& err) {
 
 void Worker::send_reply(const std::string& id, const std::string& msg) {
     band_.send(msg);
+    bool room = msg.size() <= RECENT_REPLY && ESP.getFreeHeap() > KEEP_MIN_FREE && ESP.getMaxAllocHeap() > KEEP_MIN_BLOCK;
+    note_reply(id, room ? &msg : nullptr, msg.size(), AGAIN_NONE);
+}
+
+// The call id was answered: msg is its reply to keep (null: not kept).
+void Worker::note_reply(const std::string& id, const std::string* msg, size_t size, Again again) {
     if (id.empty()) return;
     xSemaphoreTake(lock_, portMAX_DELAY);
-    for (auto& c : recent_) {
-        if (c.id != id) continue;
-        c.done = true;
-        if (msg.size() <= RECENT_REPLY) c.reply = msg;
+    try {
+        for (auto& c : recent_) {
+            if (c.id != id) continue;
+            c.done = true;
+            c.size = size;
+            c.again = again;
+            if (msg) c.reply = *msg;
+        }
+    } catch (const std::bad_alloc&) {
+        for (auto& c : recent_) std::string().swap(c.reply);      // not kept, and room made
     }
     // At most RECENT_BYTES of replies kept in all: the oldest go first.
     size_t kept = 0;
@@ -186,6 +216,33 @@ void Worker::send_reply(const std::string& id, const std::string& msg) {
         std::string().swap(c.reply);
     }
     xSemaphoreGive(lock_);
+}
+
+void Worker::shed_replies() {
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    size_t freed = 0;
+    for (auto& c : recent_) {
+        freed += c.reply.size();
+        std::string().swap(c.reply);
+    }
+    xSemaphoreGive(lock_);
+    if (freed && log) log(("memory is short: " + std::to_string(freed) + " bytes of kept replies let go").c_str());
+}
+
+// An allocation failed while answering call id: the replies kept go, and the
+// caller is told (a small message, which fits where the big one did not).
+void Worker::out_of_memory(const std::string& id, const char* where) {
+    shed_replies();
+    char b[160];
+    snprintf(b, sizeof b, "worker error: out of memory %s (heap %u, largest block %u)", where,
+             (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    if (log) log(b);
+    if (id.empty()) return;
+    try {
+        reply_err(id, b);
+    } catch (...) {
+        // not even that: the caller times out, but the worker goes on
+    }
 }
 
 void Worker::send_ack(const std::string& id) {
@@ -209,17 +266,36 @@ bool Worker::seen_call(JsonObjectConst req) {
     for (JsonVariantConst a : req["accept"].as<JsonArrayConst>())
         if (a.as<const char*>() && !strcmp(a.as<const char*>(), "ack")) ack = true;
     std::string again;
-    bool running = false;
+    bool running = false, done = false;
+    Again how = AGAIN_NONE;
+    size_t size = 0;
     xSemaphoreTake(lock_, portMAX_DELAY);
     for (auto it = recent_.begin(); it != recent_.end(); ++it) {
         if (it->id != id) continue;
         if (it->nonce == (nonce ? nonce : "")) {
-            if (it->done) again = it->reply;
+            done = it->done;
+            how = it->again;
+            size = it->size;
+            if (done) again = it->reply;
             else running = it->acked;
             xSemaphoreGive(lock_);
-            if (!again.empty()) band_.send(again);
-            else if (running) send_ack(id);
-            if (log && (running || !again.empty())) log((std::string("call ") + id + " came again: " + (running ? "acked" : "answered again")).c_str());
+            // Answered already, and its reply did not get there (else the hub
+            // would not ask again): the reply again, one way or another.
+            const char* what = running ? "acked" : "let be (still running)";
+            if (done && !again.empty()) {
+                band_.send(again);
+                what = "answered again";
+            } else if (done && how != AGAIN_NONE) {
+                send_manifests(id, how == AGAIN_MANIFESTS);
+                what = "manifest sent again";
+            } else if (done) {
+                reply_err(id, "worker error: the reply (" + std::to_string(size) +
+                                  " bytes) was lost on the way and is not kept; call again");
+                what = "told the reply is lost";
+            } else if (running) {
+                send_ack(id);
+            }
+            if (log) log((std::string("call ") + id + " came again: " + what).c_str());
             return true;
         }
         recent_.erase(it);                     // a new ticket for the same call: a new call
@@ -338,7 +414,21 @@ void Worker::on_reply(JsonObjectConst rep) {
 
 // ---- inbound ----------------------------------------------------------------
 
+// Nothing that comes in may take the worker down: an allocation that fails
+// anywhere in reading or answering a message is caught here (the C++ runtime
+// would abort and restart the chip, and the hub's copy of the request would
+// then meet the replay cache: "denied by worker: replay").
 void Worker::on_message(const uint8_t* data, size_t len) {
+    try {
+        handle_message(data, len);
+    } catch (const std::bad_alloc&) {
+        out_of_memory("", "reading a message");
+    } catch (...) {
+        if (log) log("a message could not be handled");
+    }
+}
+
+void Worker::handle_message(const uint8_t* data, size_t len) {
     if (len < 2 || data[0] != '{') return;
     // Everything on the band reaches us; parse only what can concern us.
     bool mine = find(data, len, cfg_.worker_id) != nullptr;
@@ -638,6 +728,20 @@ uint32_t Worker::dispatch_slow(const Route& r, const std::string& id, const char
 
 void Worker::on_request(JsonObjectConst req) {
     std::string id = req["id"].as<const char*>() ? req["id"].as<const char*>() : "";
+    try {
+        handle_request(req);
+    } catch (const std::bad_alloc&) {
+        out_of_memory(id, std::string("answering ").append(req["cap"] | "a call").c_str());
+    } catch (...) {
+        try {
+            reply_err(id, "worker error: the call failed");
+        } catch (...) {
+        }
+    }
+}
+
+void Worker::handle_request(JsonObjectConst req) {
+    std::string id = req["id"].as<const char*>() ? req["id"].as<const char*>() : "";
     const char* cap = req["cap"].as<const char*>();
     if (seen_call(req)) return;
     if (!clock_ok()) { reply_err(id, "denied by worker: not_yet_valid"); return; }
@@ -659,7 +763,7 @@ void Worker::on_request(JsonObjectConst req) {
         JsonArrayConst want = args["plugins"].as<JsonArrayConst>();
         bool include = want.isNull() || want.size() == 0;
         for (JsonVariantConst p : want) if (p.as<const char*>() && plugin_ == p.as<const char*>()) include = true;
-        reply_parts(id, "{\"manifests\":[", manifest_text_, include ? manifest_len_ : 0, "]}");
+        send_manifests(id, include);
         return;
     }
     if (!strcmp(cap, "core.lease.drop")) { reply_raw(id, "{\"dropped\":0}"); return; }
@@ -703,6 +807,11 @@ void Worker::on_request(JsonObjectConst req) {
 
 void Worker::loop() {
     check_slow();
+    static uint32_t shed_at = 0;
+    if (millis() - shed_at > 2000) {          // memory short: the kept replies are the first to go
+        shed_at = millis();
+        if (ESP.getFreeHeap() < KEEP_MIN_FREE * 3 / 4 || ESP.getMaxAllocHeap() < KEEP_MIN_BLOCK) shed_replies();
+    }
     band_.poll();
     if (!band_.ready()) return;
     uint32_t ms = millis();

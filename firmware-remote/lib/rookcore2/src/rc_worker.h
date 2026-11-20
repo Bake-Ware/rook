@@ -73,13 +73,25 @@ private:
     static const int SLOW_MAX = 6;            // blocking calls at once
     struct Event { std::string id, event, payload; };
     // Calls seen lately, by id and ticket nonce (transport feature "ack"): the
-    // hub sends a request again until it is acked or answered, so a part lost
-    // on the way costs a second or two, not the call. A copy of one still
-    // running is acked again (if it was acked) or let be; of one answered, its
-    // reply goes again (if it was kept: RECENT_REPLY, RECENT_BYTES).
-    struct Recent { std::string id, nonce, reply; bool done = false, ack = false, acked = false; };
-    static const int RECENT_MAX = 8;
-    static const size_t RECENT_REPLY = 4096, RECENT_BYTES = 6144;   // one reply kept, all of them
+    // hub sends a request again (after 1 s, then every 2 s, for a minute) until
+    // it is acked or answered, so a part lost on the way costs a second or two,
+    // not the call. A copy of one still running is acked again (if it was
+    // acked) or let be; of one answered, its reply goes again: the reply kept
+    // (small ones only, RECENT_REPLY, RECENT_BYTES in all, and none while memory
+    // is short), core.manifests made again from flash (never kept), else an
+    // error saying the reply was lost, so the caller hears at once.
+    enum Again : uint8_t { AGAIN_NONE, AGAIN_MANIFESTS, AGAIN_NO_MANIFESTS };
+    struct Recent {
+        std::string id, nonce, reply;
+        size_t size = 0;                      // the reply's size, kept or not
+        bool done = false, ack = false, acked = false;
+        Again again = AGAIN_NONE;
+    };
+    static const int RECENT_MAX = 16;
+    static const size_t RECENT_REPLY = 2048, RECENT_BYTES = 4096;   // one reply kept, all of them
+    // Below these, no reply is kept and those kept are let go (the C3 bridge
+    // runs at about 36 KB free, 14 KB in one piece, when busy).
+    static const size_t KEEP_MIN_FREE = 24576, KEEP_MIN_BLOCK = 8192;
     static const uint32_t ACK_AFTER_MS = 20000;   // blocking calls allowed longer than this are acked
     std::deque<Recent> recent_;               // under lock_
 
@@ -108,15 +120,22 @@ private:
     uint32_t slow_abandoned_ = 0, slow_retry_ = 0;
 
     void on_message(const uint8_t* data, size_t len);
+    void handle_message(const uint8_t* data, size_t len);
     void on_request(JsonObjectConst req);
     void on_reply(JsonObjectConst rep);
     void reply_ok(const std::string& id, JsonVariantConst result);
     void reply_raw(const std::string& id, const std::string& result_json);
-    void reply_parts(const std::string& id, const char* pre, const char* body, size_t body_len, const char* post);
+    void reply_parts(const std::string& id, const char* pre, const char* body, size_t body_len, const char* post,
+                     Again again = AGAIN_NONE);
+    void send_manifests(const std::string& id, bool include);
     void reply_err(const std::string& id, const std::string& err);
     void send_reply(const std::string& id, const std::string& msg);   // sends, and keeps it for a resent request
+    void note_reply(const std::string& id, const std::string* msg, size_t size, Again again);
+    void shed_replies();                      // memory is short: the replies kept go
+    void out_of_memory(const std::string& id, const char* where);
     void send_ack(const std::string& id);
     bool seen_call(JsonObjectConst req);      // a resend of a call seen: dealt with here
+    void handle_request(JsonObjectConst req);
     void unreadable(const uint8_t* data, size_t len, const char* why);
     bool validate(const char* cap, JsonObjectConst args, JsonDocument& out, std::string& err);
     void send_announce();

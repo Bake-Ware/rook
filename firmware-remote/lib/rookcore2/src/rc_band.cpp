@@ -108,6 +108,16 @@ static void chacha20_xor(uint8_t* out, const uint8_t* in, size_t len, const uint
     }
 }
 
+// The tag over ct, which has 32 bytes of room after it to put the MAC's
+// padding and lengths in (they are overwritten): no allocation.
+static void aead_tag_inplace(uint8_t tag[16], const uint8_t otk[32], uint8_t* ct, size_t ct_len) {
+    size_t pad = (16 - (ct_len & 15)) & 15;
+    memset(ct + ct_len, 0, pad + 8);
+    uint64_t cl = ct_len;
+    for (int i = 0; i < 8; i++) ct[ct_len + pad + 8 + i] = (uint8_t)(cl >> (8 * i));
+    poly1305_mac(otk, ct, ct_len + pad + 16, tag);
+}
+
 static void aead_tag(uint8_t tag[16], const uint8_t otk[32], const uint8_t* ct, size_t ct_len) {
     // mac_data = ct || pad16 || le64(0) || le64(ct_len); fed in pieces through one buffer
     size_t pad = (16 - (ct_len & 15)) & 15;
@@ -132,6 +142,7 @@ static void nonce_of(uint8_t n[12], uint64_t seq) {
 bool Band::begin(const std::string& psk, const std::string& relay) {
     if (!lock_) lock_ = xSemaphoreCreateMutex();
     if (!rxbuf_) rxbuf_ = (uint8_t*)malloc(1600);
+    if (!txbuf_) txbuf_ = (uint8_t*)malloc(WIRE_HEADER + FRAG_HEADER + CHUNK + 32);
     uint8_t h[32];
     sha256(psk.data(), psk.size(), h);
     memcpy(band_id_, h, 16);
@@ -165,15 +176,26 @@ bool Band::resolve() {
     return true;
 }
 
-void Band::send_chunk(const uint8_t* fid, uint16_t idx, uint16_t total, const uint8_t* data, size_t n) {
+bool Band::send_chunk(const uint8_t* fid, uint16_t idx, uint16_t total, const Piece* pieces, size_t count, size_t off,
+                      size_t n) {
     size_t plen = FRAG_HEADER + n;
-    uint8_t* frame = (uint8_t*)malloc(WIRE_HEADER + plen + 16);
-    if (!frame) return;
+    uint8_t* frame = txbuf_;
+    if (!frame) return false;
     uint8_t* plain = frame + WIRE_HEADER;           // encrypt in place
     plain[0] = 0x01;
     memcpy(plain + 1, fid, 16);
     plain[17] = idx >> 8; plain[18] = idx; plain[19] = total >> 8; plain[20] = total;
-    if (n) memcpy(plain + FRAG_HEADER, data, n);
+    // bytes off..off+n of the whole, gathered from the pieces
+    size_t at = 0, put = 0;
+    for (size_t k = 0; k < count && put < n; k++) {
+        size_t pn = pieces[k].n;
+        if (off + put < at + pn) {
+            size_t from = off + put - at, take = pn - from < n - put ? pn - from : n - put;
+            memcpy(plain + FRAG_HEADER + put, pieces[k].p + from, take);
+            put += take;
+        }
+        at += pn;
+    }
     uint64_t seq = ++seq_;
     memcpy(frame, band_id_, 16);
     frame[16] = 0x02; frame[17] = 0; frame[18] = 0;
@@ -182,27 +204,49 @@ void Band::send_chunk(const uint8_t* fid, uint16_t idx, uint16_t total, const ui
     nonce_of(nonce, seq);
     chacha20_block(block0, key_, nonce, 0);
     chacha20_xor(plain, plain, plen, key_, nonce, 1);
-    aead_tag(plain + plen, block0, plain, plen);
-    udp_.beginPacket(ip_, port_);
-    udp_.write(frame, WIRE_HEADER + plen + 16);
-    udp_.endPacket();
-    free(frame);
+    uint8_t tag[16];
+    aead_tag_inplace(tag, block0, plain, plen);
+    memcpy(plain + plen, tag, 16);
+    // The network may be out of buffers for a moment (a burst of parts, little
+    // heap): wait and try again rather than lose the part, and so the message.
+    for (int t = 0; t < 4; t++) {
+        if (t) delay(4 * t);
+        if (udp_.beginPacket(ip_, port_) && udp_.write(frame, WIRE_HEADER + plen + 16) == WIRE_HEADER + plen + 16 &&
+            udp_.endPacket())
+            return true;
+    }
+    send_failures_++;
+    return false;
 }
 
 bool Band::send(const std::string& msg) {
+    Piece p{msg.data(), msg.size()};
+    return send(&p, 1);
+}
+
+bool Band::send(const Piece* pieces, size_t count) {
     if (!ready_) return false;
+    size_t n = 0;
+    for (size_t k = 0; k < count; k++) n += pieces[k].n;
     xSemaphoreTake(lock_, portMAX_DELAY);
     uint8_t fid[16];
     esp_fill_random(fid, 16);
-    size_t n = msg.size();
     uint16_t total = n == 0 ? 1 : (uint16_t)((n + CHUNK - 1) / CHUNK);
-    for (uint16_t i = 0; i < total; i++) {
+    bool ok = true;
+    for (uint16_t i = 0; i < total && ok; i++) {
         size_t off = (size_t)i * CHUNK;
         size_t len = n - off < CHUNK ? n - off : CHUNK;
-        send_chunk(fid, i, total, (const uint8_t*)msg.data() + off, n ? len : 0);
+        ok = send_chunk(fid, i, total, pieces, count, off, n ? len : 0);
+        if (total > 1) delay(1);              // a long message: let the radio drain between parts
     }
     xSemaphoreGive(lock_);
-    return true;
+    if (!ok && log) {
+        char b[120];
+        snprintf(b, sizeof b, "band: a message of %u parts could not be sent whole (heap %u, largest block %u)", total,
+                 (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+        log(b);
+    }
+    return ok;
 }
 
 void Band::drop(Partial& p) {

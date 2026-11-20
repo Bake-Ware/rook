@@ -19,9 +19,17 @@ public:
     // Cheap pre-filter: return false to skip a message before it is assembled
     // into one buffer (it still has to be decrypted). Optional.
 
+    // A message given in pieces, sent as the one string they make: a big reply
+    // (a manifest kept in flash) goes out a part at a time, never joined in RAM.
+    struct Piece { const char* p; size_t n; };
+
     bool begin(const std::string& psk, const std::string& relay);   // relay "host:port"
     void poll();                          // read pending datagrams, keepalive, re-resolve
-    bool send(const std::string& msg);    // fragments as needed; thread-safe
+    // Fragments as needed; thread-safe. False: not ready, or a part could not
+    // be handed to the network (out of buffers even after waiting a moment).
+    bool send(const std::string& msg);
+    bool send(const Piece* pieces, size_t count);
+    uint32_t send_failures() const { return send_failures_; }   // parts the network would not take
     const std::string& band_hex() const { return band_hex_; }
     bool ready() const { return ready_; }
     uint32_t last_rx_ms() const { return last_rx_; }
@@ -51,9 +59,14 @@ private:
     SemaphoreHandle_t lock_ = nullptr;
     Partial parts_[MAX_PARTIALS];
     uint8_t* rxbuf_ = nullptr;
+    // One frame being sent (under lock_), made once: sending a big message
+    // takes no memory of its own. Room for the MAC's padding and lengths too.
+    uint8_t* txbuf_ = nullptr;
+    uint32_t send_failures_ = 0;
 
     bool resolve();
-    void send_chunk(const uint8_t* fid, uint16_t idx, uint16_t total, const uint8_t* data, size_t n);
+    // A part from the pieces, from byte off of the whole: put into the frame and sent.
+    bool send_chunk(const uint8_t* fid, uint16_t idx, uint16_t total, const Piece* pieces, size_t count, size_t off, size_t n);
     void on_datagram(const uint8_t* buf, size_t n);
     void on_chunk(const uint8_t* plain, size_t n);
     void drop(Partial& p);

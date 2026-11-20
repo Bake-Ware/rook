@@ -43,7 +43,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.12.2"
+#define FW_VERSION "0.12.3"
 #ifndef BUILD_MONIKER
 #define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
 #endif
@@ -96,8 +96,11 @@ static void active() { last_active = millis(); }
 // saved ones to forget, or everything a device scan found.
 // MENU_OPTS: what the options (settings) key offers for the row it was pressed
 // on; MENU_CONFIRM: yes or no to a delete; MENU_ICON: the pictures a profile
-// can have; MENU_BT: the Bluetooth remotes heard (Settings > Pair BT).
-enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS, MENU_OPTS, MENU_CONFIRM, MENU_ICON, MENU_BT };
+// can have; MENU_BT: the Bluetooth remotes heard (Settings > Pair BT);
+// MENU_SLEEP: the two rest times (Settings > Sleep), MENU_SLEEP_PICK: the
+// choices for one of them.
+enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS, MENU_OPTS, MENU_CONFIRM, MENU_ICON, MENU_BT, MENU_SLEEP,
+                MENU_SLEEP_PICK };
 // The main menu's tabs, left to right (left and right step through them, round).
 enum Tab { TAB_DEVICES, TAB_ASSIST, TAB_GAMES, TAB_SETTINGS, TAB_COUNT };
 static const char* const TAB_NAMES[TAB_COUNT] = {"Devices", "Assistant", "Games", "Settings"};
@@ -373,7 +376,7 @@ static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std:
             values.push_back(g.label);
         }
     } else if (tab == TAB_SETTINGS) {
-        for (const char* s : {"Wi-Fi", "Find devs", "Update", "Pair BT", "About"}) {
+        for (const char* s : {"Wi-Fi", "Find devs", "Update", "Pair BT", "Sleep", "About"}) {
             labels.push_back(s);
             values.push_back(s);
         }
@@ -706,6 +709,40 @@ static void open_icon_menu(const std::string& name) {
     ui::menu_icons_set(icons);
 }
 
+// Settings > Sleep: how long the remote is left alone before the screen goes
+// dark, and before it sleeps (Wi-Fi off, so the hub can't reach it; never:
+// Wi-Fi stays up). The same settings remote.map sets, kept across restarts.
+struct RestChoice { uint32_t s; const char* label; };
+static const RestChoice SCREEN_CHOICES[] = {{15, "15 s"}, {30, "30 s"}, {60, "1 min"}, {300, "5 min"}, {0, "never"}};
+static const RestChoice SLEEP_CHOICES[] = {{60, "1 min"}, {300, "5 min"}, {900, "15 min"}, {3600, "1 h"}, {0, "never"}};
+static bool sleep_for_screen = true;        // which of the two MENU_SLEEP_PICK is choosing
+
+static std::string rest_label(uint32_t s) {
+    for (auto* set : {SCREEN_CHOICES, SLEEP_CHOICES})
+        for (int i = 0; i < 5; i++)
+            if (set[i].s == s) return set[i].label;
+    return s % 60 ? std::to_string(s) + " s" : std::to_string(s / 60) + " min";
+}
+
+static void open_sleep_menu(int sel = 0) {
+    std::vector<std::string> labels = {"Screen off: " + rest_label(screen_off_s), "Sleep: " + rest_label(sleep_s)};
+    show_menu(MENU_SLEEP, "SLEEP", labels, {"screen", "sleep"}, sel);
+}
+
+static void open_sleep_pick(bool screen) {
+    sleep_for_screen = screen;
+    const RestChoice* set = screen ? SCREEN_CHOICES : SLEEP_CHOICES;
+    uint32_t now = screen ? screen_off_s : sleep_s;
+    std::vector<std::string> labels, values;
+    int sel = 0;
+    for (int i = 0; i < 5; i++) {
+        if (set[i].s == now) sel = i;
+        labels.push_back(set[i].label);
+        values.push_back(std::to_string(set[i].s));
+    }
+    show_menu(MENU_SLEEP_PICK, screen ? "SCREEN OFF" : "SLEEP", labels, values, sel);
+}
+
 // The Bluetooth remotes heard (bt::look), in the order they turned up, with
 // their signal; the cursor stays on the one it was on as the list changes.
 // Nothing heard yet: one row saying it is looking.
@@ -861,6 +898,18 @@ static void menu_pick(int i) {
         }
         return;
     }
+    if (kind == MENU_SLEEP) {
+        open_sleep_pick(value == "screen");
+        return;
+    }
+    if (kind == MENU_SLEEP_PICK) {
+        settings::set_kv(sleep_for_screen ? "scr_off" : "sleep", value);
+        load_sleep();
+        logf("rest: screen off after %u s, sleep after %u s (0: never)", (unsigned)screen_off_s, (unsigned)sleep_s);
+        open_sleep_menu(sleep_for_screen ? 0 : 1);
+        ui::flash(sleep_for_screen ? "screen off\n" + label : "sleep\n" + label, 900, true);
+        return;
+    }
     if (kind == MENU_BT) {
         if (value.empty()) {                 // still looking
             open_bt_list(false);
@@ -949,6 +998,8 @@ static void menu_pick(int i) {
     } else if (label == "Pair BT") {
         bt::look(true);
         open_bt_list(false);
+    } else if (label == "Sleep") {
+        open_sleep_menu();
     } else if (label == "Forget BT") {
         bt::forget();
         ui::flash("BT\ngone");
@@ -1091,6 +1142,12 @@ static void on_button(const ButtonEvent& ev) {
         if ((menu_kind == MENU_OPTS || menu_kind == MENU_CONFIRM || menu_kind == MENU_ICON) && e.name == "back") {
             ui::menu_end();
             reopen(opts_from, opts_subject);
+            return;
+        }
+        // Back from the rest times: Settings; from a choice: the rest times.
+        if ((menu_kind == MENU_SLEEP || menu_kind == MENU_SLEEP_PICK) && e.name == "back") {
+            if (menu_kind == MENU_SLEEP_PICK) open_sleep_menu(sleep_for_screen ? 0 : 1);
+            else show_tab(TAB_SETTINGS);
             return;
         }
         // Back from the remotes heard: nothing is paired, and the looking stops.
