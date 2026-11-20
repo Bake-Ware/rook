@@ -22,5 +22,5 @@ MONIKER=$(head -n1 "$HERE/.pio/build/$ENV/moniker.txt" 2>/dev/null || echo unkno
 SHA=$(sha256sum "$BIN" | cut -d' ' -f1)
 echo "publishing $ENV $VERSION ($MONIKER) as $NAME: $(stat -c %s "$BIN") bytes, sha256 $SHA"
 scp -q "$BIN" "$HOST:/tmp/$NAME"
-ssh "$HOST" "sudo -n install -o rook05 -g rook05 -m 644 /tmp/$NAME /var/lib/rook05/data/firmware/$NAME && rm -f /tmp/$NAME && sha256sum /var/lib/rook05/data/firmware/$NAME"
+ssh "$HOST" "sudo -n install -o rook05 -g rook05 -m 644 /tmp/$NAME /var/lib/rook05/data/firmware/$NAME && rm -f /tmp/$NAME && sudo -n sha256sum /var/lib/rook05/data/firmware/$NAME"
 echo "published $NAME, build $MONIKER"
