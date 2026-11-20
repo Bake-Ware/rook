@@ -347,9 +347,10 @@ const char* consumer_name(uint32_t u) {
         case 0x30: return "power";
         // The gear (settings) key: Menu, as the remote's gear key arrives (the
         // only key the earlier builds sent on to the TV as its menu), and AL
-        // Control Panel, which some remotes use for it. remote.bt names can
-        // rename any other raw key to settings.
-        case 0x40: case 0x19F: return "settings";
+        // Control Panel, which some remotes use for it, and 0x9F, which is what
+        // the onn remote's gear key sends. remote.bt names can rename any other
+        // raw key to settings.
+        case 0x40: case 0x9F: case 0x19F: return "settings";
         case 0xCD: return "play";
         case 0xB0: return "play";
         case 0xB1: return "pause";

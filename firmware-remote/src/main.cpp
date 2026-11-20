@@ -43,7 +43,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.12.0"
+#define FW_VERSION "0.12.1"
 #ifndef BUILD_MONIKER
 #define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
 #endif
@@ -332,39 +332,22 @@ static bool start_game(const std::string& label) {
     return false;
 }
 
-// A tab's rows. Devices: the hub's targets (values t:<index>), the profiles
-// (p:<name>), then the devices found on this network that the remote can
-// drive itself and no profile is linked to (lan:<id>: each is a profile too,
-// one whose keys all go to it), then Add device and Rescan.
-// Games: the games (the handheld's narrow screen has Tetris only). Settings:
-// Wi-Fi, a device scan, Update, Bluetooth.
+// A tab's rows. Devices: the profiles kept on the remote (p:<name>), and
+// nothing else (what a scan found is under Settings > Find devs), then Add
+// device. Games: the games (the handheld's narrow screen has Tetris only).
+// Settings: Wi-Fi, Find devs (a device scan), Update, Bluetooth.
 static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std::string>& values, int& selected) {
     selected = 0;
     if (tab == TAB_DEVICES) {
-        auto ts = settings::targets();
-        for (size_t i = 0; i < ts.size(); i++) {
-            labels.push_back(ts[i]);
-            values.push_back("t:" + std::to_string(i));
-        }
-        selected = settings::target();
         prof::Info act;
         bool have = active_profile(act);
-        auto ps = prof::list();
-        for (auto& p : ps) {                  // the IR profiles (one linked to a device stands for it)
+        for (auto& p : prof::list()) {
             if (have && p.name == act.name) selected = (int)labels.size();
             labels.push_back(p.name);
             values.push_back("p:" + p.name);
         }
-        for (auto& d : lan::devices()) {
-            if (d.driver.empty() || lan_has_profile(d, ps)) continue;
-            if (!have && d.id == local_id) selected = (int)labels.size();
-            labels.push_back(d.name);
-            values.push_back("lan:" + d.id);
-        }
         labels.push_back("Add device");
         values.push_back("add");
-        labels.push_back("Rescan");
-        values.push_back("scan");
     } else if (tab == TAB_GAMES) {
         for (auto& g : GAMES) {
 #ifndef ROOK_BRIDGE
@@ -426,19 +409,21 @@ static void assistant_key() {
     else if (millis() - voice_started > 700) bt::voice_stop();
 }
 
-// Everything the last scan found: what the remote can drive first, the rest
-// with what they answered as.
+// Settings > Find devs: everything the last scan found (one the remote has no
+// driver for with what it answered as), * on those a profile is linked to,
+// then Rescan. OK on one makes it a profile (or picks the one it has).
 static void open_devs_menu() {
     std::vector<std::string> labels, values;
+    auto ps = prof::list();
     for (auto& d : lan::devices()) {
-        labels.push_back(d.driver.empty() ? d.name + " (" + d.kinds[0] + ")" : d.name);
-        values.push_back((d.driver.empty() ? "x:" : "lan:") + d.id);
+        std::string l = (lan_has_profile(d, ps) ? "*" : "") + d.name;
+        if (d.driver.empty() && !d.kinds.empty()) l += " (" + d.kinds[0] + ")";
+        labels.push_back(l);
+        values.push_back("lan:" + d.id);
     }
     labels.push_back("Rescan");
     values.push_back("scan");
-    labels.push_back("Add device");
-    values.push_back("add");
-    show_menu(MENU_DEVS, "DEVICES", labels, values, 0);
+    show_menu(MENU_DEVS, "FIND DEVS", labels, values, 0);
 }
 
 static void start_dev_scan() {
@@ -457,22 +442,6 @@ static void start_dev_scan() {
     ui::card("DEVICES", "scanning", -2);
 }
 
-// The buttons are this device's from now on; an LG TV not yet paired asks its
-// person to accept the remote first.
-static void pick_device(const std::string& id) {
-    lan::Device d;
-    if (!lan::find(id, d)) return;
-    if (d.driver.empty()) {
-        ui::flash("no\ndriver");
-        return;
-    }
-    lan::keep(d.id);
-    set_local(d.id);
-    std::string err;
-    if (!dev::paired(d)) dev::run("pair", d.id, "", 0, err);
-    else ui::flash(d.name);
-}
-
 // An IR profile picked in the menu. One linked to an LG TV not yet paired
 // asks its person to accept the remote first (for the keys that go to the TV).
 static void pick_profile(const std::string& name) {
@@ -485,6 +454,58 @@ static void pick_profile(const std::string& name) {
         dev::run("pair", d.id, "", 0, err);
     else
         ui::flash(p.name, 1000, false);
+}
+
+// OK on a device in Find devs: the profile linked to it is picked; one with
+// none gets a profile, named after it (a number added when that name is taken)
+// and linked to it, so its keys go to it (lan) until codes are saved for them;
+// a device the remote has no driver for becomes an IR-only profile the same way
+// (linked, so Find devs marks it). The new profile is picked.
+static void adopt_device(const std::string& id) {
+    lan::Device d;
+    if (!lan::find(id, d)) return;
+    prof::Info p;
+    if (prof::linked_to(d.id, p)) {
+        pick_profile(p.name);
+        return;
+    }
+    std::string base = prof::clean_name(d.name.substr(0, prof::MAX_NAME));
+    if (base.empty()) base = "Device";
+    std::string name = base, err;
+    for (int n = 2; prof::find(name, p) && n < 100; n++) {
+        std::string tail = " " + std::to_string(n);
+        name = prof::clean_name(base.substr(0, prof::MAX_NAME - tail.size())) + tail;
+    }
+    bool created = false;
+    if (!prof::save(name, true, d.id, JsonObjectConst(), true, err, created)) {
+        logf("profile: %s", err.c_str());
+        ui::flash(err.rfind("full", 0) == 0 ? "full" : "not\nsaved");
+        return;
+    }
+    lan::keep(d.id);
+    logf("profile: %s added for %s", name.c_str(), d.id.c_str());
+    pick_profile(name);
+}
+
+// A profile taken away for good (the options' Delete, remote.ir profile_delete):
+// the buttons let it go if they were its, and a pairing the remote holds with
+// the device it was linked to (an LG key) is dropped too, unless another
+// profile is linked to that device.
+static bool delete_profile(const std::string& name, std::string& err) {
+    prof::Info p;
+    if (!prof::find(name, p)) { err = "no profile called " + name; return false; }
+    prof::Info act;
+    bool was = active_profile(act) && act.name == p.name;
+    std::string link = link_id(p);
+    if (!prof::remove(p.name, err)) return false;
+    if (was || (!link.empty() && local_id == link)) set_local("");
+    prof::Info other;
+    if (!link.empty() && !prof::linked_to(link, other)) {
+        std::string e2;
+        if (!dev::run("forget", link, "", 0, e2)) logf("profile: %s's pairing not dropped: %s", p.name.c_str(), e2.c_str());
+    }
+    logf("profile: %s deleted", p.name.c_str());
+    return true;
 }
 
 // Signal strength in bars, 0..4.
@@ -582,50 +603,21 @@ static void start_typing(TypeFor what, const std::string& subject, const std::st
     mode = TYPING;
 }
 
-// The devices the menu offers the buttons to: the hub's targets, then those on
-// this network the remote drives itself. The profile key steps to the next.
+// The profile key steps the buttons to the next profile kept on the remote
+// (the Devices tab's list, round).
 static void next_device() {
-    auto ts = settings::targets();
     auto ps = prof::list();
-    std::vector<std::string> lans, names;
-    for (auto& d : lan::devices()) {
-        if (d.driver.empty() || lan_has_profile(d, ps)) continue;
-        lans.push_back(d.id);
-        names.push_back(d.name);
-    }
-    int n = (int)(ts.size() + ps.size() + lans.size());
-    if (!n) {
+    if (ps.empty()) {
         ui::flash("no devices", 1000, false);
         return;
     }
-    int cur = settings::target();
+    int cur = -1;
     prof::Info act;
-    if (active_profile(act)) {
+    if (active_profile(act))
         for (size_t i = 0; i < ps.size(); i++)
-            if (ps[i].name == act.name) cur = (int)(ts.size() + i);
-    } else if (!local_id.empty()) {
-        for (size_t i = 0; i < lans.size(); i++)
-            if (lans[i] == local_id) cur = (int)(ts.size() + ps.size() + i);
-    }
-    int next = ((cur < 0 ? -1 : cur) + 1) % n;
+            if (ps[i].name == act.name) cur = (int)i;
     close_chat();
-    if (next < (int)ts.size()) {
-        settings::set_target(next);
-        set_local("");
-        ui::flash(ts[next], 1000, false);
-        return;
-    }
-    if (next < (int)(ts.size() + ps.size())) {
-        pick_profile(ps[next - ts.size()].name);
-        return;
-    }
-    lan::Device d;
-    if (!lan::find(lans[next - ts.size() - ps.size()], d)) return;
-    lan::keep(d.id);
-    set_local(d.id);
-    std::string err;
-    if (!dev::paired(d)) dev::run("pair", d.id, "", 0, err);
-    else ui::flash(d.name, 1000, false);
+    pick_profile(ps[(cur + 1) % ps.size()].name);
 }
 
 static bool is_profile_key(const ButtonEvent& e) {
@@ -651,18 +643,15 @@ static void reopen(MenuKind from, const std::string& subject = "") {
 }
 
 // The options (settings) key on a menu row: what can be done to it.
-//   a profile: Rename, Delete;  a device on the network: Rename, Forget pairing;
+//   a profile (every row of the Devices tab but Add device): Rename, Delete;
 //   a Wi-Fi network: Join, and (saved) Move up, Move down, Forget.
 static void open_options(int sel) {
     if (sel < 0 || sel >= (int)menu_values.size()) return;
     const std::string v = menu_values[sel];
     std::vector<std::string> items;
-    bool devs = menu_kind == MENU_DEVS || (menu_kind == MENU_MAIN && menu_tab == TAB_DEVICES);
+    bool devs = menu_kind == MENU_MAIN && menu_tab == TAB_DEVICES;
     if (devs && v.rfind("p:", 0) == 0) {
         items = {"Rename", "Delete"};
-        opts_subject = v;
-    } else if (devs && v.rfind("lan:", 0) == 0) {
-        items = {"Rename", "Forget pairing"};
         opts_subject = v;
     } else if (menu_kind == MENU_WIFI && !v.empty()) {
         items = {"Join"};
@@ -678,12 +667,10 @@ static void open_options(int sel) {
     show_menu(MENU_OPTS, opts_label, items, items, 0);
 }
 
-// A device's name as it shows: a profile's, or a network device's.
+// A row's name as it shows: a profile's, or a Wi-Fi network's.
 static std::string subject_name(const std::string& subj) {
-    lan::Device d;
-    if (subj.rfind("p:", 0) == 0) return subj.substr(2);
-    if (subj.rfind("lan:", 0) == 0 && lan::find(subj.substr(4), d)) return d.name;
-    return subj.rfind("w:", 0) == 0 ? subj.substr(2) : "";
+    if (subj.rfind("p:", 0) == 0 || subj.rfind("w:", 0) == 0) return subj.substr(2);
+    return "";
 }
 
 static void options_pick(const std::string& label) {
@@ -692,12 +679,6 @@ static void options_pick(const std::string& label) {
         start_typing(TYPE_RENAME, subj, "Rename", subject_name(subj).substr(0, prof::MAX_NAME));
     } else if (label == "Delete") {
         show_menu(MENU_CONFIRM, "DELETE?", {"No, keep it", "Delete " + subject_name(subj)}, {"no", "yes"}, 0);
-    } else if (label == "Forget pairing") {
-        std::string id = subj.substr(4), err;
-        if (local_id == id) set_local("");
-        dev::run("forget", id, "", 0, err);
-        reopen(opts_from);
-        ui::flash("forgot\n" + opts_label, 1200, true);
     } else if (subj.rfind("w:", 0) == 0) {
         std::string ssid = subj.substr(2);
         if (label == "Join") {
@@ -735,8 +716,7 @@ static void add_profile(const std::string& typed) {
     }
 }
 
-// A new name typed for a profile, or for a device on the network (which then
-// becomes a profile of that name, linked to it, its keys all going to it).
+// A new name typed for a profile.
 static void rename_subject(const std::string& subj, const std::string& typed) {
     std::string to = prof::clean_name(typed.substr(0, prof::MAX_NAME)), err;
     bool ok = false;
@@ -749,14 +729,6 @@ static void rename_subject(const std::string& subj, const std::string& typed) {
             sel_prof = to;
             settings::set_kv("irsel", to);
         }
-    } else if (subj.rfind("lan:", 0) == 0) {
-        prof::Info p;
-        bool created = false;
-        std::string id = subj.substr(4);
-        if (prof::find(to, p)) err = "there is already a profile called " + to;
-        else ok = prof::save(to, true, id, JsonObjectConst(), true, err, created);
-        if (ok) lan::keep(id);
-        if (ok && local_id == id && sel_prof.empty() && prof::find(to, p)) select_profile(p);
     }
     if (!ok) logf("rename: %s", err.c_str());
     ui::flash(ok ? "renamed\n" + to : err == "no name" ? err : std::string("not\nrenamed"));
@@ -775,9 +747,7 @@ static void menu_pick(int i) {
     if (kind == MENU_CONFIRM) {
         std::string name = opts_subject.substr(2), err;
         if (value == "yes" && opts_subject.rfind("p:", 0) == 0) {
-            bool was = sel_prof == name;
-            if (prof::remove(name, err)) {
-                if (was) set_local("");
+            if (delete_profile(name, err)) {
                 reopen(opts_from);
                 ui::flash("deleted\n" + name, 1200, true);
                 return;
@@ -822,25 +792,15 @@ static void menu_pick(int i) {
         return;
     }
     if (value.rfind("lan:", 0) == 0) {
-        pick_device(value.substr(4));
+        adopt_device(value.substr(4));
         return;
     }
     if (value.rfind("p:", 0) == 0) {
         pick_profile(value.substr(2));
         return;
     }
-    if (kind == MENU_DEVS) {
-        ui::flash("no\ndriver");
-        return;
-    }
-    auto ts = settings::targets();
-    if (value.rfind("t:", 0) == 0) {
-        int t = atoi(value.c_str() + 2);
-        if (t < 0 || t >= (int)ts.size()) return;
-        settings::set_target(t);
-        set_local("");
-        ui::flash(ts[t]);
-    } else if (label == "Find devs") {
+    if (kind == MENU_DEVS) return;
+    if (label == "Find devs") {
         start_dev_scan();
     } else if (label == "Update") {
         // Ask the hub whether it holds a newer build for this board. Its answer
@@ -935,6 +895,8 @@ static const char* local_key(const ButtonEvent& e, const prof::Info* p, prof::Co
     rep.key = -1;
     std::string target = !local_id.empty() ? local_id : p ? link_id(*p) : "";
     std::string err;
+    lan::Device td;
+    if (!target.empty() && lan::find(target, td) && td.driver.empty()) target.clear();   // linked, but no driver: IR only
     if (!target.empty()) {
         dev::run("key", target, send, 0, err);
         return "lan";
@@ -1348,8 +1310,18 @@ static bool cap_bt(JsonObjectConst a, JsonObject r, std::string& err) {
     }
     JsonObjectConst names = a["names"].as<JsonObjectConst>();
     if (!names.isNull()) {
+        // Merged into the names kept: a name given adds or replaces that key's,
+        // a blank or null one takes that key's out.
+        JsonDocument kept;
+        deserializeJson(kept, settings::bt_names());
+        if (!kept.is<JsonObject>()) kept.to<JsonObject>();
+        for (JsonPairConst kv : names) {
+            std::string to = kv.value().is<const char*>() ? std::string(kv.value().as<const char*>()) : "";
+            if (to.empty()) kept.remove(kv.key().c_str());
+            else kept[kv.key().c_str()] = to;
+        }
         std::string json;
-        serializeJson(names, json);
+        serializeJson(kept, json);
         settings::set_bt_names(json);
         load_bt_names();
     }
@@ -1441,13 +1413,8 @@ static bool cap_ir_led(const std::string& action, JsonObjectConst a, JsonObject 
     return true;
 }
 
-// A device on the network the remote drives, with no profile linked to it:
-// it stands as a profile of its own (implicit), every key going to it.
-static bool implicit_profile(const std::string& name, lan::Device& d) {
-    return !name.empty() && lan::find(name, d) && !d.driver.empty() && !lan_has_profile(d, prof::list());
-}
-
-// The profiles, for remote.ir's answers: those kept, then the implicit ones.
+// The profiles kept on the remote, for remote.ir's answers (what a scan found
+// is remote.devices's, not listed here).
 static void fill_profiles(JsonObject r) {
     JsonArray ps = r["profiles"].to<JsonArray>();
     auto all = prof::list();
@@ -1456,14 +1423,6 @@ static void fill_profiles(JsonObject r) {
         prof::fill(p, o);
         lan::Device d;
         if (!p.link.empty() && lan::find(p.link, d)) o["link_name"] = d.name;
-    }
-    for (auto& d : lan::devices()) {
-        if (d.driver.empty() || lan_has_profile(d, all)) continue;
-        JsonObject o = ps.add<JsonObject>();
-        o["name"] = d.name;
-        o["link"] = d.id;
-        o["implicit"] = true;                  // every key goes to the device (lan); profile_save makes it a kept profile
-        o["keys"].to<JsonArray>();
     }
     prof::Info act;
     if (active_profile(act)) r["selected"] = act.name;
@@ -1483,13 +1442,6 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
         bool set_link = !a["link"].isNull();
         std::string link = a["link"] | "";
         lan::Device d;
-        prof::Info had;
-        bool adopt = false;                   // a network device's implicit profile, kept from now on
-        if (!set_link && !prof::find(name, had) && implicit_profile(name, d)) {
-            set_link = adopt = true;
-            link = d.id;
-            name = d.name;
-        }
         if (!link.empty() && lan::find(link, d)) {
             link = d.id;                      // kept by id (a MAC when the network gives one)
             lan::keep(d.id);
@@ -1505,23 +1457,18 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
         prof::find(name, p);
         prof::Info cur;
         if (!sel_prof.empty() && prof::find(sel_prof, cur) && cur.name == p.name) select_profile(p);   // its new link, if any
-        if (adopt && sel_prof.empty() && local_id == link) select_profile(p);              // it was picked as the device
         r["created"] = created;
         prof::fill(p, r["profile"].to<JsonObject>());
         logf("ir: profile %s saved (%u bytes)", p.name.c_str(), (unsigned)p.bytes);
     } else if (action == "profile_delete") {
         prof::Info p;
         if (!prof::find(name, p)) { err = "no profile called " + name; return false; }
-        bool was = sel_prof == p.name;
-        if (!prof::remove(p.name, err)) return false;
-        if (was) set_local("");
+        if (!delete_profile(p.name, err)) return false;
         r["deleted"] = p.name;
     } else if (action == "profile_select") {
         prof::Info p;
         if (name.empty()) { err = "bad args: name is needed (profile_release lets the buttons go)"; return false; }
-        lan::Device d;
         if (prof::find(name, p)) select_profile(p);
-        else if (implicit_profile(name, d)) { lan::keep(d.id); set_local(d.id); }
         else { err = "no profile called " + name; return false; }
     } else if (action == "profile_release") {
         prof::Info p;
@@ -1531,7 +1478,7 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
         lan::Device d;
         std::string key = a["key"] | "", dev_id;
         bool have = name.empty() ? active_profile(p) : prof::find(name, p);
-        if (!have && (name.empty() ? !local_id.empty() && lan::find(local_id, d) : implicit_profile(name, d))) dev_id = d.id;
+        if (!have && name.empty() && !local_id.empty() && lan::find(local_id, d)) dev_id = d.id;   // a device picked by remote.device select
         if (!have && dev_id.empty()) {
             err = name.empty() ? "bad args: name is needed (no profile is selected)" : "no profile called " + name;
             return false;

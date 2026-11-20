@@ -223,12 +223,26 @@ void Band::on_chunk(const uint8_t* f, size_t n) {
         if (on_message) on_message(data, len);
         return;
     }
-    if (total > MAX_CHUNKS) return;
+    if (total > MAX_CHUNKS) {
+        if (idx == 0 && log) {
+            char b[96];
+            snprintf(b, sizeof b, "band: a message of %u parts is over the %u this worker takes; not read", total, MAX_CHUNKS);
+            log(b);
+        }
+        return;
+    }
     uint32_t now = millis();
     Partial* p = nullptr;
     Partial* oldest = &parts_[0];
     for (auto& q : parts_) {
-        if (q.total && now - q.started > 30000) drop(q);
+        if (q.total && now - q.started > 30000) {
+            if (log) {
+                char b[96];
+                snprintf(b, sizeof b, "band: a message of %u parts was lost (%u came in 30 s)", q.total, q.got);
+                log(b);
+            }
+            drop(q);
+        }
         if (q.total && memcmp(q.fid, f + 1, 16) == 0) p = &q;
     }
     if (p && p->total != total) { drop(*p); p = nullptr; }     // restart on a changed total
@@ -242,7 +256,16 @@ void Band::on_chunk(const uint8_t* f, size_t n) {
         if (!p->data) p->data = (uint8_t*)malloc((size_t)total * CHUNK);
         p->lens = (size_t*)calloc(total, sizeof(size_t));
         p->have = (uint8_t*)calloc(total, 1);
-        if (!p->data || !p->lens || !p->have) { drop(*p); return; }
+        if (!p->data || !p->lens || !p->have) {
+            drop(*p);
+            if (log) {
+                char b[112];
+                snprintf(b, sizeof b, "band: no memory to put a message of %u parts together (largest block %u)", total,
+                         (unsigned)ESP.getMaxAllocHeap());
+                log(b);
+            }
+            return;
+        }
         memcpy(p->fid, f + 1, 16);
         p->total = total;
         p->got = 0;

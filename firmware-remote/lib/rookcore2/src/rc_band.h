@@ -15,6 +15,7 @@ public:
     // A complete message (JSON or binary), reassembled and decrypted. Runs on
     // the caller of poll(); keepalives (single 0x00) are not delivered.
     std::function<void(const uint8_t*, size_t)> on_message;
+    std::function<void(const char*)> log;   // a message lost while being put together
     // Cheap pre-filter: return false to skip a message before it is assembled
     // into one buffer (it still has to be decrypted). Optional.
 

@@ -68,6 +68,7 @@ bool Worker::begin(const WorkerConfig& cfg, const char* manifest_json, const cha
         gate.caps.push_back({plugin_ + "." + p.key().c_str(), p.value()["risk"].as<const char*>()});
     }
     band_.on_message = [this](const uint8_t* m, size_t n) { on_message(m, n); };
+    band_.log = [this](const char* m) { if (log) log(m); };
     band_.begin(cfg_.psk, cfg_.relay);
     gate.anchor.band = band_.band_hex();
     return gate.anchor.set;
@@ -102,6 +103,7 @@ void Worker::send_announce() {
     m["manifests_hash"] = manifests_hash_;
     m["unavailable"].to<JsonObject>();
     m["role"] = "home";
+    m["features"].add("ack");             // requests are acked, and a resent one is not run twice
     m["ceiling"]["grants"].add("*");
     fill_status(m["status"].to<JsonObject>());
     std::string out;
@@ -142,7 +144,7 @@ void Worker::reply_parts(const std::string& id, const char* pre, const char* bod
     out.append(body, body_len);
     out += post;
     out += "}";
-    band_.send(out);
+    send_reply(id, out);
 }
 
 void Worker::reply_raw(const std::string& id, const std::string& result_json) {
@@ -163,7 +165,101 @@ void Worker::reply_err(const std::string& id, const std::string& err) {
     r["error"] = err;
     std::string out;
     serializeJson(r, out);
+    send_reply(id, out);
+}
+
+void Worker::send_reply(const std::string& id, const std::string& msg) {
+    band_.send(msg);
+    if (id.empty()) return;
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    for (auto& c : recent_) {
+        if (c.id != id) continue;
+        c.done = true;
+        if (msg.size() <= RECENT_REPLY) c.reply = msg;
+    }
+    // At most RECENT_BYTES of replies kept in all: the oldest go first.
+    size_t kept = 0;
+    for (auto& c : recent_) kept += c.reply.size();
+    for (auto& c : recent_) {
+        if (kept <= RECENT_BYTES) break;
+        kept -= c.reply.size();
+        std::string().swap(c.reply);
+    }
+    xSemaphoreGive(lock_);
+}
+
+void Worker::send_ack(const std::string& id) {
+    JsonDocument m;
+    m["kind"] = "ack";
+    m["from"] = cfg_.worker_id;
+    m["ids"].add(id);
+    std::string out;
+    serializeJson(m, out);
     band_.send(out);
+}
+
+// A request with an id and ticket nonce seen lately is the hub sending it again
+// (a part of it, or of the reply, went missing): it is not run again. True: it
+// was such a copy, and has been dealt with. Otherwise it is remembered.
+bool Worker::seen_call(JsonObjectConst req) {
+    const char* id = req["id"].as<const char*>();
+    const char* nonce = req["ticket"]["nonce"].as<const char*>();
+    if (!id || !*id) return false;
+    bool ack = false;
+    for (JsonVariantConst a : req["accept"].as<JsonArrayConst>())
+        if (a.as<const char*>() && !strcmp(a.as<const char*>(), "ack")) ack = true;
+    std::string again;
+    bool running = false;
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    for (auto it = recent_.begin(); it != recent_.end(); ++it) {
+        if (it->id != id) continue;
+        if (it->nonce == (nonce ? nonce : "")) {
+            if (it->done) again = it->reply;
+            else running = it->acked;
+            xSemaphoreGive(lock_);
+            if (!again.empty()) band_.send(again);
+            else if (running) send_ack(id);
+            if (log && (running || !again.empty())) log((std::string("call ") + id + " came again: " + (running ? "acked" : "answered again")).c_str());
+            return true;
+        }
+        recent_.erase(it);                     // a new ticket for the same call: a new call
+        break;
+    }
+    Recent r;
+    r.id = id;
+    r.nonce = nonce ? nonce : "";
+    r.ack = ack;
+    recent_.push_back(std::move(r));
+    while ((int)recent_.size() > RECENT_MAX) recent_.pop_front();
+    xSemaphoreGive(lock_);
+    return false;
+}
+
+// A request for this worker that could not be read whole: answered all the
+// same (its id, cap and target read alone, which takes next to no memory), so
+// the caller hears why rather than waiting out its timeout.
+void Worker::unreadable(const uint8_t* data, size_t len, const char* why) {
+    JsonDocument keep;
+    keep["id"] = true;
+    keep["cap"] = true;
+    keep["target"] = true;
+    JsonDocument d;
+    if (deserializeJson(d, (const char*)data, len, DeserializationOption::Filter(keep))) {
+        if (log) log((std::string("a message of ") + std::to_string(len) + " bytes was not read: " + why).c_str());
+        return;
+    }
+    const char* id = d["id"].as<const char*>();
+    const char* target = d["target"].as<const char*>();
+    const char* cap = d["cap"].as<const char*>();
+    if (!id || !*id || !cap || !target || cfg_.worker_id != target) return;
+    char b[200];
+    if (len > MAX_REQUEST)
+        snprintf(b, sizeof b, "args too large (%u bytes, max %u, counting the ticket)", (unsigned)len, (unsigned)MAX_REQUEST);
+    else
+        snprintf(b, sizeof b, "worker error: the request (%u bytes) could not be read: %s (free memory %u, largest block %u)",
+                 (unsigned)len, why, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    if (log) log((std::string(cap) + ": " + b).c_str());
+    reply_err(id, b);
 }
 
 // ---- events (core.event) ----------------------------------------------------
@@ -252,8 +348,14 @@ void Worker::on_message(const uint8_t* data, size_t len) {
     if (!batch_id_.empty()) rep = find(data, len, batch_id_) != nullptr;
     xSemaphoreGive(lock_);
     if (!mine && !hub && !rep) return;
+    if (mine && len > MAX_REQUEST) { unreadable(data, len, "too large"); return; }
     JsonDocument doc;
-    if (deserializeJson(doc, (const char*)data, len)) return;
+    DeserializationError de = deserializeJson(doc, (const char*)data, len);
+    if (de) {
+        doc.clear();
+        if (mine) unreadable(data, len, de.c_str());
+        return;
+    }
     JsonObjectConst m = doc.as<JsonObjectConst>();
     if (m.isNull()) return;
     const char* cap = m["cap"].as<const char*>();
@@ -478,13 +580,13 @@ void Worker::check_slow() {
     }
 }
 
-void Worker::dispatch_slow(const Route& r, const std::string& id, const char* cap, const JsonDocument& a) {
+uint32_t Worker::dispatch_slow(const Route& r, const std::string& id, const char* cap, const JsonDocument& a) {
     JsonObjectConst args = a.as<JsonObjectConst>();
     uint32_t max_ms = 120000;
     if (r.max) max_ms = r.max(args);
     else if (args["timeout"].is<long long>()) max_ms = (uint32_t)args["timeout"].as<long long>() * 1000 + 30000;
     BlockingJob* j = new (std::nothrow) BlockingJob();
-    if (!j) { reply_err(id, "worker error: busy (out of memory)"); return; }
+    if (!j) { reply_err(id, "worker error: busy (out of memory)"); return 0; }
     bool ok = true;
     try {
         j->w = this;
@@ -495,7 +597,7 @@ void Worker::dispatch_slow(const Route& r, const std::string& id, const char* ca
     } catch (...) {
         ok = false;
     }
-    if (!ok) { delete j; reply_err(id, "worker error: busy (out of memory)"); return; }
+    if (!ok) { delete j; reply_err(id, "worker error: busy (out of memory)"); return 0; }
     j->started = millis();
     j->max_ms = max_ms;
 
@@ -507,7 +609,7 @@ void Worker::dispatch_slow(const Route& r, const std::string& id, const char* ca
         xSemaphoreGive(lock_);
         delete j;
         reply_err(id, "worker error: busy (" + std::to_string(SLOW_MAX) + " slow calls running)");
-        return;
+        return 0;
     }
     *slot = j;
     TaskHandle_t standing = nullptr;
@@ -519,9 +621,9 @@ void Worker::dispatch_slow(const Route& r, const std::string& id, const char* ca
     xSemaphoreGive(lock_);
     if (standing) {
         xTaskNotify(standing, (uint32_t)(uintptr_t)j, eSetValueWithOverwrite);
-        return;
+        return max_ms;
     }
-    if (xTaskCreate(blocking_task, "rc_call", SLOW_STACK, j, 1, nullptr) == pdPASS) return;
+    if (xTaskCreate(blocking_task, "rc_call", SLOW_STACK, j, 1, nullptr) == pdPASS) return max_ms;
     xSemaphoreTake(lock_, portMAX_DELAY);
     for (auto& s : slow_) if (s == j) s = nullptr;
     xSemaphoreGive(lock_);
@@ -531,11 +633,13 @@ void Worker::dispatch_slow(const Route& r, const std::string& id, const char* ca
              (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
     reply_err(id, b);
     if (log) log(b);
+    return 0;
 }
 
 void Worker::on_request(JsonObjectConst req) {
     std::string id = req["id"].as<const char*>() ? req["id"].as<const char*>() : "";
     const char* cap = req["cap"].as<const char*>();
+    if (seen_call(req)) return;
     if (!clock_ok()) { reply_err(id, "denied by worker: not_yet_valid"); return; }
     if (!gate.hub_core().empty() && gate.hub_core().rfind("2.", 0) != 0) {
         reply_err(id, "denied by worker: incompatible");
@@ -577,7 +681,16 @@ void Worker::on_request(JsonObjectConst req) {
         std::string err;
         if (!validate(cap, args, a, err)) { reply_err(id, err); return; }
         if (r.blocking) {
-            dispatch_slow(r, id, cap, a);
+            // A call that may run long is acked, so the hub does not send it
+            // again all the while; a short one is not, so that if its reply is
+            // lost the hub's next copy of the request brings it again.
+            if (dispatch_slow(r, id, cap, a) <= ACK_AFTER_MS) return;
+            bool ack = false;
+            xSemaphoreTake(lock_, portMAX_DELAY);
+            for (auto& c : recent_)
+                if (c.id == id && c.ack && !c.done) ack = c.acked = true;
+            xSemaphoreGive(lock_);
+            if (ack) send_ack(id);
             return;
         }
         JsonDocument res;

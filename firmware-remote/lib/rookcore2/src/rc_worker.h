@@ -37,6 +37,11 @@ struct BlockingJob;
 class Worker {
 public:
     static const char* const CORE;   // "2.0"
+    // The largest request (the whole message: args, ticket and all) this
+    // worker takes. A bigger one is answered "args too large (N bytes, max M)"
+    // instead of being read. The band itself carries at most 32 parts of
+    // 1003 bytes (32,096 bytes); past that a message never arrives at all.
+    static const size_t MAX_REQUEST = 16384;
 
     // manifest_json must outlive the worker (a constant): it is served from where it is.
     bool begin(const WorkerConfig& cfg, const char* manifest_json, const char* plugin);
@@ -67,6 +72,16 @@ private:
     struct Route { std::string cap; Handler h; bool blocking; MaxTime max; };
     static const int SLOW_MAX = 6;            // blocking calls at once
     struct Event { std::string id, event, payload; };
+    // Calls seen lately, by id and ticket nonce (transport feature "ack"): the
+    // hub sends a request again until it is acked or answered, so a part lost
+    // on the way costs a second or two, not the call. A copy of one still
+    // running is acked again (if it was acked) or let be; of one answered, its
+    // reply goes again (if it was kept: RECENT_REPLY, RECENT_BYTES).
+    struct Recent { std::string id, nonce, reply; bool done = false, ack = false, acked = false; };
+    static const int RECENT_MAX = 8;
+    static const size_t RECENT_REPLY = 4096, RECENT_BYTES = 6144;   // one reply kept, all of them
+    static const uint32_t ACK_AFTER_MS = 20000;   // blocking calls allowed longer than this are acked
+    std::deque<Recent> recent_;               // under lock_
 
     WorkerConfig cfg_;
     Band band_;
@@ -99,6 +114,10 @@ private:
     void reply_raw(const std::string& id, const std::string& result_json);
     void reply_parts(const std::string& id, const char* pre, const char* body, size_t body_len, const char* post);
     void reply_err(const std::string& id, const std::string& err);
+    void send_reply(const std::string& id, const std::string& msg);   // sends, and keeps it for a resent request
+    void send_ack(const std::string& id);
+    bool seen_call(JsonObjectConst req);      // a resend of a call seen: dealt with here
+    void unreadable(const uint8_t* data, size_t len, const char* why);
     bool validate(const char* cap, JsonObjectConst args, JsonDocument& out, std::string& err);
     void send_announce();
     void send_heartbeat();
@@ -110,7 +129,8 @@ private:
     bool start_slow_task();
     void run_job(BlockingJob* j);
     void check_slow();
-    void dispatch_slow(const Route& r, const std::string& id, const char* cap, const JsonDocument& args);
+    // 0: refused (answered); else the longest the call may run, in ms.
+    uint32_t dispatch_slow(const Route& r, const std::string& id, const char* cap, const JsonDocument& args);
 };
 
 }  // namespace rc
