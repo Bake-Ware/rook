@@ -64,7 +64,14 @@ CREATE TABLE IF NOT EXISTS links (
     occasion TEXT NOT NULL,
     made_at TEXT NOT NULL,
     dream INTEGER,
-    why TEXT, note TEXT
+    why TEXT, note TEXT,
+    flips INTEGER NOT NULL DEFAULT 1   -- 0: recorded on its side, but may not change which way the belief stands
+);
+CREATE TABLE IF NOT EXISTS asks (       -- an agent or the steward said a belief is no longer so: ask Bake, once
+    id INTEGER PRIMARY KEY, belief INTEGER NOT NULL, episode INTEGER NOT NULL, claim TEXT NOT NULL,
+    made_at TEXT NOT NULL, dream INTEGER,
+    shown_at TEXT, shown_entry INTEGER,  -- the turn with Bake it was put in front of the house agent
+    answered_at TEXT, answer TEXT        -- flipped (his yes) or kept (his no), from the dream that saw his answer
 );
 CREATE TABLE IF NOT EXISTS pins (
     id INTEGER PRIMARY KEY,
@@ -92,7 +99,8 @@ CREATE TABLE IF NOT EXISTS edges (                  -- written only by the dream
     rel TEXT NOT NULL,                              -- about (belief to thing), opposes, refines (belief to
                                                     -- belief), part_of, related (thing to thing)
     dst_kind TEXT NOT NULL, dst INTEGER NOT NULL,
-    at TEXT NOT NULL, dream INTEGER, entries TEXT, why TEXT, how TEXT NOT NULL DEFAULT 'dream'
+    at TEXT NOT NULL, dream INTEGER, entries TEXT, why TEXT, how TEXT NOT NULL DEFAULT 'dream',
+    ended_at TEXT, ended TEXT          -- a for-now edge settled: lasting or lapsed
 );
 CREATE INDEX IF NOT EXISTS edges_src ON edges (src_kind, src);
 CREATE INDEX IF NOT EXISTS edges_dst ON edges (dst_kind, dst);
@@ -112,7 +120,8 @@ CREATE TABLE IF NOT EXISTS belief_texts (            -- earlier wordings of a be
 );
 CREATE TABLE IF NOT EXISTS turns (
     id INTEGER PRIMARY KEY, session INTEGER NOT NULL, entry INTEGER NOT NULL, reply INTEGER,
-    at TEXT NOT NULL, recalled TEXT       -- JSON list of the tags the turn was given (null: no memory)
+    at TEXT NOT NULL, recalled TEXT,      -- JSON list of the tags the turn was given (null: no memory)
+    pin_note TEXT                         -- a pin or unpin this turn: announced by the agent, or the line was added
 );
 CREATE TABLE IF NOT EXISTS compactions (
     id INTEGER PRIMARY KEY, session INTEGER NOT NULL, at TEXT NOT NULL, summary TEXT
@@ -173,10 +182,13 @@ class Store:
         self.db = sqlite3.connect(self.path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
-        try:   # stores from before round three's keyword search
-            self.db.execute("ALTER TABLE beliefs ADD COLUMN wordings TEXT")
-        except sqlite3.OperationalError:
-            pass
+        for table, column in (("beliefs", "wordings TEXT"), ("links", "flips INTEGER NOT NULL DEFAULT 1"),
+                              ("edges", "ended_at TEXT"), ("edges", "ended TEXT"),
+                              ("turns", "pin_note TEXT")):
+            try:   # stores from earlier rounds
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
+            except sqlite3.OperationalError:
+                pass
 
     def close(self):
         self.db.close()
@@ -226,11 +238,11 @@ class Store:
         return self.run("INSERT INTO beliefs (text, about, made_at, dream, wordings) VALUES (?, ?, ?, ?, ?)",
                         text, about, at or now(), dream, json.dumps(wordings) if wordings else None)
 
-    def add_link(self, belief, episode, stance, strength, occasion, dream=None, why=None, note=None, at=None):
+    def add_link(self, belief, episode, stance, strength, occasion, dream=None, why=None, note=None, at=None, flips=True):
         ep = self.one("SELECT happened_at FROM episodes WHERE id = ?", episode)
-        return self.run("INSERT INTO links (belief, episode, stance, strength, at, occasion, made_at, dream, why, note)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", belief, episode, 1 if stance > 0 else -1,
-                        strength, ep["happened_at"], occasion, at or now(), dream, why, note)
+        return self.run("INSERT INTO links (belief, episode, stance, strength, at, occasion, made_at, dream, why, note, flips)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", belief, episode, 1 if stance > 0 else -1,
+                        strength, ep["happened_at"], occasion, at or now(), dream, why, note, int(bool(flips)))
 
     def reword(self, belief, text, at, why):
         old = self.one("SELECT text FROM beliefs WHERE id = ?", belief)["text"]

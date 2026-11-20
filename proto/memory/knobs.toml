@@ -236,11 +236,12 @@ pin_match = 0.80
 same_check_from = 0.70
 
 [pins]
-# A pin needs the words in Bake's message that make it final. `pin` checks they are in his message and
-# contain one of these; without them the statement is an ordinary correction and nothing is pinned.
-# (Round three: the agent alone pinned sharp corrections in 4 of 7 plays.)
-final_words = ["final", "never", "always", "for good", "forever", "permanent", "not coming back",
-               "from now on", "pin"]
+# What is definitive is the house agent's call (Bake, 20 November: "let the agent decide and with the
+# feedback that something is pinned, allow the user to reverse"). Every pin is said in the same reply
+# (if the agent's reply does not, the line is added), and he can undo it at any time. A list here
+# would make `pin` check that the words it quotes as final are in his message and contain one of
+# them; empty, as now, the agent decides alone.
+final_words = []
 
 [check]
 # Which belief a regression check means is judged with this model, whatever search is under test.
@@ -265,16 +266,19 @@ without waiting for Bake, and say whose decision it was. What a thing is for, wh
 it, his preferences and his goals are his alone: if the steward or an agent asks for a change to
 one of those, hold it for him and say why.
 
-Pins. When Bake makes a definitive statement, one meant to hold for good, pin it: call pin with his
-words and, as final_words, the words in his message that make it final; then say "okay, got it,
-that's pinned". The test is whether his own words say it is final or
-permanent: "that is final", "never again", "from now on, always", "for good", "permanently", "it is
-not coming back", "pin this". Without such words it is not definitive, however firm or sharp:
-an ordinary correction or fact ("no, use cachyrig", "Starscream is gone, I decommissioned it"), a
-decision for now ("we're dropping wake word", "let's try light mode"), a sharp or repeated
-correction ("stop reaching for Starscream"), a preference. If he says a pin was not meant ("no, don't pin that"), call unpin
-straight away and say so. Never offer to pin, and don't talk about pinning unless you just pinned or
-unpinned. Nobody but Bake can pin or unpin.
+Pins. Whether Bake said something definitively, meant to hold for good, is your call: "that is
+final", "never again", "for good", "it is not coming back" usually are; an ordinary correction, a
+decision for now, or a sharp but passing remark usually are not. When you pin, say so plainly in
+the same reply, in one line, with his words: what you pinned. If it was already pinned, say it is
+pinned again. He can undo any pin at any time, in the next message or days later ("unpin that",
+"that wasn't meant to be pinned"): find it (search, if you need to), call unpin with its id, and
+say so. Beyond that one line, never talk about pinning. Nobody but Bake can pin or unpin.
+
+Asks. A "To ask Bake" line under a message means an agent or the steward said something memory
+holds is no longer so. Their word does not change what memory holds; his does. Put the question to
+him once, briefly, in that reply, and do not raise it again.
+
+
 
 Keep replies short."""
 
@@ -329,8 +333,18 @@ Do two things, in order. Ask yourself no other questions.
      "always listening", "pictures", "photos"), each a few words, and the entries they come from.
      Aliases are how a later message finds the thing: think of how Bake might ask about it another
      day, in other words.
-   - each new belief's "about_things" (names or ids), and "refines": a held belief this one narrows
-     (light mode on one tablet for a while narrows dark mode on everything: refines, not opposite);
+   - each new belief's "about_things" (names or ids), and how it stands to a held belief:
+     "refines" (says it more exactly), "exception_to" (narrower in scope: one place, one device, one
+     case: "light mode on the kitchen tablet" beside "dark mode on everything"), or "for_now_beside"
+     (temporary: a trial, "for a bit", "this week"). An exception or a for-now wish is never evidence
+     against the standing belief: do not link it "against" that one;
+   - "settle": a for-now belief later confirmed as lasting ("keep it like that"): lasting; withdrawn
+     or over: lapsed (the standing belief stays as it was);
+   - "changes": a value that changed (a time moved, a setting changed, a place moved) is the same
+     belief changing: give the held belief, its new wording and the entries. Do not make a new
+     belief and mark the old one its opposite (the backup moving from 02:00 to 03:00 is one belief);
+   - what an agent or the steward says against a held belief: link it "against" as theirs; it does
+     not change what is held (Bake will be asked);
    - "about": held beliefs that are about a thing but not yet linked to it;
    - "relations": a thing that is part of, or related to, another, where the conversation says so.
    - "heals": below are recall misses: messages where automatic recall turned up no belief, or not

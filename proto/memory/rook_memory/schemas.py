@@ -24,7 +24,9 @@ def dream(knobs):
                                    "opposite_of": {"type": ["string", "null"]},
                                    "other_wordings": {"type": "array", "items": {"type": "string"}},
                                    "about_things": {"type": "array", "items": {"type": "string"}},
-                                   "refines": {"type": ["string", "null"]}},
+                                   "refines": {"type": ["string", "null"]},
+                                   "exception_to": {"type": ["string", "null"]},
+                                   "for_now_beside": {"type": ["string", "null"]}},
                     "required": ["belief", "about"]}]},
             },
             "required": ["fact", "entries", "said_by", "kind", "held", "new_belief"]}},
@@ -47,7 +49,16 @@ def dream(knobs):
                 "properties": {"miss": {"type": "string"}, "thing": {"type": "string"}, "alias": {"type": "string"},
                                "belief": {"type": ["string", "null"]}, "why": {"type": "string"}},
                 "required": ["miss", "thing", "alias"]}},
-            "nothing_held": {"type": "array", "items": {"type": "string"}}},
+            "nothing_held": {"type": "array", "items": {"type": "string"}},
+            "settle": {"type": "array", "items": {
+                "type": "object", "properties": {"belief": {"type": "string"},
+                                                 "how": {"type": "string", "enum": ["lasting", "lapsed"]}},
+                "required": ["belief", "how"]}},
+            "changes": {"type": "array", "items": {
+                "type": "object",
+                "properties": {"belief": {"type": "string"}, "now": {"type": "string"},
+                               "entries": {"type": "array", "items": {"type": "string"}}, "why": {"type": "string"}},
+                "required": ["belief", "now", "entries"]}}},
         "required": ["facts"],
     }
 

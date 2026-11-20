@@ -47,6 +47,14 @@ def say(store, knobs, sess, text, speaker, at, channel="chat", log=print):
                   sess["id"], entry, at, text)
     head = f"[{at[:16].replace('T', ' ')}, {speaker}{', voice' if channel == 'voice' else ''}]"
     prompt = f"{head} {text}" + (f"\n\n{recall.for_turn(r)}" if r else "")
+    # An agent or the steward said something held is no longer so: put it to Bake, once, on his next turn.
+    if with_memory and speaker == knobs["people"]["person"]:
+        for ask in store.all("SELECT a.*, b.text FROM asks a JOIN beliefs b ON b.id = a.belief"
+                             " WHERE a.shown_at IS NULL AND a.answered_at IS NULL ORDER BY a.id"):
+            prompt += (f"\n\nTo ask Bake (once, briefly, in this reply; do not raise it again): {ask['claim']}"
+                       f" That is against [b{ask['belief']}] \"{ask['text']}\". Ask whether it still holds; his answer"
+                       " decides.")
+            store.run("UPDATE asks SET shown_at = ?, shown_entry = ? WHERE id = ?", at, entry, ask["id"])
     sess = store.one("SELECT * FROM sessions WHERE id = ?", sess["id"])
     cc = sess["cc_session"]
     try:
@@ -60,9 +68,19 @@ def say(store, knobs, sess, text, speaker, at, channel="chat", log=print):
     if not cc:
         store.run("UPDATE sessions SET cc_session = ? WHERE id = ?", reply["session_id"], sess["id"])
     answer = str(reply.get("result") or "").strip()
+    # A pin never happens silently: if the reply does not say so, the line is added.
+    note = None
+    for p in store.all("SELECT * FROM pins WHERE entry = ? ORDER BY id", entry):
+        if not re.search(r"\bpin", answer, re.I):
+            words = store.one("SELECT text FROM beliefs WHERE id = ?", p["belief"])["text"]
+            line = f"(Pinned: \"{words}\")" if p["action"] == "pin" else f"(Unpinned: \"{words}\")"
+            answer += "\n\n" + line
+            note = "added"
+        else:
+            note = note or "agent"
     later = (parse_time(at) + datetime.timedelta(seconds=20)).isoformat()
     reply_entry = store.add_entry(sess["id"], later, "house", "chat", answer)
-    store.run("UPDATE turns SET reply = ? WHERE entry = ?", reply_entry, entry)
+    store.run("UPDATE turns SET reply = ?, pin_note = ? WHERE entry = ?", reply_entry, note, entry)
     return answer, r
 
 

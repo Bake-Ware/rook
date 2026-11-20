@@ -8,7 +8,11 @@ b5c364a3), round two [REPORT2.md](REPORT2.md), round three [REPORT3.md](REPORT3.
 Round four: the dream writes a graph (things, their aliases, and edges: about, opposes, refines,
 part of, related to), and recall reads it with Python's sqlite3 alone (`search.model = "graph"`, the
 default now): no model, no embeddings. Live turns log possible misses; the next dream heals real ones
-with an alias in the words that missed. A pin needs the words in his message that make it final.
+with an alias in the words that missed. After Bake's answers at 16:17: the agent decides what is
+definitive, every pin is said in the reply and can be undone at any time; another agent's or the
+steward's correction never flips a belief (the house agent asks Bake once); and a narrower or
+for-now wish sits beside a standing one (exception and for-now edges) instead of counting against
+it. `python3 -m rook_memory misses` lists misses and heals.
 
 Round three added: strong evidence flips and weak does not (`flip_at`); a definitive statement pins
 and the pin keeps his words; how (the steward and agents decide) versus should (only Bake); one

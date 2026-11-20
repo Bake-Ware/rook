@@ -577,7 +577,8 @@ def test_the_graph_read_path_needs_no_numpy(store, knobs):
     assert subprocess.run([sys.executable, "-c", code], capture_output=True, text=True).stdout.strip() == "False"
 
 
-def test_a_pin_needs_the_words_that_make_it_final(store, knobs):
+def test_a_pin_needs_the_words_that_make_it_final_when_the_knob_lists_them(store, knobs):
+    knobs["pins"]["final_words"] = ["final", "never", "always", "for good", "not coming back", "pin"]
     e = entry(store, text="Again, Starscream is decommissioned. Stop reaching for Starscream.")
     bid, said = pin.pin(store, knobs, "Starscream is decommissioned", e, final_words="Stop reaching for Starscream")
     assert bid is None and "Not pinned" in said and not store.pinned(1) if bid else True
@@ -606,3 +607,108 @@ def test_dream_run_keeps_the_whole_answer(store, knobs, monkeypatch):
     out = dream.run(store, knobs, sid, log=lambda *a: None)
     assert out["aliases"] == 2 and out["edges"] == 2
     assert recall.recall(store, knobs, "Is the old server back?", "2026-06-01T00:00:00Z").beliefs
+
+
+# --- Bake's answers of 16:20: agents' corrections ask, exceptions and for-now, changes, pin feedback ---
+
+def _dream(store, knobs, sid, answer, when):
+    entries = store.undreamed(sid)
+    d = store.start_dream(sid, "fork", "idle", entries[0]["id"], entries[-1]["id"])
+    out = dream.apply(store, knobs, d, sid, entries, answer, when, log=lambda *a: None)
+    store.run("UPDATE sessions SET dreamed_to = ? WHERE id = ?", entries[-1]["id"], sid)
+    return out
+
+
+def test_an_agents_correction_does_not_flip_the_house_agent_asks_and_his_answer_decides(store, knobs):
+    knobs["search"]["model"] = "graph"
+    sid = store.session("s", "live", "s")["id"]
+    e1 = store.add_entry(sid, "2026-05-04T13:07:00Z", "bake", "chat", "Starscream is gone, I decommissioned it.")
+    _dream(store, knobs, sid, {"facts": [{"fact": "Bake said Starscream is gone.", "entries": [f"s{e1}"], "said_by": "bake",
+                                          "kind": "correction", "held": [],
+                                          "new_belief": {"belief": "Starscream is decommissioned", "about": "world"}}]},
+           "2026-05-04T13:10:00Z")
+    b = store.one("SELECT id FROM beliefs")["id"]
+    e2 = store.add_entry(sid, "2026-08-05T10:00:00Z", "agent", "chat", "[inventory agent] Starscream is back in service.")
+    out = _dream(store, knobs, sid, {"facts": [{"fact": "The inventory agent said Starscream is back in service.",
+                                                "entries": [f"s{e2}"], "said_by": "agent", "kind": "correction",
+                                                "held": [{"belief": f"b{b}", "stance": "against"}], "new_belief": None}]},
+                 "2026-08-05T10:10:00Z")
+    assert out["asks"] == 1 and standing.of(store, knobs, b)["direction"] == 1      # it stands
+    assert store.links(b)[-1]["flips"] == 0
+    # his next turn puts the question in front of the house agent, once
+    seen = []
+    model_call = model.call
+    model.call = lambda *a, **kw: seen.append(a[3]) or {"result": "Is Starscream back?", "session_id": "cc"}
+    try:
+        s = store.one("SELECT * FROM sessions WHERE id = ?", sid)
+        turn.say(store, knobs, s, "Morning.", "bake", "2026-08-12T18:00:00Z")
+        turn.say(store, knobs, s, "Anything else?", "bake", "2026-08-12T18:01:00Z")
+    finally:
+        model.call = model_call
+    assert "To ask Bake" in seen[0] and "To ask Bake" not in seen[1]
+    # his no counts for the belief and closes the ask
+    e3 = store.add_entry(sid, "2026-08-12T18:02:00Z", "bake", "chat", "No, Starscream is still gone.")
+    out = _dream(store, knobs, sid, {"facts": [{"fact": "Bake said Starscream is still gone.", "entries": [f"s{e3}"],
+                                                "said_by": "bake", "kind": "correction",
+                                                "held": [{"belief": f"b{b}", "stance": "supports"}], "new_belief": None}]},
+                 "2026-08-12T18:10:00Z")
+    assert out["answers"] == 1 and store.one("SELECT answer FROM asks")["answer"] == "kept"
+
+
+def test_a_how_decision_by_an_agent_still_flips_a_how_belief(store, knobs):
+    sid = store.session("s", "live", "s")["id"]
+    e1 = store.add_entry(sid, "2026-05-04T13:00:00Z", "agent", "chat", "[backup agent] backups at 02:00")
+    _dream(store, knobs, sid, {"facts": [{"fact": "The backup agent set backups at 02:00.", "entries": [f"s{e1}"],
+                                          "said_by": "agent", "kind": "decision", "held": [],
+                                          "new_belief": {"belief": "Backups run at 02:00", "about": "how"}}]}, "2026-05-04T13:01:00Z")
+    b = store.one("SELECT id FROM beliefs")["id"]
+    e2 = store.add_entry(sid, "2026-06-02T15:10:00Z", "agent", "chat", "[backup agent] moved backups to 03:00")
+    out = _dream(store, knobs, sid, {"facts": [{"fact": "The backup agent moved backups to 03:00.", "entries": [f"s{e2}"],
+                                                "said_by": "agent", "kind": "decision", "held": [], "new_belief": None}],
+                                     "changes": [{"belief": f"b{b}", "now": "Backups run at 03:00 (the backup agent moved them)",
+                                                  "entries": [f"s{e2}"]}]}, "2026-06-02T15:11:00Z")
+    assert out["changes"] == 1 and out["asks"] == 0
+    assert store.one("SELECT text FROM beliefs WHERE id = ?", b)["text"].startswith("Backups run at 03:00")
+    assert store.one("SELECT text FROM belief_texts WHERE belief = ?", b)["text"] == "Backups run at 02:00"
+    assert store.one("SELECT COUNT(*) AS n FROM beliefs")["n"] == 1      # one belief that changed, not two opposites
+
+
+def test_an_exception_does_not_count_against_the_standing_belief_and_comes_back_with_it(store, knobs):
+    knobs["search"]["model"] = "graph"
+    sid = store.session("s", "live", "s")["id"]
+    e1 = store.add_entry(sid, "2026-05-19T19:00:00Z", "bake", "chat", "I like dark mode on everything.")
+    _dream(store, knobs, sid, {"facts": [{"fact": "Bake likes dark mode on everything.", "entries": [f"s{e1}"],
+                                          "said_by": "bake", "kind": "statement", "held": [],
+                                          "new_belief": {"belief": "Bake likes dark mode on everything", "about": "bake",
+                                                         "about_things": ["dark mode"]}}]}, "2026-05-19T19:10:00Z")
+    dark = store.one("SELECT id FROM beliefs")["id"]
+    e2 = store.add_entry(sid, "2026-08-20T17:04:00Z", "bake", "chat", "Let's try light mode on the kitchen tablet for a bit.")
+    _dream(store, knobs, sid, {"facts": [{"fact": "Bake asked for light mode on the kitchen tablet for a bit.",
+                                          "entries": [f"s{e2}"], "said_by": "bake", "kind": "decision",
+                                          "held": [{"belief": f"b{dark}", "stance": "against"}],
+                                          "new_belief": {"belief": "Light mode on the kitchen tablet for a bit", "about": "bake",
+                                                         "about_things": ["kitchen tablet", "dark mode"],
+                                                         "for_now_beside": f"b{dark}"}}]}, "2026-08-20T17:10:00Z")
+    tablet = store.one("SELECT id FROM beliefs WHERE id != ?", dark)["id"]
+    assert standing.of(store, knobs, dark)["direction"] == 1 and not any(l["stance"] < 0 for l in store.links(dark))
+    r = recall.recall(store, knobs, "What theme is the kitchen tablet using?", "2026-08-21T00:00:00Z")
+    ids = [b.id for b in r.beliefs]
+    assert ids[:2] == [tablet, dark]
+    # settled as lapsed: the edge ends, the standing belief is as it was
+    store.add_entry(sid, "2026-09-01T10:00:00Z", "bake", "chat", "Put the tablet back to dark.")
+    _dream(store, knobs, sid, {"facts": [], "settle": [{"belief": f"b{tablet}", "how": "lapsed"}]}, "2026-09-01T10:10:00Z")
+    assert store.one("SELECT ended FROM edges WHERE rel = 'for_now'")["ended"] == "lapsed"
+
+
+def test_a_pin_is_never_silent(store, knobs, monkeypatch):
+    sid = store.session("s", "live", "s")["id"]
+    s = store.one("SELECT * FROM sessions WHERE id = ?", sid)
+
+    def fake_call(store_, knobs_, purpose, prompt, **kw):
+        e = store_.one("SELECT MAX(id) AS id FROM entries")["id"]
+        pin.pin(store_, knobs_, "The old NAS is gone and it is not coming back.", e)
+        return {"result": "Understood.", "session_id": "cc"}
+    monkeypatch.setattr(model, "call", fake_call)
+    answer, _ = turn.say(store, knobs, s, "The old NAS is gone and it is not coming back.", "bake", "2026-08-20T17:02:00Z")
+    assert answer.endswith('(Pinned: "The old NAS is gone and it is not coming back.")')
+    assert store.one("SELECT pin_note FROM turns")["pin_note"] == "added"

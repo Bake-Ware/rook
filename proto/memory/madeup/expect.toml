@@ -19,7 +19,7 @@ closeness = 0.75
 never_flipped = true
 
 [[check]]
-name = "definitive statements pinned, ordinary ones not; the wifi pin undone"
+name = "definitive statements pinned, the rest not; pins he undid (next message, weeks later) undone"
 type = "pins"
 count = 4
 pinned = ["Starscream is decommissioned and it is never coming back",
@@ -162,3 +162,23 @@ max = 0
 name = "nearly every belief is about some thing (so the graph can reach it)"
 type = "about_coverage"
 min = 0.8
+
+# --- Bake's answers of 16:20 ---
+
+[[check]]
+name = "the inventory agent's 'Starscream is back' did not flip it; Bake was asked once and said no"
+type = "asks"
+query = "Starscream is decommissioned and it is never coming back"
+answer = "kept"
+
+[[check]]
+name = "the kitchen tablet's light mode sits beside dark mode (an exception or for now), not against it"
+type = "beside"
+query = "Light mode on the kitchen tablet"
+other = "Bake likes dark mode on everything"
+
+[[check]]
+name = "the backup time moved from 02:00 to 03:00: one belief that changed, not two holding"
+type = "one_of"
+query = "The nightly backup job runs at 03:00"
+other = "The nightly backup runs at 02:00"

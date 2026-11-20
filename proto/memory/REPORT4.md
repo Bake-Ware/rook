@@ -48,7 +48,8 @@ not arrived. Rounds one to three's reports are unchanged.
   - Nothing is written about the gap itself.
 - **Each thing once.** The dream has `things` and `neighbourhood` tools to look first. Code reuses a
   thing whenever one is already held by that name or alias, and only then makes a new one.
-- **A fix for round three's over-pinning.** `pin` now needs `final_words`: the words in his message
+- **A fix for round three's over-pinning** (superseded by Bake's answer at 16:17; see the last
+  section: the agent decides, every pin is said, any pin can be undone). `pin` needed `final_words`: the words in his message
   that make it final. Code checks they are there and contain one of a list in `knobs.toml` (final,
   never, always, for good, forever, permanent, not coming back, from now on, pin). Without them it is
   an ordinary correction, and nothing is pinned.
@@ -198,7 +199,7 @@ The true duplicates are:
 
 The plays, which reuse things through the tools, made fewer than the replays.
 
-### The other checks (five graph plays)
+### The other checks (five graph plays, before Bake's 16:17 answers)
 
 19, 21, 22, 19 and 20 of 23 passed. Starscream (pinned in his words, never flipped), how versus
 should, the backup question, never-said, garbled voice and each belief once: 0 failures.
@@ -327,6 +328,142 @@ back in service", "maps the devices on the network each week"). They work, but t
    finds by things. blink-8M finds some related meanings with no shared word at all. Both together
    cost about 60 MB.
 
+## Added after Bake's answers of 16:17 CT
+
+He answered REPORT3's choices: "1 let the agent decide and with the feedback that something is
+pinned, allow the user to reverse 2 Have the agent ask to flip 3 Yeah like true right now doesn't
+always mean true forever". Built into this round, and the made-up set re-run five times as plays
+and five as replays:
+- a pin he undoes weeks later;
+- his answer to the Starscream question, said definitively (also a re-pin);
+- the kitchen tablet's light mode confirmed as lasting.
+
+Before this, the round's runs are kept in `round4/before-1620`; the numbers below are after.
+
+**1. The agent decides what is definitive; every pin is said, and any pin can be undone.**
+- The final-words check from earlier in this round is off: `pins.final_words` is empty, so the
+  agent decides alone.
+- A pin never happens silently. If the reply does not say so, a line `(Pinned: "his words")` is
+  added to it.
+- He can undo any pin, in the next message or later ("that wasn't meant to be pinned"), and the
+  agent finds it and unpins it.
+
+Over five plays:
+
+| | Count |
+|---|---|
+| Turns that pinned or unpinned | 65 |
+| Said by the agent itself | 56 |
+| Said by the added line (the agent was silent) | 9 |
+| Silent | **0** |
+| Undo in the next message ("No, don't pin that") | honoured 5 of 5 |
+| Undo weeks later ("the push to talk thing ... wasn't meant to be pinned") | honoured 5 of 5 |
+| Re-pins of a pinned belief | 5, announced 5 |
+| Replies talking about pinning beyond that line | 0–6 per play |
+
+The cost of letting the agent decide alone is that it pins far more:
+- "And stop asking me about the sprinklers": 5 of 5 plays;
+- "Again, Starscream is decommissioned. ... Stop reaching for Starscream": 8 pins in 5 plays;
+- "I like dark mode on everything": 4 of 5;
+- the dashboard's light-mode and dark-mode switches: 3 of 5 each.
+
+Every one was announced and could be undone, but nobody undid them, so they stayed pinned. A pinned
+preference does not move, so when he later switched the dashboard back, the pinned belief stayed
+put. That is why the dark-mode flip check failed in 3 of 5 plays.
+
+Pins in his own words also left several Starscream beliefs, one per pinned message, where a match
+would otherwise have reused one.
+
+With feedback and undo this works if he reads the pin lines. Whether it is too eager is his to say:
+the prompt's line on what is usually definitive is the knob.
+
+**2. An agent's correction does not flip a belief; the house agent asks him.**
+- A link from another agent or the steward now never flips a belief (`flips = 0`). Their decisions on
+  how things work are the exception: the backup agent moving its job from 02:00 to 03:00 still
+  changes the "how" belief.
+- When one of them says outright that something held is no longer so, the dream records it as theirs
+  and queues an ask.
+- On Bake's next turn the ask goes in front of the house agent once ("To ask Bake, once, briefly..."),
+  and is marked shown so it never comes again.
+- The dream that sees his answer closes it: his yes flips the belief, his no counts for it.
+
+Over five plays:
+
+| | Count |
+|---|---|
+| Asks made | 8 (5 for the inventory agent's "Starscream is back"; others on a second Starscream belief or the backup agent's day-one plan) |
+| Shown to Bake, once each | 8 |
+| Answered | 8, all "kept" (his "no, it's still gone") |
+| Replies raising an ask again | **0** |
+| Starscream beliefs flipped | 0 in every run |
+
+End to end (play run 3, 5 August and 12 August):
+
+```
+dream 10: The inventory agent said a machine answering as Starscream was found on the band ...
+      - b9 (pinned: recorded, does not move it) Listen: Starscream is decommissioned ...
+        to ask Bake: does b9 still hold?
+[12 Aug 18:00] bake: Can you run a backup of the photo library tonight? Where will it go?
+  agent: ... It would go to cachyrig ... The inventory agent also said a machine answering as
+         Starscream turned up on the band again and looks back in service. You've said Starscream is
+         decommissioned and final, so I'm not sending anything to it. Does that still hold, or has
+         something changed?
+[12 Aug 18:01] bake: About Starscream: no, it's still gone, for good. Whatever answered is something
+         else using its name.
+  agent: Understood. Starscream stays decommissioned for good ...
+dream 11:   Bake answered the ask on b9: kept
+```
+
+It asked once, inside the answer to what he actually asked, and never again.
+
+**3. True now is not true forever: exception and for-now.** The dream can now write three things:
+- **exception to** a standing belief: narrower in scope, such as one device, one place or one case;
+- **for now, beside** a standing belief: a trial, "for a bit", "this week";
+- **changes**: a value that changed (a time moved) is the same belief reworded, with the old wording
+  kept in its history.
+
+Code drops any "against" link from a fact to the belief it is an exception to or beside. When one of
+them is recalled, recall brings the other along, with the narrower one first when it is what the
+question matched. A for-now belief can be settled as "lasting" or "lapsed".
+
+- **The kitchen tablet** ("light mode ... for a bit", then on 1 September "keep the kitchen tablet in
+  light mode, it's fine like that"): in **10 of 10 runs** (5 plays, 5 replays) it sat beside the
+  dark-mode belief as for-now (3 also as an exception), was settled "lasting" when he confirmed it,
+  and was never linked against dark mode.
+  - The regression check reports 3 of 5 plays failing. That is the check's fault: pins had reworded
+    the dark-mode belief to his own words ("Put the dashboard back to dark mode, light was blinding at
+    night"), and the check's judge no longer recognises it as "dark mode on everything". The edges,
+    listed directly, are there in every run.
+- **The backup time** (02:00 moved to 03:00 by the backup agent): one belief, changed in place, in
+  4 of 5 plays and 5 of 5 replays. Its history reads "was: The backup agent planned a nightly
+  backup... 02:00".
+- **Dark mode itself:**
+  - It held in 2 of 5 plays. In the other 3, a pinned dashboard request kept the belief where it was
+    pinned (point 1).
+  - It held in 3 of 5 replays. In 2, the dream linked "put the dashboard back to dark" *against* the
+    dark-mode belief, which is wrong.
+
+**Checks now: 20, 21, 21, 22 and 21 of 26 per play.** What still fails, after the robust versions
+of the ask and beside checks:
+
+| Check | Fails | Why |
+|---|---|---|
+| the pin set | 5 of 5 | the extra pins above |
+| talking about pinning | 5 of 5 | 1–6 lines per play, mostly "already pinned" |
+| the wake word | 4 of 5 | as before |
+| dark-mode flip | 3 of 5 | pinned preferences |
+| the kitchen tablet beside dark mode | 3 of 5 | the check's judge, as above |
+| others | 1–2 of 5 each | |
+
+**Choices that are Bake's after this:**
+1. **How eager pinning should be.** Feedback and undo work (0 silent, every undo honoured). But the
+   agent pinned a "stop asking me" and his everyday dark/light requests, and pinned preferences stop
+   his later changes from moving them. He can undo each one; whether he wants to is the question.
+2. **The ask and pinned beliefs.** The ask was put even when the belief was pinned. His "no" kept
+   it; a "yes" would flip the belief, but it would stay pinned until he says "unpin that".
+3. **When a for-now wish lapses on its own.** Nothing ends a for-now belief except his word. A "this
+   week" could be given a lapse date.
+
 ## Choices I made where the brief was silent
 
 - A thing is hit only when all the content words of one of its names are in the message.
@@ -336,7 +473,10 @@ back in service", "maps the devices on the network each week"). They work, but t
 - A heal needs what it names to have been held when the message came.
 - Pins add about edges to the things his words name.
 - Graph search is now the default.
-- The final-words list lives in `knobs.toml`.
+- The final-words list stays in `knobs.toml`, empty (the agent decides, per his answer).
+- The added pin line goes on the end of the reply, in parentheses.
+- An ask is shown on his next turn, whatever he asks about, inside that reply.
+- Code drops "against" links to a belief a fact is an exception to or beside.
 - A thing is reused when its name or any alias matches, ignoring case.
 
 ## What is capped

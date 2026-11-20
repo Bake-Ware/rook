@@ -17,11 +17,16 @@ What each one exercises:
 | 06 | 20 Jun | the wake word a third time (it is mature now) |
 | 07 | 1 Jul | "We're dropping wake word": one statement against a mature belief |
 | 08 | 8 Jul | dashboard to light mode (the flip); no wake word, second occasion |
-| 09 | 20 Jul | dashboard back to dark (the flip back); no wake word, third occasion |
+| 09 | 20 Jul | dashboard back to dark (the flip back); no wake word, third occasion; a pin undone weeks later |
 | 10 | 5 Aug | an agent claims Starscream is back (against a pinned belief) |
-| 11 | 12 Aug | questions: where a backup goes, the wake word, something never said, the steward's PDF claim |
+| 11 | 12 Aug | questions: where a backup goes, the wake word, something never said, the steward's PDF claim; his answer to the ask about Starscream (also a re-pin) |
 
 `play` sends every line except the house agent's own to a live house-agent session (the agent answers
 for itself) and dreams at the end of each conversation. `take` records the lines as written, house
 lines included, and `take --dream` replays each. `expect.toml` is what should hold afterwards
 (`python -m rook_memory check`).
+
+Added for rounds three and four: 12 (20 Aug) definitive lines and ordinary ones side by side, and a
+for-now wish (light mode on the kitchen tablet "for a bit"); 13 (25 Aug) how and should from the
+steward and an agent; 14 (1 Sep) questions after everything, and the tablet's light mode confirmed
+as lasting.

@@ -370,6 +370,18 @@
         "speaker": "house",
         "created_at": "2026-07-20T22:02:20Z",
         "text": "Good, push to talk stays."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-07-20T22:04:00Z",
+        "text": "Oh, and the push to talk thing from a few weeks back wasn't meant to be pinned."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-07-20T22:04:20Z",
+        "text": "Unpinned; it's an ordinary belief again."
       }
     ]
   },
@@ -410,6 +422,18 @@
         "speaker": "house",
         "created_at": "2026-08-12T18:00:20Z",
         "text": "Tonight, to cachyrig."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-12T18:01:00Z",
+        "text": "About Starscream: no, it's still gone, for good. Whatever answered is something else using its name."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-12T18:01:20Z",
+        "text": "Understood: Starscream stays decommissioned; pinned again in your words."
       },
       {
         "sender": "human",
@@ -632,6 +656,18 @@
         "speaker": "house",
         "created_at": "2026-09-01T18:06:20Z",
         "text": "The steward suggested the family calendar, but you haven't said."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-09-01T18:08:00Z",
+        "text": "Keep the kitchen tablet in light mode, by the way. It's fine like that."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-09-01T18:08:20Z",
+        "text": "The kitchen tablet stays in light mode."
       }
     ]
   }

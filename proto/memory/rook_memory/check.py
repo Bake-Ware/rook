@@ -207,6 +207,41 @@ def evaluate(store, knobs, path):
                 "SELECT 1 FROM edges WHERE src_kind = 'belief' AND src = ? AND rel = 'about'", b["id"]))
             ok = n and linked / n >= c["min"]
             why = [f"{linked} of {n} beliefs are about at least one thing"]
+        elif t == "asks":
+            # every belief close to the query (pins in his words can leave several saying it)
+            q = emb([c["query"]])[0]
+            near = [b for sc, b in _closest(beliefs, vecs, q) if sc >= c.get("closeness", 0.7)]
+            asks = [a for b in near for a in store.all("SELECT * FROM asks WHERE belief = ? ORDER BY id", b["id"])]
+            flipped = [b for b in near if standing.of(store, knobs, b["id"])["direction"] < 0]
+            ok = bool(asks) and all(a["shown_at"] for a in asks) and any(a["answer"] == c["answer"] for a in asks) \
+                and not flipped
+            why = [f"{len(near)} beliefs close to it; flipped: {len(flipped)}"] + \
+                  [f"ask {a['id']} on b{a['belief']}: shown {str(a['shown_at'])[:16]}, answer {a['answer']}: {a['claim'][:80]}"
+                   for a in asks] + ([] if asks else ["no ask was made"])
+        elif t == "beside":
+            qa, qb = emb([c["query"]])[0], emb([c["other"]])[0]
+            narrow = [b for sc, b in _closest(beliefs, vecs, qa) if sc >= c.get("closeness", 0.75)]
+            broad = [b for sc, b in _closest(beliefs, vecs, qb) if sc >= c.get("closeness", 0.75)
+                     and b["id"] not in {n["id"] for n in narrow}]
+            edges = [e for n in narrow for b in broad for e in store.all(
+                "SELECT * FROM edges WHERE rel IN ('exception_to', 'for_now') AND src_kind = 'belief' AND src = ? AND dst = ?",
+                n["id"], b["id"])]
+            against = [l for b in broad for l in store.links(b["id"]) if l["stance"] < 0 and any(
+                store.one("SELECT 1 FROM links WHERE belief = ? AND episode = ?", n["id"], l["episode"]) for n in narrow)]
+            ok = bool(edges) and not against
+            why = [f"narrow: {', '.join('b%d' % n['id'] for n in narrow) or 'none'}; standing: "
+                   f"{', '.join('b%d' % b['id'] for b in broad) or 'none'}"] + \
+                  [f"{e['rel']} b{e['src']} -> b{e['dst']}" + (f" (settled {e['ended']})" if e["ended"] else "") for e in edges] + \
+                  [f"links against the standing one from the same evidence: {len(against)}"]
+        elif t == "one_of":
+            a = _closest(beliefs, vecs, emb([c["query"]])[0])[0][1]
+            b = _closest(beliefs, vecs, emb([c["other"]])[0])[0][1]
+            both = a["id"] != b["id"] and standing.of(store, knobs, a["id"])["value"] > 0 and \
+                standing.of(store, knobs, b["id"])["value"] > 0
+            ok = not both
+            hist = store.all("SELECT text FROM belief_texts WHERE belief = ?", a["id"])
+            why = [f"b{a['id']} {a['text'][:80]}" + (f" (was: {hist[0]['text'][:60]})" if hist else ""),
+                   f"b{b['id']} {b['text'][:80]}", "both hold" if both else "not both holding"]
         else:
             ok, why = False, [f"unknown check type {t}"]
         results.append((c["name"], ok, why))

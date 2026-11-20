@@ -131,21 +131,41 @@ def apply(store, knobs, dream, session, entries, answer, when, log=print, emb=No
     mine = {e["id"]: e for e in entries}
     held_back, pending, made = [], [], []
     count = {"facts": 0, "links": 0, "new": 0, "same": 0, "opposite": 0, "things": 0, "things_reused": 0,
-             "aliases": 0, "edges": 0, "heals": 0}
+             "aliases": 0, "edges": 0, "heals": 0, "asks": 0, "answers": 0, "changes": 0}
 
-    def link(b, ep, stance, weight, said_by, occ, why):
+    def link(b, ep, stance, weight, said_by, occ, why, kind="statement"):
         w, note = weight, None
+        # Another agent's or the steward's word never flips a belief (their decisions on how things work
+        # do). When they say outright that something held is no longer so, the house agent asks Bake.
+        flips = said_by == person or (b["about"] == "how" and kind == "decision")
         if b["about"] == person and said_by != person:
             w, note = 0.0, f"not {person}'s own words: recorded, not counted"
         elif w <= 0:
             note = f"{said_by}'s words: recorded, not counted"
         elif store.pinned(b["id"]):
             note = "pinned: recorded, does not move it"
+        elif not flips:
+            note = f"{said_by}'s word: recorded, cannot flip it; Bake is asked"
         elif not standing.strong(knobs, w):
             note = "weak: recorded, cannot flip it"
-        store.add_link(b["id"], ep, stance, w, occ, dream, why=why, note=note, at=when)
+        store.add_link(b["id"], ep, stance, w, occ, dream, why=why, note=note, at=when, flips=flips)
         count["links"] += 1
         log(f"      {'+' if stance > 0 else '-'} b{b['id']} ({w:.2f}{'; ' + note if note else ''}) {b['text']}")
+        if (stance < 0 and not flips and said_by not in (person, "house") and kind in ("correction", "decision", "statement")
+                and not store.one("SELECT 1 FROM asks WHERE belief = ? AND answered_at IS NULL", b["id"])):
+            claim = store.one("SELECT text FROM episodes WHERE id = ?", ep)["text"]
+            store.run("INSERT INTO asks (belief, episode, claim, made_at, dream) VALUES (?, ?, ?, ?, ?)",
+                      b["id"], ep, claim, when, dream)
+            count["asks"] += 1
+            log(f"        to ask Bake: does b{b['id']} still hold? ({claim[:80]})")
+        if said_by == person:
+            ask = store.one("SELECT * FROM asks WHERE belief = ? AND shown_at IS NOT NULL AND answered_at IS NULL"
+                            " ORDER BY id DESC", b["id"])
+            if ask:
+                answer = "flipped" if stance < 0 else "kept"
+                store.run("UPDATE asks SET answered_at = ?, answer = ? WHERE id = ?", when, answer, ask["id"])
+                count["answers"] += 1
+                log(f"        Bake answered the ask on b{b['id']}: {answer}")
 
     def create(text, about, ep, weight, occ, opposite_of=None, wordings=None):
         bid = store.add_belief(text, about, dream, at=when, wordings=wordings)
@@ -181,13 +201,23 @@ def apply(store, knobs, dream, session, entries, answer, when, log=print, emb=No
         weight = standing.strength(knobs, kind, said_by, channel)
         occ = standing.occasion(knobs, at, session)
         log(f"  e{ep} [{said_by}, {kind}, {channel}] {text}")
+        nb = f.get("new_belief")
+        # A narrower or for-now wish sits beside the standing one: it is never evidence against it.
+        beside = set()
+        if isinstance(nb, dict):
+            for key in ("exception_to", "for_now_beside"):
+                x = _belief(store, nb.get(key))
+                if x:
+                    beside.add(x["id"])
         for h in f.get("held") or []:
             b = _belief(store, h.get("belief"))
             if not b:
                 held_back.append({"fact": text, "why": f"links to {h.get('belief')!r}, which is no belief"})
                 continue
-            link(b, ep, -1 if h.get("stance") == "against" else 1, weight, said_by, occ, h.get("why"))
-        nb = f.get("new_belief")
+            if b["id"] in beside and h.get("stance") == "against":
+                held_back.append({"fact": text, "why": f"against b{b['id']}, which it is an exception to or beside for now"})
+                continue
+            link(b, ep, -1 if h.get("stance") == "against" else 1, weight, said_by, occ, h.get("why"), kind)
         if not (isinstance(nb, dict) and str(nb.get("belief") or "").strip()):
             continue
         about = nb.get("about") if nb.get("about") in abouts else "world"
@@ -204,7 +234,8 @@ def apply(store, knobs, dream, session, entries, answer, when, log=print, emb=No
         opp = [b["id"] for b in [_belief(store, nb.get("opposite_of"))] if b]
         others = [str(w).strip() for w in nb.get("other_wordings") or [] if str(w).strip()]
         pending.append({"text": nb["belief"].strip(), "about": about, "ep": ep, "weight": weight, "occ": occ,
-                        "said_by": said_by, "opposite_of": opp, "wordings": others})
+                        "said_by": said_by, "opposite_of": opp, "wordings": others, "kind": kind,
+                        "beside": beside})
 
     # The same check: each new belief against the held ones (and the new ones before it) it is close to.
     pairs = _close_pairs(store, knobs, pending, emb)
@@ -217,7 +248,8 @@ def apply(store, knobs, dream, session, entries, answer, when, log=print, emb=No
         if same:
             b = store.one("SELECT * FROM beliefs WHERE id = ?", resolve(same[0]))
             log(f"    same as b{b['id']}, so no new belief: {p['text']}")
-            link(b, p["ep"], +1, p["weight"], p["said_by"], p["occ"], "says the same as the new belief the dream proposed")
+            link(b, p["ep"], +1, p["weight"], p["said_by"], p["occ"], "says the same as the new belief the dream proposed",
+                 p.get("kind", "statement"))
             count["same"] += 1
             made.append(b["id"])
             continue
@@ -228,7 +260,8 @@ def apply(store, knobs, dream, session, entries, answer, when, log=print, emb=No
     log(f"  dream {dream} done: {count['facts']} facts, {count['links']} links, {count['new']} new beliefs"
         f" ({count['same']} found already held, {count['opposite']} opposites marked), {len(held_back)} held back;"
         f" graph: {count['things']} new things ({count['things_reused']} reused), {count['aliases']} aliases,"
-        f" {count['edges']} edges, {count['heals']} heals")
+        f" {count['edges']} edges, {count['heals']} heals; {count['changes']} changed; asks {count['asks']} made,"
+        f" {count['answers']} answered")
     return {"dream": dream, **count, "held_back": held_back}
 
 
@@ -263,7 +296,7 @@ def _close_pairs(store, knobs, pending, emb):
     pairs = []
     for i, p in enumerate(pending):
         for j, b in enumerate(held):
-            if b["id"] not in p["opposite_of"] and grid[i][j] >= floor:
+            if b["id"] not in p["opposite_of"] and b["id"] not in p.get("beside", ()) and grid[i][j] >= floor:
                 pairs.append((i, ("b", b["id"])))
         for j in range(i):
             if among[i][j] >= floor:
@@ -350,10 +383,39 @@ def write_graph(store, knobs, dream, answer, mine, made, pending, when, count, h
             t = thing(ref)
             if t and store.add_edge("belief", bid, "about", "thing", t["id"], when, dream, src):
                 count["edges"] += 1
-        ref = _belief(store, nb.get("refines"))
-        if ref and ref["id"] != bid and store.add_edge("belief", bid, "refines", "belief", ref["id"], when, dream, src):
-            count["edges"] += 1
-            log(f"    b{bid} refines b{ref['id']}")
+        for key, rel in (("refines", "refines"), ("exception_to", "exception_to"), ("for_now_beside", "for_now")):
+            ref = _belief(store, nb.get(key))
+            if ref and ref["id"] != bid and store.add_edge("belief", bid, rel, "belief", ref["id"], when, dream, src):
+                count["edges"] += 1
+                log(f"    b{bid} {rel.replace('_', ' ')} b{ref['id']}")
+    # a for-now belief settled: lasting (an ordinary belief from now on) or lapsed (withdrawn, or over)
+    for st in answer.get("settle") or []:
+        b = _belief(store, st.get("belief"))
+        how = st.get("how") if st.get("how") in ("lasting", "lapsed") else None
+        if b and how:
+            store.run("UPDATE edges SET ended_at = ?, ended = ? WHERE src_kind = 'belief' AND src = ? AND rel = 'for_now'"
+                          " AND ended_at IS NULL", when, how, b["id"])
+            log(f"    for-now b{b['id']} settled: {how}")
+    # a value that changed (a time moved, a setting changed) is the same belief changing, not a new opposite
+    for ch in answer.get("changes") or []:
+        b = _belief(store, ch.get("belief"))
+        now_text = str(ch.get("now") or "").strip()
+        srcs = _entry_ids(ch.get("entries"), mine)
+        if not b or not now_text or not srcs:
+            held_back.append({"change": ch, "why": "names no belief, no new wording or no entry"})
+            continue
+        ep = store.one("SELECT * FROM episodes WHERE dream = ? AND EXISTS (SELECT 1 FROM json_each(episodes.entries)"
+                       " WHERE value IN (%s)) ORDER BY id" % ",".join("?" * len(srcs)), dream, *srcs)
+        if not ep:
+            held_back.append({"change": ch, "why": "no fact of this dream comes from those entries"})
+            continue
+        store.reword(b["id"], now_text, when, f"changed (dream {dream}): {ch.get('why') or ''}".strip())
+        w = standing.strength(knobs, ep["kind"], ep["said_by"], ep["channel"])
+        flips = ep["said_by"] == knobs["people"]["person"] or b["about"] == "how"
+        store.add_link(b["id"], ep["id"], +1, w, standing.occasion(knobs, ep["happened_at"], ep["session"]), dream,
+                       why="the changed value", at=when, flips=flips)
+        count["changes"] += 1
+        log(f"    b{b['id']} changed: {now_text}")
     for a in answer.get("about") or []:
         b, t = _belief(store, a.get("belief")), thing(a.get("thing"))
         if b and t and store.add_edge("belief", b["id"], "about", "thing", t["id"], when, dream):

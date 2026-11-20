@@ -6,7 +6,9 @@ strongly (kind x who said it x channel; see [weigh] in knobs.toml).
 - Direction: the most recent *strong* link is what we go on (strength at or above flip_at). Weak
   links (a passing mention, an agent's aside) are recorded and shown, and add to the history on
   their side, but cannot change which way a belief stands. With no strong link yet, the most recent
-  link sets it.
+  link sets it. Since round four, another agent's or the steward's word never flips a belief, however
+  strong (only their decisions on how things work do): their link is recorded with flips = 0, and
+  the house agent asks Bake.
 - Certainty (maturity): the occasions behind the current direction, each counted once at its
   strongest, summed and put through 1 - exp(-sum / maturity_scale). One occasion is tentative however
   sure it sounded; it matures as it comes up again on separate occasions. Occasions from before the
@@ -32,6 +34,13 @@ def strong(knobs, value):
     return value >= knobs["weigh"]["flip_at"] - 1e-9
 
 
+def _flips(link):
+    try:
+        return bool(link["flips"])
+    except (KeyError, IndexError):
+        return True
+
+
 def occasion(knobs, at, session):
     return str(at)[:10] if knobs["weigh"]["occasion"] == "day" else f"session {session}"
 
@@ -45,7 +54,7 @@ def standing(links, knobs, pinned=False, upto=None):
     w = knobs["weigh"]
     links = sorted((l for l in links if upto is None or str(l["at"]) <= str(upto)), key=lambda l: (str(l["at"]), str(l["id"])))
     counted = [l for l in links if l["strength"] > 0]
-    firm = [l for l in counted if strong(knobs, l["strength"])]
+    firm = [l for l in counted if strong(knobs, l["strength"]) and _flips(l)]
     flips = sum(1 for a, b in zip(firm, firm[1:]) if a["stance"] != b["stance"])
     out = {"pinned": pinned, "links": len(links), "counted": len(counted), "flips": flips,
            "direction": 0, "certainty": 0.0, "contrary": 0.0, "occasions": 0, "contrary_occasions": 0,
@@ -64,7 +73,7 @@ def standing(links, knobs, pinned=False, upto=None):
         out.update(direction=d, certainty=_cert(sum(mine.values()), knobs), contrary=_cert(sum(theirs.values()), knobs),
                    occasions=len(mine), contrary_occasions=len(theirs),
                    weak_against_since=sum(1 for l in counted if l["stance"] != d and str(l["at"]) >= last_firm
-                                          and not strong(knobs, l["strength"])))
+                                          and not (strong(knobs, l["strength"]) and _flips(l))))
         out["conflict"] = out["certainty"] < w["tentative_below"] and out["contrary"] >= w["mature_at"]
     if pinned:
         out["value"] = 1.0

@@ -113,6 +113,32 @@ def recall(store, knobs, query, at, exclude_entries=(), emb="load"):
             if (i.kind, i.id) in search.last_via:
                 i.extra["via"] = search.last_via[(i.kind, i.id)]
 
+    # A narrower or for-now belief and the standing one it sits beside come together: the narrower first
+    # when it is what the question matched, the standing one untouched.
+    have = {b.id: b for b in out["belief"]}
+    for b in list(out["belief"]):
+        for e in store.all("SELECT * FROM edges WHERE rel IN ('exception_to', 'for_now') AND ended_at IS NULL"
+                           " AND ((src_kind = 'belief' AND src = ?) OR (dst_kind = 'belief' AND dst = ?))", b.id, b.id):
+            narrow, broad = e["src"], e["dst"]
+            word = "an exception to" if e["rel"] == "exception_to" else "for now, beside"
+            if narrow == b.id:
+                b.extra["via"] = (b.extra.get("via", "") + f"; {word} b{broad}").lstrip("; ")
+            other = broad if narrow == b.id else narrow
+            if other in have:
+                continue
+            row = store.one("SELECT * FROM beliefs WHERE id = ?", other)
+            st = standing.of(store, knobs, other)
+            it = Item("belief", other, row["text"], row["about"], row["made_at"],
+                      extra={"standing": st, "links": standing.links_of(store, knobs, other), "about": row["about"],
+                             "row": row, "via": (f"the standing belief b{b.id} is {word}" if narrow == b.id
+                                                 else f"{word} b{b.id}")})
+            it.closeness, it.certainty = b.closeness * (0.99 if narrow == b.id else 1.01), abs(st["value"])
+            out["belief"].append(it)
+            have[other] = it
+    narrow_ids = {e["src"] for e in store.all("SELECT src FROM edges WHERE rel IN ('exception_to', 'for_now')"
+                                              " AND ended_at IS NULL")}
+    out["belief"].sort(key=lambda i: (-(i.closeness + (0.05 if i.id in narrow_ids else 0))))
+
     # Graph search: the opposites of the beliefs found come along, marked.
     if s.get("kind") == "graph":
         have = {b.id for b in out["belief"]}
