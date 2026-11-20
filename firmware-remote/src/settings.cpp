@@ -1,5 +1,6 @@
 #include "settings.h"
 #include <Preferences.h>
+#include <nvs.h>
 #include <esp_random.h>
 #include <strings.h>
 #include "rc_sig.h"
@@ -254,6 +255,28 @@ std::string kv(const char* key) { return get(key); }
 
 void set_kv(const char* key, const std::string& value) {
     if (get(key) != value) put(key, value);
+}
+
+bool blob(const char* key, std::string& out) {
+    out.clear();
+    size_t n = prefs.isKey(key) ? prefs.getBytesLength(key) : 0;
+    if (!n) return false;
+    out.resize(n);
+    if (prefs.getBytes(key, &out[0], n) != n) { out.clear(); return false; }
+    return true;
+}
+
+bool set_blob(const char* key, const std::string& value) {
+    return prefs.putBytes(key, value.data(), value.size()) == value.size();
+}
+
+void remove(const char* key) {
+    if (prefs.isKey(key)) prefs.remove(key);
+}
+
+int nvs_free_entries() {
+    nvs_stats_t st;
+    return nvs_get_stats(nullptr, &st) == ESP_OK ? (int)st.free_entries : -1;
 }
 
 std::string bt_names() { return get("bt_names"); }

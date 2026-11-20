@@ -25,6 +25,7 @@
 #include "lan.h"
 #include "osk.h"
 #include "ota.h"
+#include "prof.h"
 #ifdef ROOK_GAMEPAD
 #include <Preferences.h>
 #include <Update.h>
@@ -42,7 +43,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.11.5"
+#define FW_VERSION "0.11.6"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -92,6 +93,17 @@ static const uint32_t CHAT_IDLE_MS = 120000;   // the Assistant tab stays up lon
 // A device on this network the buttons drive directly (dev.h), in place of a
 // hub target: its id, and its name for the screen and the events.
 static std::string local_id, local_name;
+// An IR profile picked in the menu (prof.h), by name; blank: none picked
+// directly (a picked network device may still have a profile linked to it).
+static std::string sel_prof;
+// A profile key held down on the paired remote: its code goes on repeating.
+static struct {
+    int key = -1;                  // prof key id; -1: nothing repeating
+    std::string raw;               // the paired remote's raw key name (bt::held)
+    prof::Code code;
+    uint32_t next = 0, every = 108, until = 0;
+} rep;
+static volatile int ir_failed = 0;          // set by the IR send task: 1 no pin, 2 another error
 // Talking to the home agent through the paired remote's microphone: the audio
 // leaves as remote.voice.part events while it is spoken, then remote.voice.
 static uint32_t voice_id = 0, voice_seq = 0, voice_bytes = 0, voice_started = 0;
@@ -240,6 +252,54 @@ static void set_local(const std::string& id) {
         local_name = d.name;
     }
     settings::set_kv("local", local_id);
+    sel_prof.clear();
+    settings::set_kv("irsel", "");
+    rep.key = -1;
+}
+
+// The profile the buttons are for: the one picked, else one linked to the
+// network device picked.
+static bool active_profile(prof::Info& p) {
+    if (!sel_prof.empty()) return prof::find(sel_prof, p);
+    return !local_id.empty() && prof::linked_to(local_id, p);
+}
+
+// What the buttons are for, by name (the status line, the events).
+static std::string chosen_name() {
+    prof::Info p;
+    if (active_profile(p)) return p.name;
+    return local_id.empty() ? settings::target_name() : local_name;
+}
+
+// The network device a profile is linked to, by its id now (blank: none).
+static std::string link_id(const prof::Info& p) {
+    lan::Device d;
+    if (p.link.empty()) return "";
+    return lan::find(p.link, d) ? d.id : p.link;
+}
+
+// The buttons drive this profile from now on (and, for the keys it has no
+// code for, the network device it is linked to).
+static void select_profile(const prof::Info& p) {
+    lan::Device d;
+    if (!p.link.empty() && lan::find(p.link, d)) {
+        local_id = d.id;
+        local_name = d.name;
+    } else {
+        local_id.clear();
+        local_name.clear();
+    }
+    settings::set_kv("local", local_id);
+    sel_prof = p.name;
+    settings::set_kv("irsel", p.name);
+    rep.key = -1;
+}
+
+// Is this network device shown under a profile linked to it (so not twice)?
+static bool lan_has_profile(const lan::Device& d, const std::vector<prof::Info>& ps) {
+    for (auto& p : ps)
+        if (!p.link.empty() && link_id(p) == d.id) return true;
+    return false;
 }
 
 // The game called label takes the screen. False: there is none by that name.
@@ -256,8 +316,9 @@ static bool start_game(const std::string& label) {
     return false;
 }
 
-// A tab's rows. Devices: the hub's targets (values t:<index>), then the
-// devices found on this network that the remote can drive itself (lan:<id>).
+// A tab's rows. Devices: the hub's targets (values t:<index>), the IR
+// profiles (p:<name>), then the devices found on this network that the remote
+// can drive itself and no profile is linked to (lan:<id>).
 // Games: the games (the handheld's narrow screen has Tetris only). Settings:
 // Wi-Fi, a device scan, Update, Bluetooth.
 static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std::string>& values, int& selected) {
@@ -269,9 +330,17 @@ static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std:
             values.push_back("t:" + std::to_string(i));
         }
         selected = settings::target();
+        prof::Info act;
+        bool have = active_profile(act);
+        auto ps = prof::list();
+        for (auto& p : ps) {                  // the IR profiles (one linked to a device stands for it)
+            if (have && p.name == act.name) selected = (int)labels.size();
+            labels.push_back(p.name);
+            values.push_back("p:" + p.name);
+        }
         for (auto& d : lan::devices()) {
-            if (d.driver.empty()) continue;
-            if (d.id == local_id) selected = (int)labels.size();
+            if (d.driver.empty() || lan_has_profile(d, ps)) continue;
+            if (!have && d.id == local_id) selected = (int)labels.size();
             labels.push_back(d.name);
             values.push_back("lan:" + d.id);
         }
@@ -385,6 +454,20 @@ static void pick_device(const std::string& id) {
     else ui::flash(d.name);
 }
 
+// An IR profile picked in the menu. One linked to an LG TV not yet paired
+// asks its person to accept the remote first (for the keys that go to the TV).
+static void pick_profile(const std::string& name) {
+    prof::Info p;
+    if (!prof::find(name, p)) return;
+    select_profile(p);
+    lan::Device d;
+    std::string err;
+    if (!local_id.empty() && lan::find(local_id, d) && !d.driver.empty() && !dev::paired(d))
+        dev::run("pair", d.id, "", 0, err);
+    else
+        ui::flash(p.name, 1000, false);
+}
+
 // The networks heard (strongest first; * marks a saved one), then the saved ones to forget.
 static void open_wifi_menu() {
     std::vector<std::string> labels, values;
@@ -436,21 +519,27 @@ static void wifi_prefer_row(int i) {
 // this network the remote drives itself. The profile key steps to the next.
 static void next_device() {
     auto ts = settings::targets();
+    auto ps = prof::list();
     std::vector<std::string> lans, names;
     for (auto& d : lan::devices()) {
-        if (d.driver.empty()) continue;
+        if (d.driver.empty() || lan_has_profile(d, ps)) continue;
         lans.push_back(d.id);
         names.push_back(d.name);
     }
-    int n = (int)(ts.size() + lans.size());
+    int n = (int)(ts.size() + ps.size() + lans.size());
     if (!n) {
         ui::flash("no devices", 1000, false);
         return;
     }
     int cur = settings::target();
-    if (!local_id.empty())
+    prof::Info act;
+    if (active_profile(act)) {
+        for (size_t i = 0; i < ps.size(); i++)
+            if (ps[i].name == act.name) cur = (int)(ts.size() + i);
+    } else if (!local_id.empty()) {
         for (size_t i = 0; i < lans.size(); i++)
-            if (lans[i] == local_id) cur = (int)(ts.size() + i);
+            if (lans[i] == local_id) cur = (int)(ts.size() + ps.size() + i);
+    }
     int next = ((cur < 0 ? -1 : cur) + 1) % n;
     close_chat();
     if (next < (int)ts.size()) {
@@ -459,8 +548,12 @@ static void next_device() {
         ui::flash(ts[next], 1000, false);
         return;
     }
+    if (next < (int)(ts.size() + ps.size())) {
+        pick_profile(ps[next - ts.size()].name);
+        return;
+    }
     lan::Device d;
-    if (!lan::find(lans[next - ts.size()], d)) return;
+    if (!lan::find(lans[next - ts.size() - ps.size()], d)) return;
     lan::keep(d.id);
     set_local(d.id);
     std::string err;
@@ -516,6 +609,10 @@ static void menu_pick(int i) {
         pick_device(value.substr(4));
         return;
     }
+    if (value.rfind("p:", 0) == 0) {
+        pick_profile(value.substr(2));
+        return;
+    }
     if (kind == MENU_DEVS) {
         if (label == "Rescan") start_dev_scan();
         else ui::flash("no\ndriver");
@@ -559,6 +656,61 @@ static void menu_pick(int i) {
         bt::forget();
         ui::flash("BT\ngone");
     }
+}
+
+// A key for the profile or network device picked: by IR when the profile
+// has a code for it (queued: the IR task sends it), else to the linked or
+// picked network device (queued for the device task). Held on the paired
+// remote, an NEC code goes on with repeat frames every 108 ms, a raw one is
+// sent again (volume, arrows, channels, seek only; power never). Answers
+// "ir", "lan" or null (nothing was sent).
+static const char* local_key(const ButtonEvent& e, const prof::Info* p) {
+    uint32_t ms = millis();
+    int k = prof::key_id(e.name);
+    std::string raw = e.lines.rfind("bt:", 0) == 0 ? e.lines.substr(3) : "";
+    if (p && prof::has(*p, k)) {
+        // Already repeating this key (a game controller presses a held
+        // direction again by itself): the repeat goes on, no new frame.
+        if (rep.key == k && !raw.empty() && rep.raw == raw && !rep.code.raw) return "ir";
+        prof::Code c;
+        std::string err;
+        if (!prof::code(*p, k, c, err)) {
+            logf("ir: %s", err.c_str());
+            ui::flash("IR\nerror", 1000, false);
+            rep.key = -1;
+            return nullptr;
+        }
+        bool queued = c.raw ? ir::post(ir::POST_RAW, 0, 0, c.carrier, &c.d)
+                            : ir::post(ir::POST_NEC, c.address, c.command, 0, nullptr);
+        if (!queued) logf("ir: busy, %s dropped", e.name.c_str());
+        rep.key = -1;
+        if (queued && !raw.empty() && prof::repeats(k)) {
+            rep.key = k;
+            rep.raw = raw;
+            if (c.raw) {
+                uint32_t us = 0;
+                size_t sent = c.d.size() % 2 ? c.d.size() : c.d.size() - 1;   // a trailing space is not sent
+                for (size_t i = 0; i < sent; i++) us += c.d[i];
+                rep.every = std::max<uint32_t>(110, us / 1000 + 40);
+                rep.next = ms + std::max<uint32_t>(300, rep.every);      // a moment before it starts again
+            } else {
+                rep.every = 108;
+                rep.next = ms + 108;
+            }
+            rep.code = std::move(c);
+            rep.until = ms + 30000;                                    // never more than 30 s held
+        }
+        return queued ? "ir" : nullptr;
+    }
+    rep.key = -1;
+    std::string target = !local_id.empty() ? local_id : p ? link_id(*p) : "";
+    std::string err;
+    if (!target.empty()) {
+        dev::run("key", target, e.name, 0, err);
+        return "lan";
+    }
+    ui::flash("no code\n" + e.name, 1000, false);
+    return nullptr;
 }
 
 // A press: one of the handheld's buttons, or (index -1, lines "bt") a key of
@@ -694,12 +846,14 @@ static void on_button(const ButtonEvent& ev) {
     } else {
         ui::flash(e.name + (strcmp(e.action, "long") ? "" : " (hold)"));
     }
-    // A device on this network picked in the menu: the remote presses its key itself.
-    bool local = !local_id.empty();
-    if (local && !strcmp(e.action, "press")) {
-        std::string err;
-        dev::run("key", local_id, e.name, 0, err);
-    }
+    // A profile or a device on this network picked in the menu: the remote
+    // sends the key itself, by IR when the profile has a code for it, else to
+    // the network device (none of it waits on Wi-Fi or the hub).
+    prof::Info pi;
+    bool have_prof = active_profile(pi);
+    bool local = !local_id.empty() || have_prof;
+    const char* via = nullptr;
+    if (local && !strcmp(e.action, "press")) via = local_key(e, have_prof ? &pi : nullptr);
     if (worker_on) {
         JsonDocument p;
         p["button"] = e.name;
@@ -707,8 +861,9 @@ static void on_button(const ButtonEvent& ev) {
         p["index"] = e.index;
         p["held_ms"] = e.held_ms;
         if (local) {
-            p["target"] = local_name;
+            p["target"] = have_prof ? pi.name : local_name;
             p["local"] = true;
+            if (via) p["via"] = via;
         } else if (!settings::target_name().empty()) p["target"] = settings::target_name();
         if (e.index < 0) p["source"] = "bt";
         worker.emit("remote.button", p.as<JsonObjectConst>());
@@ -805,6 +960,11 @@ static void fill_state(JsonObject r) {
         r["local"]["id"] = local_id;
         r["local"]["name"] = local_name;
     }
+    {
+        prof::Info p;
+        if (active_profile(p)) r["profile"] = p.name;
+    }
+    r["profiles"] = (int)prof::list().size();
     r["devices"] = (int)lan::devices().size();
     ota::fill(r["update"].to<JsonObject>());
     r["heap"] = (unsigned)ESP.getFreeHeap();
@@ -1035,9 +1195,109 @@ static bool cap_ir_led(const std::string& action, JsonObjectConst a, JsonObject 
     return true;
 }
 
+// The profiles, for remote.ir's answers.
+static void fill_profiles(JsonObject r) {
+    JsonArray ps = r["profiles"].to<JsonArray>();
+    for (auto& p : prof::list()) {
+        JsonObject o = ps.add<JsonObject>();
+        prof::fill(p, o);
+        lan::Device d;
+        if (!p.link.empty() && lan::find(p.link, d)) o["link_name"] = d.name;
+    }
+    prof::Info act;
+    if (active_profile(act)) r["selected"] = act.name;
+    r["max"] = prof::MAX;
+    r["bytes"] = (unsigned)prof::total_bytes();
+    r["bytes_max"] = (unsigned)prof::MAX_TOTAL;
+    r["nvs_free_entries"] = settings::nvs_free_entries();
+    r["ir_pin"] = ir::pin();
+}
+
+// remote.ir profiles / profile_save / profile_delete / profile_select /
+// profile_release / profile_send: IR device profiles kept on the remote (prof.h).
+static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObject r, std::string& err) {
+    std::string name = a["name"] | "";
+    if (action == "profile_save") {
+        bool set_link = !a["link"].isNull();
+        std::string link = a["link"] | "";
+        lan::Device d;
+        if (!link.empty() && lan::find(link, d)) {
+            link = d.id;                      // kept by id (a MAC when the network gives one)
+            lan::keep(d.id);
+            r["link_name"] = d.name;
+        } else if (!link.empty()) {
+            r["warning"] = "no device called " + link + " is known yet: the link is kept as given, and works once remote.scan finds it";
+        }
+        JsonObjectConst keys = a["keys"].as<JsonObjectConst>();
+        if (!a["keys"].isNull() && keys.isNull()) { err = "bad args: keys is a map, key name -> code"; return false; }
+        bool created = false;
+        if (!prof::save(name, set_link, link, keys, a["merge"] | true, err, created)) return false;
+        prof::Info p;
+        prof::find(name, p);
+        prof::Info cur;
+        if (!sel_prof.empty() && prof::find(sel_prof, cur) && cur.name == p.name) select_profile(p);   // its new link, if any
+        r["created"] = created;
+        prof::fill(p, r["profile"].to<JsonObject>());
+        logf("ir: profile %s saved (%u bytes)", p.name.c_str(), (unsigned)p.bytes);
+    } else if (action == "profile_delete") {
+        prof::Info p;
+        if (!prof::find(name, p)) { err = "no profile called " + name; return false; }
+        bool was = sel_prof == p.name;
+        if (!prof::remove(p.name, err)) return false;
+        if (was) set_local("");
+        r["deleted"] = p.name;
+    } else if (action == "profile_select") {
+        prof::Info p;
+        if (name.empty()) { err = "bad args: name is needed (profile_release lets the buttons go)"; return false; }
+        if (!prof::find(name, p)) { err = "no profile called " + name; return false; }
+        select_profile(p);
+    } else if (action == "profile_release") {
+        prof::Info p;
+        if (active_profile(p)) set_local("");
+    } else if (action == "profile_send") {
+        prof::Info p;
+        if (name.empty() ? !active_profile(p) : !prof::find(name, p)) {
+            err = name.empty() ? "bad args: name is needed (no profile is selected)" : "no profile called " + name;
+            return false;
+        }
+        std::string key = a["key"] | "";
+        int k = prof::key_id(key);
+        if (k < 0) { err = "bad args: key is one of " + prof::key_names(); return false; }
+        prof::Code c;
+        if (!prof::code(p, k, c, err)) return false;
+        ir::Sent s;
+        int repeats = a["repeats"] | 0;
+        bool ok = c.raw ? ir::send_raw(c.carrier, c.d, s, err) : ir::send_nec(c.address, c.command, repeats, s, err);
+        if (!ok) {
+            logf("ir: send failed: %s", err.c_str());
+            return false;
+        }
+        char b[96];
+        if (c.raw) snprintf(b, sizeof b, "%s %s: raw, %u durations at %u Hz", p.name.c_str(), key.c_str(), (unsigned)c.d.size(), (unsigned)c.carrier);
+        else snprintf(b, sizeof b, "%s %s: nec address 0x%0*X command 0x%02X", p.name.c_str(), key.c_str(), c.address > 0xFF ? 4 : 2, c.address, c.command);
+        r["sent"] = b;
+        r["pin"] = s.pin;
+        r["duration_us"] = s.duration_us;
+        r["carrier_hz"] = s.carrier_hz;
+        r["edges"] = (int)s.edges;
+        logf("ir: sent %s on GPIO %d", b, s.pin);
+        return true;
+    }
+    fill_profiles(r);
+    return true;
+}
+
 static bool cap_ir(JsonObjectConst a, JsonObject r, std::string& err) {
     std::string action = a["action"] | "";
     if (action == "pin" || action == "send") return cap_ir_led(action, a, r, err);
+    if (action == "profiles" || action.rfind("profile_", 0) == 0) {
+        if (action != "profiles" && action != "profile_save" && action != "profile_delete" && action != "profile_select" &&
+            action != "profile_release" && action != "profile_send") {
+            err = "bad args: the profile actions are profiles, profile_save, profile_delete, profile_select, profile_release, profile_send";
+            return false;
+        }
+        return cap_ir_profile(action, a, r, err);
+    }
     std::string code;
     if (!hex_bytes(a["code"] | "", code)) { err = "bad args: code is hex bytes"; return false; }
     std::vector<std::string> steps;
@@ -1060,7 +1320,7 @@ static bool cap_ir(JsonObjectConst a, JsonObject r, std::string& err) {
         steps = bt::ir_suppress(keys);
         if (action == "clear") bt::ir_forget_events();
     } else if (!action.empty() && action != "status") {
-        err = "bad args: action is pin, send, write, program, suppress or clear";
+        err = "bad args: action is pin, send, profiles, profile_save, profile_delete, profile_select, profile_release, profile_send, write, program, suppress or clear";
         return false;
     }
     r["ir_pin"] = ir::pin();
@@ -1105,6 +1365,10 @@ static void fill_devices(JsonObject r) {
     r["network"] = WiFi.SSID();
     r["scans"] = lan::scans();
     if (!local_id.empty()) r["selected"] = local_id;
+    JsonArray ps = r["profiles"].to<JsonArray>();
+    for (auto& p : prof::list()) prof::fill(p, ps.add<JsonObject>());
+    prof::Info act;
+    if (active_profile(act)) r["selected_profile"] = act.name;
 }
 
 static bool cap_scan(JsonObjectConst, JsonObject r, std::string& err) {
@@ -1355,7 +1619,7 @@ static void handle_line(const std::string& line) {
         ESP.restart();
     } else {
         out["ok"] = false;
-        out["error"] = "commands: status key wifi wifi.clear scan name enroll unenroll show names identify layout.set layout.reset targets rotate bt bt.pair bt.forget dev.scan devices dev update update.confirm reboot factory";
+        out["error"] = "commands: status key wifi wifi.clear scan name enroll unenroll show names identify layout.set layout.reset targets rotate bt bt.pair bt.forget ir dev.scan devices dev update update.confirm reboot factory";
     }
     reply(out);
 }
@@ -1658,7 +1922,17 @@ void setup() {
     });
     lan::begin([](const char* m) { logf("%s", m); });
     dev::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) { ui::flash(t); });
-    set_local(settings::kv("local"));
+    prof::begin();
+    ir::on_fail([](const std::string& err) {
+        logf("ir: send failed: %s", err.c_str());
+        ir_failed = err.rfind("no IR pin", 0) == 0 ? 1 : 2;
+    });
+    {
+        std::string irsel = settings::kv("irsel");     // set_local clears it
+        set_local(settings::kv("local"));
+        prof::Info p;
+        if (prof::find(irsel, p)) select_profile(p);
+    }
 
     const Enrollment& e = settings::enrollment();
     if (e.ok) {
@@ -1699,7 +1973,7 @@ void setup() {
             // IR-over-BLE writes wait on Bluetooth up to 90 s
             worker.on("remote.ir", cap_ir, true, [](JsonObjectConst a) -> uint32_t {
                 std::string act = a["action"] | "";
-                return act == "pin" || act == "send" ? 15000 : 120000;
+                return act == "pin" || act == "send" || act.rfind("profile", 0) == 0 ? 15000 : 120000;
             });
             worker.on("remote.wifi", cap_wifi);
             worker.on("remote.scan", cap_scan, true);
@@ -1792,6 +2066,23 @@ void loop() {
     while (bt::next_key(bt_key)) {
         ButtonEvent e{0, -1, bt_name_of(bt_key), "bt:" + bt_key, "press", 0, ms};
         on_button(e);
+    }
+    // A profile key held: its code goes on (bt::held is the raw name).
+    if (rep.key >= 0) {
+        if (mode != REMOTE || bt::held() != rep.raw || (int32_t)(ms - rep.until) >= 0) {
+            rep.key = -1;
+            rep.code = prof::Code();
+        } else if ((int32_t)(ms - rep.next) >= 0) {
+            if (rep.code.raw) ir::post(ir::POST_RAW, 0, 0, rep.code.carrier, &rep.code.d);
+            else ir::post(ir::POST_NEC_REPEAT, 0, 0, 0, nullptr);     // queue full: this one is skipped
+            rep.next += rep.every;
+            if ((int32_t)(ms - rep.next) >= 0) rep.next = ms + rep.every;
+        }
+    }
+    if (ir_failed) {
+        ui::flash(ir_failed == 1 ? "no IR\npin" : "IR\nfailed", 1000, false);
+        ir_failed = 0;
+        rep.key = -1;
     }
     // A key of the paired remote that means more when held: let go, or still down after HOLD_MS?
     if (guide_at) {
@@ -1935,7 +2226,14 @@ void loop() {
     if (lan::renames() != renames_seen) {            // a device got its MAC id: follow it (found by address)
         renames_seen = lan::renames();
         lan::Device d;
-        if (!local_id.empty() && lan::find(local_id, d) && d.id != local_id) set_local(d.id);
+        if (!local_id.empty() && lan::find(local_id, d) && d.id != local_id) {
+            std::string keep = sel_prof;                 // set_local lets the picked profile go
+            set_local(d.id);
+            prof::Info p;
+            if (prof::find(keep, p)) select_profile(p);
+        }
+        for (auto& p : prof::list())                      // profiles linked by address follow too
+            if (!p.link.empty() && lan::find(p.link, d) && d.id != p.link) prof::relink(p.name, d.id);
     }
     if (devs_pending && lan::scans() != devs_scans) {
         devs_pending = false;
@@ -1983,7 +2281,7 @@ void loop() {
 #endif
         ui::network(up ? std::string(WiFi.SSID().c_str()) : std::string());
         ui::status_line(1, bt::state() == "connected" ? "TV: B" : "TV:");
-        ui::status_line(2, local_id.empty() ? settings::target_name() : local_name);
+        ui::status_line(2, chosen_name());
         ota::tick(worker_on && worker.hub_ok());
         // Left alone: the screen goes dark, then Wi-Fi goes off too. Not while something is going on.
         if (mode == GAME || mode == TYPING || bt::voice_open() || ota::busy() || ui::asking() ||

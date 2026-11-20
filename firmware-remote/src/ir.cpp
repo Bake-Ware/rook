@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <driver/gpio.h>
+#include <new>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <soc/soc_caps.h>
@@ -251,6 +252,66 @@ bool send_nec(uint16_t address, uint8_t command, int repeats, Sent& s, std::stri
         frame = 9000 + 2250 + 560;
     }
     return transmit(38000, d, s, err);
+}
+
+bool send_nec_repeat(Sent& s, std::string& err) {
+    std::vector<uint32_t> d{9000, 2250, 560};
+    return transmit(38000, d, s, err);
+}
+
+// ---- the queue -------------------------------------------------------------------
+
+struct Post {
+    PostKind kind;
+    uint8_t command;
+    uint16_t address;
+    uint32_t carrier;
+    std::vector<uint32_t> d;
+};
+static QueueHandle_t posts;
+static void (*fail_)(const std::string&) = nullptr;
+
+void on_fail(void (*fail)(const std::string&)) { fail_ = fail; }
+
+static void post_task(void* arg) {
+    QueueHandle_t q = (QueueHandle_t)arg;
+    for (;;) {
+        Post* p = nullptr;
+        if (xQueueReceive(q, &p, portMAX_DELAY) != pdTRUE || !p) continue;
+        Sent s;
+        std::string err;
+        bool ok = p->kind == POST_NEC ? send_nec(p->address, p->command, 0, s, err)
+                : p->kind == POST_NEC_REPEAT ? send_nec_repeat(s, err)
+                : send_raw(p->carrier, p->d, s, err);
+        delete p;
+        if (!ok && fail_) fail_(err);
+    }
+}
+
+bool post(PostKind kind, uint16_t address, uint8_t command, uint32_t carrier_hz, const std::vector<uint32_t>* durations) {
+    if (!posts) {
+        // The task takes the queue as its argument: it runs at once (a step above the loop).
+        QueueHandle_t q = xQueueCreate(3, sizeof(Post*));
+        if (!q) return false;
+        if (xTaskCreate(post_task, "irtx", 3584, q, 2, nullptr) != pdPASS) {
+            vQueueDelete(q);
+            return false;
+        }
+        posts = q;
+    }
+    if (uxQueueSpacesAvailable(posts) == 0) return false;
+    Post* p = new (std::nothrow) Post();
+    if (!p) return false;
+    p->kind = kind;
+    p->address = address;
+    p->command = command;
+    p->carrier = carrier_hz;
+    if (durations) p->d = *durations;
+    if (xQueueSend(posts, &p, 0) != pdTRUE) {
+        delete p;
+        return false;
+    }
+    return true;
 }
 
 }  // namespace ir

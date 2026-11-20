@@ -58,6 +58,11 @@ void set_bt_names(const std::string& json);
 // Small named values other modules keep (keys of at most 15 characters).
 std::string kv(const char* key);
 void set_kv(const char* key, const std::string& value);
+// Small binary values (the IR profiles, prof.h). blob: false when there is none.
+bool blob(const char* key, std::string& out);
+bool set_blob(const char* key, const std::string& value);     // false: NVS is full
+void remove(const char* key);
+int nvs_free_entries();                        // 32 bytes each; -1: unknown
 
 void factory_reset();
 

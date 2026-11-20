@@ -35,5 +35,16 @@ bool set_pin(int pin, std::string& err, std::string& warn);
 bool send_nec(uint16_t address, uint8_t command, int repeats, Sent& s, std::string& err);
 // Durations in microseconds, alternately mark and space, starting with a mark.
 bool send_raw(uint32_t carrier_hz, const std::vector<uint32_t>& durations, Sent& s, std::string& err);
+// One NEC repeat frame (9000/2250/560): a key still held, sent 108 ms after
+// the start of the frame before it.
+bool send_nec_repeat(Sent& s, std::string& err);
+
+// The same sends, queued for a small task of their own (made at the first
+// post, from the main loop only; ~4 KB) so a key press never waits on the LED.
+// Three may wait; more are dropped (false). fail is called on that task with
+// a send's error.
+enum PostKind : uint8_t { POST_NEC, POST_NEC_REPEAT, POST_RAW };
+bool post(PostKind kind, uint16_t address, uint8_t command, uint32_t carrier_hz, const std::vector<uint32_t>* durations);
+void on_fail(void (*fail)(const std::string& err));
 
 }  // namespace ir
