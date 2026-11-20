@@ -1,0 +1,131 @@
+# Recall questions for comparing embedding models (`compare-models`). An item recalled counts as
+# relevant when its text contains every word of one of the `relevant` groups (lower case). A
+# question with no groups should recall nothing: anything it turns up is noise.
+
+[[question]]
+text = "Where does the photo library backup go, and when does it run?"
+relevant = [["cachyrig"], ["backup"]]
+
+[[question]]
+text = "Can you run a backup of the photo library tonight? Where will it go?"
+relevant = [["cachyrig"], ["backup"]]
+
+[[question]]
+text = "What wake word am I using these days?"
+relevant = [["wake word"], ["push to talk"]]
+
+[[question]]
+text = "Is Starscream back?"
+relevant = [["starscream"]]
+
+[[question]]
+text = "Is the old NAS still around?"
+relevant = [["nas"]]
+
+[[question]]
+text = "Do I want reports as PDFs?"
+relevant = [["pdf"]]
+
+[[question]]
+text = "When does the morning digest go out?"
+relevant = [["digest"]]
+
+[[question]]
+text = "When does the weekly report go out now?"
+relevant = [["weekly report"], ["report job"]]
+
+[[question]]
+text = "What's my dashboard supposed to show?"
+relevant = [["dashboard"]]
+
+[[question]]
+text = "Where are the old camera clips kept?"
+relevant = [["clip"]]
+
+[[question]]
+text = "Where does the guest wifi password live?"
+relevant = [["wifi"]]
+
+[[question]]
+text = "Who is my dentist?"
+relevant = []
+
+[[question]]
+text = "What's the weather like tomorrow?"
+relevant = []
+
+[[question]]
+text = "How old is my car?"
+relevant = []
+
+# --- said in other words: the question shares few or no words with what was said ---
+
+[[question]]
+text = "Is the kitchen speaker still always listening?"
+relevant = [["wake word"], ["push to talk"]]
+other_words = true
+
+[[question]]
+text = "How do I get Rook's attention these days?"
+relevant = [["wake word"], ["push to talk"]]
+other_words = true
+
+[[question]]
+text = "Where do my pictures get copied to overnight?"
+relevant = [["cachyrig", "photo"]]
+other_words = true
+
+[[question]]
+text = "Is that old server we retired in the winter available again?"
+relevant = [["starscream"]]
+other_words = true
+
+[[question]]
+text = "Which screen colours do I prefer?"
+relevant = [["dark"]]
+other_words = true
+
+[[question]]
+text = "What time does the daily summary arrive?"
+relevant = [["digest"]]
+other_words = true
+
+[[question]]
+text = "How are the log files kept small?"
+relevant = [["zstd"], ["compress"]]
+other_words = true
+
+[[question]]
+text = "How often do the logs get rolled over?"
+relevant = [["rotat"]]
+other_words = true
+
+[[question]]
+text = "Which scanner does the inventory sweep run?"
+relevant = [["nmap"]]
+other_words = true
+
+[[question]]
+text = "Where is the code for visitors' internet kept?"
+relevant = [["wifi"]]
+other_words = true
+
+[[question]]
+text = "Where did the security camera recordings end up?"
+relevant = [["clip"]]
+other_words = true
+
+[[question]]
+text = "Can the visitors' network share the main network segment?"
+relevant = [["vlan"]]
+other_words = true
+
+[[question]]
+text = "Is the network storage box still in service?"
+relevant = [["nas"]]
+other_words = true
+
+[[question]]
+text = "Which day is the weekly summary produced?"
+relevant = [["monday"]]
+other_words = true

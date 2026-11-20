@@ -1,0 +1,100 @@
+# Round four: ways of asking about things already held, in words the stored text does not use.
+# `heal-test` asks each cold (recall only), then live (the house agent may search in its own words),
+# dreams, and asks again. relevant: an item counts as found when its text has every word of one group.
+
+[[question]]
+text = "Is the kitchen speaker still always listening?"
+relevant = [["push to talk"], ["wake word"]]
+[[question]]
+text = "How do I get Rook's attention these days?"
+relevant = [["push to talk"], ["wake word"]]
+[[question]]
+text = "Do I still have to say the magic phrase before asking something?"
+relevant = [["push to talk"], ["wake word"]]
+[[question]]
+text = "Does the speaker in the kitchen react to the telly?"
+relevant = [["tv"], ["wake word"]]
+[[question]]
+text = "Where do my pictures get copied to overnight?"
+relevant = [["cachyrig"]]
+[[question]]
+text = "Which box keeps the copies of my photos?"
+relevant = [["cachyrig"]]
+[[question]]
+text = "Is that old server we retired in the winter available again?"
+relevant = [["starscream"]]
+[[question]]
+text = "Can the backup go to the machine we shut down in February?"
+relevant = [["starscream"]]
+[[question]]
+text = "Is the network storage box still in service?"
+relevant = [["nas"]]
+[[question]]
+text = "Can I put files on the storage appliance we used to have?"
+relevant = [["nas"]]
+[[question]]
+text = "Which screen colours do I prefer?"
+relevant = [["dark"]]
+[[question]]
+text = "Should the control panel be bright or dim at night?"
+relevant = [["dark"]]
+[[question]]
+text = "What theme is the tablet in the kitchen using?"
+relevant = [["light", "tablet"]]
+[[question]]
+text = "What time does the daily summary arrive?"
+relevant = [["digest"]]
+[[question]]
+text = "When does my morning briefing land?"
+relevant = [["digest"]]
+[[question]]
+text = "How are the log files kept small?"
+relevant = [["zstd"], ["compress"]]
+[[question]]
+text = "How often do the logs get rolled over?"
+relevant = [["rotat"]]
+[[question]]
+text = "Which scanner does the inventory sweep run?"
+relevant = [["nmap"]]
+[[question]]
+text = "What tool maps the devices on the network each week?"
+relevant = [["nmap"], ["sweep"]]
+[[question]]
+text = "Where is the code for visitors' internet kept?"
+relevant = [["wifi"]]
+[[question]]
+text = "How often does the password for guests change?"
+relevant = [["wifi"]]
+[[question]]
+text = "Where did the security camera recordings end up?"
+relevant = [["clip"]]
+[[question]]
+text = "Can the visitors' network share the main network segment?"
+relevant = [["vlan"]]
+[[question]]
+text = "Are guests allowed on the same LAN as my own machines?"
+relevant = [["vlan"], ["guest network"]]
+[[question]]
+text = "Which day is the weekly summary produced?"
+relevant = [["monday"]]
+[[question]]
+text = "When does the nightly copy job kick off?"
+relevant = [["03:00"]]
+[[question]]
+text = "Who decided when the nightly copy runs?"
+relevant = [["03:00"], ["backup agent"]]
+[[question]]
+text = "Should you bother me about the garden watering?"
+relevant = [["sprinkler"]]
+[[question]]
+text = "Do I want my documents in a printable format?"
+relevant = [["pdf"]]
+[[question]]
+text = "What's the big screen in the hall meant to display?"
+relevant = [["dashboard"]]
+[[question]]
+text = "Is the hall display meant to show the family schedule?"
+relevant = [["calendar"]]
+[[question]]
+text = "What happened with the archive export for the cameras?"
+relevant = [["clip"], ["camera"]]

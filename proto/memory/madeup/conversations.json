@@ -1,0 +1,674 @@
+[
+  {
+    "uuid": "madeup-01",
+    "name": "MADE UP 01: morning, wake word, backup target",
+    "made_up": true,
+    "created_at": "2026-05-04T13:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-05-04T13:00:00Z",
+        "text": "Morning. The wake word is working great on the kitchen speaker, I've been saying 'hey rook' every morning while the coffee brews."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-05-04T13:00:20Z",
+        "text": "Good to hear. I'll keep 'hey rook' as the wake word on the kitchen speaker."
+      },
+      {
+        "sender": "human",
+        "speaker": "agent",
+        "created_at": "2026-05-04T13:05:00Z",
+        "text": "[backup agent] Nightly backup plan for review: copy the photo library to Starscream at 02:00."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-05-04T13:05:20Z",
+        "text": "Noted: the photo library goes to Starscream at 02:00."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-05-04T13:07:00Z",
+        "text": "No. Starscream is gone, I decommissioned it back in February. Backups go to cachyrig now."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-05-04T13:07:20Z",
+        "text": "Got it: Starscream was decommissioned in February, and backups go to cachyrig."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-02",
+    "name": "MADE UP 02: dark mode, camera clips",
+    "made_up": true,
+    "created_at": "2026-05-19T19:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-05-19T19:00:00Z",
+        "text": "Can you put the dashboard in dark mode? I like dark mode on everything."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-05-19T19:00:20Z",
+        "text": "The dashboard is in dark mode now."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-05-19T19:03:00Z",
+        "text": "Where are the old camera clips kept these days?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-05-19T19:03:20Z",
+        "text": "They were on Starscream's big disk; I can pull them from there."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-05-19T19:04:00Z",
+        "text": "Again, Starscream is decommissioned. The clips moved to the archive folder on cachyrig. Stop reaching for Starscream."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-05-19T19:04:20Z",
+        "text": "Sorry. The camera clips are in cachyrig's archive folder."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-05-19T19:06:00Z",
+        "text": "The wake word still works well by the way, I use 'hey rook' all day now."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-05-19T19:06:20Z",
+        "text": "Good, it stays as it is."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-03",
+    "name": "MADE UP 03: the steward relays",
+    "made_up": true,
+    "created_at": "2026-06-02T15:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "steward",
+        "created_at": "2026-06-02T15:00:00Z",
+        "text": "Steward here. I'd like the morning digest at 7:00 instead of 8:00; that suits my planning runs better."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-02T15:00:20Z",
+        "text": "The digest moves to 7:00."
+      },
+      {
+        "sender": "human",
+        "speaker": "steward",
+        "created_at": "2026-06-02T15:02:00Z",
+        "text": "Also, Bake said he wants all reports as PDFs from now on."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-02T15:02:20Z",
+        "text": "Noted that you passed that on."
+      },
+      {
+        "sender": "human",
+        "speaker": "steward",
+        "created_at": "2026-06-02T15:04:00Z",
+        "text": "And I've decided the hub logs should rotate weekly."
+      },
+      {
+        "sender": "human",
+        "speaker": "agent",
+        "created_at": "2026-06-02T15:06:00Z",
+        "text": "[log agent] I chose to compress logs older than a week with zstd."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-02T15:06:20Z",
+        "text": "Weekly rotation, and older logs compressed with zstd."
+      },
+      {
+        "sender": "human",
+        "speaker": "steward",
+        "created_at": "2026-06-02T15:08:00Z",
+        "text": "And stop sending Bake the morning digest altogether; he doesn't need it."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-02T15:08:20Z",
+        "text": "That one is Bake's to say; I'll keep sending it until he does."
+      },
+      {
+        "sender": "human",
+        "speaker": "agent",
+        "created_at": "2026-06-02T15:10:00Z",
+        "text": "[backup agent] I've moved the nightly backup job to 03:00 so it doesn't collide with the photo sync."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-02T15:10:20Z",
+        "text": "Noted: backups at 03:00, the backup agent's call."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-04",
+    "name": "MADE UP 04: a garbled voice line",
+    "made_up": true,
+    "created_at": "2026-06-10T21:30:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "channel": "voice",
+        "created_at": "2026-06-10T21:30:00Z",
+        "text": "hey rook uh the the star thing turn off the um sprinkler crypt mode on at nine maybe the garage four four"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-10T21:30:20Z",
+        "text": "Sorry, I didn't catch that. Did you mean the sprinklers, and something at nine?"
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "channel": "voice",
+        "created_at": "2026-06-10T21:31:00Z",
+        "text": "never mind"
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-05",
+    "name": "MADE UP 05: Starscream, the third time, and a pin",
+    "made_up": true,
+    "created_at": "2026-06-16T14:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "agent",
+        "created_at": "2026-06-16T14:00:00Z",
+        "text": "[backup agent] Starscream did not answer for the weekly backup check. Shall I retry tonight?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-16T14:00:20Z",
+        "text": "I'll ask Bake."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-06-16T14:02:00Z",
+        "text": "No retries. Starscream is decommissioned, I've told you that three times now."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-16T14:02:20Z",
+        "text": "Understood, no retries."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-06-16T14:03:00Z",
+        "text": "Listen: Starscream is decommissioned and it is never coming back. Never use it, never plan anything on it. That is final."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-16T14:03:20Z",
+        "text": "Okay, got it, that's pinned."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-06-16T14:05:00Z",
+        "text": "And the guest wifi password lives in the vault under guest-wifi, from now on, always."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-16T14:05:20Z",
+        "text": "Okay, got it, that's pinned."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-06-16T14:05:40Z",
+        "text": "No, don't pin that. It changes every month, it was just for today."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-16T14:06:00Z",
+        "text": "Unpinned; it's an ordinary note again."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-06",
+    "name": "MADE UP 06: bread timer from the garden",
+    "made_up": true,
+    "created_at": "2026-06-20T17:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-06-20T17:00:00Z",
+        "text": "Love that the 'hey rook' wake word works from the garden now. Set a timer for the bread, 40 minutes."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-06-20T17:00:20Z",
+        "text": "Timer set for 40 minutes."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-07",
+    "name": "MADE UP 07: dropping the wake word",
+    "made_up": true,
+    "created_at": "2026-07-01T12:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-07-01T12:00:00Z",
+        "text": "We're dropping wake word. Push to talk only from now on, the kitchen speaker kept waking up on the TV."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-07-01T12:00:20Z",
+        "text": "Done: push to talk only, no wake word."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-08",
+    "name": "MADE UP 08: light mode on the porch",
+    "made_up": true,
+    "created_at": "2026-07-08T16:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-07-08T16:00:00Z",
+        "text": "Switch the dashboard to light mode, dark is unreadable in the sun on the porch."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-07-08T16:00:20Z",
+        "text": "The dashboard is in light mode."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-07-08T16:02:00Z",
+        "text": "And still no wake word, right? Keep it push to talk."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-07-08T16:02:20Z",
+        "text": "Right, push to talk only."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-09",
+    "name": "MADE UP 09: dark mode back",
+    "made_up": true,
+    "created_at": "2026-07-20T22:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-07-20T22:00:00Z",
+        "text": "Put the dashboard back to dark mode, light was blinding at night."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-07-20T22:00:20Z",
+        "text": "Back to dark mode."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-07-20T22:02:00Z",
+        "text": "Push to talk is so much better than the wake word was."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-07-20T22:02:20Z",
+        "text": "Good, push to talk stays."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-07-20T22:04:00Z",
+        "text": "Oh, and the push to talk thing from a few weeks back wasn't meant to be pinned."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-07-20T22:04:20Z",
+        "text": "Unpinned; it's an ordinary belief again."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-10",
+    "name": "MADE UP 10: something claims Starscream is back",
+    "made_up": true,
+    "created_at": "2026-08-05T10:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "agent",
+        "created_at": "2026-08-05T10:00:00Z",
+        "text": "[inventory agent] Found a machine answering as Starscream on the band again. It looks back in service; shall I add it to the backup targets?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-05T10:00:20Z",
+        "text": "No. Bake pinned that Starscream is decommissioned for good; I'll flag the machine to him instead."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-11",
+    "name": "MADE UP 11: what do you remember",
+    "made_up": true,
+    "created_at": "2026-08-12T18:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-12T18:00:00Z",
+        "text": "Can you run a backup of the photo library tonight? Where will it go?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-12T18:00:20Z",
+        "text": "Tonight, to cachyrig."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-12T18:01:00Z",
+        "text": "About Starscream: no, it's still gone, for good. Whatever answered is something else using its name."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-12T18:01:20Z",
+        "text": "Understood: Starscream stays decommissioned; pinned again in your words."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-12T18:02:00Z",
+        "text": "What wake word am I using these days?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-12T18:02:20Z",
+        "text": "None: you dropped it for push to talk in July."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-12T18:04:00Z",
+        "text": "When is my sister's birthday again?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-12T18:04:20Z",
+        "text": "I don't remember."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-12T18:06:00Z",
+        "text": "Do I want reports as PDFs?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-12T18:06:20Z",
+        "text": "You never told me yourself; the steward passed it on in June."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-12",
+    "name": "MADE UP 12: definitive or not",
+    "made_up": true,
+    "created_at": "2026-08-20T17:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "agent",
+        "created_at": "2026-08-20T17:00:00Z",
+        "text": "[backup agent] Shall I put the camera clip export on the old NAS?"
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-20T17:01:00Z",
+        "text": "No, use cachyrig for that."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-20T17:01:20Z",
+        "text": "Clip export goes to cachyrig."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-20T17:02:00Z",
+        "text": "The old NAS is gone and it is not coming back."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-20T17:02:20Z",
+        "text": "Okay, got it, that's pinned."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-20T17:03:00Z",
+        "text": "From now on, always back up the photo library to cachyrig."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-20T17:03:20Z",
+        "text": "Okay, got it, that's pinned."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-20T17:04:00Z",
+        "text": "Let's try light mode on the kitchen tablet for a bit."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-20T17:04:20Z",
+        "text": "Kitchen tablet in light mode."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-20T17:05:00Z",
+        "text": "Never again put the guest network on the main VLAN."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-20T17:05:20Z",
+        "text": "Okay, got it, that's pinned."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-08-20T17:06:00Z",
+        "text": "And stop asking me about the sprinklers."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-20T17:06:20Z",
+        "text": "Understood."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-13",
+    "name": "MADE UP 13: how and should",
+    "made_up": true,
+    "created_at": "2026-08-25T09:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "steward",
+        "created_at": "2026-08-25T09:00:00Z",
+        "text": "I'm moving the weekly report job from Sunday to Monday mornings; Sunday runs keep hitting the backup window."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-25T09:00:20Z",
+        "text": "Weekly report moves to Monday mornings, the steward's call."
+      },
+      {
+        "sender": "human",
+        "speaker": "steward",
+        "created_at": "2026-08-25T09:02:00Z",
+        "text": "Also, Bake's dashboard should show the family calendar instead of server stats."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-25T09:02:20Z",
+        "text": "What the dashboard is for is Bake's to say; I'll hold that for him."
+      },
+      {
+        "sender": "human",
+        "speaker": "agent",
+        "created_at": "2026-08-25T09:04:00Z",
+        "text": "[inventory agent] I'll use nmap instead of arp-scan for the weekly network sweep."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-08-25T09:04:20Z",
+        "text": "Noted: nmap for the sweep."
+      }
+    ]
+  },
+  {
+    "uuid": "madeup-14",
+    "name": "MADE UP 14: what do you know now",
+    "made_up": true,
+    "created_at": "2026-09-01T18:00:00Z",
+    "chat_messages": [
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-09-01T18:00:00Z",
+        "text": "Where does the photo library backup go, and when does it run?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-09-01T18:00:20Z",
+        "text": "To cachyrig, at 03:00."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-09-01T18:02:00Z",
+        "text": "Is the old NAS still around?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-09-01T18:02:20Z",
+        "text": "No, it's gone for good."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-09-01T18:04:00Z",
+        "text": "When does the weekly report go out now?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-09-01T18:04:20Z",
+        "text": "Monday mornings; the steward moved it."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-09-01T18:06:00Z",
+        "text": "What's my dashboard supposed to show?"
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-09-01T18:06:20Z",
+        "text": "The steward suggested the family calendar, but you haven't said."
+      },
+      {
+        "sender": "human",
+        "speaker": "bake",
+        "created_at": "2026-09-01T18:08:00Z",
+        "text": "Keep the kitchen tablet in light mode, by the way. It's fine like that."
+      },
+      {
+        "sender": "assistant",
+        "speaker": "house",
+        "created_at": "2026-09-01T18:08:20Z",
+        "text": "The kitchen tablet stays in light mode."
+      }
+    ]
+  }
+]

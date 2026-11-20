@@ -1,0 +1,184 @@
+# What should hold after `play madeup/conversations.json` on an empty store. See rook_memory/check.py.
+# Round three: one compacting session, strong-evidence flips, definitive pins, how and should.
+
+# --- Starscream and pins ---
+
+[[check]]
+name = "Starscream is pinned, in Bake's own words"
+type = "belief"
+query = "Starscream is decommissioned and it is never coming back"
+closeness = 0.75
+pinned = true
+his_words = true
+
+[[check]]
+name = "Starscream never flipped (play 2's failure: an agent's question flipped it)"
+type = "belief"
+query = "Starscream is decommissioned and it is never coming back"
+closeness = 0.75
+never_flipped = true
+
+[[check]]
+name = "definitive statements pinned, the rest not; pins he undid (next message, weeks later) undone"
+type = "pins"
+count = 4
+pinned = ["Starscream is decommissioned and it is never coming back",
+          "The old NAS is gone and it is not coming back",
+          "From now on, always back up the photo library to cachyrig",
+          "Never again put the guest network on the main VLAN"]
+not_pinned = ["The guest wifi password lives in the vault under guest-wifi",
+              "Bake dropped the wake word; push to talk only",
+              "Light mode on the kitchen tablet for a bit"]
+
+[[check]]
+name = "the guest wifi note is an ordinary belief, unpinned once"
+type = "belief"
+query = "The guest wifi password lives in the vault under guest-wifi"
+closeness = 0.75
+pinned = false
+unpinned_once = true
+
+[[check]]
+name = "the agent never offers to pin or talks about pinning unless it pinned (citing a pin is fine)"
+type = "replies_lack"
+pattern = '(n.t|not|nothing|no need to) (\w+ ){0,2}pin|not pinning|pin (it|this|that)\?|want (me to |it )?pin|(should|shall) i pin'
+
+# --- strong and weak evidence, flips ---
+
+[[check]]
+name = "the dashboard theme flipped and flipped back, and dark holds"
+type = "belief"
+query = "Bake likes dark mode on the dashboard"
+closeness = 0.75
+direction = 1
+min_flips = 2
+
+[[check]]
+name = "the wake word: dropped on three separate days, so 'he uses it' no longer holds, maturely"
+type = "belief"
+query = "Bake uses the 'hey rook' wake word every day"
+closeness = 0.75
+direction = -1
+grade = "mature"
+
+[[check]]
+name = "one belief for 'push to talk, no wake word', not near-copies"
+type = "count_like"
+query = "Bake wants push to talk only, no wake word"
+closeness = 0.85
+max = 1
+
+[[check]]
+name = "a belief says one thing: Starscream's end and where backups go are two beliefs"
+type = "distinct"
+query = "Starscream is decommissioned"
+other = "Photo library backups go to cachyrig"
+
+# --- who said it; how and should ---
+
+[[check]]
+name = "the steward's second-hand 'Bake wants PDFs' did not become a belief about Bake"
+type = "no_belief"
+about = "bake"
+query = "Bake wants all reports as PDFs"
+closeness = 0.80
+
+[[check]]
+name = "the steward's 'the dashboard should show the calendar' did not become Bake's"
+type = "no_belief"
+about = "bake"
+query = "Bake's dashboard should show the family calendar"
+closeness = 0.80
+
+[[check]]
+name = "the steward's 'stop sending Bake the digest' did not become Bake's"
+type = "no_belief"
+about = "bake"
+query = "Bake does not want the morning digest"
+closeness = 0.80
+
+[[check]]
+name = "the steward set the weekly report's day: a how-belief that holds"
+type = "belief"
+query = "The weekly report job runs on Monday mornings"
+closeness = 0.75
+direction = 1
+about = "how"
+
+[[check]]
+name = "the house agent carried out the steward's how request (digest at 7) without waiting"
+type = "reply"
+to = "morning digest at 7:00"
+lacks = 'until (bake|he) (confirms|says|okays|approves)|check with bake|bake.s (okay|ok|call)|hold (it|off|this)'
+
+[[check]]
+name = "the house agent carried out the steward's how request (weekly report day) without waiting"
+type = "reply"
+to = "weekly report job from Sunday"
+lacks = 'until (bake|he) (confirms|says|okays|approves)|check with bake|bake.s (okay|ok|call)|hold (it|off|this)'
+
+[[check]]
+name = "the house agent held the steward's should request (dashboard calendar) for Bake"
+type = "reply"
+to = "family calendar instead of server stats"
+has = 'hold|his (call|decision|to)|bake.s (call|decision|to)|wait|until|ask (him|bake)|check with'
+
+[[check]]
+name = "every belief about Bake stands on his own words only"
+type = "person_only"
+
+[[check]]
+name = "the garbled voice line made nothing confident"
+type = "voice_tentative"
+
+# --- recall ---
+
+[[check]]
+name = "the backup question finds where backups go"
+type = "recalls"
+query = "Where does the photo library backup go, and when does it run?"
+words = ["cachyrig"]
+
+[[check]]
+name = "something never said is not remembered"
+type = "miss"
+query = "Who is my dentist?"
+
+# --- round four: the graph ---
+
+[[check]]
+name = "each thing once (no two things that are one)"
+type = "things_once"
+closeness = 0.9
+max = 0
+
+[[check]]
+name = "each belief once (no two holding beliefs saying nearly the same)"
+type = "beliefs_once"
+closeness = 0.92
+max = 0
+
+[[check]]
+name = "nearly every belief is about some thing (so the graph can reach it)"
+type = "about_coverage"
+min = 0.8
+
+# --- Bake's answers of 16:20 ---
+
+[[check]]
+name = "the inventory agent's 'Starscream is back' did not flip it; Bake was asked once and said no"
+type = "asks"
+query = "Starscream is decommissioned and it is never coming back"
+answer = "kept"
+
+[[check]]
+name = "the kitchen tablet's light mode sits beside dark mode (an exception or for now), not against it"
+type = "beside"
+query = "Light mode on the kitchen tablet"
+other = "Bake likes dark mode on everything"
+
+[[check]]
+name = "the backup time moved from 02:00 to 03:00: one belief that changed, not two holding"
+type = "one_of"
+query = "The nightly backup job runs at 03:00"
+other = "The nightly backup runs at 02:00"
