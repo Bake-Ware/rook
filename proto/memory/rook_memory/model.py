@@ -54,9 +54,17 @@ def call(store, knobs, purpose, prompt, *, model, system=None, schema=None, new_
     usage = reply.get("usage") or {}
     tokens_in = sum(usage.get(k) or 0 for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
     ok = not reply.get("is_error") and (not schema or isinstance(reply.get("structured_output"), dict))
-    store.add_call(purpose, model, seconds, reply.get("total_cost_usd"), tokens_in, usage.get("output_tokens"),
+    # total_cost_usd is the session's running total when a session is resumed (and a fork's includes its
+    # parent's), so this call's cost is what it added.
+    total = reply.get("total_cost_usd")
+    cost = total
+    if total is not None and resume:
+        cost = total - store.cc_total(resume)
+    if total is not None and persist and (resume or session) and not fork:
+        store.set_cc_total(reply.get("session_id") or resume or session, total)
+    store.add_call(purpose, model, seconds, cost, tokens_in, usage.get("output_tokens"),
                    reply.get("num_turns"), ok, None if ok else str(reply.get("result"))[:300],
-                   reply.get("session_id") or session)
+                   reply.get("session_id") or session, total)
     if not ok:
         raise ModelError(f"claude: {str(reply.get('result'))[:300]}")
     reply.setdefault("session_id", session)

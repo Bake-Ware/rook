@@ -1,8 +1,15 @@
-# House agent memory: prototype, round two (not for merge)
+# House agent memory: prototype (not for merge)
 
-A standalone prototype of the house agent's memory, rebuilt around Bake's answers of 20 November
-(brief MEM2). Not wired into Rookie, the hub, any plugin or the beta. Round one's code is in git at
-b5c364a3 and its findings in [REPORT.md](REPORT.md); round two's findings are in [REPORT2.md](REPORT2.md).
+A standalone prototype of the house agent's memory (briefs MEM1 to MEM3). Not wired into Rookie,
+the hub, any plugin or the beta. Findings: round one [REPORT.md](REPORT.md) (its code is in git at
+b5c364a3), round two [REPORT2.md](REPORT2.md), round three [REPORT3.md](REPORT3.md).
+
+Round three added: strong evidence flips and weak does not (`flip_at`); a definitive statement pins
+and the pin keeps his words; how (the steward and agents decide) versus should (only Bake); one
+house session that dreams and compacts between days; opposites behind a knob; a same/opposite check
+before any new belief; and six searches to choose from (`search.model`: bge-small, bge-base, the
+static tables blink-8M and potion-base-8M, keyword over SQLite full-text with the dream's other
+wordings, and hybrid).
 
 ## Shape
 
@@ -33,8 +40,10 @@ b5c364a3 and its findings in [REPORT.md](REPORT.md); round two's findings are in
 
 ## Run it
 
-Python 3.11 or newer with numpy (cachyrig's `python3` has it), and Claude Code signed in. From this
-folder:
+Python 3.11 or newer with numpy, and Claude Code signed in. cachyrig's system numpy uses reference
+BLAS and embeds about eleven times slower, so use a numpy wheel: `uv venv ~/.rook-memory-proto/venv
+&& VIRTUAL_ENV=~/.rook-memory-proto/venv uv pip install numpy`, then run with that venv's `python`
+(written `python3` below). From this folder:
 
 ```sh
 python3 -m rook_memory play madeup/conversations.json   # live turns + a dream after each conversation
@@ -47,11 +56,18 @@ python3 -m rook_memory pin "Starscream is gone for good" ; python3 -m rook_memor
 python3 -m rook_memory take EXPORT.zip --list           # a Claude data export
 python3 -m rook_memory take EXPORT.zip --pick NAME --dream
 python3 -m rook_memory dream [SESSION] [--all]
-python3 -m rook_memory cases                            # the three score cases with these knobs
+python3 -m rook_memory cases                            # what flips, and the score cases, with these knobs
+python3 -m rook_memory repeat 5 --into DIR [--replay]   # five plays at once, then how often each check failed
+python3 -m rook_memory tally DIR/run-*                  # the same tally for stores already played
+python3 -m rook_memory compare-models bge-small blink-8M keyword   # misses, noise, time on the recall questions
+python3 -m rook_memory opposites                        # pairs marked as opposites, knob off and on
+python3 -m rook_memory bench blink-8M                   # load, search and embed times, peak memory
+tools/vm-bench.sh PYTHON > results.jsonl                # the same under the Oracle free-VM shapes (systemd scopes)
 python3 -m rook_memory reset
 ```
 
-`--store DIR` (default `~/.rook-memory-proto`) and `--knobs FILE` go before the command.
+`--store DIR` (default `~/.rook-memory-proto`), `--knobs FILE` and `--set section.key=value` go
+before the command.
 
 For compaction, a PreCompact hook in the house agent's Claude Code settings would run
 `python3 -m rook_memory hook` (it reads the hook's JSON on stdin and dreams that session). Nothing

@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS episodes (
 CREATE TABLE IF NOT EXISTS beliefs (
     id INTEGER PRIMARY KEY,
     text TEXT NOT NULL,
-    about TEXT NOT NULL,           -- bake (his wishes), world, steward, agent, other
+    about TEXT NOT NULL,           -- bake (a "should": his wishes, preferences, goals), how, world
+    wordings TEXT,                 -- JSON: other ways of saying it, written by the dream (keyword search finds by them)
     made_at TEXT NOT NULL,
     last_used TEXT,
     dream INTEGER                  -- null when a pin made it
@@ -72,6 +73,21 @@ CREATE TABLE IF NOT EXISTS pins (
     at TEXT NOT NULL,
     entry INTEGER,                 -- his message it came from
     words TEXT
+);
+CREATE TABLE IF NOT EXISTS opposites (
+    a INTEGER NOT NULL, b INTEGER NOT NULL,          -- a < b
+    at TEXT NOT NULL, by TEXT NOT NULL,              -- 'dream N' or 'same check, dream N'
+    PRIMARY KEY (a, b)
+);
+CREATE TABLE IF NOT EXISTS belief_texts (            -- earlier wordings of a belief (a pin rewords it)
+    id INTEGER PRIMARY KEY, belief INTEGER NOT NULL, text TEXT NOT NULL, until TEXT NOT NULL, why TEXT
+);
+CREATE TABLE IF NOT EXISTS turns (
+    id INTEGER PRIMARY KEY, session INTEGER NOT NULL, entry INTEGER NOT NULL, reply INTEGER,
+    at TEXT NOT NULL, recalled TEXT       -- JSON list of the tags the turn was given (null: no memory)
+);
+CREATE TABLE IF NOT EXISTS compactions (
+    id INTEGER PRIMARY KEY, session INTEGER NOT NULL, at TEXT NOT NULL, summary TEXT
 );
 CREATE TABLE IF NOT EXISTS vectors (
     kind TEXT NOT NULL, ref INTEGER NOT NULL, model TEXT NOT NULL, vec BLOB NOT NULL,
@@ -99,8 +115,11 @@ CREATE TABLE IF NOT EXISTS calls (
     id INTEGER PRIMARY KEY,
     at TEXT NOT NULL, purpose TEXT NOT NULL, model TEXT, cc_session TEXT,
     seconds REAL, cost_usd REAL, input_tokens INTEGER, output_tokens INTEGER, turns INTEGER,
-    ok INTEGER NOT NULL, note TEXT
+    ok INTEGER NOT NULL, note TEXT,
+    reported_total REAL            -- Claude Code's total_cost_usd: for a resumed or forked session it is
+                                   -- the session's running total, so cost_usd is this call's share of it
 );
+CREATE TABLE IF NOT EXISTS cc_totals (cc_session TEXT PRIMARY KEY, total REAL NOT NULL);
 """
 
 
@@ -126,6 +145,10 @@ class Store:
         self.db = sqlite3.connect(self.path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        try:   # stores from before round three's keyword search
+            self.db.execute("ALTER TABLE beliefs ADD COLUMN wordings TEXT")
+        except sqlite3.OperationalError:
+            pass
 
     def close(self):
         self.db.close()
@@ -171,15 +194,33 @@ class Store:
                         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", session, text, said_by, channel, kind,
                         json.dumps(list(entries)), stamp(happened_at), at or now(), dream)
 
-    def add_belief(self, text, about, dream=None, at=None):
-        return self.run("INSERT INTO beliefs (text, about, made_at, dream) VALUES (?, ?, ?, ?)",
-                        text, about, at or now(), dream)
+    def add_belief(self, text, about, dream=None, at=None, wordings=None):
+        return self.run("INSERT INTO beliefs (text, about, made_at, dream, wordings) VALUES (?, ?, ?, ?, ?)",
+                        text, about, at or now(), dream, json.dumps(wordings) if wordings else None)
 
     def add_link(self, belief, episode, stance, strength, occasion, dream=None, why=None, note=None, at=None):
         ep = self.one("SELECT happened_at FROM episodes WHERE id = ?", episode)
         return self.run("INSERT INTO links (belief, episode, stance, strength, at, occasion, made_at, dream, why, note)"
                         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", belief, episode, 1 if stance > 0 else -1,
                         strength, ep["happened_at"], occasion, at or now(), dream, why, note)
+
+    def reword(self, belief, text, at, why):
+        old = self.one("SELECT text FROM beliefs WHERE id = ?", belief)["text"]
+        if old == text:
+            return
+        self.run("INSERT INTO belief_texts (belief, text, until, why) VALUES (?, ?, ?, ?)", belief, old, at, why)
+        self.run("UPDATE beliefs SET text = ? WHERE id = ?", text, belief)
+        self.run("DELETE FROM vectors WHERE kind = 'belief' AND ref = ?", belief)
+
+    def mark_opposites(self, a, b, at, by):
+        if a == b:
+            return
+        a, b = min(a, b), max(a, b)
+        self.run("INSERT OR IGNORE INTO opposites (a, b, at, by) VALUES (?, ?, ?, ?)", a, b, at, by)
+
+    def opposites(self, belief):
+        return [r["b"] if r["a"] == belief else r["a"]
+                for r in self.all("SELECT * FROM opposites WHERE a = ? OR b = ?", belief, belief)]
 
     def links(self, belief):
         return self.all("SELECT l.*, e.text AS episode_text, e.said_by, e.kind, e.channel, e.session"
@@ -230,7 +271,15 @@ class Store:
         self.run("UPDATE dreams SET finished_at = ?, facts = ?, links = ?, new_beliefs = ?, held_back = ?, answer = ?"
                  " WHERE id = ?", now(), facts, links, new_beliefs, json.dumps(held_back), json.dumps(answer), dream)
 
-    def add_call(self, purpose, model, seconds, cost, tokens_in, tokens_out, turns, ok, note=None, cc_session=None):
+    def add_call(self, purpose, model, seconds, cost, tokens_in, tokens_out, turns, ok, note=None, cc_session=None,
+                 reported_total=None):
         self.run("INSERT INTO calls (at, purpose, model, cc_session, seconds, cost_usd, input_tokens, output_tokens,"
-                 " turns, ok, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", now(), purpose, model, cc_session,
-                 seconds, cost, tokens_in, tokens_out, turns, int(ok), note)
+                 " turns, ok, note, reported_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", now(), purpose, model,
+                 cc_session, seconds, cost, tokens_in, tokens_out, turns, int(ok), note, reported_total)
+
+    def cc_total(self, cc_session):
+        row = self.one("SELECT total FROM cc_totals WHERE cc_session = ?", cc_session)
+        return row["total"] if row else 0.0
+
+    def set_cc_total(self, cc_session, total):
+        self.run("INSERT OR REPLACE INTO cc_totals (cc_session, total) VALUES (?, ?)", cc_session, total)

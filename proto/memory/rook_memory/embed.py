@@ -1,14 +1,17 @@
-"""Semantic search's half that runs here: a small sentence-embedding model, run on this machine's CPU.
+"""Semantic search's half that runs here: sentence embeddings, made on this machine's CPU in numpy.
 
-The model is a plain BERT encoder (BAAI/bge-small-en-v1.5 by default: 33 million parameters, 384
-numbers per text). Its weights are fetched once from Hugging Face into the store's `models` folder;
-nothing of Bake's is sent anywhere to do that, and after that it runs offline. The forward pass is
-written here in numpy (the only thing this needs beyond the standard library), so there is nothing
-else to install. Any BERT-shaped model in safetensors works: change `[search]` in knobs.toml
-(all-MiniLM-L6-v2 with pooling "mean" is the usual smaller one).
+Two kinds of model, chosen by the search knob (see [models] in knobs.toml):
+- "bert": a BERT encoder (BAAI/bge-small-en-v1.5 by default: 33 million parameters, 384 numbers per
+  text; bge-base: 110 million, 768). The forward pass is written here in numpy.
+- "static": a table of one vector per token, averaged per text and nothing else at search time
+  (model2vec: minishlab/blink-8M, potion-base-8M: 30,000 tokens by 256 numbers, about 31 MB).
+
+Their files are fetched once from Hugging Face into the models folder (a knob); nothing of Bake's is
+sent anywhere to do that, and after that they run offline. numpy is the only thing needed beyond the
+standard library. The weights are mapped from the file, not copied.
 
 `fake` is a stand-in for the tests: it hashes words into a vector, so the mechanics can be tested
-without the model.
+without a model.
 """
 
 import hashlib
@@ -20,24 +23,60 @@ import struct
 import unicodedata
 import urllib.request
 
-FILES = ("config.json", "vocab.txt", "model.safetensors")
+FILES = {"bert": ("config.json", "vocab.txt", "model.safetensors"),
+         "static": ("config.json", "tokenizer.json", "model.safetensors")}
 
 
-def folder(store_folder, name):
-    return pathlib.Path(store_folder) / "models" / name.split("/")[-1]
+def folder(models_folder, repo):
+    return pathlib.Path(models_folder).expanduser() / repo.split("/")[-1]
 
 
-def fetch(store_folder, name, log=print):
+def fetch(models_folder, repo, kind="bert", log=print):
     """Download the model's files once. Only public model files come in; nothing goes out."""
-    where = folder(store_folder, name)
+    where = folder(models_folder, repo)
     where.mkdir(parents=True, exist_ok=True)
-    for f in FILES:
+    for f in FILES[kind]:
         if not (where / f).exists():
-            log(f"fetching {name}/{f} from huggingface.co into {where}")
+            log(f"fetching {repo}/{f} from huggingface.co into {where}")
             tmp = where / (f + ".part")
-            urllib.request.urlretrieve(f"https://huggingface.co/{name}/resolve/main/{f}", tmp)
+            urllib.request.urlretrieve(f"https://huggingface.co/{repo}/resolve/main/{f}", tmp)
             tmp.rename(where / f)
     return where
+
+
+class WordPiece:
+    """BERT's uncased basic tokenizer, then WordPiece: text in, token ids out (no special tokens)."""
+
+    def __init__(self, vocab, unk="[UNK]"):
+        self.vocab, self.unk = vocab, vocab.get(unk)
+
+    def ids(self, text):
+        text = "".join(" " if unicodedata.category(c).startswith("C") and c not in "\t\n\r" else c
+                       for c in text if ord(c) not in (0, 0xFFFD))
+        text = unicodedata.normalize("NFD", text.lower())
+        text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+        out = []
+        for word in re.findall(r"[^\s\W_]+|[^\s]", text, flags=re.UNICODE):
+            out += self._wordpiece(word)
+        return out
+
+    def _wordpiece(self, word):
+        if len(word) > 100:
+            return [self.unk]
+        out, start = [], 0
+        while start < len(word):
+            end, piece = len(word), None
+            while start < end:
+                sub = word[start:end] if start == 0 else "##" + word[start:end]
+                if sub in self.vocab:
+                    piece = self.vocab[sub]
+                    break
+                end -= 1
+            if piece is None:
+                return [self.unk]
+            out.append(piece)
+            start = end
+        return out
 
 
 class Bert:
@@ -52,37 +91,12 @@ class Bert:
         self.eps = cfg.get("layer_norm_eps", 1e-12)
         self.pooling, self.max_tokens = pooling, min(max_tokens, cfg.get("max_position_embeddings", 512))
         self.vocab = {w: i for i, w in enumerate((where / "vocab.txt").read_text(encoding="utf-8").splitlines())}
+        self.wp = WordPiece(self.vocab)
         self.w = _safetensors(where / "model.safetensors", np)
 
-    # --- tokenizing (BERT's uncased basic tokenizer, then WordPiece) ---
     def tokens(self, text):
-        text = "".join(" " if unicodedata.category(c).startswith("C") and c not in "\t\n\r" else c
-                       for c in text if ord(c) not in (0, 0xFFFD))
-        text = unicodedata.normalize("NFD", text.lower())
-        text = "".join(c for c in text if unicodedata.category(c) != "Mn")
-        ids = [self.vocab["[CLS]"]]
-        for word in re.findall(r"[^\s\W_]+|[^\s]", text, flags=re.UNICODE):
-            ids += self._wordpiece(word)
-        ids = ids[:self.max_tokens - 1]
-        return ids + [self.vocab["[SEP]"]]
-
-    def _wordpiece(self, word):
-        if len(word) > 100:
-            return [self.vocab["[UNK]"]]
-        out, start = [], 0
-        while start < len(word):
-            end, piece = len(word), None
-            while start < end:
-                sub = word[start:end] if start == 0 else "##" + word[start:end]
-                if sub in self.vocab:
-                    piece = self.vocab[sub]
-                    break
-                end -= 1
-            if piece is None:
-                return [self.vocab["[UNK]"]]
-            out.append(piece)
-            start = end
-        return out
+        ids = [self.vocab["[CLS]"]] + self.wp.ids(text)
+        return ids[:self.max_tokens - 1] + [self.vocab["[SEP]"]]
 
     # --- the encoder ---
     def __call__(self, texts):
@@ -148,25 +162,68 @@ def _gelu(x, np):
 
 
 def _safetensors(path, np):
-    raw = pathlib.Path(path).read_bytes()
-    (size,) = struct.unpack("<Q", raw[:8])
-    header = json.loads(raw[8:8 + size])
+    """The tensors, mapped from the file rather than read and copied, so the model's weights are paged in
+    from disk once (half the memory of reading the file and converting it)."""
+    import mmap
+    with open(path, "rb") as f:
+        mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+    (size,) = struct.unpack("<Q", mm[:8])
+    header = json.loads(mm[8:8 + size])
     kinds = {"F32": np.float32, "F16": np.float16, "F64": np.float64, "I64": np.int64, "I32": np.int32}
     out = {}
     for name, meta in header.items():
         if name == "__metadata__":
             continue
         a, b = meta["data_offsets"]
-        buf = raw[8 + size + a:8 + size + b]
         if meta["dtype"] == "BF16":
-            arr = (np.frombuffer(buf, dtype=np.uint16).astype(np.uint32) << 16).view(np.float32)
+            raw = np.frombuffer(mm, dtype=np.uint16, count=(b - a) // 2, offset=8 + size + a)
+            arr = (raw.astype(np.uint32) << 16).view(np.float32)
         else:
-            arr = np.frombuffer(buf, dtype=kinds[meta["dtype"]]).astype(np.float32)
+            dtype = kinds[meta["dtype"]]
+            arr = np.frombuffer(mm, dtype=dtype, count=(b - a) // np.dtype(dtype).itemsize, offset=8 + size + a)
+            if dtype != np.float32 and dtype not in (np.int64, np.int32):
+                arr = arr.astype(np.float32)
         for prefix in ("bert.", "model."):
             if name.startswith(prefix):
                 name = name[len(prefix):]
         out[name] = arr.reshape(meta["shape"])
     return out
+
+
+class Static:
+    """A static embedding table (model2vec): the token vectors of a text averaged, then made unit length.
+    Unknown tokens are left out, as model2vec does. No transformer runs at search time."""
+
+    def __init__(self, where):
+        import numpy as np
+        self.np = np
+        where = pathlib.Path(where)
+        tok = json.loads((where / "tokenizer.json").read_text(encoding="utf-8"))
+        vocab = tok["model"]["vocab"]
+        vocab = vocab if isinstance(vocab, dict) else {w: i for i, (w, *_rest) in enumerate(vocab)}
+        self.wp = WordPiece(vocab, tok["model"].get("unk_token", "[UNK]"))
+        cfg = json.loads((where / "config.json").read_text())
+        self.normalize = cfg.get("normalize", True)
+        w = _safetensors(where / "model.safetensors", np)
+        self.table = w["embeddings"]
+        self.weights = w.get("weights")
+
+    def __call__(self, texts):
+        np = self.np
+        out = np.zeros((len(texts), self.table.shape[1]), dtype=np.float32)
+        for r, t in enumerate(texts):
+            ids = [i for i in self.wp.ids(t) if i != self.wp.unk]
+            if not ids:
+                continue
+            rows = self.table[ids]
+            if self.weights is not None:
+                rows = rows * self.weights[ids][:, None]
+            v = rows.mean(0)
+            if self.normalize:
+                n = np.linalg.norm(v)
+                v = v / n if n else v
+            out[r] = v
+        return out
 
 
 class Fake:
@@ -187,14 +244,23 @@ class Fake:
 _loaded = {}
 
 
-def embedder(store_folder, knobs, log=print):
-    """The embedder the knobs name, loaded once per process. "fake" gives the test stand-in."""
-    s = knobs["search"]
-    if s["model"] == "fake":
+def embedder(store_folder, knobs, log=print, repo=None):
+    """The embedder the knobs name (or `repo`), loaded once per process. None for keyword search.
+    "fake" gives the test stand-in."""
+    from .knobs import search
+    s = search(knobs)
+    kind = s.get("kind", "bert")
+    if kind == "keyword":
+        return None
+    if kind == "hybrid":
+        repo, kind = s["static"], "static"
+    repo = repo or s["repo"]
+    if repo == "fake":
         return Fake()
-    key = (str(store_folder), s["model"], s["pooling"])
+    key = (repo, s.get("pooling"))
     if key not in _loaded:
-        model = Bert(fetch(store_folder, s["model"], log), pooling=s["pooling"])
-        model.name = s["model"]
+        where = fetch(s["models_folder"], repo, kind, log)
+        model = Static(where) if kind == "static" else Bert(where, pooling=s["pooling"])
+        model.name = repo
         _loaded[key] = model
     return _loaded[key]

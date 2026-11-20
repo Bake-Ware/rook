@@ -2,10 +2,11 @@
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 
-from . import check, dream, importer, knobs as knobs_mod, mcp, pin, recall, show, standing, turn
+from . import check, compare, dream, importer, knobs as knobs_mod, mcp, pin, recall, show, standing, turn
 from .store import Store, now, stamp
 
 
@@ -13,6 +14,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="rook_memory", description="The house agent's memory prototype (round two).")
     ap.add_argument("--store", default="~/.rook-memory-proto", help="folder holding memory.sqlite3 (and the model)")
     ap.add_argument("--knobs", default=None, help="knobs file (default: knobs.toml beside the package)")
+    ap.add_argument("--set", action="append", default=[], metavar="SECTION.KEY=VALUE",
+                    help="override one knob for this run (repeatable), e.g. --set search.model=bge-base")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("take", help="take conversations in from an export (zip, folder or conversations.json)")
@@ -71,13 +74,43 @@ def main(argv=None):
     p.add_argument("--entry", type=int)
     p.add_argument("--at")
 
+    p = sub.add_parser("tally", help="the checks over several stores (repeated plays): how often each fails")
+    p.add_argument("stores", nargs="+")
+    p.add_argument("--expect", default=str(pathlib.Path(__file__).resolve().parent.parent / "madeup" / "expect.toml"))
+
+    p = sub.add_parser("repeat", help="play (or replay) the made-up set N times in parallel, one store each, then tally")
+    p.add_argument("n", type=int)
+    p.add_argument("--into", required=True, help="folder for the runs' stores (run-1, run-2, ...)")
+    p.add_argument("--replay", action="store_true", help="take --dream instead of play")
+    p.add_argument("--path", default=str(pathlib.Path(__file__).resolve().parent.parent / "madeup" / "conversations.json"))
+
+    p = sub.add_parser("compare-models", help="recall questions against this store with each embedding model")
+    p.add_argument("models", nargs="+", help="names of [models] tables, e.g. bge-small bge-base")
+    p.add_argument("--questions", default=str(pathlib.Path(__file__).resolve().parent.parent / "madeup" / "questions.toml"))
+
+    p = sub.add_parser("bench", help="load, search and embed timings and peak memory for one model (one JSON line)")
+    p.add_argument("model")
+    p.add_argument("--sizes", nargs="+", type=int, default=[500, 5000, 50000])
+    p.add_argument("--folder", default="/tmp/rook-memory-bench")
+
+    sub.add_parser("opposites", help="each pair of beliefs marked as opposites, standing with the knob off and on")
+
     sub.add_parser("cases", help="the three score cases (one against a mature belief, three times, a flip), with these knobs")
 
     sub.add_parser("reset", help="delete the store's memory (not the model)")
 
     a = ap.parse_args(argv)
-    knobs = knobs_mod.load(a.knobs)
+    knobs = knobs_mod.load(a.knobs, a.set)
+    for var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ.setdefault(var, str(knobs["search"]["threads"]))
     store_dir = pathlib.Path(a.store).expanduser()
+    if a.cmd == "tally":
+        return 0 if check.tally(a.stores, knobs, a.expect) else 1
+    if a.cmd == "repeat":
+        return repeat(a, knobs)
+    if a.cmd == "bench":
+        compare.bench(knobs, a.model, a.sizes, a.folder)
+        return 0
     if a.cmd == "cases":
         print("\n".join(standing.cases(knobs)))
         return 0
@@ -149,9 +182,35 @@ def main(argv=None):
             show.calls(store)
         if w == "tools":
             show.tools(store)
+    elif a.cmd == "opposites":
+        compare.opposites(store, knobs)
+    elif a.cmd == "compare-models":
+        compare.models(store, knobs, a.models, a.questions)
     elif a.cmd == "check":
         return 0 if check.run(store, knobs, a.expect) else 1
     return 0
+
+
+def repeat(a, knobs):
+    import subprocess
+    into = pathlib.Path(a.into).expanduser()
+    procs = []
+    here = pathlib.Path(__file__).resolve().parent.parent
+    for k in range(1, a.n + 1):
+        d = into / f"run-{k}"
+        d.mkdir(parents=True, exist_ok=True)
+        argv = [sys.executable, "-u", "-m", "rook_memory", "--store", str(d), "--knobs", knobs["_path"]]
+        for o in knobs["_overrides"]:
+            argv += ["--set", o]
+        argv += ["take", a.path, "--dream"] if a.replay else ["play", a.path]
+        log = open(d / ("replay.log" if a.replay else "play.log"), "w")
+        procs.append((subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT, cwd=here), log))
+        print(f"run-{k}: {' '.join(argv[3:])}")
+    for p, log in procs:
+        p.wait()
+        log.close()
+    return 0 if check.tally([into / f"run-{k}" for k in range(1, a.n + 1)], knobs,
+                            str(here / "madeup" / "expect.toml")) else 1
 
 
 def _session(store, ref):

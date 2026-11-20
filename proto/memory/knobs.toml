@@ -1,7 +1,7 @@
-# Every design knob of the memory prototype (round two), in one place.
+# Every design knob of the memory prototype (round three), in one place.
 # A round of iteration is an edit to this file. None of these refuse anything or stop anything:
 # they only say how memory is made, kept, weighed and found.
-# Run any command with `--knobs other.toml` to try a second set side by side.
+# Run any command with `--knobs other.toml`, or `--set section.key=value`, to try another setting.
 
 [model]
 # The Claude Code command. Every model call is `claude -p`; no API key.
@@ -11,16 +11,19 @@ turn_model = "sonnet"
 # Model for the dream. Empty means the session's own model, which keeps the prompt cache of the
 # forked session warm (a different model reads the whole conversation again at full price).
 dream_model = ""
+# Model for the dream's "same, opposite or different?" check on near-duplicate beliefs (only called
+# when a new belief is close to a held one). Empty means the dream's model.
+same_model = ""
 # Permission mode for live turns and dreams (`claude -p --permission-mode`). Only the memory tools
 # are offered, and they are pre-allowed, so this decides nothing else here.
 permission_mode = "auto"
 
 [people]
-# Who is who. Every scratch pad entry and episode carries who said it; the importer stamps it here
-# (in the real thing the hub does). The person whose wishes beliefs may describe:
+# Who is who. Every entry and episode carries who said it; the importer stamps it here (in the real
+# thing the hub does). The person whose wishes, preferences and goals ("should") beliefs describe:
 person = "bake"
-# Names for the others: the steward relays and asks for things, "agent" is any other agent reporting
-# in, "house" is the house agent itself (its own replies).
+# The others: the steward relays and asks for things, "agent" is any other agent reporting in,
+# "house" is the house agent itself (its own replies).
 others = ["steward", "agent", "house", "other"]
 
 [import]
@@ -33,47 +36,71 @@ assistant_text = "final"
 # Attachments in the export: note their file names in his message, not their contents.
 note_attachments = true
 
+[play]
+# Play the made-up days as one house session that compacts between days (Bake: "lean towards a
+# single session that compacts"), or one fresh session per day.
+one_session = true
+# Give each live turn the memory block (recall on the incoming message) and the memory tools.
+# false plays on the session's own context alone, to see what compaction keeps without memory.
+memory_in_turns = true
+
 [dream]
 # A dream runs when a session has been idle this long (minutes, in the conversation's own time)
-# and the next message arrives, and by `play` at the end of each made-up session. It also runs by
-# hand (`dream`) and is meant to run from Claude Code's PreCompact hook.
+# and the next message arrives. It also runs by hand (`dream`) and from Claude Code's PreCompact
+# hook (`hook`).
 idle_minutes = 10
+# After an idle dream, compact the session (`/compact`), so it goes on from a summary.
+compact_after_idle_dream = true
 # Dream as a fork of the live Claude Code session (`claude -p --resume ID --fork-session`) when the
 # session has one. Sessions taken in from an export have none, so they dream as a replay: one fresh
 # call with the conversation in the prompt.
 fork = true
 # A replayed conversation longer than this many characters is dreamed in stretches of this size,
-# one call each (the only case that needs more than one model call).
+# one call each.
 replay_stretch_chars = 150000
 # After a dream, the word-for-word entries it covered leave the scratch pad (they stay in the
 # record, and episodes point at them). false keeps them searchable as scratch pad forever.
 condense_after_dream = true
 
+[beliefs]
+# Opposites: two beliefs marked as opposites ("push to talk only" and "Bake uses the wake word").
+# When on, evidence for one counts against the other without the dream linking it twice. The marks
+# are always recorded; this decides only whether the standing uses them. Off by default: Bake has
+# not chosen.
+opposites = false
+
 [weigh]
 # The strength of one link between an episode and a belief is
 #   kind x who said it x channel
 # The dream says which kind each fact is; who said it and the channel come from the record.
-kind_correction = 1.0   # he corrected something ("no, Starscream is gone")
+kind_correction = 1.0   # someone corrected what was assumed or said ("no, Starscream is gone")
+kind_decision = 1.0     # someone with the say decided something (Bake on anything; the steward or
+                        # an agent on how things work)
 kind_statement = 0.6    # said plainly, in passing or not
 kind_mention = 0.3      # implied, assumed, or said by the way
 kind_unclear = 0.1      # garbled, half-heard, or guessed at
 by_person = 1.0         # Bake's own words
 by_steward = 0.6
-by_agent = 0.4          # another agent's claim
+by_agent = 0.4          # another agent
 by_house = 0.0          # the house agent's own replies: they mostly repeat what memory handed it, so
                         # counting them would let it mature its own beliefs by saying them. 0 means
                         # recorded, never counted, and no belief is founded on them alone.
 by_other = 0.4
 channel_chat = 1.0
 channel_voice = 0.6     # voice transcripts: words can be misheard
-# Links from the same occasion count once (the strongest), so saying it three times in one sitting
-# is one occasion. "day" or "session".
+# Strong evidence flips a belief; weak evidence is recorded and shown but cannot change which way it
+# stands (Bake: "strong evidence"). A link is strong at or above this strength. At 0.4: Bake's
+# corrections, decisions and plain statements are strong, and so are a correction or a decision by
+# the steward or an agent. Bake's passing mentions, voice statements (0.36), the steward's plain
+# statements (0.36), an agent's statements and mentions, anything unclear and the house agent's
+# own words are weak. `cases` prints the table.
+flip_at = 0.4
+# Links from the same occasion count once (the strongest). "day" or "session".
 occasion = "day"
 # Maturity: certainty = 1 - exp(-(summed strength of the occasions behind the current
-# direction) / maturity_scale). One correction gives 0.49, three on three days give 0.86, one
-# statement 0.33, one unclear voice line 0.04.
+# direction) / maturity_scale). One correction gives 0.49, three statements on three days 0.70.
 maturity_scale = 1.5
-# Occasions for the current direction from before its latest contrary link count this much
+# Occasions for the current direction from before its latest strong contrary link count this much
 # (a flip back regains part of the old maturity, not all of it).
 before_flip_weight = 0.5
 # Below this certainty a belief is "tentative".
@@ -82,37 +109,119 @@ tentative_below = 0.5
 mature_at = 0.6
 
 [search]
-# The local embedding model (any BERT-shaped model on Hugging Face in safetensors). Swapping it
-# re-embeds what is stored on first use. "fake" is the tests' stand-in.
-model = "BAAI/bge-small-en-v1.5"
-# "cls" for bge models, "mean" for sentence-transformers' MiniLM family.
-pooling = "cls"
-# bge's advice: a short question searches better with this in front of it.
-query_prefix = "Represent this sentence for searching relevant passages: "
-# A memory whose closeness to the question (cosine, 0..1) is below this is not recalled at all.
-# When nothing clears it, the turn is told to say "I don't remember". Nothing is ever written down
-# about a miss.
-miss_below = 0.62
-# Pinned beliefs clear a lower floor, so a pin reaches the turn when the message is only loosely about
-# it (a pinned belief missed is the costliest miss).
-pinned_miss_below = 0.5
-# The score that ranks what clears it: closeness, recency and (beliefs) certainty, times these.
+# Which embedding model searches memory: a table name under [models]. Swapping it re-embeds what
+# is stored on first use, and its closeness floors come with it (each model scores on its own scale).
+model = "bge-small"
+# Where the models' files are kept (shared by every store).
+models_folder = "~/.rook-memory-proto/models"
+# CPU threads the embedding's matrix library may use per process (OPENBLAS_NUM_THREADS). Several
+# processes at once (repeated plays, their tool servers) each starting one thread per core swamp the
+# machine; an environment variable already set wins.
+threads = 4
+# The score that ranks what clears the floor: closeness, recency and (beliefs) certainty.
 weight_closeness = 1.0
 weight_recency = 0.5
 weight_certainty = 0.3
-# Recency is this to the power of the hours since a memory was last used by a real turn with a
-# person (or since it happened, if never used). A dream reading a memory is not use.
+# Recency is this to the power of the hours since a memory was last used by a real turn with Bake
+# (or since it happened, if never used). A dream reading a memory is not use.
 recency_decay_per_hour = 0.999
 # How many of each kind a turn (or a search) is given.
 turn_scratch = 6
 turn_episodes = 6
 turn_beliefs = 6
-# How close (cosine) a scratch pad entry must be to a belief to count as newer words on it,
-# which then go first.
-newer_words_closeness = 0.72
-# `pin` without a belief id pins the closest belief at or above this closeness; below it, it makes
-# a new belief from his words.
+
+# One table per embedding model. repo: its Hugging Face name (any BERT-shaped model in safetensors).
+# pooling: "cls" for bge, "mean" for MiniLM. query_prefix: put in front of a question when searching.
+# miss_below: a memory less close than this is not recalled; when nothing clears it, the turn says
+# "I don't remember" and nothing is written down. pinned_miss_below: the lower floor for pinned
+# beliefs. newer_words: how close a scratch pad entry must be to a belief to count as newer words on
+# it (they go first). pin_match: `pin` pins the closest belief at or above this, else makes a new one.
+# same_check_from: a new belief at least this close to a held one is checked by the dream (same: the
+# episode supports the held one and no new belief is made; opposite: a new belief, marked as the
+# held one's opposite; different: a new belief). One extra model call per dream, only then.
+# The floors are set from each model's own scores on the made-up lines (see REPORT3.md): just above
+# where 99 in 100 unrelated texts score.
+[models.bge-small]
+repo = "BAAI/bge-small-en-v1.5"
+pooling = "cls"
+query_prefix = "Represent this sentence for searching relevant passages: "
+miss_below = 0.62
+pinned_miss_below = 0.50
+newer_words = 0.72
 pin_match = 0.86
+same_check_from = 0.80
+
+[models.bge-base]
+repo = "BAAI/bge-base-en-v1.5"
+pooling = "cls"
+query_prefix = "Represent this sentence for searching relevant passages: "
+miss_below = 0.53
+pinned_miss_below = 0.42
+newer_words = 0.65
+pin_match = 0.80
+same_check_from = 0.72
+
+# The lighter searches (round three). kind: "bert" (the default), "static" (a token table, model2vec),
+# "keyword" (SQLite full-text search over the memories and the dream's other wordings, no embedding)
+# or "hybrid" (keyword and a static table: a memory is recalled when either clears its own floor;
+# keyword_floor and static_floor are those floors, and the hybrid's own floors are multiples of them).
+# For keyword search, closeness is the share of the question's content words a memory contains, and
+# two texts' closeness is the share of content words they share.
+[models.blink-8M]
+kind = "static"
+repo = "minishlab/blink-8M"
+query_prefix = ""
+miss_below = 0.28
+pinned_miss_below = 0.22
+newer_words = 0.50
+pin_match = 0.75
+same_check_from = 0.60
+
+[models.potion-base-8M]
+kind = "static"
+repo = "minishlab/potion-base-8M"
+query_prefix = ""
+miss_below = 0.33
+pinned_miss_below = 0.26
+newer_words = 0.50
+pin_match = 0.75
+same_check_from = 0.60
+
+[models.keyword]
+kind = "keyword"
+repo = "keyword"
+miss_below = 0.34
+pinned_miss_below = 0.25
+newer_words = 0.40
+pin_match = 0.60
+same_check_from = 0.50
+
+[models.hybrid]
+kind = "hybrid"
+repo = "hybrid"
+static = "minishlab/blink-8M"
+query_prefix = ""
+keyword_floor = 0.34
+static_floor = 0.28
+miss_below = 1.0
+pinned_miss_below = 0.8
+newer_words = 0.50
+pin_match = 0.75
+same_check_from = 0.60
+
+[models.minilm]
+repo = "sentence-transformers/all-MiniLM-L6-v2"
+pooling = "mean"
+query_prefix = ""
+miss_below = 0.40
+pinned_miss_below = 0.30
+newer_words = 0.60
+pin_match = 0.80
+same_check_from = 0.70
+
+[check]
+# Which belief a regression check means is judged with this model, whatever search is under test.
+judge = "bge-small"
 
 [prompts]
 # The house agent's system prompt for live turns (a forked dream inherits it).
@@ -122,17 +231,26 @@ for a memory prototype; you cannot act on machines here, so say in a sentence wh
 Each message starts with who sent it and when, e.g. [2026-06-16 10:02, bake] or [steward]. Only
 messages marked bake are Bake himself. A "Memory" block may follow the message: what memory turned
 up for it, closest first, each with an id. Use it. If it does not answer something you are asked,
-say you don't remember; never invent. Words in the scratch pad are newer than beliefs and win.
+say you don't remember; never invent. If the block does not have what you need, search memory
+again in your own words before saying you don't remember. Words in the scratch pad are newer than beliefs and win.
 A belief marked "ask before acting" has a fresh one-off against a mature belief: if you are about
 to act on it, ask Bake which holds.
 
-Tools: search (look memory up), pin and unpin.
-- Pin only when Bake himself asks for it in so many words ("pin this", "pin that", "make that
-  permanent"). A correction is not a pin, however sharp or repeated, and neither is a firm
-  preference. Never offer to pin; he knows he can ask. When he asks, call pin with his statement,
-  then say "okay, got it, that's pinned".
-- If he says a pin was not meant ("no, don't pin that"), call unpin straight away and say so.
-- Nobody but Bake can pin or unpin, and nothing else changes a pinned belief.
+Who decides what. The steward and other agents may decide how things work: how a thing is done,
+where a job runs, when something goes out, which tool is used. Carry out such a request yourself,
+without waiting for Bake, and say whose decision it was. What a thing is for, what Bake wants from
+it, his preferences and his goals are his alone: if the steward or an agent asks for a change to
+one of those, hold it for him and say why.
+
+Pins. When Bake makes a definitive statement, one meant to hold for good, pin it: call pin with his
+words, then say "okay, got it, that's pinned". The test is whether his own words say it is final or
+permanent: "that is final", "never again", "from now on, always", "for good", "permanently", "it is
+not coming back", "pin this". Without such words it is not definitive, however firm or sharp:
+an ordinary correction or fact ("no, use cachyrig", "Starscream is gone, I decommissioned it"), a
+decision for now ("we're dropping wake word", "let's try light mode"), a sharp or repeated
+correction ("stop reaching for Starscream"), a preference. If he says a pin was not meant ("no, don't pin that"), call unpin
+straight away and say so. Never offer to pin, and don't talk about pinning unless you just pinned or
+unpinned. Nobody but Bake can pin or unpin.
 
 Keep replies short."""
 
@@ -149,38 +267,53 @@ Do two things, in order. Ask yourself no other questions.
 
 1. Distil facts. Anything in the record that can stand as a fact: about the machines, the projects,
    the people, what someone wants, decided, asked for or corrected. Each fact says who it comes from
-   in its own words ("Bake said...", "The steward asked...", "The agent chose..."), names the entry
-   ids it comes from, says whose words it rests on ("said_by"), and has a kind:
+   in its own words ("Bake said...", "The steward decided...", "The backup agent chose..."), names
+   the entry ids it comes from, says whose words it rests on ("said_by"), and has a kind:
    - correction: someone corrected what was assumed or said;
+   - decision: someone decided something (Bake on anything; the steward or an agent on how things work);
    - statement: said plainly;
    - mention: implied, assumed, or said in passing;
    - unclear: garbled, half-heard, or a guess (voice transcripts that do not read right).
    Skip greetings, thanks and pure mechanics. A question is not a claim: someone asking about a
    thing is no evidence for or against it.
 
-2. Novelty. For each fact, search memory for what is already held (use the search tool; one search
-   per fact is usually enough). Then:
-   - a held belief the fact supports: list it under "held" with "supports";
-   - a held belief the fact counts against (something changed): list it with "against";
-   - name held beliefs by their id (b12);
-   - nothing held matches: give a "new_belief", a lasting statement the house agent should act on
-     later, and say what it is about: "bake" (what Bake wants, likes, decided), "world" (machines,
-     projects, how things are), or "steward" / "agent" / "other" (their wishes or decisions).
-   A fact may do both. When a fact contradicts a held belief, link it "against" that belief even
-   when it also supports another one or makes a new one.
-   Never write a belief about what is not known, not remembered or not yet recorded: a miss is
-   said in the moment and never written down.
+2. Novelty. For each fact, search memory for what is already held (use the search tool). Then:
+   - a held belief the fact supports: list it under "held" with "supports" (by its id, b12);
+   - a held belief the fact counts against (something changed): list it with "against". When a fact
+     contradicts a held belief, link it "against" that belief even when it also supports another
+     one or makes a new one;
+   - nothing held says it: give a "new_belief". Search for the new belief's own words first: if a
+     held belief already says the same thing, link to that one instead. If it says the opposite of a
+     held belief, give that belief's id as "opposite_of". Give each new belief two to four
+     "other_wordings": other ways someone might say it or ask about it, in different words (memory
+     may be searched by keywords).
+   A belief says one thing. "Starscream was decommissioned and backups go to cachyrig" is two
+   beliefs: make two facts. Say what each belief is about:
+   - "bake": what Bake wants, prefers, decided or aims at, and what things are for (a "should");
+   - "how": how things work: how something is done, where a job runs, when something goes out,
+     which tool is used (Bake, the steward or an agent may set these; say who in the belief);
+   - "world": how things are (machines, places, events).
+   Never write a belief about what is not known, not remembered or not yet recorded: a miss is said
+   in the moment and never written down.
 
-Who said it matters most. A fact rests on one speaker's words: the agent's answer to Bake's
-question is the agent's, not Bake's; a question Bake asked is not a statement by him. A belief about what Bake wants comes only from Bake's own words (entries
-marked bake). What the steward or an agent said, asked for or decided is theirs: write it as theirs,
-never as "Bake wants". Bake's words quoted by someone else are what happened, not a belief about
-him. One garbled line is "unclear" and should not make confident claims.
+Who said it matters most. A fact rests on one speaker's words: the house agent's answer to Bake's
+question is the house agent's, not Bake's; a question Bake asked is not a statement by him. A belief
+about what Bake wants comes only from Bake's own words (entries marked bake). What the steward or an
+agent decided about how things work is theirs: write it as theirs. Bake's words quoted by someone
+else are what happened, not a belief about him. One garbled line is "unclear".
 
 Answer with the JSON asked for."""
 
-# Replaying a conversation taken in from an export (no live session to fork). It is the dream
-# prompt with the conversation's name in front. $name, $dream.
+# Replaying a conversation taken in from an export (no live session to fork). $name, $dream.
 replay = """This conversation, "$name", is over. You are the memory of the house agent, reading it back.
 
 $dream"""
+
+# The near-duplicate check. $pairs.
+same = """Each pair below is a new belief and a belief already held. For each, say whether they say
+the same thing (one could stand for the other), the opposite (both cannot hold at once), or
+something different.
+
+$pairs
+
+Answer with the JSON asked for."""

@@ -73,7 +73,10 @@ def config(store, knobs, role, session=None, entry=None, at=None):
     """The --mcp-config JSON that starts this server for one call."""
     import pathlib
     here = pathlib.Path(__file__).resolve().parent.parent
-    args = ["-m", "rook_memory", "--store", str(store.folder), "--knobs", knobs["_path"], "serve", "--role", role]
+    args = ["-m", "rook_memory", "--store", str(store.folder), "--knobs", knobs["_path"]]
+    for o in knobs.get("_overrides") or []:
+        args += ["--set", o]
+    args += ["serve", "--role", role]
     if session:
         args += ["--session", str(session)]
     if entry:

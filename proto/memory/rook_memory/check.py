@@ -1,22 +1,35 @@
 """The made-up set's regression expectations (madeup/expect.toml), checked against what memory holds.
 
 Run after `play madeup/conversations.json` on an empty store. These test what the model did with
-the rules, so they cost a full play to run; the plain mechanics are in tests/.
+the rules, so they cost a full play to run; the plain mechanics are in tests/. `tally` runs the same
+checks over several stores (repeated plays) and counts how often each fails.
 
 Kinds of check:
-- belief: the belief closest to `query` (it must be at least `closeness` close); then any of
-  pinned, direction (+1/-1), grade (tentative/settling/mature), min_flips, about, unpinned_once,
-  min_against_since_pin.
+- belief: the belief closest to `query` (at least `closeness` close); then any of pinned, direction
+  (+1/-1), grade (tentative/settling/mature), min_flips, about, unpinned_once, min_against_since_pin,
+  never_flipped (its direction never changed in its history), his_words (its text is words from one
+  of Bake's own messages).
 - no_belief: no belief about `about` is at least `closeness` close to `query`.
+- count_like: at most `max` beliefs (holding, at least `closeness` close to `query`).
+- distinct: the beliefs closest to `query` and to `other` are not the same belief.
 - person_only: every belief about the person stands only on his own words (others' links count 0).
 - voice_tentative: a belief standing only on voice lines is tentative.
-- pins: exactly `count` beliefs pinned now.
+- pins: exactly `count` beliefs pinned now; and each of `pinned` (queries) is pinned, each of
+  `not_pinned` is not (judged on the closest belief).
 - miss: recall for `query` turns up nothing ("I don't remember").
+- recalls: recall for `query` turns up a belief or episode containing all of `words`.
+- replies_lack: no house reply matches `pattern` (a regular expression), except replies to turns
+  that pinned or unpinned.
+- reply: the house reply to the message containing `to` matches `has` (if given) and not `lacks`.
 """
 
+import copy
+import pathlib
+import re
 import tomllib
 
-from . import embed, recall, standing
+from . import embed, recall, search, standing
+from .store import Store
 
 
 def _grade(st, knobs):
@@ -26,25 +39,46 @@ def _grade(st, knobs):
     return "mature" if st["certainty"] >= w["mature_at"] else "settling"
 
 
-def run(store, knobs, path, out=print):
+def _closest(beliefs, vecs, q):
+    return sorted(((float(vecs[b["id"]] @ q), b) for b in beliefs), key=lambda x: -x[0])
+
+
+def _norm(t):
+    return " ".join(re.findall(r"[a-z0-9']+", (t or "").lower()))
+
+
+def checks(path):
     with open(path, "rb") as f:
-        checks = tomllib.load(f)["check"]
-    emb = embed.embedder(store.folder, knobs)
+        return tomllib.load(f)["check"]
+
+
+def evaluate(store, knobs, path):
+    """Answers [(name, ok, [why...])]."""
+    # Which belief a check means is judged by one fixed embedding model, whatever search is under test;
+    # the recall checks (miss, recalls) use the search under test.
+    judge = copy.deepcopy(knobs)
+    judge["search"]["model"] = knobs.get("check", {}).get("judge", "bge-small")
+    emb = embed.embedder(store.folder, judge)
     person = knobs["people"]["person"]
     beliefs = store.all("SELECT * FROM beliefs ORDER BY id")
-    vecs = recall._vectors(store, knobs, "belief", beliefs, emb)
-    passed = 0
-    for c in checks:
-        ok, why = True, []
-        t = c["type"]
-        if t in ("belief", "no_belief"):
+    vecs = search.vectors(store, judge, "belief", beliefs, emb) if beliefs else {}
+    last = (store.one("SELECT MAX(at) AS at FROM entries")["at"]) or "9999"
+    results = []
+    for c in checks(path):
+        ok, why, t = True, [], c["type"]
+        if t in ("belief", "no_belief", "count_like"):
             q = emb([c["query"]])[0]
-            pool = [b for b in beliefs if t == "belief" or b["about"] == c.get("about", person)]
-            scored = sorted(((float(vecs[b["id"]] @ q), b) for b in pool), key=lambda x: -x[0])
+            pool = [b for b in beliefs if t != "no_belief" or b["about"] == c.get("about", person)]
+            scored = _closest(pool, vecs, q) if pool else []
             if t == "no_belief":
                 hits = [(s, b) for s, b in scored if s >= c["closeness"]]
                 ok = not hits
                 why = [f"b{b['id']} ({s:.2f}) {b['text']}" for s, b in hits] or ["none close"]
+            elif t == "count_like":
+                hits = [(s, b) for s, b in scored if s >= c["closeness"]
+                        and standing.of(store, knobs, b["id"])["value"] > 0]
+                ok = len(hits) <= c["max"]
+                why = [f"{len(hits)} holding: " + "; ".join(f"b{b['id']} ({s:.2f}) {b['text']}" for s, b in hits)]
             elif not scored or scored[0][0] < c.get("closeness", 0):
                 ok, why = False, ["no belief close enough" + (f" (best {scored[0][0]:.2f})" if scored else "")]
             else:
@@ -59,11 +93,19 @@ def run(store, knobs, path, out=print):
                     "about": lambda v: b["about"] == v,
                     "unpinned_once": lambda v: any(p["action"] == "unpin" for p in store.pins(b["id"])) == v,
                     "min_against_since_pin": lambda v: st.get("against_since_pin", 0) >= v,
+                    "never_flipped": lambda v: _never_flipped(store, knobs, b["id"]) == v,
+                    "his_words": lambda v: any(_norm(b["text"]) in _norm(e["text"]) for e in store.all(
+                        "SELECT text FROM entries WHERE speaker = ?", person)) == v,
                 }
                 for k, f in tests.items():
                     if k in c and not f(c[k]):
                         ok = False
                         why.append(f"expected {k} = {c[k]}")
+        elif t == "distinct":
+            a = _closest(beliefs, vecs, emb([c["query"]])[0])[0][1]
+            b = _closest(beliefs, vecs, emb([c["other"]])[0])[0][1]
+            ok = a["id"] != b["id"]
+            why = [f"b{a['id']} {a['text']}", f"b{b['id']} {b['text']}"]
         elif t == "person_only":
             for b in beliefs:
                 if b["about"] != person:
@@ -82,23 +124,92 @@ def run(store, knobs, path, out=print):
                     if not st["pinned"] and _grade(st, knobs) != "tentative":
                         ok = False
                         why.append(f"b{b['id']} {standing.summary(st)}: {b['text']}")
-                    else:
-                        why.append(f"b{b['id']} tentative: {b['text']}")
-            why = why or ["no belief stands on voice lines alone"]
+            why = why or ["no belief stands on voice lines alone, or all such are tentative"]
         elif t == "pins":
             pinned = [b for b in beliefs if store.pinned(b["id"])]
-            ok = len(pinned) == c["count"]
-            why = [f"b{b['id']} {b['text']}" for b in pinned] or ["none"]
-        elif t == "miss":
-            last = store.one("SELECT MAX(at) AS at FROM entries")["at"]
-            r = recall.recall(store, knobs, c["query"], last, emb=emb)
-            ok = r.missed
-            why = [f"best closeness {r.best:.3f}"] + [f"{i.tag} {i.closeness:.2f} {i.text[:80]}" for i in r.items()]
+            if "count" in c and len(pinned) != c["count"]:
+                ok = False
+                why.append(f"expected {c['count']} pinned, found {len(pinned)}")
+            why += [f"pinned b{b['id']} {b['text']}" for b in pinned]
+            for key, want in (("pinned", True), ("not_pinned", False)):
+                for query in c.get(key, []):
+                    s, b = _closest(beliefs, vecs, emb([query])[0])[0]
+                    got = store.pinned(b["id"])
+                    if got != want:
+                        ok = False
+                        why.append(f"expected {'pinned' if want else 'not pinned'}: {query!r} (closest b{b['id']},"
+                                   f" {s:.2f}: {b['text']})")
+        elif t in ("miss", "recalls"):
+            r = recall.recall(store, knobs, c["query"], last)
+            if t == "miss":
+                ok = r.missed
+            else:
+                words = [w.lower() for w in c["words"]]
+                ok = any(all(w in i.text.lower() for w in words) for i in r.beliefs + r.episodes)
+            why = [f"best closeness {r.best:.3f}"] + [f"{i.tag} {i.closeness:.2f} {i.text[:90]}" for i in r.items()]
+        elif t == "replies_lack":
+            pat = re.compile(c["pattern"], re.I)
+            for tr in store.all("SELECT t.entry, e.text AS said, r.text AS answer FROM turns t JOIN entries e ON e.id = t.entry"
+                                " LEFT JOIN entries r ON r.id = t.reply"):
+                if store.one("SELECT 1 FROM pins WHERE entry = ?", tr["entry"]):
+                    continue
+                if tr["answer"] and pat.search(tr["answer"]):
+                    ok = False
+                    why.append(f"to {tr['said'][:60]!r}: {tr['answer'][:140]!r}")
+            why = why or ["none"]
+        elif t == "reply":
+            rows = store.all("SELECT e.text AS said, r.text AS reply FROM turns t JOIN entries e ON e.id = t.entry"
+                             " LEFT JOIN entries r ON r.id = t.reply WHERE e.text LIKE ?", f"%{c['to']}%")
+            if not rows:
+                ok, why = False, ["no such turn"]
+            for row in rows:
+                reply = row["reply"] or ""
+                if c.get("has") and not re.search(c["has"], reply, re.I):
+                    ok = False
+                if c.get("lacks") and re.search(c["lacks"], reply, re.I):
+                    ok = False
+                why.append(f"reply: {reply[:200]!r}")
         else:
             ok, why = False, [f"unknown check type {t}"]
-        passed += ok
-        out(f"{'PASS' if ok else 'FAIL'}  {c['name']}")
+        results.append((c["name"], ok, why))
+    return results
+
+
+def _never_flipped(store, knobs, belief):
+    links = store.links(belief)
+    directions = [standing.of(store, knobs, belief, upto=l["at"])["direction"] for l in links]
+    directions = [d for d in directions if d]
+    return all(d == directions[0] for d in directions)
+
+
+def run(store, knobs, path, out=print):
+    results = evaluate(store, knobs, path)
+    for name, ok, why in results:
+        out(f"{'PASS' if ok else 'FAIL'}  {name}")
         for w in why:
             out(f"      {w}")
-    out(f"\n{passed} of {len(checks)} passed")
-    return passed == len(checks)
+    passed = sum(ok for _, ok, _ in results)
+    out(f"\n{passed} of {len(results)} passed")
+    return passed == len(results)
+
+
+def tally(folders, knobs, path, out=print):
+    """The checks over several stores: how often each failed, and which runs."""
+    runs = []
+    for f in folders:
+        if not (pathlib.Path(f) / "memory.sqlite3").exists():
+            continue
+        s = Store(f)
+        runs.append((pathlib.Path(f).name, evaluate(s, knobs, path)))
+        s.close()
+    if not runs:
+        out("no stores")
+        return False
+    out(f"{len(runs)} runs: {', '.join(n for n, _ in runs)}\n")
+    names = [n for n, _, _ in runs[0][1]]
+    for i, name in enumerate(names):
+        failed = [r for r, res in runs if not res[i][1]]
+        out(f"  {len(failed)}/{len(runs)} failed  {name}" + (f"  ({', '.join(failed)})" if failed else ""))
+    total = [sum(ok for _, ok, _ in res) for _, res in runs]
+    out(f"\npassed per run: {', '.join(f'{n} {t}/{len(names)}' for (n, _), t in zip(runs, total))}")
+    return True

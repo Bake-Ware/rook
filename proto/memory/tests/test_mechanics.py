@@ -1,5 +1,6 @@
-"""The plain mechanics (round two): standing from links, pins, who-said-it rules when a dream's answer
-is written, recall and the two clocks, the importer, the MCP tools and the command line. The model
+"""The plain mechanics (rounds two and three): standing from links (strong evidence flips, weak does
+not; opposites), pins in his words, who-said-it and how/should rules when a dream's answer is written,
+the same check, recall and the two clocks, compaction, the importer, the MCP tools and the command line. The model
 and the embedding model are stand-ins here; nothing tests what a model writes (that is
 madeup/expect.toml, run with `check`)."""
 
@@ -12,21 +13,22 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from rook_memory import dream, importer, knobs as knobs_mod, mcp, model, pin, recall, standing, turn  # noqa: E402
+from rook_memory import dream, importer, knobs as knobs_mod, mcp, model, pin, recall, search, standing, turn  # noqa: E402
 from rook_memory.__main__ import main  # noqa: E402
 from rook_memory.store import Store  # noqa: E402
 
 MADEUP = pathlib.Path(__file__).resolve().parent.parent / "madeup" / "conversations.json"
 
 
+FAKE = {"repo": "fake", "pooling": "none", "query_prefix": "", "miss_below": 0.3, "pinned_miss_below": 0.2,
+        "newer_words": 0.5, "pin_match": 0.7, "same_check_from": 0.8}
+
+
 @pytest.fixture
 def knobs():
     k = knobs_mod.load()
+    k["models"]["fake"] = dict(FAKE)
     k["search"]["model"] = "fake"
-    k["search"]["query_prefix"] = ""
-    k["search"]["miss_below"] = 0.3
-    k["search"]["pin_match"] = 0.7
-    k["search"]["newer_words_closeness"] = 0.5
     return k
 
 
@@ -119,7 +121,7 @@ def test_pin_makes_a_new_pinned_belief_from_his_words_and_unpin_drops_it_back(st
     bid, said = pin.pin(store, knobs, "Starscream is decommissioned for good", e)
     assert bid and "new belief" in said and store.pinned(bid)
     links = store.links(bid)
-    assert len(links) == 1 and links[0]["said_by"] == "bake" and links[0]["kind"] == "correction"
+    assert len(links) == 1 and links[0]["said_by"] == "bake" and links[0]["kind"] == "decision"
     assert standing.of(store, knobs, bid)["pinned"]
     e2 = entry(store, text="no, don't pin that", at="2026-06-16T14:04:00Z")
     got, said = pin.unpin(store, knobs, e2)
@@ -209,8 +211,8 @@ def test_recall_finds_by_closeness_and_misses_say_nothing(store, knobs):
 
 def test_a_pinned_belief_clears_a_lower_floor(store, knobs):
     sid, e, ep, b = seeded(store)
-    knobs["search"]["miss_below"] = 0.9
-    knobs["search"]["pinned_miss_below"] = 0.3
+    knobs["models"]["fake"]["miss_below"] = 0.9
+    knobs["models"]["fake"]["pinned_miss_below"] = 0.3
     q = "is starscream back in service"
     assert not recall.recall(store, knobs, q, "2026-08-01T00:00:00Z").beliefs
     store.add_pin(b, "pin", "2026-06-16T14:03:00Z", e, "pin it")
@@ -323,10 +325,8 @@ def test_the_made_up_set_is_marked_and_stamped(knobs, store):
 # --- the command line ---
 
 def test_command_line(tmp_path, capsys, monkeypatch):
-    k = tmp_path / "knobs.toml"
-    text = knobs_mod.DEFAULT.read_text().replace('model = "BAAI/bge-small-en-v1.5"', 'model = "fake"')
-    k.write_text(text.replace("miss_below = 0.62", "miss_below = 0.3").replace("pin_match = 0.86", "pin_match = 0.7"))
-    base = ["--store", str(tmp_path / "mem"), "--knobs", str(k)]
+    base = ["--store", str(tmp_path / "mem"), "--set", "search.model=fake"]
+    base += [f"--set=models.fake.{key}={json.dumps(v)}" for key, v in FAKE.items()]
     assert main(base + ["pin", "Starscream is decommissioned for good"]) == 0
     assert "Pinned b1" in capsys.readouterr().out
     assert main(base + ["ask", "starscream decommissioned"]) == 0
@@ -339,3 +339,164 @@ def test_command_line(tmp_path, capsys, monkeypatch):
     assert "beliefs (1)" in capsys.readouterr().out
     assert main(base + ["reset"]) == 0
     assert not list((tmp_path / "mem").glob("memory.sqlite3*"))
+
+
+# --- round three: strong evidence flips, weak does not ---
+
+def test_play_2s_failure_an_agents_question_does_not_flip_a_mature_belief(knobs):
+    corr = standing.strength(knobs, "correction", "bake", "chat")
+    held = [link(1, 1, corr, "2026-05-04"), link(2, 1, corr, "2026-05-19")]
+    asked = standing.standing(held + [link(3, -1, standing.strength(knobs, "mention", "agent", "chat"), "2026-06-16")], knobs)
+    assert asked["direction"] == 1 and asked["flips"] == 0 and not asked["conflict"]
+    assert asked["weak_against_since"] == 1 and "too weak to flip" in standing.summary(asked)
+    stated = standing.standing(held + [link(3, -1, standing.strength(knobs, "statement", "agent", "chat"), "2026-08-05")], knobs)
+    assert stated["direction"] == 1
+    corrected = standing.standing(held + [link(3, -1, standing.strength(knobs, "correction", "agent", "chat"), "2026-08-05")],
+                                  knobs)
+    assert corrected["direction"] == -1 and corrected["conflict"]   # strong, so it flips, tentatively
+
+
+def test_flip_at_is_the_line(knobs):
+    s = lambda kind, who, ch="chat": standing.strength(knobs, kind, who, ch)
+    assert standing.strong(knobs, s("statement", "bake")) and standing.strong(knobs, s("decision", "steward"))
+    assert standing.strong(knobs, s("decision", "agent"))
+    for weak in (s("mention", "bake"), s("statement", "bake", "voice"), s("statement", "steward"),
+                 s("statement", "agent"), s("unclear", "bake")):
+        assert not standing.strong(knobs, weak)
+    knobs["weigh"]["flip_at"] = 0.0
+    held = [link(1, 1, 1.0, "2026-05-04"), link(2, -1, 0.12, "2026-06-16")]
+    assert standing.standing(held, knobs)["direction"] == -1   # round two's rule, for comparison
+
+
+def test_cases_lists_what_flips(knobs):
+    text = "\n".join(standing.cases(knobs))
+    assert "agent mention" in text and "Play 2's failure" in text and "recorded only" in text
+
+
+# --- opposites ---
+
+def test_opposites_count_against_each_other_only_with_the_knob(store, knobs):
+    sid = store.session("s", "live", "s")["id"]
+    e = store.add_entry(sid, "2026-07-01T12:00:00Z", "bake", "chat", "x")
+    uses = store.add_belief("Bake uses the wake word", "bake")
+    ptt = store.add_belief("Push to talk only", "bake")
+    for day in ("2026-05-04", "2026-05-19", "2026-06-20"):
+        ep = store.add_episode(sid, "uses it", "bake", "chat", "statement", [e], day + "T10:00:00Z")
+        store.add_link(uses, ep, 1, 0.6, day)
+    for day in ("2026-07-01", "2026-07-08", "2026-07-20"):
+        ep = store.add_episode(sid, "push to talk", "bake", "chat", "statement", [e], day + "T10:00:00Z")
+        store.add_link(ptt, ep, 1, 0.6, day)
+    store.mark_opposites(ptt, uses, "2026-07-01", "dream 1")
+    assert store.opposites(uses) == [ptt]
+    off = standing.of(store, knobs, uses)
+    assert off["direction"] == 1 and off["certainty"] > 0.6   # nothing linked against it directly
+    knobs["beliefs"]["opposites"] = True
+    on = standing.of(store, knobs, uses)
+    assert on["direction"] == -1 and on["occasions"] == 3 and on["certainty"] > 0.6
+    assert any(l.get("via") == ptt for l in standing.links_of(store, knobs, uses))
+
+
+# --- pins in his words ---
+
+def test_a_pin_rewords_the_matched_belief_to_his_words(store, knobs):
+    held = store.add_belief("starscream is decommissioned and backups go elsewhere", "world")
+    e = entry(store, text="Listen: starscream is decommissioned and backups go elsewhere. That is final.")
+    bid, said = pin.pin(store, knobs, "starscream is decommissioned and backups go elsewhere. That is final.", e)
+    assert bid == held
+    assert store.one("SELECT text FROM beliefs WHERE id = ?", held)["text"] == \
+        "starscream is decommissioned and backups go elsewhere. That is final."
+    assert store.one("SELECT text FROM belief_texts WHERE belief = ?", held)["text"].startswith("starscream is decommissioned")
+    assert pin.his_words("Starscream is gone forever (paraphrase)", "Listen: it is over.") == "Listen: it is over."
+
+
+# --- how and should; the same check ---
+
+def test_the_steward_may_set_how_but_not_should(store, knobs):
+    sid = store.session("s", "live", "s")["id"]
+    st = store.add_entry(sid, "2026-08-25T09:00:00Z", "steward", "chat", "I'm moving the weekly report to Monday.")
+    answer = {"facts": [
+        {"fact": "The steward moved the weekly report to Monday.", "entries": [f"s{st}"], "said_by": "steward",
+         "kind": "decision", "held": [], "new_belief": {"belief": "The weekly report runs on Monday (the steward's call)",
+                                                         "about": "how"}},
+        {"fact": "The steward said the dashboard should show the calendar.", "entries": [f"s{st}"], "said_by": "steward",
+         "kind": "statement", "held": [], "new_belief": {"belief": "Bake's dashboard should show the calendar", "about": "bake"}}]}
+    d = store.start_dream(sid, "fork", "hand", st, st)
+    out = dream.apply(store, knobs, d, sid, store.undreamed(sid), answer, "2026-08-25T09:01:00Z", log=lambda *a: None)
+    assert out["new"] == 1 and len(out["held_back"]) == 1
+    how = store.one("SELECT * FROM beliefs WHERE about = 'how'")
+    s = standing.of(store, knobs, how["id"])
+    assert s["direction"] == 1 and store.links(how["id"])[0]["strength"] == pytest.approx(0.6)
+
+
+def test_the_same_check_reuses_a_held_belief_or_marks_an_opposite(store, knobs, monkeypatch):
+    sid = store.session("s", "live", "s")["id"]
+    e = store.add_entry(sid, "2026-07-08T16:02:00Z", "bake", "chat", "Keep it push to talk.")
+    held = store.add_belief("bake wants push to talk only no wake word", "bake")
+    store.add_belief("bake uses the hey rook wake word", "bake")
+    asked = []
+
+    def fake_call(store_, knobs_, purpose, prompt, **kw):
+        asked.append(prompt)
+        lines = [l for l in prompt.splitlines() if l[:1].isdigit()]
+        verdicts = []
+        for line in lines:
+            k = int(line.split(".")[0])
+            verdicts.append({"pair": k, "verdict": "same" if "push to talk only" in prompt.split(f"{k}. new:")[1].split(
+                "\n")[1] else "opposite"})
+        return {"structured_output": {"verdicts": verdicts}}
+    monkeypatch.setattr(model, "call", fake_call)
+    knobs["models"]["fake"]["same_check_from"] = 0.3
+    answer = {"facts": [{"fact": "Bake said keep push to talk.", "entries": [f"s{e}"], "said_by": "bake", "kind": "statement",
+                         "held": [], "new_belief": {"belief": "bake wants push to talk only no wake word ever", "about": "bake"}}]}
+    d = store.start_dream(sid, "fork", "hand", e, e)
+    out = dream.apply(store, knobs, d, sid, store.undreamed(sid), answer, "2026-07-08T16:03:00Z", log=lambda *a: None)
+    assert asked and out["same"] == 1 and out["new"] == 0
+    assert len(store.links(held)) == 1 and store.links(held)[0]["stance"] == 1
+
+
+# --- one session that compacts ---
+
+def test_an_idle_gap_dreams_then_compacts_the_same_session(store, knobs, monkeypatch):
+    sid = store.session("house", "live", "house")["id"]
+    store.run("UPDATE sessions SET cc_session = 'cc-1' WHERE id = ?", sid)
+    store.add_entry(sid, "2026-05-04T13:00:00Z", "bake", "chat", "hello")
+    seen = []
+
+    def fake_call(store_, knobs_, purpose, prompt, **kw):
+        seen.append((purpose, prompt, kw))
+        if purpose.startswith("dream"):
+            return {"structured_output": {"facts": []}}
+        return {"result": "ok", "session_id": "cc-1"}
+    monkeypatch.setattr(model, "call", fake_call)
+    s = store.one("SELECT * FROM sessions WHERE id = ?", sid)
+    turn.say(store, knobs, s, "next day", "bake", "2026-05-05T09:00:00Z")
+    assert [p for p, _, _ in seen] == ["dream 1", "compact house", "turn house"]
+    assert seen[1][1] == "/compact" and seen[1][2]["resume"] == "cc-1" and seen[2][2]["resume"] == "cc-1"
+    assert store.one("SELECT COUNT(*) AS n FROM compactions")["n"] == 1
+    assert store.one("SELECT recalled FROM turns")["recalled"] is not None
+
+
+# --- the lighter searches ---
+
+def test_keyword_search_finds_a_belief_by_the_dreams_other_wordings(store, knobs):
+    knobs["search"]["model"] = "keyword"
+    b = store.add_belief("Bake dropped the wake word; push to talk only", "bake",
+                         wordings=["the kitchen speaker no longer listens all the time", "no always-on microphone"])
+    store.add_belief("Bake likes dark mode on everything", "bake")
+    r = recall.recall(store, knobs, "Is the kitchen speaker still always listening?", "2026-08-01T00:00:00Z")
+    assert [i.id for i in r.beliefs] == [b]
+    assert recall.recall(store, knobs, "Who is my dentist?", "2026-08-01T00:00:00Z").missed
+    # rewording a belief (a pin) re-indexes it
+    store.reword(b, "Push to talk, for good", "2026-08-02T00:00:00Z", "test")
+    store.run("UPDATE beliefs SET wordings = NULL WHERE id = ?", b)
+    assert recall.recall(store, knobs, "Is the kitchen speaker still always listening?", "2026-08-03T00:00:00Z").missed
+    assert search.dice("Bake dropped the wake word", "the wake word was dropped") > 0.5
+
+
+def test_hybrid_recalls_what_either_search_finds(store, knobs):
+    knobs["models"]["hybrid"]["static"] = "fake"
+    knobs["search"]["model"] = "hybrid"
+    by_words = store.add_belief("zstd compresses old logs", "how", wordings=["log files are kept small"])
+    r = recall.recall(store, knobs, "How are the log files kept small?", "2026-08-01T00:00:00Z")
+    assert by_words in [i.id for i in r.beliefs]
+    assert r.beliefs[0].closeness >= 1.0      # the hybrid's floor is 1.0: a multiple of each search's own floor

@@ -11,7 +11,8 @@ told to say "I don't remember", and nothing is written down about the miss.
 
 from dataclasses import dataclass, field
 
-from . import embed, standing
+from . import search, standing
+from .knobs import search as search_knobs
 from .store import parse_time
 
 
@@ -51,26 +52,12 @@ class Recall:
 
 
 def model_key(knobs):
-    s = knobs["search"]
-    return f"{s['model']}|{s['pooling']}"
+    s = search_knobs(knobs)
+    return f"{s['repo'] if s.get('kind') != 'hybrid' else s.get('static')}|{s.get('pooling')}"
 
 
 def _vectors(store, knobs, kind, rows, emb):
-    import numpy as np
-    key = model_key(knobs)
-    have = store.vectors(kind, key)
-    missing = [r for r in rows if r["id"] not in have]
-    if missing:
-        made = emb([r["text"] for r in missing])
-        pairs = [(r["id"], made[i].astype("float32").tobytes()) for i, r in enumerate(missing)]
-        store.put_vectors(kind, key, pairs)
-        have.update(dict(pairs))
-    return {r["id"]: np.frombuffer(have[r["id"]], dtype=np.float32) for r in rows}
-
-
-def embed_query(store, knobs, text, emb=None):
-    emb = emb or embed.embedder(store.folder, knobs)
-    return emb([knobs["search"]["query_prefix"] + text])[0]
+    return search.vectors(store, knobs, kind, rows, emb)
 
 
 def _recency(knobs, last, at):
@@ -78,44 +65,44 @@ def _recency(knobs, last, at):
     return knobs["search"]["recency_decay_per_hour"] ** hours
 
 
-def recall(store, knobs, query, at, exclude_entries=(), emb=None):
-    s = knobs["search"]
-    emb = emb or embed.embedder(store.folder, knobs)
-    q = embed_query(store, knobs, query, emb)
+def recall(store, knobs, query, at, exclude_entries=(), emb="load"):
+    """emb: an embedder already loaded, or "load" (the knobs' one; none for keyword search)."""
+    s = search_knobs(knobs)
     out = {"entry": [], "episode": [], "belief": []}
-    best = 0.0
-
     entries = [r for r in store.scratch() if r["id"] not in set(exclude_entries) and r["at"] <= at]
     episodes = [r for r in store.all("SELECT * FROM episodes ORDER BY id") if r["happened_at"] <= at]
     beliefs = store.all("SELECT * FROM beliefs ORDER BY id")
-    vec = {"entry": _vectors(store, knobs, "entry", entries, emb),
-           "episode": _vectors(store, knobs, "episode", episodes, emb),
-           "belief": _vectors(store, knobs, "belief", beliefs, emb)}
+    close = search.query(store, knobs, query, {"entry": entries, "episode": episodes, "belief": beliefs},
+                         emb=emb if emb is not None else "load")
+    best = max(close.values(), default=0.0)
+    floor = min(s["miss_below"], s["pinned_miss_below"])
 
     for r in entries:
         it = Item("entry", r["id"], r["text"], r["speaker"], r["at"], extra={"channel": r["channel"], "session": r["session"]})
-        it.closeness = float(vec["entry"][r["id"]] @ q)
+        it.closeness = close[("entry", r["id"])]
         it.recency = _recency(knobs, r["last_used"] or r["at"], at)
         out["entry"].append(it)
     for r in episodes:
         it = Item("episode", r["id"], r["text"], r["said_by"], r["happened_at"],
                   extra={"kind": r["kind"], "channel": r["channel"], "session": r["session"], "entries": r["entries"]})
-        it.closeness = float(vec["episode"][r["id"]] @ q)
+        it.closeness = close[("episode", r["id"])]
         it.recency = _recency(knobs, r["last_used"] or r["happened_at"], at)
         out["episode"].append(it)
     for r in beliefs:
+        c = close[("belief", r["id"])]
+        if c < floor:          # too far to be recalled even if pinned: no need to work out its standing
+            continue
         st = standing.of(store, knobs, r["id"])
-        links = store.links(r["id"])
+        links = standing.links_of(store, knobs, r["id"])
         it = Item("belief", r["id"], r["text"], r["about"], r["made_at"],
-                  extra={"standing": st, "links": links, "about": r["about"]})
-        it.closeness = float(vec["belief"][r["id"]] @ q)
+                  extra={"standing": st, "links": links, "about": r["about"], "row": r})
+        it.closeness = c
         it.recency = _recency(knobs, r["last_used"] or (links[-1]["at"] if links else r["made_at"]), at)
         it.certainty = abs(st["value"])
         out["belief"].append(it)
 
     for kind, items in out.items():
         for it in items:
-            best = max(best, it.closeness)
             it.score = (s["weight_closeness"] * it.closeness + s["weight_recency"] * it.recency
                         + s["weight_certainty"] * it.certainty)
         keep = sorted((i for i in items if i.closeness >= s["miss_below"]
@@ -124,11 +111,15 @@ def recall(store, knobs, query, at, exclude_entries=(), emb=None):
         out[kind] = keep[:s[{"entry": "turn_scratch", "episode": "turn_episodes", "belief": "turn_beliefs"}[kind]]]
 
     # Newer words win: a scratch pad entry close to a belief and newer than its latest link.
-    for b in out["belief"]:
-        latest = b.extra["links"][-1]["at"] if b.extra["links"] else b.when
-        for e in out["entry"]:
-            if e.when > latest and float(vec["entry"][e.id] @ vec["belief"][b.id]) >= s["newer_words_closeness"]:
-                b.extra.setdefault("newer_words", []).append(e.tag)
+    if out["belief"] and out["entry"]:
+        rows_e = [store.one("SELECT * FROM entries WHERE id = ?", e.id) for e in out["entry"]]
+        rows_b = [b.extra["row"] for b in out["belief"]]
+        grid = search.pair_rows(store, knobs, "entry", rows_e, "belief", rows_b, emb=emb if emb is not None else "load")
+        for j, b in enumerate(out["belief"]):
+            latest = b.extra["links"][-1]["at"] if b.extra["links"] else b.when
+            for i, e in enumerate(out["entry"]):
+                if e.when > latest and grid[i][j] >= s["newer_words"]:
+                    b.extra.setdefault("newer_words", []).append(e.tag)
     return Recall(query, at, out["entry"], out["episode"], out["belief"], best)
 
 
@@ -147,7 +138,8 @@ def belief_line(it, links_shown=3):
     for l in it.extra["links"][-links_shown:]:
         mark = "+" if l["stance"] > 0 else "-"
         lines.append(f"     {mark} {_day(l['at'])[:10]} {l['said_by']} ({l['kind']}, {l['strength']:.2f}) [e{l['episode']}]"
-                     f" {l['episode_text'][:140]}" + (f"  ({l['note']})" if l["note"] else ""))
+                     f" {l['episode_text'][:140]}" + (f"  ({l['note']})" if l["note"] else "")
+                     + (f"  (via its opposite b{l['via']})" if l.get("via") else ""))
     return "\n".join(lines)
 
 
