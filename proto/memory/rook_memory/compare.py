@@ -150,3 +150,127 @@ def opposites(store, knobs, out=print):
             out(f"  [b{bid}] {b['text']}")
             out(f"      off: {standing.summary(standing.of(store, off, bid))}")
             out(f"      on:  {standing.summary(standing.of(store, on, bid))}")
+
+
+def _belief_hits(store, knobs, text, at, relevant, upto):
+    r = recall.recall(store, knobs, text, at)
+    good = [b for b in r.beliefs if b.id <= upto and _relevant(b.text, relevant)]
+    return bool(good), r
+
+
+def heal_test(store, knobs, path, start, per_day=8, others=(), out=print):
+    """Misses and healing. Each question is asked cold (recall only, no model), then live as Bake (the
+    house agent may search in its own words; a dream follows each day), then cold again. A question
+    counts as found when recall turns up a belief held before the test with the question's words.
+    The other searches named are asked cold before and after too (they do not heal themselves, but
+    the dreams may add to what they search)."""
+    import datetime
+    import json
+    from . import dream as dream_mod, turn
+    from .store import parse_time
+
+    with open(path, "rb") as f:
+        questions = tomllib.load(f)["question"]
+    upto = store.one("SELECT MAX(id) AS n FROM beliefs")["n"] or 0
+    t0 = parse_time(start)
+
+    def ask_all(label, model):
+        k = copy.deepcopy(knobs)
+        k["search"]["model"] = model
+        at = (t0 + datetime.timedelta(days=60)).isoformat()
+        return [_belief_hits(store, k, q["text"], at, q["relevant"], upto)[0] for q in questions]
+
+    before = {m: ask_all("cold", m) for m in [knobs["search"]["model"], *others]}
+    sess = turn.session(store, "heal test")
+    for n, q in enumerate(questions):
+        day = t0 + datetime.timedelta(days=n // per_day, minutes=3 * (n % per_day))
+        out(f"[{day.isoformat()[:16]}] bake: {q['text']}")
+        answer, r = turn.say(store, knobs, sess, q["text"], knobs["people"]["person"], day.isoformat(), log=out)
+        out(f"    recalled: {', '.join(i.tag for i in r.beliefs) or 'no beliefs'}\n  agent: {(answer or '')[:300]}")
+    dream_mod.run(store, knobs, sess["id"], trigger="idle", log=out)
+    after = {m: ask_all("healed", m) for m in before}
+
+    main = knobs["search"]["model"]
+    rows = store.all("SELECT * FROM misses WHERE session = ? ORDER BY id", sess["id"])
+    by_query = {}
+    for m in rows:
+        by_query.setdefault(m["query"], m)
+    out("\n== heal test: found cold / after the dreams")
+    for i, q in enumerate(questions):
+        m = by_query.get(q["text"])
+        heal = ""
+        if m:
+            heals = store.all("SELECT kind, words FROM heals WHERE miss = ?", m["id"])
+            found = json.loads(m["found"] or "[]")
+            heal = f"  [{m['status']}" + (f"; agent's search found {', '.join(found)}" if found else "") + \
+                   (f"; healed with {'; '.join(h['kind'] + ' ' + h['words'] for h in heals)}" if heals else "") + "]"
+        out(f"  {'yes' if before[main][i] else 'no ':3} -> {'yes' if after[main][i] else 'no ':3}  {q['text']}{heal}")
+    for m, cold in before.items():
+        out(f"  SUMMARY {m}: found {sum(cold)}/{len(questions)} cold, {sum(after[m])}/{len(questions)} after the dreams")
+    return before, after
+
+
+def bench_graph(knobs, sizes, folder, out=print):
+    """The graph's read path at N beliefs, with N/5 things (two aliases each), about 1.5 about-edges a
+    belief and N/10 thing-to-thing edges, all filler sentences from the made-up set's words. Uses
+    Python's sqlite3 and nothing else; says whether numpy was ever imported."""
+    import json
+    import pathlib
+    import random
+    import resource
+    import sys
+    from . import search
+    from .store import Store
+
+    k = copy.deepcopy(knobs)
+    k["search"]["model"] = "graph"
+    result = {"model": "graph", "kind": "graph"}
+    words = sorted({w for w in search.words(" ".join([
+        "photo library backup cachyrig starscream decommissioned wake word push talk kitchen speaker dashboard dark mode",
+        "light tablet guest wifi vault vlan network nas storage digest morning steward report monday logs zstd nmap",
+        "sweep inventory agent camera clips archive sprinklers garden timer bread porch sun night"]))} |
+                   {f"word{i}" for i in range(3000)})
+    rnd = random.Random(1)
+    question = "Is that old server we retired in the winter available again?"
+    for n in sizes:
+        d = pathlib.Path(folder) / f"bench-graph-{n}"
+        d.mkdir(parents=True, exist_ok=True)
+        for f in d.glob("memory.sqlite3*"):
+            f.unlink()
+        store = Store(d)
+        db = store.db
+        db.executemany("INSERT INTO beliefs (text, about, made_at) VALUES (?, 'world', '2026-01-01T00:00:00+00:00')",
+                       [(" ".join(rnd.choice(words) for _ in range(10)),) for _ in range(n)])
+        db.executemany("INSERT INTO things (name, made_at) VALUES (?, '2026-01-01')",
+                       [(" ".join(rnd.choice(words) for _ in range(2)),) for _ in range(n // 5)])
+        db.executemany("INSERT INTO aliases (thing, alias, at, how) VALUES (?, ?, '2026-01-01', 'dream')",
+                       [(t, " ".join(rnd.choice(words) for _ in range(2))) for t in range(1, n // 5 + 1) for _ in range(2)])
+        db.executemany("INSERT INTO edges (src_kind, src, rel, dst_kind, dst, at) VALUES ('belief', ?, 'about', 'thing', ?, 'x')",
+                       [(rnd.randint(1, n), rnd.randint(1, n // 5)) for _ in range(n * 3 // 2)])
+        db.executemany("INSERT INTO edges (src_kind, src, rel, dst_kind, dst, at) VALUES ('thing', ?, 'related', 'thing', ?, 'x')",
+                       [(rnd.randint(1, n // 5), rnd.randint(1, n // 5)) for _ in range(n // 10)])
+        # the real Starscream, so the question has something to find
+        t = store.add_thing("Starscream", "2026-01-01")
+        store.add_alias(t, "the old server we retired", "2026-01-01")
+        b = store.add_belief("Starscream is decommissioned and never coming back", "world")
+        store.add_edge("belief", b, "about", "thing", t, "2026-01-01")
+        db.commit()
+        started = time.monotonic()
+        recall.recall(store, k, "index", "2026-09-01T00:00:00+00:00")       # builds both full-text indexes
+        result[f"index_{n}_s"] = round(time.monotonic() - started, 2)
+        times, hit = [], False
+        for _ in range(3):
+            started = time.monotonic()
+            r = recall.recall(store, k, question, "2026-09-01T00:00:00+00:00")
+            times.append(time.monotonic() - started)
+            hit = any(x.id == b for x in r.beliefs)
+        result[f"search_{n}_s"] = round(min(times), 3)
+        result[f"found_{n}"] = hit
+        store.close()
+        for f in d.glob("memory.sqlite3*"):
+            f.unlink()
+        d.rmdir()
+    result["peak_mb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+    result["numpy_imported"] = "numpy" in sys.modules
+    out(json.dumps(result))
+    return result

@@ -118,7 +118,7 @@ def entry(store, speaker="bake", text="x", at="2026-06-16T14:03:00Z", session=No
 
 def test_pin_makes_a_new_pinned_belief_from_his_words_and_unpin_drops_it_back(store, knobs):
     e = entry(store, text="Pin this: Starscream is decommissioned for good.")
-    bid, said = pin.pin(store, knobs, "Starscream is decommissioned for good", e)
+    bid, said = pin.pin(store, knobs, "Starscream is decommissioned for good", e, final_words="for good")
     assert bid and "new belief" in said and store.pinned(bid)
     links = store.links(bid)
     assert len(links) == 1 and links[0]["said_by"] == "bake" and links[0]["kind"] == "decision"
@@ -133,20 +133,20 @@ def test_pin_makes_a_new_pinned_belief_from_his_words_and_unpin_drops_it_back(st
 def test_pin_matches_a_close_held_belief(store, knobs):
     held = store.add_belief("starscream is decommissioned", "world")
     e = entry(store, text="pin it: starscream is decommissioned")
-    bid, said = pin.pin(store, knobs, "starscream is decommissioned", e)
+    bid, said = pin.pin(store, knobs, "starscream is decommissioned", e, final_words="pin it")
     assert bid == held and "closest held belief" in said
 
 
 def test_only_his_own_words_pin(store, knobs):
     e = entry(store, speaker="steward", text="pin that Bake wants PDFs")
-    bid, said = pin.pin(store, knobs, "Bake wants PDFs", e)
+    bid, said = pin.pin(store, knobs, "Bake wants PDFs", e, final_words="pin that")
     assert bid is None and "Only his own words" in said
     assert store.one("SELECT COUNT(*) AS n FROM beliefs")["n"] == 0
 
 
 def test_a_pinned_belief_does_not_move_but_its_evidence_shows(store, knobs):
     e = entry(store, text="Starscream is gone, pin it")
-    bid, _ = pin.pin(store, knobs, "Starscream is decommissioned", e)
+    bid, _ = pin.pin(store, knobs, "Starscream is decommissioned", e, final_words="pin it")
     ep = store.add_episode(1, "An agent said Starscream is back", "agent", "chat", "statement", [e], "2026-08-05T10:00:00Z")
     store.add_link(bid, ep, -1, 0.24, "2026-08-05")
     s = standing.of(store, knobs, bid)
@@ -235,7 +235,7 @@ def test_a_dream_reading_memory_is_not_use_a_turn_with_him_is(store, knobs, monk
                          "params": {"name": "search", "arguments": {"query": "starscream decommissioned"}}})]
     mcp.serve(store, knobs, "dream", session=sid, at="2026-08-01T00:00:00Z", stdin=io.StringIO("\n".join(lines)), stdout=out)
     replies = [json.loads(x) for x in out.getvalue().splitlines()]
-    assert [t["name"] for t in replies[0]["result"]["tools"]] == ["search"]
+    assert [t["name"] for t in replies[0]["result"]["tools"]] == ["search", "things", "neighbourhood"]
     assert "starscream" in replies[1]["result"]["content"][0]["text"]
     assert store.one("SELECT last_used FROM beliefs WHERE id = ?", b)["last_used"] is None
 
@@ -276,7 +276,7 @@ def test_dream_forks_a_live_session_condenses_and_an_idle_gap_triggers_it(store,
     assert not dream.due(store, knobs, sid, "2026-07-01T12:05:00Z")
     assert dream.due(store, knobs, sid, "2026-07-01T12:30:00Z")
     out = dream.run(store, knobs, sid, log=lambda *a: None)
-    assert seen[0]["resume"] == "cc-9" and seen[0]["fork"] and not seen[0]["persist"] and seen[0]["tools"] == ["search"]
+    assert seen[0]["resume"] == "cc-9" and seen[0]["fork"] and not seen[0]["persist"] and seen[0]["tools"] == ["search", "things", "neighbourhood"]
     assert out["new"] == 1 and not store.scratch()
     assert store.one("SELECT dreamed_to FROM sessions WHERE id = ?", sid)["dreamed_to"] == e
     assert dream.run(store, knobs, sid, log=lambda *a: None) is None   # nothing new
@@ -401,7 +401,8 @@ def test_opposites_count_against_each_other_only_with_the_knob(store, knobs):
 def test_a_pin_rewords_the_matched_belief_to_his_words(store, knobs):
     held = store.add_belief("starscream is decommissioned and backups go elsewhere", "world")
     e = entry(store, text="Listen: starscream is decommissioned and backups go elsewhere. That is final.")
-    bid, said = pin.pin(store, knobs, "starscream is decommissioned and backups go elsewhere. That is final.", e)
+    bid, said = pin.pin(store, knobs, "starscream is decommissioned and backups go elsewhere. That is final.", e,
+                        final_words="That is final")
     assert bid == held
     assert store.one("SELECT text FROM beliefs WHERE id = ?", held)["text"] == \
         "starscream is decommissioned and backups go elsewhere. That is final."
@@ -500,3 +501,108 @@ def test_hybrid_recalls_what_either_search_finds(store, knobs):
     r = recall.recall(store, knobs, "How are the log files kept small?", "2026-08-01T00:00:00Z")
     assert by_words in [i.id for i in r.beliefs]
     assert r.beliefs[0].closeness >= 1.0      # the hybrid's floor is 1.0: a multiple of each search's own floor
+
+
+# --- round four: the graph ---
+
+def graph_store(store, knobs):
+    knobs["search"]["model"] = "graph"
+    sid = store.session("s", "live", "s")["id"]
+    e = store.add_entry(sid, "2026-07-01T12:00:00Z", "bake", "chat", "We're dropping wake word. Push to talk only.")
+    ep = store.add_episode(sid, "Bake dropped the wake word", "bake", "chat", "decision", [e], "2026-07-01T12:00:00Z")
+    ptt = store.add_belief("Push to talk only", "bake", at="2026-07-01T12:00:00Z")
+    store.add_link(ptt, ep, 1, 1.0, "2026-07-01")
+    uses = store.add_belief("Bake uses 'hey rook' every morning", "bake", at="2026-05-04T13:00:00Z")
+    store.add_link(uses, ep, -1, 1.0, "2026-07-01")
+    store.mark_opposites(ptt, uses, "2026-07-01", "dream 1")
+    speaker = store.add_thing("kitchen speaker", "2026-05-04")
+    wake = store.add_thing("wake word", "2026-05-04")
+    store.add_edge("belief", ptt, "about", "thing", wake, "2026-07-01", dream=1)
+    store.add_edge("thing", wake, "part_of", "thing", speaker, "2026-07-01", dream=1)
+    return sid, e, ptt, uses, speaker, wake
+
+
+def test_graph_recall_walks_from_a_named_thing_and_brings_opposites(store, knobs):
+    sid, e, ptt, uses, speaker, wake = graph_store(store, knobs)
+    r = recall.recall(store, knobs, "What wake word am I using?", "2026-08-01T00:00:00Z")
+    found = {b.id: b.extra.get("via") for b in r.beliefs}
+    assert ptt in found and "about 'wake word'" in found[ptt]
+    assert found.get(uses) == f"the opposite of b{ptt}"
+    # one step out: the kitchen speaker is related to the wake word
+    knobs["models"]["graph"]["hops"] = 1
+    r = recall.recall(store, knobs, "Is the kitchen speaker on push to talk?", "2026-08-01T00:00:00Z")
+    assert ptt in [b.id for b in r.beliefs]
+    knobs["models"]["graph"]["hops"] = 0
+    r = recall.recall(store, knobs, "Is the kitchen speaker still always listening?", "2026-08-01T00:00:00Z")
+    assert ptt not in [b.id for b in r.beliefs]
+
+
+def test_a_heal_makes_the_same_wording_hit_next_time(store, knobs):
+    sid, e, ptt, uses, speaker, wake = graph_store(store, knobs)
+    q = "Is Rook still always listening?"
+    assert not recall.recall(store, knobs, q, "2026-08-01T00:00:00Z").beliefs
+    m = store.run("INSERT INTO misses (session, entry, at, query, recalled, found) VALUES (?, ?, ?, ?, '[]', ?)",
+                  sid, e, "2026-08-01T00:00:00Z", q, json.dumps([f"b{ptt}"]))
+    entries = store.undreamed(sid)
+    d = store.start_dream(sid, "fork", "idle", entries[0]["id"], entries[-1]["id"])
+    answer = {"facts": [], "heals": [{"miss": f"m{m}", "thing": "wake word", "alias": "always listening",
+                                     "belief": f"b{ptt}", "why": "the agent found it by searching 'wake word'"}]}
+    out = dream.apply(store, knobs, d, sid, entries, answer, "2026-08-01T00:10:00Z", log=lambda *a: None)
+    assert out["heals"] == 1 and store.one("SELECT status FROM misses WHERE id = ?", m)["status"] == "healed"
+    assert ptt in [b.id for b in recall.recall(store, knobs, q, "2026-08-02T00:00:00Z").beliefs]
+
+
+def test_the_dream_reuses_a_held_thing_by_name_or_alias(store, knobs):
+    sid, e, ptt, uses, speaker, wake = graph_store(store, knobs)
+    store.add_alias(wake, "hey rook", "2026-05-04")
+    entries = store.undreamed(sid)
+    d = store.start_dream(sid, "fork", "idle", entries[0]["id"], entries[-1]["id"])
+    answer = {"facts": [], "things": [{"name": "Hey Rook", "aliases": ["the trigger phrase"], "entries": [f"s{e}"]},
+                                      {"name": "the porch tablet"}],
+              "about": [{"belief": f"b{uses}", "thing": "hey rook"}]}
+    out = dream.apply(store, knobs, d, sid, entries, answer, "2026-07-01T13:00:00Z", log=lambda *a: None)
+    assert out["things"] == 1 and out["things_reused"] == 1
+    assert store.one("SELECT COUNT(*) AS n FROM things")["n"] == 3
+    assert store.thing_named("the trigger phrase")["id"] == wake
+    assert store.one("SELECT 1 FROM edges WHERE src = ? AND rel = 'about' AND dst = ?", uses, wake)
+
+
+def test_the_graph_read_path_needs_no_numpy(store, knobs):
+    import subprocess
+    code = ("import sys; sys.path.insert(0, %r); from rook_memory import knobs, recall; from rook_memory.store import Store;"
+            "k = knobs.load(overrides=['search.model=graph']); s = Store(%r);"
+            "recall.recall(s, k, 'What wake word am I using?', '2026-08-01T00:00:00Z');"
+            "print('numpy' in sys.modules)") % (str(pathlib.Path(__file__).resolve().parent.parent), str(store.folder))
+    graph_store(store, knobs)
+    assert subprocess.run([sys.executable, "-c", code], capture_output=True, text=True).stdout.strip() == "False"
+
+
+def test_a_pin_needs_the_words_that_make_it_final(store, knobs):
+    e = entry(store, text="Again, Starscream is decommissioned. Stop reaching for Starscream.")
+    bid, said = pin.pin(store, knobs, "Starscream is decommissioned", e, final_words="Stop reaching for Starscream")
+    assert bid is None and "Not pinned" in said and not store.pinned(1) if bid else True
+    e2 = entry(store, text="Never again put the guest network on the main VLAN.", at="2026-08-20T17:05:00Z")
+    bid, said = pin.pin(store, knobs, "Never again put the guest network on the main VLAN.", e2, final_words="Never again")
+    assert bid and store.pinned(bid)
+    assert pin.final(knobs, "it is not coming back", "The old NAS is gone and it is not coming back.") == "not coming back"
+    assert pin.final(knobs, "for good", "Starscream is gone.") is None     # not in his message
+
+
+def test_dream_run_keeps_the_whole_answer(store, knobs, monkeypatch):
+    knobs["search"]["model"] = "graph"
+    sid = store.session("s", "live", "s")["id"]
+    store.run("UPDATE sessions SET cc_session = 'cc-2' WHERE id = ?", sid)
+    e = store.add_entry(sid, "2026-05-04T13:07:00Z", "bake", "chat", "Starscream is gone, I decommissioned it.")
+
+    def fake_call(store_, knobs_, purpose, prompt, **kw):
+        return {"structured_output": {
+            "facts": [{"fact": "Bake said Starscream is gone.", "entries": [f"s{e}"], "said_by": "bake", "kind": "correction",
+                       "held": [], "new_belief": {"belief": "Starscream is decommissioned", "about": "world",
+                                                  "about_things": ["Starscream"]}}],
+            "things": [{"name": "Starscream", "aliases": ["the old server"], "entries": [f"s{e}"]},
+                       {"name": "backups", "aliases": ["copies"], "entries": []}],
+            "relations": [{"thing": "Starscream", "rel": "related", "other": "backups"}]}}
+    monkeypatch.setattr(model, "call", fake_call)
+    out = dream.run(store, knobs, sid, log=lambda *a: None)
+    assert out["aliases"] == 2 and out["edges"] == 2
+    assert recall.recall(store, knobs, "Is the old server back?", "2026-06-01T00:00:00Z").beliefs

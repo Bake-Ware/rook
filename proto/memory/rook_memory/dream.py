@@ -16,6 +16,7 @@ only by his own words: anything else that would do it is recorded and held back 
 Pinned beliefs get their links like any other, and do not move.
 """
 
+import json
 from string import Template
 
 from . import embed, mcp, model, schemas, search, standing
@@ -28,6 +29,22 @@ def _when(t):
 
 def listing(entries):
     return "\n".join(f"[s{e['id']}] {_when(e['at'])} {e['speaker']} ({e['channel']}): {e['text']}" for e in entries)
+
+
+def misses_listing(store, entries):
+    ids = [e["id"] for e in entries]
+    rows = store.all(f"SELECT * FROM misses WHERE status = 'open' AND entry IN ({','.join('?' * len(ids))}) ORDER BY id",
+                     *ids) if ids else []
+    if not rows:
+        return "(none)"
+    out = []
+    for m in rows:
+        found = json.loads(m["found"] or "[]")
+        recalled = json.loads(m["recalled"] or "[]")
+        out.append(f"[m{m['id']}] at s{m['entry']}: \"{m['query']}\"; automatic recall gave "
+                   f"{', '.join(recalled) or 'no beliefs'}"
+                   + (f"; the house agent's own search then found {', '.join(found)}" if found else ""))
+    return "\n".join(out)
 
 
 def stretches(entries, chars):
@@ -64,25 +81,28 @@ def run(store, knobs, session, trigger="hand", log=print):
     log(f"dream {dream} ({trigger}, {mode}) over {s['name']}: entries s{entries[0]['id']}-s{entries[-1]['id']}")
     chosen = knobs["model"]["dream_model"] or knobs["model"]["turn_model"]
     tools = mcp.config(store, knobs, "dream", session=session, at=when)
-    facts = []
+    merged = {"facts": []}
     runs = [entries] if mode == "fork" else list(stretches(entries, knobs["dream"]["replay_stretch_chars"]))
     for n, part in enumerate(runs, 1):
-        body = Template(knobs["prompts"]["dream"]).safe_substitute(entries=listing(part), now=_when(when))
+        body = Template(knobs["prompts"]["dream"]).safe_substitute(entries=listing(part), now=_when(when),
+                                                                   misses=misses_listing(store, part))
         try:
             if mode == "fork":
                 reply = model.call(store, knobs, f"dream {dream}", body, model=chosen, schema=schemas.dream(knobs),
-                                   resume=s["cc_session"], fork=True, persist=False, mcp=tools, tools=["search"])
+                                   resume=s["cc_session"], fork=True, persist=False, mcp=tools, tools=["search", "things", "neighbourhood"])
             else:
                 prompt = Template(knobs["prompts"]["replay"]).safe_substitute(name=s["name"], dream=body)
                 reply = model.call(store, knobs, f"dream {dream} {n}/{len(runs)}", prompt, model=chosen,
                                    system=knobs["prompts"]["house"], schema=schemas.dream(knobs), persist=False,
-                                   mcp=tools, tools=["search"])
+                                   mcp=tools, tools=["search", "things", "neighbourhood"])
         except model.ModelError as e:
             log(f"  no answer ({e}); these entries stay undreamed")
             store.finish_dream(dream, 0, 0, 0, [{"why": str(e)}], None)
             return None
-        facts += reply["structured_output"].get("facts") or []
-    result = apply(store, knobs, dream, session, entries, {"facts": facts}, when, log)
+        for key, value in (reply["structured_output"] or {}).items():
+            if isinstance(value, list):
+                merged.setdefault(key, []).extend(value)
+    result = apply(store, knobs, dream, session, entries, merged, when, log)
     last = entries[-1]["id"]
     if knobs["dream"]["condense_after_dream"]:
         store.run("UPDATE entries SET condensed_at = ? WHERE session = ? AND id <= ? AND condensed_at IS NULL",
@@ -110,7 +130,8 @@ def apply(store, knobs, dream, session, entries, answer, when, log=print, emb=No
     abouts = [person, "how", "world"]
     mine = {e["id"]: e for e in entries}
     held_back, pending, made = [], [], []
-    count = {"facts": 0, "links": 0, "new": 0, "same": 0, "opposite": 0}
+    count = {"facts": 0, "links": 0, "new": 0, "same": 0, "opposite": 0, "things": 0, "things_reused": 0,
+             "aliases": 0, "edges": 0, "heals": 0}
 
     def link(b, ep, stance, weight, said_by, occ, why):
         w, note = weight, None
@@ -202,9 +223,12 @@ def apply(store, knobs, dream, session, entries, answer, when, log=print, emb=No
             continue
         made.append(create(p["text"], p["about"], p["ep"], p["weight"], p["occ"],
                            p["opposite_of"] + [resolve(r) for r in opposite], p["wordings"]))
+    write_graph(store, knobs, dream, answer, mine, made, pending, when, count, held_back, log)
     store.finish_dream(dream, count["facts"], count["links"], count["new"], held_back, answer)
     log(f"  dream {dream} done: {count['facts']} facts, {count['links']} links, {count['new']} new beliefs"
-        f" ({count['same']} found already held, {count['opposite']} opposites marked), {len(held_back)} held back")
+        f" ({count['same']} found already held, {count['opposite']} opposites marked), {len(held_back)} held back;"
+        f" graph: {count['things']} new things ({count['things_reused']} reused), {count['aliases']} aliases,"
+        f" {count['edges']} edges, {count['heals']} heals")
     return {"dream": dream, **count, "held_back": held_back}
 
 
@@ -230,7 +254,7 @@ def _close_pairs(store, knobs, pending, emb):
     grid = search.pair(store, knobs, texts, held, emb=emb if emb is not None else "load") if held else [[] for _ in texts]
     floor = search_knobs(knobs)["same_check_from"]
     kind = search.kind(knobs)
-    if kind == "keyword":
+    if kind in ("keyword", "graph"):
         among = [[search.dice(a, b) for b in texts] for a in texts]
     else:
         e = embed.embedder(store.folder, knobs) if emb in (None, "load") else emb
@@ -270,3 +294,110 @@ def _same(store, knobs, dream, pairs, log):
             pass
     log(f"    same check: {len(pairs)} pair(s): " + ", ".join(f"{k}={out.get(k)}" for k in range(len(pairs))))
     return out
+
+
+def _entry_ids(tags, mine):
+    return [i for i in _ids(tags, "s") if i in mine]
+
+
+def write_graph(store, knobs, dream, answer, mine, made, pending, when, count, held_back, log=print):
+    """Things, aliases and edges from the dream's answer. A thing is reused when one is already held by
+    that name or alias; only then is a new one made."""
+    names = {}
+
+    def thing(ref, entries=(), make=True):
+        ref = str(ref or "").strip()
+        if not ref:
+            return None
+        t = None
+        if ref.lower().startswith("t") and ref[1:].isdigit():
+            t = store.one("SELECT * FROM things WHERE id = ?", int(ref[1:]))
+        t = t or names.get(ref.lower()) or store.thing_named(ref)
+        if t is None and make:
+            tid = store.add_thing(ref, when, dream, entries)
+            t = store.one("SELECT * FROM things WHERE id = ?", tid)
+            count["things"] += 1
+            log(f"    thing t{tid} {ref}")
+        if t is not None:
+            names[ref.lower()] = t
+        return t
+
+    for t in answer.get("things") or []:
+        entries = _entry_ids(t.get("entries"), mine)
+        existed = bool((str(t.get("id") or "").lower().startswith("t")) or store.thing_named(t.get("name") or ""))
+        row = thing(t.get("id") or t.get("name"), entries)
+        if row is None:
+            continue
+        if existed:
+            count["things_reused"] += 1
+        if t.get("name") and t.get("id") and row["name"].lower() != t["name"].lower():
+            if store.add_alias(row["id"], t["name"], when, dream, entries):
+                count["aliases"] += 1
+        for a in t.get("aliases") or []:
+            if store.add_alias(row["id"], a, when, dream, entries):
+                count["aliases"] += 1
+                log(f"    t{row['id']} {row['name']}: also \"{a}\"")
+
+    # new beliefs: what they are about, and what they refine
+    by_fact = [f.get("new_belief") for f in answer.get("facts") or [] if isinstance(f.get("new_belief"), dict)
+               and str(f["new_belief"].get("belief") or "").strip()]
+    for p, bid in zip(pending, made):
+        nb = next((n for n in by_fact if n["belief"].strip() == p["text"]), None)
+        if not nb:
+            continue
+        src = json.loads(store.one("SELECT entries FROM episodes WHERE id = ?", p["ep"])["entries"])
+        for ref in nb.get("about_things") or []:
+            t = thing(ref)
+            if t and store.add_edge("belief", bid, "about", "thing", t["id"], when, dream, src):
+                count["edges"] += 1
+        ref = _belief(store, nb.get("refines"))
+        if ref and ref["id"] != bid and store.add_edge("belief", bid, "refines", "belief", ref["id"], when, dream, src):
+            count["edges"] += 1
+            log(f"    b{bid} refines b{ref['id']}")
+    for a in answer.get("about") or []:
+        b, t = _belief(store, a.get("belief")), thing(a.get("thing"))
+        if b and t and store.add_edge("belief", b["id"], "about", "thing", t["id"], when, dream):
+            count["edges"] += 1
+    for r in answer.get("relations") or []:
+        a, b = thing(r.get("thing")), thing(r.get("other"))
+        if a and b and r.get("rel") in ("part_of", "related") and store.add_edge(
+                "thing", a["id"], r["rel"], "thing", b["id"], when, dream, _entry_ids(r.get("entries"), mine)):
+            count["edges"] += 1
+
+    # heals: the words a missed message used become an alias (and the edge it lacked), so they hit next time
+    for h in answer.get("heals") or []:
+        mid = _ids([h.get("miss")], "m")
+        miss = store.one("SELECT * FROM misses WHERE id = ?", mid[0]) if mid else None
+        t = thing(h.get("thing"), make=False)
+        if not miss or not t:
+            held_back.append({"heal": h, "why": "names no open miss or no held thing"})
+            continue
+        b = _belief(store, h.get("belief"))
+        # A miss is only a miss if what it was after was already held when the message came.
+        held_then = (b and str(b["made_at"]) <= str(miss["at"])) or (not b and str(t["made_at"]) <= str(miss["at"]))
+        if not held_then:
+            store.run("UPDATE misses SET status = 'nothing held', dream = ?, note = ? WHERE id = ?", dream,
+                      "new information, not a miss: nothing was held then", miss["id"])
+            held_back.append({"heal": h, "why": "not a miss: what it names was not held when the message came"})
+            continue
+        done = []
+        aid = store.add_alias(t["id"], h.get("alias") or "", when, dream, [miss["entry"]], how="heal")
+        if aid:
+            store.run("INSERT INTO heals (miss, at, dream, kind, ref, words, why) VALUES (?, ?, ?, 'alias', ?, ?, ?)",
+                      miss["id"], when, dream, aid, h.get("alias"), h.get("why"))
+            done.append(f"alias \"{h.get('alias')}\" for t{t['id']}")
+        if b:
+            eid = store.add_edge("belief", b["id"], "about", "thing", t["id"], when, dream, [miss["entry"]],
+                                 why=h.get("why"), how="heal")
+            if eid:
+                store.run("INSERT INTO heals (miss, at, dream, kind, ref, words, why) VALUES (?, ?, ?, 'edge', ?, ?, ?)",
+                          miss["id"], when, dream, eid, f"b{b['id']} about t{t['id']}", h.get("why"))
+                done.append(f"b{b['id']} about t{t['id']}")
+        if done:
+            store.run("UPDATE misses SET status = 'healed', dream = ? WHERE id = ?", dream, miss["id"])
+            count["heals"] += 1
+            log(f"    healed m{miss['id']} (\"{miss['query'][:60]}\"): {'; '.join(done)}")
+    for tag in answer.get("nothing_held") or []:
+        mid = _ids([tag], "m")
+        if mid:
+            store.run("UPDATE misses SET status = 'nothing held', dream = ? WHERE id = ? AND status = 'open'", dream, mid[0])

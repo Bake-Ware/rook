@@ -5,6 +5,7 @@
   share of the question's content words the memory contains. A belief is indexed with the other
   ways of saying it that the dream wrote down with it, so a question in other words can still meet
   one of them; and a live turn may search again in its own words.
+- "graph": things, aliases and edges the dream wrote, read with SQLite alone (see graph.py).
 - "hybrid": keyword and a static table together. Each has its own floor; closeness is the better of
   the two, each as a multiple of its floor, so a memory is recalled when either finds it (the
   floor of the hybrid is 1.0).
@@ -118,10 +119,19 @@ def keyword(store, query, rows_by_kind):
 
 # --- the two questions every search answers ---
 
+last_via = {}          # (kind, id): how the last query reached it (graph search only)
+
+
 def query(store, knobs, text, rows_by_kind, emb="load"):
     """{(kind, id): closeness} for every row given."""
     s = search_knobs(knobs)
     k = s.get("kind", "bert")
+    last_via.clear()
+    if k == "graph":
+        from . import graph
+        close, via, _things = graph.query(store, knobs, text, rows_by_kind)
+        last_via.update(via)
+        return close
     out = {(kk, r["id"]): 0.0 for kk, rows in rows_by_kind.items() for r in rows}
     if k in ("keyword", "hybrid"):
         kw = keyword(store, text, rows_by_kind)
@@ -145,7 +155,7 @@ def query(store, knobs, text, rows_by_kind, emb="load"):
 
 def pair(store, knobs, texts, rows, kind_="belief", emb="load"):
     """[[closeness of texts[i] to rows[j]]]: embedding cosine, or word overlap for keyword search."""
-    if kind(knobs) == "keyword":
+    if kind(knobs) in ("keyword", "graph"):
         return [[dice(t, body(kind_, r)) for r in rows] for t in texts]
     emb = embed.embedder(store.folder, knobs) if emb == "load" else emb
     if not rows or not texts:
@@ -157,7 +167,7 @@ def pair(store, knobs, texts, rows, kind_="belief", emb="load"):
 
 def pair_rows(store, knobs, a_kind, a_rows, b_kind, b_rows, emb="load"):
     """[[closeness of a_rows[i] to b_rows[j]]] for stored rows (newer words: entries against beliefs)."""
-    if kind(knobs) == "keyword":
+    if kind(knobs) in ("keyword", "graph"):
         return [[dice(body(a_kind, a), body(b_kind, b)) for b in b_rows] for a in a_rows]
     emb = embed.embedder(store.folder, knobs) if emb == "load" else emb
     if not a_rows or not b_rows:

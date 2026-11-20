@@ -79,6 +79,34 @@ CREATE TABLE IF NOT EXISTS opposites (
     at TEXT NOT NULL, by TEXT NOT NULL,              -- 'dream N' or 'same check, dream N'
     PRIMARY KEY (a, b)
 );
+CREATE TABLE IF NOT EXISTS things (                 -- what beliefs are about: Starscream, the wake word, a person
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL, made_at TEXT NOT NULL, dream INTEGER, entries TEXT
+);
+CREATE TABLE IF NOT EXISTS aliases (                -- other ways a thing is said, each tied to where it was learned
+    id INTEGER PRIMARY KEY, thing INTEGER NOT NULL, alias TEXT NOT NULL, at TEXT NOT NULL,
+    dream INTEGER, entries TEXT, how TEXT NOT NULL  -- how: dream, heal, pin, name
+);
+CREATE TABLE IF NOT EXISTS edges (                  -- written only by the dream and by pin
+    id INTEGER PRIMARY KEY,
+    src_kind TEXT NOT NULL, src INTEGER NOT NULL,
+    rel TEXT NOT NULL,                              -- about (belief to thing), opposes, refines (belief to
+                                                    -- belief), part_of, related (thing to thing)
+    dst_kind TEXT NOT NULL, dst INTEGER NOT NULL,
+    at TEXT NOT NULL, dream INTEGER, entries TEXT, why TEXT, how TEXT NOT NULL DEFAULT 'dream'
+);
+CREATE INDEX IF NOT EXISTS edges_src ON edges (src_kind, src);
+CREATE INDEX IF NOT EXISTS edges_dst ON edges (dst_kind, dst);
+CREATE TABLE IF NOT EXISTS misses (                 -- live turns where recall may have missed
+    id INTEGER PRIMARY KEY, session INTEGER, entry INTEGER NOT NULL, at TEXT NOT NULL, query TEXT NOT NULL,
+    recalled TEXT,                                  -- JSON: belief tags automatic recall gave
+    found TEXT,                                     -- JSON: belief tags the agent's own searches found that recall did not
+    status TEXT NOT NULL DEFAULT 'open',            -- open, healed, nothing held
+    dream INTEGER, note TEXT
+);
+CREATE TABLE IF NOT EXISTS heals (
+    id INTEGER PRIMARY KEY, miss INTEGER, at TEXT NOT NULL, dream INTEGER,
+    kind TEXT NOT NULL, ref INTEGER NOT NULL, words TEXT, why TEXT   -- kind: alias or edge
+);
 CREATE TABLE IF NOT EXISTS belief_texts (            -- earlier wordings of a belief (a pin rewords it)
     id INTEGER PRIMARY KEY, belief INTEGER NOT NULL, text TEXT NOT NULL, until TEXT NOT NULL, why TEXT
 );
@@ -216,7 +244,50 @@ class Store:
         if a == b:
             return
         a, b = min(a, b), max(a, b)
-        self.run("INSERT OR IGNORE INTO opposites (a, b, at, by) VALUES (?, ?, ?, ?)", a, b, at, by)
+        if not self.one("SELECT 1 FROM opposites WHERE a = ? AND b = ?", a, b):
+            self.run("INSERT INTO opposites (a, b, at, by) VALUES (?, ?, ?, ?)", a, b, at, by)
+            dream = int(by.split()[-1]) if by.split()[-1].isdigit() else None
+            self.add_edge("belief", a, "opposes", "belief", b, at, dream=dream, why=by)
+
+    # --- the graph: things, aliases, edges ---
+    def thing_named(self, name):
+        """A thing whose name or one of whose aliases is this, ignoring case and spacing."""
+        key = " ".join(str(name).lower().split())
+        row = self.one("SELECT * FROM things WHERE lower(name) = ?", key)
+        if row:
+            return row
+        a = self.one("SELECT thing FROM aliases WHERE lower(alias) = ?", key)
+        return self.one("SELECT * FROM things WHERE id = ?", a["thing"]) if a else None
+
+    def add_thing(self, name, at, dream=None, entries=()):
+        tid = self.run("INSERT INTO things (name, made_at, dream, entries) VALUES (?, ?, ?, ?)",
+                       name.strip(), at, dream, json.dumps(list(entries)))
+        return tid
+
+    def add_alias(self, thing, alias, at, dream=None, entries=(), how="dream"):
+        alias = " ".join(str(alias).split())
+        key = alias.lower()
+        t = self.one("SELECT name FROM things WHERE id = ?", thing)
+        if not alias or (t and t["name"].lower() == key) or \
+                self.one("SELECT 1 FROM aliases WHERE thing = ? AND lower(alias) = ?", thing, key):
+            return None
+        return self.run("INSERT INTO aliases (thing, alias, at, dream, entries, how) VALUES (?, ?, ?, ?, ?, ?)",
+                        thing, alias, at, dream, json.dumps(list(entries)), how)
+
+    def add_edge(self, src_kind, src, rel, dst_kind, dst, at, dream=None, entries=(), why=None, how="dream"):
+        if (src_kind, src) == (dst_kind, dst):
+            return None
+        same = self.one("SELECT id FROM edges WHERE src_kind = ? AND src = ? AND rel = ? AND dst_kind = ? AND dst = ?",
+                        src_kind, src, rel, dst_kind, dst)
+        if same:
+            return None
+        return self.run("INSERT INTO edges (src_kind, src, rel, dst_kind, dst, at, dream, entries, why, how)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", src_kind, src, rel, dst_kind, dst, at, dream,
+                        json.dumps(list(entries)), why, how)
+
+    def edges_of(self, kind, ref):
+        return self.all("SELECT * FROM edges WHERE (src_kind = ? AND src = ?) OR (dst_kind = ? AND dst = ?) ORDER BY id",
+                        kind, ref, kind, ref)
 
     def opposites(self, belief):
         return [r["b"] if r["a"] == belief else r["a"]

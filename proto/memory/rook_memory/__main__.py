@@ -95,6 +95,17 @@ def main(argv=None):
 
     sub.add_parser("opposites", help="each pair of beliefs marked as opposites, standing with the knob off and on")
 
+    p = sub.add_parser("neighbourhood", help="a thing's or belief's neighbourhood (t3, b12, or a thing's name)")
+    p.add_argument("ref")
+
+    p = sub.add_parser("heal-test", help="ask reworded questions cold, live (with dreams), and cold again")
+    p.add_argument("--questions", default=str(pathlib.Path(__file__).resolve().parent.parent / "madeup" / "reworded.toml"))
+    p.add_argument("--start", default="2026-09-10T18:00:00Z")
+    p.add_argument("--per-day", type=int, default=8)
+    p.add_argument("--others", nargs="*", default=[], help="other searches to ask cold before and after")
+
+    sub.add_parser("misses", help="every possible recall miss live turns logged, and how dreams healed them")
+
     sub.add_parser("cases", help="the three score cases (one against a mature belief, three times, a flip), with these knobs")
 
     sub.add_parser("reset", help="delete the store's memory (not the model)")
@@ -109,7 +120,10 @@ def main(argv=None):
     if a.cmd == "repeat":
         return repeat(a, knobs)
     if a.cmd == "bench":
-        compare.bench(knobs, a.model, a.sizes, a.folder)
+        if a.model == "graph":
+            compare.bench_graph(knobs, a.sizes, a.folder)
+        else:
+            compare.bench(knobs, a.model, a.sizes, a.folder)
         return 0
     if a.cmd == "cases":
         print("\n".join(standing.cases(knobs)))
@@ -159,7 +173,7 @@ def main(argv=None):
         words = a.statement if a.cmd == "pin" else a.words
         entry = store.add_entry(s["id"], now(), person, "chat", words)
         if a.cmd == "pin":
-            print(pin.pin(store, knobs, a.statement, entry, a.belief, a.about)[1])
+            print(pin.pin(store, knobs, a.statement, entry, a.belief, a.about, final_words=a.statement)[1])
         else:
             print(pin.unpin(store, knobs, entry, a.belief)[1])
     elif a.cmd == "history":
@@ -182,6 +196,24 @@ def main(argv=None):
             show.calls(store)
         if w == "tools":
             show.tools(store)
+    elif a.cmd == "neighbourhood":
+        from . import graph
+        ref = a.ref.strip()
+        if ref[:1].lower() in ("t", "b") and ref[1:].isdigit():
+            kind, rid = ("thing" if ref[0].lower() == "t" else "belief"), int(ref[1:])
+        else:
+            t = store.thing_named(ref)
+            kind, rid = "thing", (t["id"] if t else 0)
+        print("\n".join(graph.neighbourhood(store, kind, rid)))
+        if kind == "belief" and store.one("SELECT 1 FROM beliefs WHERE id = ?", rid):
+            print(f"    standing: {standing.summary(standing.of(store, knobs, rid))}")
+        if kind == "thing":
+            for e in store.all("SELECT src FROM edges WHERE rel = 'about' AND dst_kind = 'thing' AND dst = ?", rid):
+                print(f"    [b{e['src']}] {standing.summary(standing.of(store, knobs, e['src']))}")
+    elif a.cmd == "heal-test":
+        compare.heal_test(store, knobs, a.questions, a.start, a.per_day, a.others)
+    elif a.cmd == "misses":
+        show.misses(store)
     elif a.cmd == "opposites":
         compare.opposites(store, knobs)
     elif a.cmd == "compare-models":

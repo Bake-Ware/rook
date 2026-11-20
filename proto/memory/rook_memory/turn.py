@@ -39,6 +39,12 @@ def say(store, knobs, sess, text, speaker, at, channel="chat", log=print):
     r = recall.recall(store, knobs, text, at, exclude_entries=[entry]) if with_memory else None
     if r and speaker == knobs["people"]["person"]:
         store.use(at, [(i.kind, i.id) for i in r.items()], sess["id"], entry, how="recall")
+    # Every turn's recall is kept; a turn whose recall turned up no belief is a possible miss for the dream.
+    store.run("INSERT INTO turns (session, entry, at, recalled) VALUES (?, ?, ?, ?)", sess["id"], entry, at,
+              json.dumps([i.tag for i in r.items()] if r else None))
+    if r is not None and not r.beliefs:
+        store.run("INSERT INTO misses (session, entry, at, query, recalled, found) VALUES (?, ?, ?, ?, '[]', '[]')",
+                  sess["id"], entry, at, text)
     head = f"[{at[:16].replace('T', ' ')}, {speaker}{', voice' if channel == 'voice' else ''}]"
     prompt = f"{head} {text}" + (f"\n\n{recall.for_turn(r)}" if r else "")
     sess = store.one("SELECT * FROM sessions WHERE id = ?", sess["id"])
@@ -56,8 +62,7 @@ def say(store, knobs, sess, text, speaker, at, channel="chat", log=print):
     answer = str(reply.get("result") or "").strip()
     later = (parse_time(at) + datetime.timedelta(seconds=20)).isoformat()
     reply_entry = store.add_entry(sess["id"], later, "house", "chat", answer)
-    store.run("INSERT INTO turns (session, entry, reply, at, recalled) VALUES (?, ?, ?, ?, ?)", sess["id"], entry,
-              reply_entry, at, json.dumps([i.tag for i in r.items()] if r else None))
+    store.run("UPDATE turns SET reply = ? WHERE entry = ?", reply_entry, entry)
     return answer, r
 
 

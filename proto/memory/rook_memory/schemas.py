@@ -22,10 +22,32 @@ def dream(knobs):
                     "type": "object",
                     "properties": {"belief": {"type": "string"}, "about": {"type": "string", "enum": abouts},
                                    "opposite_of": {"type": ["string", "null"]},
-                                   "other_wordings": {"type": "array", "items": {"type": "string"}}},
+                                   "other_wordings": {"type": "array", "items": {"type": "string"}},
+                                   "about_things": {"type": "array", "items": {"type": "string"}},
+                                   "refines": {"type": ["string", "null"]}},
                     "required": ["belief", "about"]}]},
             },
-            "required": ["fact", "entries", "said_by", "kind", "held", "new_belief"]}}},
+            "required": ["fact", "entries", "said_by", "kind", "held", "new_belief"]}},
+            "things": {"type": "array", "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "id": {"type": ["string", "null"]},
+                               "aliases": {"type": "array", "items": {"type": "string"}},
+                               "entries": {"type": "array", "items": {"type": "string"}}},
+                "required": ["name", "aliases"]}},
+            "about": {"type": "array", "items": {
+                "type": "object", "properties": {"belief": {"type": "string"}, "thing": {"type": "string"}},
+                "required": ["belief", "thing"]}},
+            "relations": {"type": "array", "items": {
+                "type": "object",
+                "properties": {"thing": {"type": "string"}, "rel": {"type": "string", "enum": ["part_of", "related"]},
+                               "other": {"type": "string"}, "entries": {"type": "array", "items": {"type": "string"}}},
+                "required": ["thing", "rel", "other"]}},
+            "heals": {"type": "array", "items": {
+                "type": "object",
+                "properties": {"miss": {"type": "string"}, "thing": {"type": "string"}, "alias": {"type": "string"},
+                               "belief": {"type": ["string", "null"]}, "why": {"type": "string"}},
+                "required": ["miss", "thing", "alias"]}},
+            "nothing_held": {"type": "array", "items": {"type": "string"}}},
         "required": ["facts"],
     }
 

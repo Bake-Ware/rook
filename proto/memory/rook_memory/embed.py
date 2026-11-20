@@ -250,7 +250,7 @@ def embedder(store_folder, knobs, log=print, repo=None):
     from .knobs import search
     s = search(knobs)
     kind = s.get("kind", "bert")
-    if kind == "keyword":
+    if kind in ("keyword", "graph"):
         return None
     if kind == "hybrid":
         repo, kind = s["static"], "static"

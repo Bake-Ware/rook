@@ -109,6 +109,26 @@ def recall(store, knobs, query, at, exclude_entries=(), emb="load"):
                        or (i.kind == "belief" and i.extra["standing"]["pinned"] and i.closeness >= s["pinned_miss_below"])),
                       key=lambda i: -i.score)
         out[kind] = keep[:s[{"entry": "turn_scratch", "episode": "turn_episodes", "belief": "turn_beliefs"}[kind]]]
+        for i in out[kind]:
+            if (i.kind, i.id) in search.last_via:
+                i.extra["via"] = search.last_via[(i.kind, i.id)]
+
+    # Graph search: the opposites of the beliefs found come along, marked.
+    if s.get("kind") == "graph":
+        have = {b.id for b in out["belief"]}
+        for b in list(out["belief"]):
+            for other in store.opposites(b.id):
+                if other in have:
+                    continue
+                row = store.one("SELECT * FROM beliefs WHERE id = ?", other)
+                st = standing.of(store, knobs, other)
+                links = standing.links_of(store, knobs, other)
+                it = Item("belief", other, row["text"], row["about"], row["made_at"],
+                          extra={"standing": st, "links": links, "about": row["about"], "row": row,
+                                 "via": f"the opposite of b{b.id}"})
+                it.closeness, it.certainty = b.closeness, abs(st["value"])
+                out["belief"].append(it)
+                have.add(other)
 
     # Newer words win: a scratch pad entry close to a belief and newer than its latest link.
     if out["belief"] and out["entry"]:
@@ -129,7 +149,7 @@ def _day(t):
 
 def belief_line(it, links_shown=3):
     st = it.extra["standing"]
-    head = f"[{it.tag}] {standing.summary(st)}"
+    head = f"[{it.tag}] {standing.summary(st)}" + (f"; found by {it.extra['via']}" if it.extra.get("via") else "")
     if st["pinned"]:
         head += f", pinned {_day(st['pinned_at'])[:10]} from his words \"{(st.get('pinned_words') or '')[:120]}\""
     if it.extra.get("newer_words"):

@@ -21,6 +21,10 @@ Kinds of check:
 - replies_lack: no house reply matches `pattern` (a regular expression), except replies to turns
   that pinned or unpinned.
 - reply: the house reply to the message containing `to` matches `has` (if given) and not `lacks`.
+- things_once: at most `max` pairs of things that may be one thing (a shared name or alias, or names
+  at least `closeness` close).
+- beliefs_once: at most `max` pairs of holding beliefs at least `closeness` close (opposites aside).
+- about_coverage: at least `min` of the beliefs are about some thing.
 """
 
 import copy
@@ -169,6 +173,40 @@ def evaluate(store, knobs, path):
                 if c.get("lacks") and re.search(c["lacks"], reply, re.I):
                     ok = False
                 why.append(f"reply: {reply[:200]!r}")
+        elif t == "things_once":
+            things = store.all("SELECT * FROM things ORDER BY id")
+            names = {}
+            for th in things:
+                for n in [th["name"]] + [a["alias"] for a in store.all("SELECT alias FROM aliases WHERE thing = ?", th["id"])]:
+                    names.setdefault(" ".join(n.lower().split()), set()).add(th["id"])
+            pairs = {tuple(sorted(ids)) for ids in names.values() if len(ids) > 1}
+            if things:
+                tv = emb([th["name"] for th in things])
+                for i in range(len(things)):
+                    for j in range(i):
+                        if float(tv[i] @ tv[j]) >= c.get("closeness", 0.9):
+                            pairs.add((things[j]["id"], things[i]["id"]))
+            ok = len(pairs) <= c.get("max", 0)
+            byid = {th["id"]: th["name"] for th in things}
+            why = [f"{len(things)} things, {len(pairs)} pair(s) that may be one thing"] + \
+                  [f"t{a} {byid[a]!r} / t{b} {byid[b]!r}" for a, b in sorted(pairs)]
+        elif t == "beliefs_once":
+            holding = [b for b in beliefs if standing.of(store, knobs, b["id"])["value"] > 0]
+            pairs = []
+            for i in range(len(holding)):
+                for j in range(i):
+                    a, b = holding[j], holding[i]
+                    if float(vecs[a["id"]] @ vecs[b["id"]]) >= c.get("closeness", 0.92) and b["id"] not in store.opposites(a["id"]):
+                        pairs.append((a, b))
+            ok = len(pairs) <= c.get("max", 0)
+            why = [f"{len(holding)} beliefs holding, {len(pairs)} pair(s) saying nearly the same"] + \
+                  [f"b{a['id']} {a['text'][:70]!r} / b{b['id']} {b['text'][:70]!r}" for a, b in pairs]
+        elif t == "about_coverage":
+            n = len(beliefs)
+            linked = sum(1 for b in beliefs if store.one(
+                "SELECT 1 FROM edges WHERE src_kind = 'belief' AND src = ? AND rel = 'about'", b["id"]))
+            ok = n and linked / n >= c["min"]
+            why = [f"{linked} of {n} beliefs are about at least one thing"]
         else:
             ok, why = False, [f"unknown check type {t}"]
         results.append((c["name"], ok, why))

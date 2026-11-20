@@ -124,3 +124,18 @@ def tools(store, out=print):
     for t in store.all("SELECT * FROM tool_log ORDER BY id"):
         out(f"  {t['role']} s{t['entry'] or '-'} {t['tool']} {t['args']}")
         out(_wrap(t["answer"].splitlines()[0] if t["answer"] else "", "       "))
+
+
+def misses(store, out=print):
+    """Every possible miss a live turn logged, and how (or whether) a dream healed it."""
+    rows = store.all("SELECT * FROM misses ORDER BY id")
+    counts = {}
+    for m in rows:
+        counts[m["status"]] = counts.get(m["status"], 0) + 1
+    out(f"== misses ({len(rows)}: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) + ")")
+    for m in rows:
+        found = json.loads(m["found"] or "[]")
+        out(f"  [m{m['id']}] {_when(m['at'])} s{m['entry']} {m['status']}{' by dream ' + str(m['dream']) if m['dream'] else ''}:"
+            f" \"{m['query'][:90]}\"" + (f"; the agent's search found {', '.join(found)}" if found else ""))
+        for h in store.all("SELECT * FROM heals WHERE miss = ? ORDER BY id", m["id"]):
+            out(f"      healed with {h['kind']} {h['words']}" + (f" ({h['why']})" if h["why"] else ""))

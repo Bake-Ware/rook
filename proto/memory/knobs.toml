@@ -109,9 +109,9 @@ tentative_below = 0.5
 mature_at = 0.6
 
 [search]
-# Which embedding model searches memory: a table name under [models]. Swapping it re-embeds what
+# Which search reads memory: a table name under [models] (round four: "graph", read with SQLite alone). Swapping it re-embeds what
 # is stored on first use, and its closeness floors come with it (each model scores on its own scale).
-model = "bge-small"
+model = "graph"
 # Where the models' files are kept (shared by every store).
 models_folder = "~/.rook-memory-proto/models"
 # CPU threads the embedding's matrix library may use per process (OPENBLAS_NUM_THREADS). Several
@@ -209,6 +209,22 @@ newer_words = 0.50
 pin_match = 0.75
 same_check_from = 0.60
 
+# Round four: the graph the dream writes (things, aliases, edges), read with SQLite alone. No model
+# and no embeddings at reading time. hops: how far to walk out from the things a message names.
+# walk_decay: how much closeness each step out loses. miss_below: a belief found only by its own
+# words needs this share of the message's content words. pin_match, same_check_from and
+# newer_words: shares of content words two texts have in common.
+[models.graph]
+kind = "graph"
+repo = "graph"
+hops = 1
+walk_decay = 0.6
+miss_below = 0.5
+pinned_miss_below = 0.34
+newer_words = 0.40
+pin_match = 0.60
+same_check_from = 0.50
+
 [models.minilm]
 repo = "sentence-transformers/all-MiniLM-L6-v2"
 pooling = "mean"
@@ -218,6 +234,13 @@ pinned_miss_below = 0.30
 newer_words = 0.60
 pin_match = 0.80
 same_check_from = 0.70
+
+[pins]
+# A pin needs the words in Bake's message that make it final. `pin` checks they are in his message and
+# contain one of these; without them the statement is an ordinary correction and nothing is pinned.
+# (Round three: the agent alone pinned sharp corrections in 4 of 7 plays.)
+final_words = ["final", "never", "always", "for good", "forever", "permanent", "not coming back",
+               "from now on", "pin"]
 
 [check]
 # Which belief a regression check means is judged with this model, whatever search is under test.
@@ -243,7 +266,8 @@ it, his preferences and his goals are his alone: if the steward or an agent asks
 one of those, hold it for him and say why.
 
 Pins. When Bake makes a definitive statement, one meant to hold for good, pin it: call pin with his
-words, then say "okay, got it, that's pinned". The test is whether his own words say it is final or
+words and, as final_words, the words in his message that make it final; then say "okay, got it,
+that's pinned". The test is whether his own words say it is final or
 permanent: "that is final", "never again", "from now on, always", "for good", "permanently", "it is
 not coming back", "pin this". Without such words it is not definitive, however firm or sharp:
 an ordinary correction or fact ("no, use cachyrig", "Starscream is gone, I decommissioned it"), a
@@ -254,7 +278,7 @@ unpinned. Nobody but Bake can pin or unpin.
 
 Keep replies short."""
 
-# The dream: one more turn of the session. $entries, $now.
+# The dream: one more turn of the session. $entries, $now, $misses.
 dream = """[Memory dream. This turn is a fork: nothing you write here reaches the conversation.]
 
 It is $now. Below is the record of the conversation since the last dream, one entry per message,
@@ -295,6 +319,30 @@ Do two things, in order. Ask yourself no other questions.
    - "world": how things are (machines, places, events).
    Never write a belief about what is not known, not remembered or not yet recorded: a miss is said
    in the moment and never written down.
+
+3. The graph. Memory is read without a model: a message finds beliefs through the things they are
+   about, by the names and other wordings of those things. So:
+   - "things": the things the beliefs here are about (a machine, a device, a feature, a person, a
+     project, a job, a place). Look first (the tools "things" and "neighbourhood"): reuse a held
+     thing by its id (t3) and add what was newly said for it; make a new one only when none is held.
+     Give each thing two to four other ways it is said or asked about ("aliases": "the old server",
+     "always listening", "pictures", "photos"), each a few words, and the entries they come from.
+     Aliases are how a later message finds the thing: think of how Bake might ask about it another
+     day, in other words.
+   - each new belief's "about_things" (names or ids), and "refines": a held belief this one narrows
+     (light mode on one tablet for a while narrows dark mode on everything: refines, not opposite);
+   - "about": held beliefs that are about a thing but not yet linked to it;
+   - "relations": a thing that is part of, or related to, another, where the conversation says so.
+   - "heals": below are recall misses: messages where automatic recall turned up no belief, or not
+     the one the conversation then showed it should have (the house agent found it by searching in
+     its own words, or Bake supplied it). It is a miss only if a belief already held when the message
+     came was what it was after; new information is not a miss. For a real miss, give the thing, an
+     alias of a few words in the words the message used (so the same wording finds it next time) and
+     the belief. Otherwise list the miss under "nothing_held". Never write anything about the gap
+     itself.
+
+Recall misses:
+$misses
 
 Who said it matters most. A fact rests on one speaker's words: the house agent's answer to Bake's
 question is the house agent's, not Bake's; a question Bake asked is not a statement by him. A belief

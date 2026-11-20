@@ -143,3 +143,22 @@ words = ["cachyrig"]
 name = "something never said is not remembered"
 type = "miss"
 query = "Who is my dentist?"
+
+# --- round four: the graph ---
+
+[[check]]
+name = "each thing once (no two things that are one)"
+type = "things_once"
+closeness = 0.9
+max = 0
+
+[[check]]
+name = "each belief once (no two holding beliefs saying nearly the same)"
+type = "beliefs_once"
+closeness = 0.92
+max = 0
+
+[[check]]
+name = "nearly every belief is about some thing (so the graph can reach it)"
+type = "about_coverage"
+min = 0.8

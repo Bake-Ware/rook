@@ -1,8 +1,14 @@
 # House agent memory: prototype (not for merge)
 
-A standalone prototype of the house agent's memory (briefs MEM1 to MEM3). Not wired into Rookie,
+A standalone prototype of the house agent's memory (briefs MEM1 to MEM4). Not wired into Rookie,
 the hub, any plugin or the beta. Findings: round one [REPORT.md](REPORT.md) (its code is in git at
-b5c364a3), round two [REPORT2.md](REPORT2.md), round three [REPORT3.md](REPORT3.md).
+b5c364a3), round two [REPORT2.md](REPORT2.md), round three [REPORT3.md](REPORT3.md), round four
+[REPORT4.md](REPORT4.md).
+
+Round four: the dream writes a graph (things, their aliases, and edges: about, opposes, refines,
+part of, related to), and recall reads it with Python's sqlite3 alone (`search.model = "graph"`, the
+default now): no model, no embeddings. Live turns log possible misses; the next dream heals real ones
+with an alias in the words that missed. A pin needs the words in his message that make it final.
 
 Round three added: strong evidence flips and weak does not (`flip_at`); a definitive statement pins
 and the pin keeps his words; how (the steward and agents decide) versus should (only Bake); one
@@ -62,6 +68,10 @@ python3 -m rook_memory tally DIR/run-*                  # the same tally for sto
 python3 -m rook_memory compare-models bge-small blink-8M keyword   # misses, noise, time on the recall questions
 python3 -m rook_memory opposites                        # pairs marked as opposites, knob off and on
 python3 -m rook_memory bench blink-8M                   # load, search and embed times, peak memory
+python3 -m rook_memory bench graph                      # the graph read path (sqlite3 only)
+python3 -m rook_memory neighbourhood Starscream         # a thing's or belief's (t3, b12) neighbourhood
+python3 -m rook_memory misses                           # possible misses and how dreams healed them
+python3 -m rook_memory heal-test --others bge-small blink-8M keyword   # reworded questions: cold, live, healed
 tools/vm-bench.sh PYTHON > results.jsonl                # the same under the Oracle free-VM shapes (systemd scopes)
 python3 -m rook_memory reset
 ```

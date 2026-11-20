@@ -40,11 +40,27 @@ def his_words(statement, message):
     return quote if quote and norm(quote) and norm(quote) in norm(message) else message.strip()
 
 
-def pin(store, knobs, statement, entry, belief=None, about="world", emb=None):
+def final(knobs, words, message):
+    """The words that make his statement final, if they are in his message and one of the final ones."""
+    norm = lambda t: " ".join(re.findall(r"[a-z0-9']+", (t or "").lower()))
+    said = norm(words)
+    if not said or said not in norm(message):
+        return None
+    for f in knobs.get("pins", {}).get("final_words", []):
+        if re.search(r"\b" + re.escape(norm(f)) + r"\b", said):
+            return f
+    return None
+
+
+def pin(store, knobs, statement, entry, belief=None, about="world", emb=None, final_words=None):
     """Answers (belief id or None, what to tell the agent). The pinned belief's text is his words."""
     row, refusal = _his(store, knobs, entry)
     if refusal:
         return None, refusal
+    if knobs.get("pins", {}).get("final_words") and not final(knobs, final_words, row["text"]):
+        return None, ("Not pinned: final_words must quote the words in his message that make it final (one of: "
+                      + ", ".join(knobs["pins"]["final_words"]) + "). Without them this is an ordinary correction"
+                      " or a decision for now; act on it, and say nothing about pinning.")
     words = his_words(statement, row["text"])
     match = None
     if belief:
@@ -70,6 +86,9 @@ def pin(store, knobs, statement, entry, belief=None, about="world", emb=None):
     store.add_link(bid, ep, +1, st, standing.occasion(knobs, row["at"], row["session"]), why="his words when pinning",
                    at=row["at"])
     store.add_pin(bid, "pin", row["at"], row["id"], words)
+    from . import graph
+    for tid in graph.match_things(store, words):     # the things his words name: the pin's own edges
+        store.add_edge("belief", bid, "about", "thing", tid, row["at"], entries=[row["id"]], how="pin")
     return bid, (f"Pinned b{bid} ({how}), in his words: {words}\nIf that is not what he meant, unpin it and pin"
                  f" again with belief= the right id, or without one to make a new belief.")
 
@@ -102,6 +121,7 @@ TOOLS = {
                        " a new pinned one tied to his message. Give belief (an id like b12) only to pin that exact belief.",
         "inputSchema": {"type": "object", "properties": {
             "statement": {"type": "string"},
+            "final_words": {"type": "string", "description": "the words in his message that make it final, quoted"},
             "belief": {"type": "string"},
             "about": {"type": "string", "description": "for a new belief: world (how things are), how (how things work)"
                                                        " or bake (what he wants)"}},
@@ -110,5 +130,14 @@ TOOLS = {
     "unpin": {
         "description": "Lift a pin when Bake says it was not meant. Without belief, lifts the most recent pin.",
         "inputSchema": {"type": "object", "properties": {"belief": {"type": "string"}}},
+    },
+    "things": {
+        "description": "List the things memory holds (what beliefs are about), with the other ways each is said.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    "neighbourhood": {
+        "description": "One thing's or belief's neighbourhood: its names, aliases, edges and evidence. Give an id (t3, b12)"
+                       " or a thing's name.",
+        "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
     },
 }
