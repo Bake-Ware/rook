@@ -44,7 +44,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.12.4"
+#define FW_VERSION "0.12.5"
 #ifndef BUILD_MONIKER
 #define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
 #endif
@@ -116,6 +116,18 @@ static std::string local_id, local_name;
 // An IR profile picked in the menu (prof.h), by name; blank: none picked
 // directly (a picked network device may still have a profile linked to it).
 static std::string sel_prof;
+// local_id, local_name and sel_prof are read and changed by the loop (keys,
+// the menu) and by cap handlers on the band's tasks (remote.ir, remote.device,
+// remote.state): two tasks writing a std::string at once can free its buffer
+// twice, which shows up later as someone else's heap block (a Wi-Fi buffer)
+// found already free. Every function that touches them holds sel_mu
+// (recursive: they call each other).
+static SemaphoreHandle_t sel_mu = nullptr;
+struct SelLock {
+    SelLock() { xSemaphoreTakeRecursive(sel_mu, portMAX_DELAY); }
+    ~SelLock() { xSemaphoreGiveRecursive(sel_mu); }
+    SelLock(const SelLock&) = delete;
+};
 // A profile key held down on the paired remote: its code goes on repeating.
 static struct {
     int key = -1;                  // prof key id; -1: nothing repeating
@@ -277,6 +289,7 @@ static void show_menu(MenuKind kind, const std::string& title, const std::vector
 }
 
 static void set_local(const std::string& id) {
+    SelLock sel_lock;
     lan::Device d;
     if (id.empty() || !lan::find(id, d)) {
         local_id.clear();
@@ -294,12 +307,14 @@ static void set_local(const std::string& id) {
 // The profile the buttons are for: the one picked, else one linked to the
 // network device picked.
 static bool active_profile(prof::Info& p) {
+    SelLock sel_lock;
     if (!sel_prof.empty()) return prof::find(sel_prof, p);
     return !local_id.empty() && prof::linked_to(local_id, p);
 }
 
 // What the buttons are for, by name (the status line, the events).
 static std::string chosen_name() {
+    SelLock sel_lock;
     prof::Info p;
     if (active_profile(p)) return p.name;
     return local_id.empty() ? settings::target_name() : local_name;
@@ -315,6 +330,7 @@ static std::string link_id(const prof::Info& p) {
 // The buttons drive this profile from now on (and, for the keys it has no
 // code for, the network device it is linked to).
 static void select_profile(const prof::Info& p) {
+    SelLock sel_lock;
     lan::Device d;
     if (!p.link.empty() && lan::find(p.link, d)) {
         local_id = d.id;
@@ -473,6 +489,7 @@ static void start_dev_scan() {
 // An IR profile picked in the menu. One linked to an LG TV not yet paired
 // asks its person to accept the remote first (for the keys that go to the TV).
 static void pick_profile(const std::string& name) {
+    SelLock sel_lock;
     prof::Info p;
     if (!prof::find(name, p)) return;
     select_profile(p);
@@ -520,6 +537,7 @@ static void adopt_device(const std::string& id) {
 // the device it was linked to (an LG key) is dropped too, unless another
 // profile is linked to that device.
 static bool delete_profile(const std::string& name, std::string& err) {
+    SelLock sel_lock;
     prof::Info p;
     if (!prof::find(name, p)) { err = "no profile called " + name; return false; }
     prof::Info act;
@@ -881,6 +899,7 @@ static void add_profile(const std::string& typed) {
 
 // A new name typed for a profile.
 static void rename_subject(const std::string& subj, const std::string& typed) {
+    SelLock sel_lock;
     std::string to = prof::clean_name(typed.substr(0, prof::MAX_NAME)), err;
     bool ok = false;
     if (to.empty()) {
@@ -1077,6 +1096,7 @@ static void menu_pick(int i) {
 // sent again (volume, arrows, channels, seek only; power never). Answers
 // "ir", "lan", "cap" or null (nothing was done).
 static const char* local_key(const ButtonEvent& e, const prof::Info* p, prof::Code& call) {
+    SelLock sel_lock;
     uint32_t ms = millis();
     int k = prof::key_id(e.name);
     std::string raw = e.lines.rfind("bt:", 0) == 0 ? e.lines.substr(3) : "";
@@ -1138,6 +1158,7 @@ static const char* local_key(const ButtonEvent& e, const prof::Info* p, prof::Co
 // A press: one of the handheld's buttons, or (index -1, lines "bt") a key of
 // the Bluetooth remote paired to it. Both do the same things.
 static void on_button(const ButtonEvent& ev) {
+    SelLock sel_lock;
     ButtonEvent e = ev;
     e.seq = ++seq_all;
     active();
@@ -1365,6 +1386,7 @@ static void fill_bt(JsonObject o) {
     }
     if (!bt::last_report().empty()) o["last_report"] = bt::last_report();
     if (!bt::pair_error().empty()) o["pair_error"] = bt::pair_error();
+    o["switch"] = bt::switching();
     JsonArray bs = o["bonds"].to<JsonArray>();        // every remote bonded, most recently used first
     for (auto& b : bt::bonded()) {
         JsonObject e = bs.add<JsonObject>();
@@ -1389,6 +1411,7 @@ static void fill_bt(JsonObject o) {
 }
 
 static void fill_state(JsonObject r) {
+    SelLock sel_lock;
     r["name"] = settings::name();
     r["version"] = FW_VERSION;
     r["build"] = BUILD_MONIKER;
@@ -1582,6 +1605,7 @@ static bool cap_bt(JsonObjectConst a, JsonObject r, std::string& err) {
         bt::find(action == "find" ? (int)(a["level"] | 3) : 0);
         delay(400);                  // long enough for its answer to be in the reply
     }
+    if (!a["switch"].isNull()) bt::set_switching(a["switch"] | false);
     JsonObjectConst names = a["names"].as<JsonObjectConst>();
     if (!names.isNull()) {
         // Merged into the names kept: a name given adds or replaces that key's,
@@ -1690,6 +1714,7 @@ static bool cap_ir_led(const std::string& action, JsonObjectConst a, JsonObject 
 // The profiles kept on the remote, for remote.ir's answers (what a scan found
 // is remote.devices's, not listed here).
 static void fill_profiles(JsonObject r) {
+    SelLock sel_lock;
     JsonArray ps = r["profiles"].to<JsonArray>();
     auto all = prof::list();
     for (auto& p : all) {
@@ -1713,6 +1738,7 @@ static void fill_profiles(JsonObject r) {
 // remote.ir profiles / profile_save / profile_delete / profile_select /
 // profile_release / profile_send: IR device profiles kept on the remote (prof.h).
 static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObject r, std::string& err) {
+    SelLock sel_lock;
     std::string name = a["name"] | "";
     if (action == "profile_save") {
         bool set_link = !a["link"].isNull();
@@ -1882,6 +1908,7 @@ static bool cap_wifi(JsonObjectConst a, JsonObject r, std::string& err) {
 }
 
 static void fill_devices(JsonObject r) {
+    SelLock sel_lock;
     JsonArray a = r["devices"].to<JsonArray>();
     for (auto& d : lan::devices()) dev::fill(d, a.add<JsonObject>());
     r["network"] = WiFi.SSID();
@@ -1917,6 +1944,7 @@ static bool cap_device(JsonObjectConst a, JsonObject r, std::string& err) {
         lan::keep(d.id);
         set_local(d.id);
     } else if (action == "release") {
+        SelLock sel_lock;
         if (local_id == d.id) set_local("");
     } else {
         std::string arg = action == "launch" ? (a["app"] | "") : (a["key"] | "");
@@ -1927,10 +1955,12 @@ static bool cap_device(JsonObjectConst a, JsonObject r, std::string& err) {
         std::string out;
         if (!dev::run(action, d.id, arg, action == "pair" ? 70000 : 20000, err, &out)) return false;
         if (!out.empty()) r["did"] = out;
+        SelLock sel_lock;                        // (not held while the device answers: pair waits a minute)
         if (action == "forget" && local_id == d.id) set_local("");
     }
     lan::Device now;
     if (lan::find(d.id, now)) dev::fill(now, r["device"].to<JsonObject>());
+    SelLock sel_lock;
     if (!local_id.empty()) r["selected"] = local_id;
     return true;
 }
@@ -1988,6 +2018,7 @@ static bool cap_map(JsonObjectConst a, JsonObject r, std::string&) {
     }
     if (!a["screen_off"].isNull()) settings::set_kv("scr_off", std::to_string((int)(a["screen_off"] | 30)));
     if (!a["sleep"].isNull()) settings::set_kv("sleep", std::to_string((int)(a["sleep"] | 300)));
+    if (!a["heap_check"].isNull()) diag::set_heap_check(a["heap_check"] | false);
     if (!a["tz"].isNull()) {
         settings::set_kv("tz", a["tz"] | "");
         std::string tz = settings::kv("tz");
@@ -1998,6 +2029,7 @@ static bool cap_map(JsonObjectConst a, JsonObject r, std::string&) {
     load_sleep();
     r["screen_off"] = screen_off_s;
     r["sleep"] = sleep_s;
+    r["heap_check"] = diag::heap_check_on();
     JsonArray bs = r["buttons"].to<JsonArray>();
     for (int i = 0; i < buttons::count(); i++) bs.add(buttons::name(i));
     JsonArray to = r["targets"].to<JsonArray>();
@@ -2393,7 +2425,9 @@ static void wifi_task(void*) {
         }
         if (wifi_sleep) {                 // asleep: the radio stays off until a key wakes the remote
             if (WiFi.getMode() != WIFI_OFF) {
+                diag::check("wifi off, before");
                 WiFi.disconnect(true);
+                diag::check("wifi off, after");
                 wifi_woke = true;
                 logf("wifi: off");
             }
@@ -2441,8 +2475,10 @@ void setup() {
     Serial.begin(115200);
     ev_mu = xSemaphoreCreateMutex();
     wifi_mu = xSemaphoreCreateMutex();
+    sel_mu = xSemaphoreCreateRecursiveMutex();
     settings::begin();
     diag::begin();                // why it started, and what the last crash left
+    rc::heap_check = diag::check;
     ir::begin();                  // the IR LED's pin LOW before anything else
 #ifdef ROOK_GAMEPAD
     devweb_mu = xSemaphoreCreateMutex();
@@ -2588,8 +2624,12 @@ static uint16_t game_key(const std::string& n) {
 }
 
 void loop() {
-    static uint32_t next_status = 0, next_scan = 0;
+    static uint32_t next_status = 0, next_scan = 0, next_check = 0;
     uint32_t ms = millis();
+    if ((int32_t)(ms - next_check) >= 0) {
+        next_check = ms + 250;
+        diag::check("main loop");
+    }
     if ((int32_t)(ms - next_scan) >= 0) {
         next_scan = ms + 5;
         buttons::poll();
@@ -2828,6 +2868,7 @@ void loop() {
     }
     static uint32_t renames_seen = 0;
     if (lan::renames() != renames_seen) {            // a device got its MAC id: follow it (found by address)
+        SelLock sel_lock;
         renames_seen = lan::renames();
         lan::Device d;
         if (!local_id.empty() && lan::find(local_id, d) && d.id != local_id) {

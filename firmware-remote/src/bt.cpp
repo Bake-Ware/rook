@@ -1,4 +1,5 @@
 #include "bt.h"
+#include "diag.h"
 #include <NimBLEDevice.h>
 #include <Preferences.h>
 #include <deque>
@@ -38,6 +39,7 @@ const uint32_t SWITCH_GAP_MS = 4000;
 std::string parked;                         // under mu
 uint32_t parked_until = 0;
 const uint32_t PARK_MS = 20000, QUIET_MS = 2000;
+volatile bool switch_on = false;            // scan while connected, to switch (bt::set_switching)
 QueueHandle_t keys;
 SemaphoreHandle_t mu;
 std::function<void(const char*)> logger;
@@ -554,6 +556,7 @@ void note_heard(NimBLEAdvertisedDevice* d, const std::string& a, bool in_pairing
 
 class Seen : public NimBLEAdvertisedDeviceCallbacks {
     void onResult(NimBLEAdvertisedDevice* d) override {
+        diag::check("bt scan result");
         if (paused) return;
         std::string a = d->getAddress().toString();
         bool hid = is_hid(d);
@@ -564,7 +567,7 @@ class Seen : public NimBLEAdvertisedDeviceCallbacks {
         std::string bonded_name;
         if (connected) {
             // Another bonded remote woke up (a key pressed on it): it takes over.
-            if (pairing || millis() - last_switch < SWITCH_GAP_MS) return;
+            if (!switch_on || pairing || millis() - last_switch < SWITCH_GAP_MS) return;
             if (millis() - last_hid_ms < QUIET_MS) return;          // the one in use is being used
             xSemaphoreTake(mu, portMAX_DELAY);
             int i = bond_index(a);
@@ -590,10 +593,17 @@ class Seen : public NimBLEAdvertisedDeviceCallbacks {
             xSemaphoreGive(mu);
         }
         if (!take) return;
+        std::string nm = d->haveName() ? d->getName() : !bonded_name.empty() ? bonded_name : std::string("remote");
+        xSemaphoreTake(mu, portMAX_DELAY);          // pair() may be setting them from another task
+        if (want_connect) {                          // it just did: its pick stands
+            xSemaphoreGive(mu);
+            return;
+        }
         cand_addr = a;
         cand_type = d->getAddress().getType();
-        cand_name = d->haveName() ? d->getName() : !bonded_name.empty() ? bonded_name : std::string("remote");
+        cand_name = nm;
         want_connect = true;
+        xSemaphoreGive(mu);
         NimBLEDevice::getScan()->stop();
     }
 };
@@ -705,6 +715,7 @@ void task(void*) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(v_ready ? 30 : 200));
         if (!inited) continue;
+        diag::check("bt task");
         std::shared_ptr<IrJob> job;
         xSemaphoreTake(mu, portMAX_DELAY);
         job.swap(ir_job);
@@ -785,8 +796,10 @@ void task(void*) {
         if (want_connect && paused) want_connect = false;
         if (want_connect) {
             bool was_pairing = pairing;
+            xSemaphoreTake(mu, portMAX_DELAY);
             std::string addr = cand_addr, nm = cand_name;
             uint8_t type = cand_type;
+            xSemaphoreGive(mu);
             if (client && client->isConnected()) {                // the remote that was paired before (a new one was picked)
                 client->disconnect();
                 for (int i = 0; i < 20 && client->isConnected(); i++) vTaskDelay(pdMS_TO_TICKS(50));
@@ -822,7 +835,7 @@ void task(void*) {
         }
         if (paused) {
             if (NimBLEDevice::getScan()->isScanning()) NimBLEDevice::getScan()->stop();
-        } else if (listing || (!connected && (pairing || !saved_addr.empty())) || (connected && bonds.size() > 1)) {
+        } else if (listing || (!connected && (pairing || !saved_addr.empty())) || (connected && switch_on && bonds.size() > 1)) {
             // (Connected, with other remotes bonded: still listening, passively, for one of them waking.)
             NimBLEScan* s = NimBLEDevice::getScan();
             if (!s->isScanning()) {
@@ -844,6 +857,7 @@ void begin(std::function<void(const char*)> log) {
     keys = xQueueCreate(16, 20);
     prefs.begin("rook-bt", false);
     load_bonds();
+    switch_on = prefs.getBool("switch", false);
     if (!saved_addr.empty()) radio_on();
     xTaskCreatePinnedToCore(task, "bt", 8192, nullptr, 1, nullptr, 0);
 }
@@ -876,10 +890,12 @@ void pair(uint32_t seconds, const std::string& address, bool need) {
                 if (!h.name.empty()) nm = h.name;
             }
         xSemaphoreGive(mu);
+        xSemaphoreTake(mu, portMAX_DELAY);
         cand_addr = addr;
         cand_type = type;
         cand_name = nm;
         want_connect = true;
+        xSemaphoreGive(mu);
     }
     if (addr.empty()) logf(need ? "bt: looking for a remote in pairing mode (until one is found)" : "bt: looking for a remote in pairing mode");
     else logf("bt: pairing with %s", addr.c_str());
@@ -966,6 +982,13 @@ bool forget(const std::string& address) {
     logf("bt: forgot %s (%s)", b.name.c_str(), b.addr.c_str());
     return true;
 }
+
+void set_switching(bool on) {
+    switch_on = on;
+    prefs.putBool("switch", on);
+}
+
+bool switching() { return switch_on; }
 
 std::vector<BondInfo> bonded() {
     std::vector<BondInfo> out;

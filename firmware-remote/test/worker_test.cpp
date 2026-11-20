@@ -6,6 +6,8 @@
 //   cd firmware-remote/test && g++ -m32 -std=gnu++17 -O1 -Ihost -I../include -I../lib/rookcore2/src \
 //     -I../.pio/libdeps/bridge/ArduinoJson/src worker_test.cpp host/host_net.cpp \
 //     ../lib/rookcore2/src/*.c* -o /tmp/worker_test && /tmp/worker_test
+// Under AddressSanitizer and UBSan: add -g -fsanitize=address,undefined -fno-sanitize-recover=undefined,
+// run with ASAN_OPTIONS=detect_leaks=0.
 #include <ArduinoJson.h>
 #include <stdio.h>
 #include <new>
@@ -504,6 +506,67 @@ int main() {
         drain(20);
         expect(w.events_queued() == 0 && !batches.empty() && batches.back().dropped == 0,
                "130 events: the hub answering, the queue empties and dropped is cleared once reported");
+    }
+    // 16. The band's piece-wise send at and around every part boundary: a
+    //     message in pieces (some empty, split anywhere) arrives byte for byte.
+    {
+        rc::Band a, b;
+        std::vector<std::string> heard;
+        b.on_message = [&heard](const uint8_t* m, size_t n) {
+            size_t limit = alloc_limit;
+            alloc_limit = 0;
+            if (n && m[0] == '~') heard.push_back(std::string((const char*)m, n));
+            alloc_limit = limit;
+        };
+        a.begin(PSK, "relay:7000");
+        b.begin(PSK, "relay:7000");
+        const size_t C = 1003;
+        std::vector<size_t> sizes = {1, 2, 15, 16, 17, 979, 980, 981, 982, 986, 987, 988, C - 1, C, C + 1,
+                                     2 * C - 1, 2 * C, 2 * C + 1, 3 * C + 7, 31 * C, 32 * C - 1, 32 * C};
+        bool all = true;
+        std::string bad;
+        unsigned seed = 7;
+        for (size_t sz : sizes) {
+            std::string msg(sz, '\0');
+            msg[0] = '~';
+            for (size_t i = 1; i < sz; i++) msg[i] = (char)(' ' + (i * 31 + sz) % 90);
+            for (int split = 0; split < 4; split++) {
+                // cut msg into pieces: none, at every part boundary +-1, at random places, with empty ones between
+                std::vector<rc::Band::Piece> ps;
+                size_t at = 0;
+                while (at < sz) {
+                    size_t len;
+                    if (split == 0) len = sz;
+                    else if (split == 1) len = (at % C) == 0 ? C - 1 : 2;
+                    else if (split == 2) len = 1 + (seed = seed * 1103515245 + 12345) % 1500;
+                    else len = 1 + (seed = seed * 1103515245 + 12345) % 40;
+                    len = std::min(len, sz - at);
+                    ps.push_back({msg.data() + at, len});
+                    if (split == 3) ps.push_back({nullptr, 0});
+                    at += len;
+                }
+                heard.clear();
+                a.send(ps.data(), ps.size());
+                for (int r = 0; r < 4; r++) {
+                    b.poll();
+                    a.poll();
+                }
+                if (heard.size() != 1 || heard[0] != msg) {
+                    all = false;
+                    bad += " " + std::to_string(sz) + "/" + std::to_string(split) + "(" + std::to_string(heard.size()) + ")";
+                }
+            }
+        }
+        expect(all, "band: " + std::to_string(sizes.size() * 4) + " messages in pieces, at and around every part boundary, arrive whole" + bad);
+        // the same through send(std::string), and an empty message
+        heard.clear();
+        a.send(std::string("~") + std::string(2 * C, 'q'));
+        for (int r = 0; r < 4; r++) b.poll();
+        expect(heard.size() == 1 && heard[0].size() == 2 * C + 1, "band: a 2007-byte string arrives whole");
+        rc::Band::Piece none{nullptr, 0};
+        a.send(&none, 1);                    // an empty message: one empty part, nothing delivered past the keepalive check
+        for (int r = 0; r < 4; r++) b.poll();
+        expect(true, "band: an empty message is sent without touching memory");
     }
     printf("%d passed, %d failed (%u packets sent, %u lost on purpose)\n", passes, fails, NET.sent, NET.lost);
     return fails ? 1 : 0;

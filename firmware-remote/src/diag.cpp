@@ -2,14 +2,24 @@
 #include <Arduino.h>
 #include <esp_core_dump.h>
 #include <esp_flash.h>
+#include <esp_attr.h>
+#include <esp_heap_caps.h>
+#include <esp_rom_sys.h>
 #include <esp_system.h>
 #include "rc_util.h"
 #include "settings.h"
 
 namespace diag {
 
-static std::string reason_, summary_;
+static std::string reason_, summary_, heap_bad_;
 static uint32_t boots_ = 0, crashes_ = 0;
+static volatile bool checking_ = false, found_ = false;
+// Where a heap check first failed, kept across the restart (RTC memory is not
+// cleared by a panic). magic says it was written by check().
+struct HeapNote { uint32_t magic; uint32_t up_s; char where[40]; };
+static RTC_NOINIT_ATTR HeapNote heap_note;
+static const uint32_t HEAP_MAGIC = 0x48454150;   // "HEAP"
+
 
 static const char* reason_word(esp_reset_reason_t r) {
     switch (r) {
@@ -80,12 +90,41 @@ void begin() {
     settings::set_kv("boots", std::to_string(boots_));
     if (abnormal(r)) settings::set_kv("crashes", std::to_string(crashes_));
     read_summary();
+    // A heap check that failed before this start: kept in the settings until the next one fails.
+    if (heap_note.magic == HEAP_MAGIC) {
+        heap_note.where[sizeof heap_note.where - 1] = 0;
+        settings::set_kv("heapbad", std::string(heap_note.where) + " (" + std::to_string(heap_note.up_s) + " s up, boot " +
+                                        std::to_string(boots_ - 1) + ")");
+    }
+    heap_note.magic = 0;
+    heap_bad_ = settings::kv("heapbad");
+    checking_ = settings::kv("heapcheck") == "1";
+}
+
+void set_heap_check(bool on) {
+    checking_ = on;
+    settings::set_kv("heapcheck", on ? "1" : "");
+}
+
+bool heap_check_on() { return checking_; }
+
+void check(const char* where) {
+    if (!checking_ || found_) return;
+    if (heap_caps_check_integrity_all(true)) return;
+    found_ = true;                                  // the first is the one that matters
+    heap_note.up_s = millis() / 1000;
+    strlcpy(heap_note.where, where, sizeof heap_note.where);
+    heap_note.magic = HEAP_MAGIC;
+    esp_rom_printf("heap check failed at %s\n", where);
 }
 
 void fill(JsonObject o) {
     o["reset"] = reason_;
     o["boots"] = boots_;
     o["crashes"] = crashes_;
+    if (checking_) o["heap_check"] = true;
+    if (found_) o["heap_bad"] = std::string(heap_note.where) + " (now, " + std::to_string(heap_note.up_s) + " s up)";
+    else if (!heap_bad_.empty()) o["heap_bad"] = heap_bad_;
     size_t size = 0;
     if (coredump_size(size)) {
         JsonObject d = o["coredump"].to<JsonObject>();

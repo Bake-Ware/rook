@@ -139,6 +139,9 @@ static void nonce_of(uint8_t n[12], uint64_t seq) {
 
 // ---- Band -------------------------------------------------------------------
 
+void (*heap_check)(const char* where) = nullptr;
+#define RC_CHECK(where) do { if (heap_check) heap_check(where); } while (0)
+
 bool Band::begin(const std::string& psk, const std::string& relay) {
     if (!lock_) lock_ = xSemaphoreCreateMutex();
     if (!rxbuf_) rxbuf_ = (uint8_t*)malloc(1600);
@@ -228,6 +231,7 @@ bool Band::send(const Piece* pieces, size_t count) {
     if (!ready_) return false;
     size_t n = 0;
     for (size_t k = 0; k < count; k++) n += pieces[k].n;
+    RC_CHECK("band send, before");
     xSemaphoreTake(lock_, portMAX_DELAY);
     uint8_t fid[16];
     esp_fill_random(fid, 16);
@@ -240,6 +244,7 @@ bool Band::send(const Piece* pieces, size_t count) {
         if (total > 1) delay(1);              // a long message: let the radio drain between parts
     }
     xSemaphoreGive(lock_);
+    RC_CHECK("band send, after");
     if (!ok && log) {
         char b[120];
         snprintf(b, sizeof b, "band: a message of %u parts could not be sent whole (heap %u, largest block %u)", total,
@@ -375,7 +380,9 @@ void Band::poll() {
         if (n <= 0) break;
         if (n > 1600) { udp_.flush(); continue; }
         int got = udp_.read(rxbuf_, n);
+        RC_CHECK("band read");
         if (got > 0) on_datagram(rxbuf_, (size_t)got);
+        RC_CHECK("band message handled");
     }
 }
 

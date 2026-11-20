@@ -10,6 +10,10 @@
 
 namespace rc {
 
+// Called, when set, at the start and end of a send and around each datagram
+// read (a heap integrity check while corruption is being hunted). Optional.
+extern void (*heap_check)(const char* where);
+
 class Band {
 public:
     // A complete message (JSON or binary), reassembled and decrypted. Runs on

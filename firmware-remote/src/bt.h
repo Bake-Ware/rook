@@ -30,6 +30,12 @@ std::vector<Heard> heard();           // in the order first heard
 // No scanning while on (a firmware download wants the radio); a remote already
 // connected stays connected.
 void pause(bool on);
+// With more than one remote bonded: keep listening (passively) while one is
+// connected, so another that wakes takes over. Off by default since 0.12.5
+// (the radio then does Wi-Fi, a BLE connection and a scan at once); off, a
+// bonded remote takes over when the one connected has gone to sleep. Kept.
+void set_switching(bool on);
+bool switching();
 void forget();                        // drop every remote bonded with
 // Up to 3 remotes stay bonded (a new one past that pushes out the one used
 // least lately); one is connected at a time, and another bonded remote that

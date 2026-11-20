@@ -493,6 +493,7 @@ void Worker::on_reply(JsonObjectConst rep) {
 // would abort and restart the chip, and the hub's copy of the request would
 // then meet the replay cache: "denied by worker: replay").
 void Worker::on_message(const uint8_t* data, size_t len) {
+    if (heap_check) heap_check("worker message, before");
     try {
         handle_message(data, len);
     } catch (const std::bad_alloc&) {

@@ -310,6 +310,8 @@ void look(bool) {}
 bool looking() { return false; }
 std::vector<Heard> heard() { return {}; }
 void pause(bool) {}
+void set_switching(bool) {}
+bool switching() { return false; }
 void forget() {}
 bool forget(const std::string&) { return false; }
 std::vector<BondInfo> bonded() { return {}; }

@@ -17,4 +17,12 @@ bool coredump_size(size_t& size);      // false: none
 bool coredump_read(size_t offset, size_t& length, std::string& b64, std::string& err);   // length: what was read
 bool coredump_erase(std::string& err);
 
+// Heap checks (off unless set on: remote.map heap_check): check(where) walks
+// every heap (heap_caps_check_integrity_all, a few ms) and the first place one
+// is found broken is kept in RTC memory (no allocation, survives the restart
+// the corruption will cause) and reported by remote.state as heap_bad.
+void set_heap_check(bool on);
+bool heap_check_on();
+void check(const char* where);
+
 }  // namespace diag
