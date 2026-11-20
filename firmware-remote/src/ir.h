@@ -2,8 +2,10 @@
 // driven (through 1 kOhm) from one GPIO, pin HIGH = LED on. The LED may have
 // little or no series resistance, so the pin idles LOW at all times and one
 // send is capped (500 ms in all, no mark over 20 ms). Sent with the RMT
-// peripheral and its hardware carrier; the RMT driver and its item buffer
-// exist only for the length of a send.
+// peripheral and its hardware carrier; the RMT driver is installed at the
+// first send and kept (removed and made again only after a send fails), the
+// pin is a plain GPIO output LOW between sends. Calls wait at most 2 s for
+// one another, never forever.
 #pragma once
 #include <stdint.h>
 #include <string>

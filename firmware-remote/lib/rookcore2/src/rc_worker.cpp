@@ -3,6 +3,7 @@
 #include "rc_sig.h"
 #include "rc_util.h"
 #include <esp_random.h>
+#include <new>
 #include <string.h>
 #include <sys/time.h>
 #include <time.h>
@@ -32,7 +33,7 @@ bool Worker::begin(const WorkerConfig& cfg, const char* manifest_json, const cha
     plugin_ = plugin;
     manifest_text_ = manifest_json;
     manifest_len_ = strlen(manifest_json);
-    lock_ = xSemaphoreCreateMutex();
+    if (!lock_) lock_ = xSemaphoreCreateMutex();
     // Parsed without the docs, which are most of it: memory is short on the small chips.
     JsonDocument keep;
     keep["version"] = true;
@@ -72,8 +73,9 @@ bool Worker::begin(const WorkerConfig& cfg, const char* manifest_json, const cha
     return gate.anchor.set;
 }
 
-void Worker::on(const char* cap, Handler h, bool blocking) {
-    routes_.push_back({cap, h, blocking});
+void Worker::on(const char* cap, Handler h, bool blocking, MaxTime max) {
+    routes_.push_back({cap, h, blocking, max});
+    if (blocking && !slow_task_) start_slow_task();
 }
 
 // ---- outbound ---------------------------------------------------------------
@@ -330,24 +332,205 @@ bool Worker::validate(const char* cap, JsonObjectConst args, JsonDocument& out, 
     return true;
 }
 
+// ---- blocking calls ---------------------------------------------------------
+//
+// Each blocking call is a job in slow_ from when it is accepted to when its
+// task is done with it. A call is answered once: by its task, or by the
+// watchdog (check_slow) when it outruns its maximum, whichever is first
+// (answered, under lock_). The standing task is made once, at begin, while
+// memory is whole: a task made per call needs 8 KB in one piece, which a
+// long-running C3's heap stops having (that was "worker error: busy").
+
+static const uint32_t SLOW_STACK = 8192;
+
 struct BlockingJob {
     Worker* w;
     Handler h;
-    std::string id;
+    std::string id, cap;
     JsonDocument args;
-    std::function<void(const std::string&, bool, const std::string&)> done;
+    uint32_t started = 0, max_ms = 0;
+    bool answered = false;     // under the worker's lock_
 };
+
+static_assert(sizeof(void*) <= sizeof(uint32_t), "jobs go to the standing task as a notification value");
+
+void Worker::run_job(BlockingJob* j) {
+    bool ok = false;
+    std::string out, err;
+    try {
+        JsonDocument res;
+        ok = j->h(j->args.as<JsonObjectConst>(), res.to<JsonObject>(), err);
+        if (ok) {
+            serializeJson(res, out);
+            if (res.overflowed()) { ok = false; err = "worker error: out of memory for the result"; }
+        }
+    } catch (const std::bad_alloc&) {
+        ok = false;
+        err = "worker error: out of memory";
+    } catch (...) {
+        ok = false;
+        err = "worker error: the call failed";
+    }
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    bool late = j->answered;
+    j->answered = true;
+    for (auto& s : slow_) if (s == j) s = nullptr;
+    if (slow_cur_ == j) slow_cur_ = nullptr;     // its address may be a new job's soon
+    xSemaphoreGive(lock_);
+    try {
+        if (late) {
+            if (log) log((j->cap + " finished after the watchdog had answered it").c_str());
+        } else if (ok) {
+            reply_raw(j->id, out.empty() ? "{}" : out);
+        } else {
+            reply_err(j->id, err);
+        }
+    } catch (...) {
+        // no memory to answer in: the caller times out, the slot is free all the same
+    }
+    delete j;
+}
 
 void Worker::blocking_task(void* arg) {
     BlockingJob* j = (BlockingJob*)arg;
-    JsonDocument res;
-    std::string err;
-    bool ok = j->h(j->args.as<JsonObjectConst>(), res.to<JsonObject>(), err);
-    std::string out;
-    if (ok) serializeJson(res, out);
-    j->done(j->id, ok, ok ? out : err);
-    delete j;
+    j->w->run_job(j);
     vTaskDelete(nullptr);
+}
+
+void Worker::slow_loop(void* arg) {
+    Worker* w = (Worker*)arg;
+    TaskHandle_t me = xTaskGetCurrentTaskHandle();
+    for (;;) {
+        uint32_t v = 0;
+        if (xTaskNotifyWait(0, 0xFFFFFFFF, &v, portMAX_DELAY) != pdTRUE) continue;
+        if (v) w->run_job((BlockingJob*)(uintptr_t)v);
+        xSemaphoreTake(w->lock_, portMAX_DELAY);
+        bool still = w->slow_task_ == me;
+        if (still) {
+            w->slow_cur_ = nullptr;
+            w->slow_idle_ = true;
+        }
+        xSemaphoreGive(w->lock_);
+        if (!still) vTaskDelete(nullptr);     // replaced while it overran: a new one stands
+    }
+}
+
+bool Worker::start_slow_task() {
+    if (!lock_) lock_ = xSemaphoreCreateMutex();
+    TaskHandle_t t = nullptr;
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    // made under the lock: it cannot look for itself in slow_task_ before it is there
+    bool ok = xTaskCreate(slow_loop, "rc_slow", SLOW_STACK, this, 1, &t) == pdPASS;
+    if (ok) {
+        slow_task_ = t;
+        slow_cur_ = nullptr;
+        slow_idle_ = true;
+    }
+    xSemaphoreGive(lock_);
+    return ok;
+}
+
+int Worker::slow_running() {
+    int n = 0;
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    for (auto* s : slow_) if (s) n++;
+    xSemaphoreGive(lock_);
+    return n;
+}
+
+// From loop(): answers the calls that ran past their maximum and frees their
+// slots. A task stuck in one cannot be killed safely (it may hold a lock), but
+// it no longer counts: the standing task is replaced and later calls run.
+void Worker::check_slow() {
+    struct Late { std::string id, cap; uint32_t age; };
+    std::vector<Late> late;
+    uint32_t ms = millis();
+    bool replace = false;
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    for (auto& s : slow_) {
+        if (!s || s->answered || ms - s->started <= s->max_ms) continue;
+        s->answered = true;
+        late.push_back({s->id, s->cap, ms - s->started});
+        if (s == slow_cur_) {
+            slow_task_ = nullptr;           // it deletes itself if it ever comes back
+            slow_cur_ = nullptr;
+            slow_idle_ = false;
+            replace = true;
+        }
+        s = nullptr;                        // its task still owns the job; it is freed there
+        slow_abandoned_++;
+    }
+    bool want = !slow_task_ && (replace || ms - slow_retry_ > 5000);
+    xSemaphoreGive(lock_);
+    for (auto& l : late) {
+        char b[160];
+        snprintf(b, sizeof b, "%s ran %u s, past its maximum: answered with an error, slot freed", l.cap.c_str(),
+                 (unsigned)(l.age / 1000));
+        if (log) log(b);
+        reply_err(l.id, "worker error: " + l.cap + " did not finish in time (" + std::to_string(l.age / 1000) +
+                            " s); it was given up on");
+    }
+    if (want && !routes_.empty()) {
+        slow_retry_ = ms;
+        bool any = false;
+        for (auto& r : routes_) any |= r.blocking;
+        if (any && !start_slow_task() && log) log("no memory for a new slow-call task yet");
+    }
+}
+
+void Worker::dispatch_slow(const Route& r, const std::string& id, const char* cap, const JsonDocument& a) {
+    JsonObjectConst args = a.as<JsonObjectConst>();
+    uint32_t max_ms = 120000;
+    if (r.max) max_ms = r.max(args);
+    else if (args["timeout"].is<long long>()) max_ms = (uint32_t)args["timeout"].as<long long>() * 1000 + 30000;
+    BlockingJob* j = new (std::nothrow) BlockingJob();
+    if (!j) { reply_err(id, "worker error: busy (out of memory)"); return; }
+    bool ok = true;
+    try {
+        j->w = this;
+        j->h = r.h;
+        j->id = id;
+        j->cap = cap;
+        ok = j->args.set(a) && !j->args.overflowed();
+    } catch (...) {
+        ok = false;
+    }
+    if (!ok) { delete j; reply_err(id, "worker error: busy (out of memory)"); return; }
+    j->started = millis();
+    j->max_ms = max_ms;
+
+    // Take a slot; hand it to the standing task if that is free, else a task of its own.
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    BlockingJob** slot = nullptr;
+    for (auto& s : slow_) if (!s) { slot = &s; break; }
+    if (!slot) {
+        xSemaphoreGive(lock_);
+        delete j;
+        reply_err(id, "worker error: busy (" + std::to_string(SLOW_MAX) + " slow calls running)");
+        return;
+    }
+    *slot = j;
+    TaskHandle_t standing = nullptr;
+    if (slow_task_ && slow_idle_) {
+        standing = slow_task_;
+        slow_idle_ = false;
+        slow_cur_ = j;
+    }
+    xSemaphoreGive(lock_);
+    if (standing) {
+        xTaskNotify(standing, (uint32_t)(uintptr_t)j, eSetValueWithOverwrite);
+        return;
+    }
+    if (xTaskCreate(blocking_task, "rc_call", SLOW_STACK, j, 1, nullptr) == pdPASS) return;
+    xSemaphoreTake(lock_, portMAX_DELAY);
+    for (auto& s : slow_) if (s == j) s = nullptr;
+    xSemaphoreGive(lock_);
+    delete j;
+    char b[120];
+    snprintf(b, sizeof b, "worker error: busy (a slow call is running and there is no memory for another: heap %u, largest %u)",
+             (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    reply_err(id, b);
+    if (log) log(b);
 }
 
 void Worker::on_request(JsonObjectConst req) {
@@ -394,15 +577,7 @@ void Worker::on_request(JsonObjectConst req) {
         std::string err;
         if (!validate(cap, args, a, err)) { reply_err(id, err); return; }
         if (r.blocking) {
-            BlockingJob* j = new BlockingJob{this, r.h, id, JsonDocument(), nullptr};
-            j->args.set(a);
-            j->done = [this](const std::string& rid, bool ok, const std::string& body) {
-                if (ok) reply_raw(rid, body.empty() ? "{}" : body); else reply_err(rid, body);
-            };
-            if (xTaskCreate(blocking_task, "rc_call", 8192, j, 1, nullptr) != pdPASS) {
-                delete j;
-                reply_err(id, "worker error: busy");
-            }
+            dispatch_slow(r, id, cap, a);
             return;
         }
         JsonDocument res;
@@ -414,6 +589,7 @@ void Worker::on_request(JsonObjectConst req) {
 }
 
 void Worker::loop() {
+    check_slow();
     band_.poll();
     if (!band_.ready()) return;
     uint32_t ms = millis();

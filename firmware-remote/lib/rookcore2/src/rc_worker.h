@@ -27,6 +27,12 @@ struct WorkerConfig {
 // A cap handler fills result (a JSON object) or returns false with err set.
 // Blocking handlers (that wait on a person) run on their own task.
 using Handler = std::function<bool(JsonObjectConst args, JsonObject result, std::string& err)>;
+// The longest a blocking call may plausibly run with these args, in ms. Past
+// it the caller is answered with an error and the call no longer counts as
+// running (its task, if it ever finishes, says nothing more).
+using MaxTime = std::function<uint32_t(JsonObjectConst args)>;
+
+struct BlockingJob;
 
 class Worker {
 public:
@@ -34,7 +40,8 @@ public:
 
     // manifest_json must outlive the worker (a constant): it is served from where it is.
     bool begin(const WorkerConfig& cfg, const char* manifest_json, const char* plugin);
-    void on(const char* cap, Handler h, bool blocking = false);
+    // max: blocking calls only; unset, a "timeout" (s) argument + 30 s, else 120 s.
+    void on(const char* cap, Handler h, bool blocking = false, MaxTime max = nullptr);
     // Queue an event this worker's plugin declares in its manifest's emits.
     void emit(const char* event, JsonObjectConst payload);
     // Fills the announce/heartbeat status object for the plugin namespace.
@@ -51,11 +58,14 @@ public:
     uint32_t calls() const { return calls_; }
     uint32_t events_sent() const { return events_sent_; }
     size_t events_queued() const { return outbox_.size(); }
+    int slow_running();                       // blocking calls still counted as running
+    uint32_t slow_abandoned() const { return slow_abandoned_; }   // answered by the watchdog
 
     Gate gate;
 
 private:
-    struct Route { std::string cap; Handler h; bool blocking; };
+    struct Route { std::string cap; Handler h; bool blocking; MaxTime max; };
+    static const int SLOW_MAX = 6;            // blocking calls at once
     struct Event { std::string id, event, payload; };
 
     WorkerConfig cfg_;
@@ -74,6 +84,13 @@ private:
     size_t batch_n_ = 0;
     uint32_t batch_sent_ = 0, batch_backoff_ = 1000;
     SemaphoreHandle_t lock_ = nullptr;
+    // Blocking calls: one task made at begin, while memory is whole, takes them
+    // in turn; a second at once gets a task of its own (if there is memory).
+    BlockingJob* slow_[SLOW_MAX] = {};        // under lock_
+    TaskHandle_t slow_task_ = nullptr;        // under lock_; null: being replaced
+    BlockingJob* slow_cur_ = nullptr;         // what slow_task_ runs, under lock_
+    bool slow_idle_ = false;                  // under lock_
+    uint32_t slow_abandoned_ = 0, slow_retry_ = 0;
 
     void on_message(const uint8_t* data, size_t len);
     void on_request(JsonObjectConst req);
@@ -88,7 +105,12 @@ private:
     void pump_events();
     void fill_status(JsonObject status);
     int64_t now() const;
-    static void blocking_task(void* arg);
+    static void blocking_task(void* arg);     // one call, then gone
+    static void slow_loop(void* arg);         // the standing task
+    bool start_slow_task();
+    void run_job(BlockingJob* j);
+    void check_slow();
+    void dispatch_slow(const Route& r, const std::string& id, const char* cap, const JsonDocument& args);
 };
 
 }  // namespace rc

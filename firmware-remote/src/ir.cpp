@@ -20,6 +20,17 @@ namespace ir {
 
 static int g_pin = -1;
 static SemaphoreHandle_t mu;
+// A send holds the LED for at most MAX_TOTAL_US plus its own wait margin; the
+// lock is never waited on for longer than that, so no caller can hang on it.
+static const uint32_t LOCK_WAIT_MS = 2000;
+
+static bool take(std::string& err) {
+    if (!mu) mu = xSemaphoreCreateMutex();
+    if (mu && xSemaphoreTake(mu, pdMS_TO_TICKS(LOCK_WAIT_MS)) == pdTRUE) return true;
+    err = mu ? "IR busy: another IR call has held the LED for over 2 s; try again"
+             : "IR: no memory for its lock";
+    return false;
+}
 
 // Pins that are never the LED's: the screen's, the flash's, USB's.
 static bool reserved(int p) {
@@ -84,11 +95,11 @@ bool set_pin(int p, std::string& err, std::string& warn) {
         err = "bad args: GPIO " + std::to_string(p) + " is in use (screen, flash or USB)";
         return false;
     }
-    if (mu) xSemaphoreTake(mu, portMAX_DELAY);
+    if (!take(err)) return false;
     g_pin = p;
     drive_low(g_pin);            // a previous pin stays an output LOW until restart
     settings::set_kv("ir_pin", p < 0 ? "" : std::to_string(p));
-    if (mu) xSemaphoreGive(mu);
+    xSemaphoreGive(mu);
     if (p >= 0 && strapping(p))
         warn = "GPIO " + std::to_string(p) +
                " is a strapping pin: the LED circuit may change how the chip boots";
@@ -98,6 +109,7 @@ bool set_pin(int p, std::string& err, std::string& warn) {
 #if IR_HAVE_RMT
 static const rmt_channel_t CH = RMT_CHANNEL_0;
 static const uint32_t MAX_TICKS = 32767;      // an RMT item's duration field (1 us ticks)
+static bool g_installed = false;              // under mu
 
 // Lays the durations out as RMT items (mark = level 1), splitting long
 // spaces; out null: only counts. Never writes a zero duration except the end.
@@ -149,8 +161,7 @@ static bool transmit(uint32_t carrier_hz, const std::vector<uint32_t>& d, Sent& 
     if (!items) { err = "out of memory for " + std::to_string(n) + " RMT items"; return false; }
     lay_out(d, items);
 
-    if (!mu) mu = xSemaphoreCreateMutex();
-    xSemaphoreTake(mu, portMAX_DELAY);
+    if (!take(err)) { free(items); return false; }
     int p = g_pin;
     if (p < 0) {
         xSemaphoreGive(mu);
@@ -167,20 +178,36 @@ static bool transmit(uint32_t carrier_hz, const std::vector<uint32_t>& d, Sent& 
     c.tx_config.idle_level = RMT_IDLE_LEVEL_LOW;
     c.tx_config.idle_output_en = true;
     gpio_set_level((gpio_num_t)p, 0);
-    esp_err_t e = rmt_config(&c);
-    bool installed = false;
-    if (e == ESP_OK) {
-        e = rmt_driver_install(CH, 0, 0);
-        installed = e == ESP_OK;
+    // The driver is installed once and kept (installing and removing it per send
+    // allocated and freed its state and interrupt every time, on a heap that is
+    // short and in pieces). rmt_config points the channel at this send's pin
+    // and carrier; drive_low takes the pin back to a plain GPIO after it.
+    esp_err_t e = ESP_OK;
+    bool stale = false;
+    if (!g_installed) {
+        e = rmt_config(&c);
+        if (e == ESP_OK) e = rmt_driver_install(CH, 0, 0);
+        if (e == ESP_OK) g_installed = true;
+    } else {
+        // The driver's write waits for the last send's end with no limit: make
+        // sure it has ended (a lost end interrupt would leave it waiting forever).
+        if (rmt_wait_tx_done(CH, 0) != ESP_OK) stale = true, e = ESP_ERR_INVALID_STATE;
+        if (e == ESP_OK) e = rmt_config(&c);
     }
     if (e == ESP_OK) e = rmt_write_items(CH, items, (int)n, false);
-    if (e == ESP_OK) e = rmt_wait_tx_done(CH, pdMS_TO_TICKS(MAX_TOTAL_US / 1000 + 200));
-    if (e != ESP_OK) rmt_tx_stop(CH);
-    if (installed) rmt_driver_uninstall(CH);
+    if (e == ESP_OK) e = rmt_wait_tx_done(CH, pdMS_TO_TICKS(total / 1000 + 300));
+    if (e != ESP_OK && g_installed) {
+        // Start over on the next send: stopped, and removed (it does not wait
+        // for the send's end when the write did not ask to: rmt_write_items(..., false)).
+        rmt_tx_stop(CH);
+        rmt_driver_uninstall(CH);
+        g_installed = false;
+    }
     drive_low(p);                                   // never left HIGH, sent or not
     xSemaphoreGive(mu);
     free(items);
 
+    if (stale) { err = "rmt: the last send never ended; the RMT is reset, send again"; return false; }
     if (e != ESP_OK) { err = std::string("rmt: ") + esp_err_to_name(e); return false; }
     s.pin = p;
     s.duration_us = (uint32_t)total;

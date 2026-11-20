@@ -42,7 +42,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.11.4"
+#define FW_VERSION "0.11.5"
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -808,6 +808,9 @@ static void fill_state(JsonObject r) {
     r["devices"] = (int)lan::devices().size();
     ota::fill(r["update"].to<JsonObject>());
     r["heap"] = (unsigned)ESP.getFreeHeap();
+    r["heap_block"] = (unsigned)ESP.getMaxAllocHeap();     // the largest piece: a slow-call task needs 8 KB of it
+    r["slow_calls"] = worker.slow_running();
+    if (worker.slow_abandoned()) r["slow_abandoned"] = worker.slow_abandoned();
     r["hub_contact"] = worker.hub_ok();
     r["events_sent"] = worker.events_sent();
     r["events_queued"] = (unsigned)worker.events_queued();
@@ -1692,7 +1695,12 @@ void setup() {
             worker.on("remote.ask", cap_ask, true);
             worker.on("remote.wait", cap_wait, true);
             worker.on("remote.bt", cap_bt);
-            worker.on("remote.ir", cap_ir, true);
+            // an IR LED send is over in well under a second; the paired remote's
+            // IR-over-BLE writes wait on Bluetooth up to 90 s
+            worker.on("remote.ir", cap_ir, true, [](JsonObjectConst a) -> uint32_t {
+                std::string act = a["action"] | "";
+                return act == "pin" || act == "send" ? 15000 : 120000;
+            });
             worker.on("remote.wifi", cap_wifi);
             worker.on("remote.scan", cap_scan, true);
             worker.on("remote.devices", cap_devices);
