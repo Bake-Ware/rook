@@ -304,7 +304,12 @@ void begin(std::function<void(const char*)> log) {
     xTaskCreatePinnedToCore(client_task, "usb_client", 6144, nullptr, 9, nullptr, 0);
 }
 
-void pair(uint32_t) {}
+void pair(uint32_t, const std::string&, bool) {}
+std::string pair_error() { return ""; }
+void look(bool) {}
+bool looking() { return false; }
+std::vector<Heard> heard() { return {}; }
+void pause(bool) {}
 void forget() {}
 bool saved() { return true; }        // nothing to pair: whatever is plugged in is it
 std::string state() { return on ? "connected" : "waiting"; }

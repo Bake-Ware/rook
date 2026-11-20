@@ -1,7 +1,8 @@
 // A Bluetooth LE remote (HID over GATT: most Android TV remotes) bridged onto
 // the band: this remote is its host. pair() scans for a HID device in pairing
 // mode, bonds with it and remembers it; after that it is reconnected whenever
-// it wakes and advertises. Its key presses come out of next_key() by name:
+// it wakes and advertises. look() lists the HID remotes heard instead (Settings >
+// Pair BT), and pair() with an address bonds with the one picked from it. Its key presses come out of next_key() by name:
 // the handheld's own names where the key means the same (up, ok, vol_up...),
 // else bt_c<usage> / bt_k<code>, so every key is a button a job can use.
 // The radio is only switched on once there is something to pair or reconnect.
@@ -14,7 +15,21 @@
 namespace bt {
 
 void begin(std::function<void(const char*)> log);
-void pair(uint32_t seconds = 30);     // look for a remote in pairing mode and bond with it
+// Look for a remote in pairing mode and bond with it: the first one heard, or
+// the one at address. seconds 0: until one is found. need_mode: only one that
+// says it is in pairing mode (discoverable) is taken (the bridge pairing on its
+// own; by hand any HID remote heard is).
+void pair(uint32_t seconds = 30, const std::string& address = "", bool need_mode = false);
+std::string pair_error();             // why the last pair() did not bond (blank: it did, or still going)
+// The HID remotes heard advertising, for a list to pick from: on, the radio
+// listens for them (actively, for their names) and bonds with none by itself.
+struct Heard { std::string address, name; int rssi; bool pairing; uint32_t ago_ms; uint8_t type; };   // pairing: it says it is in pairing mode
+void look(bool on);
+bool looking();
+std::vector<Heard> heard();           // in the order first heard
+// No scanning while on (a firmware download wants the radio); a remote already
+// connected stays connected.
+void pause(bool on);
 void forget();                        // drop the remembered remote and its bond
 bool saved();
 std::string state();                  // off | idle | pairing | waiting | connected

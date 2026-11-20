@@ -13,7 +13,36 @@
 //     type 1 (raw): carrier (varint, Hz), count (varint), durations (varints, us)
 //     type 2 (lan): the key to send (length, name; blank: the key's own)
 //     type 3 (cap): cap, worker, args (JSON), each length then text
+//   then, when the profile has an icon, one byte: the icon. (Builds before
+//   0.12.2 stop reading after the keys, so they still read a blob with it.)
 namespace prof {
+
+static const char* const ICON_NAMES[ICON_COUNT] = {"", "tv", "projector", "speaker", "streaming", "light", "phone",
+                                                   "car", "game", "generic"};
+static const char* const ICON_LABELS[ICON_COUNT] = {"", "TV", "Projector", "Speaker", "Streaming box", "Light",
+                                                    "Phone", "Car", "Game controller", "Generic"};
+
+const char* icon_name(int icon) { return icon > 0 && icon < ICON_COUNT ? ICON_NAMES[icon] : "generic"; }
+const char* icon_label(int icon) { return icon > 0 && icon < ICON_COUNT ? ICON_LABELS[icon] : "Generic"; }
+
+int icon_id(const std::string& in) {
+    std::string n;
+    for (char c : in) n += c == ' ' || c == '-' ? '_' : (char)tolower((unsigned char)c);
+    if (n.empty() || n == "none") return ICON_NONE;
+    if (n == "streaming_box" || n == "stream" || n == "box") return ICON_STREAMING;
+    if (n == "game_controller" || n == "controller" || n == "console") return ICON_GAME;
+    if (n == "television") return ICON_TV;
+    if (n == "lamp" || n == "lights") return ICON_LIGHT;
+    for (int i = 1; i < ICON_COUNT; i++)
+        if (n == ICON_NAMES[i]) return i;
+    return -1;
+}
+
+std::string icon_names() {
+    std::string s;
+    for (int i = 1; i < ICON_COUNT; i++) s += (i > 1 ? ", " : "") + std::string(ICON_NAMES[i]);
+    return s;
+}
 
 static const char* const KEYS[] = {
     "power", "vol_up", "vol_down", "mute", "input", "up", "down", "left", "right", "ok", "back", "home",
@@ -151,6 +180,11 @@ static bool decode(const std::string& b, Info& info, int want, Code* out, std::v
         }
         if (all) all->push_back(std::move(e));
     }
+    info.icon = ICON_NONE;
+    if (!r.bad && r.at < r.n) {                // the icon, after the keys
+        uint8_t ic = r.u8();
+        if (ic < ICON_COUNT) info.icon = ic;
+    }
     if (r.bad || info.name.empty()) return false;
     return want < 0 || found;
 }
@@ -160,7 +194,7 @@ static void put_str(std::string& o, const std::string& v) {
     o += v;
 }
 
-static std::string encode(const std::string& name, const std::string& link, const std::vector<Entry>& es) {
+static std::string encode(const std::string& name, const std::string& link, const std::vector<Entry>& es, uint8_t icon) {
     std::string o;
     o += (char)1;
     o += (char)name.size();
@@ -190,6 +224,7 @@ static std::string encode(const std::string& name, const std::string& link, cons
             for (uint32_t v : e.c.d) put_var(o, v);
         }
     }
+    if (icon != ICON_NONE && icon < ICON_COUNT) o += (char)icon;
     return o;
 }
 
@@ -377,7 +412,7 @@ std::string clean_name(const std::string& in) {
 }
 
 bool save(const std::string& name_in, bool set_link, const std::string& link_in, JsonObjectConst keys, bool merge,
-          std::string& err, bool& created) {
+          std::string& err, bool& created, int icon) {
     std::string name = clean_name(name_in);
     created = false;
     if (name.empty()) {
@@ -385,6 +420,7 @@ bool save(const std::string& name_in, bool set_link, const std::string& link_in,
         return false;
     }
     if (link_in.size() > MAX_LINK || !printable(link_in)) { err = "bad args: link is a device id, at most 40 characters"; return false; }
+    if (icon >= ICON_COUNT) { err = "bad args: icon is one of " + icon_names(); return false; }
     // Everything given is parsed and checked before anything stored is touched.
     std::vector<Entry> given;
     std::vector<uint8_t> drop;
@@ -409,6 +445,7 @@ bool save(const std::string& name_in, bool set_link, const std::string& link_in,
         if (same(idx[i].name, name)) at = (int)i;
     std::vector<Entry> es;
     std::string link = set_link ? link_in : (at >= 0 ? idx[at].link : "");
+    uint8_t ic = icon >= 0 ? (uint8_t)icon : at >= 0 ? idx[at].icon : (uint8_t)ICON_NONE;
     if (at >= 0) {
         if (merge) {
             char k[8];
@@ -432,7 +469,7 @@ bool save(const std::string& name_in, bool set_link, const std::string& link_in,
         if (!replaced) es.push_back(std::move(g));
     }
     given.clear();
-    std::string blob = encode(name, link, es);
+    std::string blob = encode(name, link, es, ic);
     es.clear();
     es.shrink_to_fit();
     size_t others = 0;
@@ -521,7 +558,7 @@ bool rename(const std::string& name, const std::string& to_in, std::string& err)
         err = "profile " + name + " could not be read back";
         return false;
     }
-    b = encode(to, i.link, es);
+    b = encode(to, i.link, es, i.icon);
     es.clear();
     if (!settings::set_blob(k, b)) {
         xSemaphoreGive(mu);
@@ -535,9 +572,19 @@ bool rename(const std::string& name, const std::string& to_in, std::string& err)
     return true;
 }
 
+bool set_icon(const std::string& name, int icon, std::string& err) {
+    Info p;
+    if (!find(name, p)) { err = "no profile called " + name; return false; }
+    if (icon < 0 || icon >= ICON_COUNT) { err = "bad args: icon is one of " + icon_names(); return false; }
+    if (p.icon == icon) return true;
+    bool created;
+    return save(p.name, false, "", JsonObjectConst(), true, err, created, icon);
+}
+
 void fill(const Info& p, JsonObject o) {
     o["name"] = p.name;
     if (!p.link.empty()) o["link"] = p.link;
+    o["icon"] = icon_name(p.icon);
     JsonArray k = o["keys"].to<JsonArray>();
     for (int i = 0; i < NKEYS; i++)
         if (has(p, i)) k.add(KEYS[i]);

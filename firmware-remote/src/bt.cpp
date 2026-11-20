@@ -12,7 +12,12 @@ const uint16_t HID_SERVICE = 0x1812, HID_REPORT = 0x2A4D;
 Preferences prefs;
 bool inited = false;
 volatile bool pairing = false, want_connect = false, connected = false;
-uint32_t pair_until = 0;
+volatile bool listing = false, paused = false, need_mode = false;
+uint32_t pair_until = 0;                    // 0: pairing goes on until a remote is bonded
+std::string pick_addr, pair_err, connect_err;   // under mu
+std::vector<bt::Heard> heard_list;          // under mu; ago_ms holds when it was last heard (millis)
+const size_t HEARD_MAX = 12;
+const uint32_t HEARD_KEEP_MS = 20000;       // not heard for this long: off the list
 NimBLEClient* client = nullptr;
 std::string saved_addr, saved_name, cand_addr, cand_name, last_hex, held_name;
 uint8_t saved_type = 0, cand_type = 0;
@@ -432,18 +437,48 @@ void on_report(NimBLERemoteCharacteristic* c, uint8_t* d, size_t len, bool) {
     xQueueSend(keys, name, 0);
 }
 
+bool is_hid(NimBLEAdvertisedDevice* d) {
+    if (d->isAdvertisingService(NimBLEUUID(HID_SERVICE))) return true;
+    if (!d->haveAppearance()) return false;
+    uint16_t ap = d->getAppearance();
+    return (ap >= 0x03C0 && ap <= 0x03C4) || ap == 0x0180;      // HID devices, remote control
+}
+
+// A HID remote heard while the list is open: on it, or its signal and name brought up to date.
+void note_heard(NimBLEAdvertisedDevice* d, const std::string& a, bool in_pairing) {
+    uint32_t ms = millis();
+    xSemaphoreTake(mu, portMAX_DELAY);
+    bt::Heard* h = nullptr;
+    for (auto& e : heard_list)
+        if (e.address == a) h = &e;
+    if (!h && heard_list.size() < HEARD_MAX) {
+        heard_list.push_back(bt::Heard{a, "", 0, false, 0, d->getAddress().getType()});
+        h = &heard_list.back();
+    }
+    if (h) {
+        h->rssi = d->getRSSI();
+        h->pairing = h->pairing || in_pairing;
+        h->ago_ms = ms;
+        if (d->haveName() && !d->getName().empty()) h->name = d->getName().substr(0, 24);
+    }
+    xSemaphoreGive(mu);
+}
+
 class Seen : public NimBLEAdvertisedDeviceCallbacks {
     void onResult(NimBLEAdvertisedDevice* d) override {
-        if (connected || want_connect) return;
+        if (paused) return;
         std::string a = d->getAddress().toString();
+        bool hid = is_hid(d);
+        bool in_pairing = (d->getAdvFlags() & (BLE_HS_ADV_F_DISC_LTD | BLE_HS_ADV_F_DISC_GEN)) != 0;
+        if (listing && hid) note_heard(d, a, in_pairing);
+        if (connected || want_connect) return;
         bool take = false;
         if (pairing) {
-            bool hid = d->isAdvertisingService(NimBLEUUID(HID_SERVICE));
-            if (!hid && d->haveAppearance()) {
-                uint16_t ap = d->getAppearance();
-                hid = (ap >= 0x03C0 && ap <= 0x03C4) || ap == 0x0180;      // HID devices, remote control
-            }
-            take = hid && d->getRSSI() > -85;
+            xSemaphoreTake(mu, portMAX_DELAY);
+            std::string pick = pick_addr;
+            xSemaphoreGive(mu);
+            if (!pick.empty()) take = a == pick;                       // the one picked from the list
+            else if (!listing) take = hid && d->getRSSI() > -85 && (!need_mode || in_pairing);
         } else {
             take = !saved_addr.empty() && a == saved_addr;
         }
@@ -478,12 +513,15 @@ void connect_to(const std::string& addr, uint8_t type) {
         client->setConnectTimeout(8);
     }
     logf("bt: connecting to %s", addr.c_str());
+    connect_err.clear();
     if (!client->connect(NimBLEAddress(addr, type))) {
         logf("bt: connect failed");
+        connect_err = "no answer";
         return;
     }
     if (!client->secureConnection()) {
         logf("bt: it refused to pair");
+        connect_err = "refused";
         client->disconnect();
         return;
     }
@@ -503,6 +541,7 @@ void connect_to(const std::string& addr, uint8_t type) {
     }
     if (!n) {
         logf("bt: no HID input reports on it");
+        connect_err = "not a remote";
         client->disconnect();
         return;
     }
@@ -623,34 +662,61 @@ void task(void*) {
             xSemaphoreGive(mu);
             logf("bt: disconnected");
         }
-        if (pairing && (int32_t)(millis() - pair_until) >= 0) {
+        if (pairing && pair_until && (int32_t)(millis() - pair_until) >= 0) {
             pairing = false;
             NimBLEDevice::getScan()->stop();
-            logf("bt: no remote in pairing mode found");
+            xSemaphoreTake(mu, portMAX_DELAY);
+            bool picked = !pick_addr.empty();
+            pick_addr.clear();
+            pair_err = picked ? "not heard" : "none found";
+            xSemaphoreGive(mu);
+            logf(picked ? "bt: the remote picked was not heard" : "bt: no remote in pairing mode found");
         }
+        if (want_connect && paused) want_connect = false;
         if (want_connect) {
             bool was_pairing = pairing;
             std::string addr = cand_addr, nm = cand_name;
             uint8_t type = cand_type;
+            if (client && client->isConnected()) {                // the remote that was paired before (a new one was picked)
+                client->disconnect();
+                for (int i = 0; i < 20 && client->isConnected(); i++) vTaskDelay(pdMS_TO_TICKS(50));
+                connected = false;
+            }
             connect_to(addr, type);
             want_connect = false;
+            xSemaphoreTake(mu, portMAX_DELAY);
+            bool picked = !pick_addr.empty();
+            xSemaphoreGive(mu);
             if (connected && was_pairing) {
                 xSemaphoreTake(mu, portMAX_DELAY);
+                std::string old = saved_addr;
+                uint8_t old_type = saved_type;
                 saved_addr = addr;
                 saved_name = nm;
                 saved_type = type;
+                pick_addr.clear();
+                pair_err.clear();
                 xSemaphoreGive(mu);
                 prefs.putString("addr", addr.c_str());
                 prefs.putString("name", nm.c_str());
                 prefs.putUChar("type", type);
                 pairing = false;
+                if (!old.empty() && old != addr) NimBLEDevice::deleteBond(NimBLEAddress(old, old_type));   // the remote it replaced
+            } else if (was_pairing && picked) {                    // the one picked would not bond: say why, and stop
+                xSemaphoreTake(mu, portMAX_DELAY);
+                pick_addr.clear();
+                pair_err = connect_err.empty() ? "failed" : connect_err;
+                xSemaphoreGive(mu);
+                pairing = false;
             }
             continue;
         }
-        if (!connected && (pairing || !saved_addr.empty())) {
+        if (paused) {
+            if (NimBLEDevice::getScan()->isScanning()) NimBLEDevice::getScan()->stop();
+        } else if (listing || (!connected && (pairing || !saved_addr.empty()))) {
             NimBLEScan* s = NimBLEDevice::getScan();
             if (!s->isScanning()) {
-                s->setActiveScan(pairing);
+                s->setActiveScan(pairing || listing);
                 s->start(0, scan_done, false);
             }
         }
@@ -674,17 +740,89 @@ void begin(std::function<void(const char*)> log) {
     xTaskCreatePinnedToCore(task, "bt", 8192, nullptr, 1, nullptr, 0);
 }
 
-void pair(uint32_t seconds) {
+void pair(uint32_t seconds, const std::string& address, bool need) {
     radio_on();
-    if (client && client->isConnected()) client->disconnect();
+    std::string addr;
+    for (char c : address) addr += (char)tolower((unsigned char)c);
+    bool now = false;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    pick_addr = addr;
+    pair_err.clear();
+    for (auto& h : heard_list)                     // just heard: connect to it straight away
+        if (!addr.empty() && h.address == addr && millis() - h.ago_ms < HEARD_KEEP_MS) now = true;
+    xSemaphoreGive(mu);
+    need_mode = need;
+    // A remote picked from the list is connected to from the bt task, which lets
+    // the one connected now go first; else that one goes now, and the scan finds the new one.
+    if (addr.empty() && client && client->isConnected()) client->disconnect();
     NimBLEDevice::getScan()->stop();
-    pair_until = millis() + seconds * 1000;
+    pair_until = seconds ? (millis() + seconds * 1000) | 1 : 0;
     pairing = true;
-    logf("bt: looking for a remote in pairing mode");
+    if (now) {
+        uint8_t type = BLE_ADDR_PUBLIC;
+        std::string nm = "remote";
+        xSemaphoreTake(mu, portMAX_DELAY);
+        for (auto& h : heard_list)
+            if (h.address == addr) {
+                type = h.type;
+                if (!h.name.empty()) nm = h.name;
+            }
+        xSemaphoreGive(mu);
+        cand_addr = addr;
+        cand_type = type;
+        cand_name = nm;
+        want_connect = true;
+    }
+    if (addr.empty()) logf(need ? "bt: looking for a remote in pairing mode (until one is found)" : "bt: looking for a remote in pairing mode");
+    else logf("bt: pairing with %s", addr.c_str());
+}
+
+std::string pair_error() {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    std::string e = pair_err;
+    xSemaphoreGive(mu);
+    return e;
+}
+
+void look(bool on) {
+    if (on) radio_on();
+    else if (!inited) return;
+    if (on == listing) return;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    heard_list.clear();
+    xSemaphoreGive(mu);
+    listing = on;
+    NimBLEDevice::getScan()->stop();        // the bt task starts it again, active or not as it now needs
+    logf(on ? "bt: listing the remotes heard" : "bt: list closed");
+}
+
+bool looking() { return listing; }
+
+std::vector<Heard> heard() {
+    uint32_t ms = millis();
+    std::vector<Heard> out;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    for (auto& h : heard_list) {
+        if (ms - h.ago_ms > HEARD_KEEP_MS) continue;
+        out.push_back(h);
+        out.back().ago_ms = ms - h.ago_ms;
+    }
+    xSemaphoreGive(mu);
+    return out;
+}
+
+void pause(bool on) {
+    if (paused == on) return;
+    paused = on;
+    if (on && inited) NimBLEDevice::getScan()->stop();
+    logf(on ? "bt: scanning paused" : "bt: scanning resumed");
 }
 
 void forget() {
     pairing = false;
+    xSemaphoreTake(mu, portMAX_DELAY);
+    pick_addr.clear();
+    xSemaphoreGive(mu);
     if (inited) {
         NimBLEDevice::getScan()->stop();
         if (client && client->isConnected()) client->disconnect();

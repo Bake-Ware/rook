@@ -89,6 +89,8 @@ bool menu_on = false;
 std::string menu_title;
 std::vector<std::string> menu_items;
 std::vector<int8_t> menu_bars;      // a signal strength (0..4) a row; -1 or past the end: none
+std::vector<int8_t> menu_icons;     // a picture a row (ui::menu_icons_set); ICON_LABEL or past the end: by its label
+int8_t home_icon = -1;              // the picked profile's picture (ui::status_icon)
 int menu_sel = 0;
 bool game_on = false;
 void (*canvas_fn)(Adafruit_GFX&) = nullptr;
@@ -156,22 +158,37 @@ void lines(const std::vector<std::string>& l, int y, int pitch) {
     }
 }
 
+std::string window(const std::string& s, int fit, uint32_t ms);
+const uint8_t* row_icon(int i);
+
 // Options from y down, the chosen one inverted (and sliding when too long).
-void list(int y0, const std::vector<std::string>& opts, int sel, uint32_t ms) {
+// pics: a picture before each row (the menu's rows that have one set).
+void list(int y0, const std::vector<std::string>& opts, int sel, uint32_t ms, const uint8_t* (*pics)(int) = nullptr) {
     int rows = (H - y0) / PITCH;
     int first = sel - rows + 1 < 0 ? 0 : sel - rows + 1;
     for (int r = 0; r < rows && first + r < (int)opts.size(); r++) {
         int i = first + r, y = y0 + r * PITCH;
-        if (i == sel) {
-            oled.fillRect(0, y, W, PITCH - 1, SSD1306_WHITE);
-            oled.setTextColor(SSD1306_BLACK);
+        const uint8_t* pic = pics ? pics(i) : nullptr;
+        if (i == sel) oled.fillRect(0, y, W, PITCH - 1, SSD1306_WHITE);
+        uint16_t ink = i == sel ? SSD1306_BLACK : SSD1306_WHITE;
+        if (pic) oled.drawBitmap(0, y, pic, 8, 8, ink);
+        oled.setTextColor(ink);
+        if (pic) {                     // the picture takes nearly two characters: what is left of the name
+            oled.setCursor(10, y + 1);
+            oled.print((i == sel ? window(opts[i], (W - 10) / 6, ms) : opts[i].substr(0, (W - 10) / 6)).c_str());
+        } else if (i == sel) {
             line(opts[i], y + 1, ms);
-            oled.setTextColor(SSD1306_WHITE);
         } else {
             oled.setCursor(1, y + 1);
             oled.print(opts[i].substr(0, COLS).c_str());
         }
+        oled.setTextColor(SSD1306_WHITE);
     }
+}
+
+// A row of the menu has a picture of its own (narrow screen: only those drawn).
+const uint8_t* set_icon_of(int i) {
+    return i < (int)menu_icons.size() && menu_icons[i] != ui::ICON_LABEL ? row_icon(i) : nullptr;
 }
 
 // fit characters of s: the start, and when s is longer a window that walks
@@ -196,6 +213,30 @@ const uint8_t IC_DOT[] PROGMEM = {0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00
 const uint8_t IC_UPD[] PROGMEM = {0x18, 0x18, 0x18, 0x7E, 0x3C, 0x18, 0x00, 0x7E};
 const uint8_t IC_RING[] PROGMEM = {0x00, 0x3C, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00};
 const uint8_t IC_GEAR[] PROGMEM = {0x18, 0x7E, 0x66, 0xC3, 0xC3, 0x66, 0x7E, 0x18};
+const uint8_t IC_PLUS[] PROGMEM = {0x00, 0x18, 0x18, 0x7E, 0x7E, 0x18, 0x18, 0x00};
+
+// The profiles' pictures, by prof::Icon (0, none, draws the generic one).
+const uint8_t IC_PROJECTOR[] PROGMEM = {0x00, 0xFF, 0x8F, 0x8B, 0x8F, 0x81, 0xFF, 0x42};
+const uint8_t IC_SPEAKER[] PROGMEM = {0x12, 0x31, 0xF5, 0xF5, 0xF5, 0xF5, 0x31, 0x12};
+const uint8_t IC_STREAM[] PROGMEM = {0x00, 0x00, 0xFF, 0x91, 0x99, 0x91, 0xFF, 0x00};
+const uint8_t IC_LIGHT[] PROGMEM = {0x3C, 0x42, 0x81, 0x81, 0x42, 0x24, 0x3C, 0x18};
+const uint8_t IC_PHONE[] PROGMEM = {0x7E, 0x42, 0x42, 0x42, 0x42, 0x7E, 0x66, 0x7E};
+const uint8_t IC_CAR[] PROGMEM = {0x00, 0x3C, 0x42, 0xFF, 0xFF, 0xFF, 0x66, 0x66};
+const uint8_t IC_GENERIC[] PROGMEM = {0x00, 0x7E, 0x42, 0x5A, 0x5A, 0x42, 0x7E, 0x00};
+const uint8_t* const PROFILE_ICONS[] = {IC_GENERIC, IC_TV, IC_PROJECTOR, IC_SPEAKER, IC_STREAM,
+                                        IC_LIGHT,   IC_PHONE, IC_CAR, IC_GAME, IC_GENERIC};
+
+const uint8_t* profile_icon(int id) {
+    if (id == ui::ICON_PLUS) return IC_PLUS;
+    return id >= 0 && id < (int)(sizeof PROFILE_ICONS / sizeof PROFILE_ICONS[0]) ? PROFILE_ICONS[id] : IC_GENERIC;
+}
+
+// The picture row i of the menu has: the one set for it, else by what it says.
+const uint8_t* icon_for(const std::string& label);
+const uint8_t* row_icon(int i) {
+    int8_t id = i < (int)menu_icons.size() ? menu_icons[i] : ui::ICON_LABEL;
+    return id == ui::ICON_LABEL ? icon_for(menu_items[i]) : profile_icon(id);
+}
 
 // The tabs' pictures: Devices, Assistant, Games, Settings.
 const uint8_t* tab_icon(const std::string& name) {
@@ -305,7 +346,7 @@ void menu_draw(uint32_t ms) {
             oled.drawFastHLine(0, 9, W, SSD1306_WHITE);
             y = 12;
         }
-        list(y, menu_items, menu_sel, ms);
+        list(y, menu_items, menu_sel, ms, menu_icons.empty() ? nullptr : set_icon_of);
         return;
     }
     const int BAR = 11, Y0 = 13, ROW = 12;
@@ -329,7 +370,7 @@ void menu_draw(uint32_t ms) {
     for (int r = 0; r < rows && menu_first + r < n; r++) {
         const std::string& item = menu_items[menu_first + r];
         int y = Y0 + r * ROW;
-        oled.drawBitmap(3, y + 1, icon_for(item), 8, 8, SSD1306_WHITE);
+        oled.drawBitmap(3, y + 1, row_icon(menu_first + r), 8, 8, SSD1306_WHITE);
         oled.setCursor(15, y + 2);
         int fit = (W - 4 - 16) / 6;
         int lv = menu_first + r < (int)menu_bars.size() ? menu_bars[menu_first + r] : -1;
@@ -445,11 +486,14 @@ void home_draw(uint32_t ms, bool noted) {
     const std::string &target = status[2], &key = status[3];
     home_bar(ms);
     oled.drawRoundRect(0, 15, W, 30, 5, SSD1306_WHITE);
-    auto big = [&](const std::string& t) {
+    // In the frame: what it says, large; the device's picture at its left (pic).
+    auto big = [&](const std::string& t, const uint8_t* pic) {
+        int left = pic ? 15 : 0, room = W - left;
+        if (pic) oled.drawBitmap(6, 26, pic, 8, 8, SSD1306_WHITE);
         int n = (int)t.size();
-        if (n && n * 12 <= W - 8) {
+        if (n && n * 12 <= room - 8) {
             oled.setTextSize(2);
-            oled.setCursor((W - n * 12) / 2 + 1, 23);
+            oled.setCursor(left + (room - n * 12) / 2 + 1, 23);
             oled.print(t.c_str());
             oled.setTextSize(1);
             return;
@@ -457,23 +501,24 @@ void home_draw(uint32_t ms, bool noted) {
         auto ls = wrap(t, 3);
         int y = 30 - (int)ls.size() * 4 - (ls.size() > 1 ? 1 : 0);
         for (auto& l : ls) {
-            oled.setCursor(std::max(4, (W - (int)l.size() * 6) / 2), y);
-            oled.print(l.substr(0, COLS - 1).c_str());
+            oled.setCursor(std::max(left + 4, left + (room - (int)l.size() * 6) / 2), y);
+            oled.print(l.substr(0, (room - 8) / 6).c_str());
             y += 9;
         }
     };
+    const uint8_t* pic = home_icon == ui::ICON_LABEL || target.empty() ? nullptr : profile_icon(home_icon);
     if (noted) {
         std::string t = note;
         if (t.find('\n') != std::string::npos && t.size() <= 10)      // "BT\ngone": short enough for one large line
             std::replace(t.begin(), t.end(), '\n', ' ');
-        big(t);
+        big(t, nullptr);
         int clock = home_clock();            // the time stays where it was
-        oled.drawBitmap(1, 52, IC_TV, 8, 8, SSD1306_WHITE);
+        oled.drawBitmap(1, 52, pic ? pic : IC_TV, 8, 8, SSD1306_WHITE);
         oled.setCursor(13, 53);
         oled.print(target.substr(0, (W - 13 - (clock ? clock + 8 : 0)) / 6).c_str());
         return;
     }
-    big(target.empty() ? std::string("no device") : target);
+    big(target.empty() ? std::string("no device") : target, pic);
     if (!key.empty()) {
         std::string k = key.substr(0, 10);
         int w = (int)k.size() * 6 + 9;
@@ -547,6 +592,8 @@ void draw() {
         home_draw(ms, false);
     } else {
         static const int Y[4] = {0, 14, 24, 44};
+        if (home_icon != ui::ICON_LABEL && !status[2].empty())        // the picked device's picture, under its name
+            oled.drawBitmap(1, 34, profile_icon(home_icon), 8, 8, SSD1306_WHITE);
         for (int i = 0; i < 4; i++) {
             if (i == 2) { line(status[i], Y[i], ms); continue; }      // the target: slides when long
             oled.setCursor(1, Y[i]);
@@ -733,6 +780,7 @@ void menu_begin(const std::string& title, const std::vector<std::string>& items,
     menu_title = title;
     menu_items = items;
     menu_bars.clear();
+    menu_icons.clear();
     menu_sel = selected >= 0 && selected < (int)items.size() ? selected : 0;
     menu_first = 0;
     menu_hl = -1;
@@ -755,6 +803,7 @@ void menu_tabs(const std::vector<std::string>& names, int active, const std::vec
     tab_body = body;
     menu_items = items;
     menu_bars.clear();
+    menu_icons.clear();
     menu_sel = selected >= 0 && selected < (int)items.size() ? selected : 0;
     menu_first = 0;
     menu_hl = -1;
@@ -778,6 +827,19 @@ void menu_bars_set(const std::vector<int8_t>& bars) {
     xSemaphoreTake(mu, portMAX_DELAY);
     menu_bars = bars;
     dirty = true;
+    xSemaphoreGive(mu);
+}
+
+void menu_icons_set(const std::vector<int8_t>& icons) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    menu_icons = icons;
+    dirty = true;
+    xSemaphoreGive(mu);
+}
+
+void status_icon(int8_t icon) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    if (home_icon != icon) { home_icon = icon; dirty = true; }
     xSemaphoreGive(mu);
 }
 

@@ -43,9 +43,17 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.12.1"
+#define FW_VERSION "0.12.2"
 #ifndef BUILD_MONIKER
 #define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
+#endif
+// Which builds this board takes (the update feed's latest-<board>.json, remote.update.check).
+#ifdef ROOK_GAMEPAD
+static const char* const BOARD = "gamepad-s3";
+#elif defined(ROOK_BRIDGE)
+static const char* const BOARD = "bridge-c3";
+#else
+static const char* const BOARD = "s3";
 #endif
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
@@ -87,8 +95,9 @@ static void active() { last_active = millis(); }
 // The menu on screen: the main one (in tabs), the Wi-Fi networks heard, the
 // saved ones to forget, or everything a device scan found.
 // MENU_OPTS: what the options (settings) key offers for the row it was pressed
-// on; MENU_CONFIRM: yes or no to a delete.
-enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS, MENU_OPTS, MENU_CONFIRM };
+// on; MENU_CONFIRM: yes or no to a delete; MENU_ICON: the pictures a profile
+// can have; MENU_BT: the Bluetooth remotes heard (Settings > Pair BT).
+enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS, MENU_OPTS, MENU_CONFIRM, MENU_ICON, MENU_BT };
 // The main menu's tabs, left to right (left and right step through them, round).
 enum Tab { TAB_DEVICES, TAB_ASSIST, TAB_GAMES, TAB_SETTINGS, TAB_COUNT };
 static const char* const TAB_NAMES[TAB_COUNT] = {"Devices", "Assistant", "Games", "Settings"};
@@ -172,6 +181,9 @@ static const char* const BT_PAIR_TEXT = "Pair a remote:\n\nhold Back + Home on i
 #else
 static const char* const BT_PAIR_TEXT = "BT\npair:\n\nput\nthe\nother\nremote\nin\npair\nmode";
 #endif
+// The bridge is pairing on its own (nothing bonded): it may still rest meanwhile.
+static bool bt_auto = false;
+static const uint32_t BT_LIST_IDLE_MS = 60000;   // the list of remotes heard stays up this long untouched
 
 #ifdef ROOK_GAMEPAD
 // The gamepad build has no USB serial (its one port is the host for the pad):
@@ -336,7 +348,9 @@ static bool start_game(const std::string& label) {
 // nothing else (what a scan found is under Settings > Find devs), then Add
 // device. Games: the games (the handheld's narrow screen has Tetris only).
 // Settings: Wi-Fi, Find devs (a device scan), Update, Bluetooth.
-static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std::string>& values, int& selected) {
+// The Devices rows have pictures (icons): each profile's own, and a plus on Add device.
+static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std::string>& values, int& selected,
+                     std::vector<int8_t>& icons) {
     selected = 0;
     if (tab == TAB_DEVICES) {
         prof::Info act;
@@ -345,9 +359,11 @@ static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std:
             if (have && p.name == act.name) selected = (int)labels.size();
             labels.push_back(p.name);
             values.push_back("p:" + p.name);
+            icons.push_back((int8_t)p.icon);
         }
         labels.push_back("Add device");
         values.push_back("add");
+        icons.push_back(ui::ICON_PLUS);
     } else if (tab == TAB_GAMES) {
         for (auto& g : GAMES) {
 #ifndef ROOK_BRIDGE
@@ -372,13 +388,15 @@ static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std:
 static void show_tab(int tab) {
     std::vector<std::string> labels, values;
     std::vector<std::string> names(TAB_NAMES, TAB_NAMES + TAB_COUNT);
+    std::vector<int8_t> icons;
     int selected = 0;
     menu_tab = tab;
     menu_kind = MENU_MAIN;
-    if (tab != TAB_ASSIST) tab_rows(tab, labels, values, selected);
+    if (tab != TAB_ASSIST) tab_rows(tab, labels, values, selected, icons);
     menu_labels = labels;
     menu_values = values;
     ui::menu_tabs(names, tab, labels, selected, tab == TAB_ASSIST ? chat::draw : nullptr);
+    if (!icons.empty()) ui::menu_icons_set(icons);
     menu_until = millis() + (tab == TAB_ASSIST ? CHAT_IDLE_MS : MENU_IDLE_MS);
     mode = MENU;
 }
@@ -430,6 +448,10 @@ static void start_dev_scan() {
     std::string err;
     if (WiFi.status() != WL_CONNECTED) {
         ui::flash("no\nWi-Fi");
+        return;
+    }
+    if (ota::busy()) {                      // the download has the radio
+        ui::flash("busy\nupdating");
         return;
     }
     devs_scans = lan::scans();
@@ -643,7 +665,7 @@ static void reopen(MenuKind from, const std::string& subject = "") {
 }
 
 // The options (settings) key on a menu row: what can be done to it.
-//   a profile (every row of the Devices tab but Add device): Rename, Delete;
+//   a profile (every row of the Devices tab but Add device): Rename, Icon, Delete;
 //   a Wi-Fi network: Join, and (saved) Move up, Move down, Forget.
 static void open_options(int sel) {
     if (sel < 0 || sel >= (int)menu_values.size()) return;
@@ -651,7 +673,7 @@ static void open_options(int sel) {
     std::vector<std::string> items;
     bool devs = menu_kind == MENU_MAIN && menu_tab == TAB_DEVICES;
     if (devs && v.rfind("p:", 0) == 0) {
-        items = {"Rename", "Delete"};
+        items = {"Rename", "Icon", "Delete"};
         opts_subject = v;
     } else if (menu_kind == MENU_WIFI && !v.empty()) {
         items = {"Join"};
@@ -667,6 +689,69 @@ static void open_options(int sel) {
     show_menu(MENU_OPTS, opts_label, items, items, 0);
 }
 
+// The pictures a profile can have, each drawn by its name; the cursor on the one it has.
+static void open_icon_menu(const std::string& name) {
+    prof::Info p;
+    if (!prof::find(name, p)) return;
+    std::vector<std::string> labels, values;
+    std::vector<int8_t> icons;
+    int sel = 0;
+    for (int i = prof::ICON_TV; i < prof::ICON_COUNT; i++) {
+        if (i == (p.icon == prof::ICON_NONE ? (int)prof::ICON_GENERIC : (int)p.icon)) sel = (int)labels.size();
+        labels.push_back(prof::icon_label(i));
+        values.push_back(prof::icon_name(i));
+        icons.push_back((int8_t)i);
+    }
+    show_menu(MENU_ICON, "ICON", labels, values, sel);
+    ui::menu_icons_set(icons);
+}
+
+// The Bluetooth remotes heard (bt::look), in the order they turned up, with
+// their signal; the cursor stays on the one it was on as the list changes.
+// Nothing heard yet: one row saying it is looking.
+static std::vector<std::string> bt_list_addrs;      // what the list shows now, to tell when it changed
+static void open_bt_list(bool keep_cursor) {
+    std::string at = keep_cursor && ui::menu_selected() < (int)menu_values.size() ? menu_values[ui::menu_selected()] : "";
+    std::vector<std::string> labels, values, addrs;
+    std::vector<int8_t> bars;
+    int sel = 0;
+    for (auto& h : bt::heard()) {
+        std::string n = h.name.empty() ? h.address : h.name;
+        if (h.address == at) sel = (int)labels.size();
+#ifdef ROOK_BRIDGE
+        labels.push_back(n);
+#else
+        labels.push_back(std::to_string(wifi_bars(h.rssi)) + n);         // no room for bars
+#endif
+        values.push_back(h.address);
+        bars.push_back(wifi_bars(h.rssi));
+        addrs.push_back(h.address + "|" + h.name);
+    }
+    if (labels.empty()) {
+        labels.push_back("Looking...");
+        values.push_back("");
+    }
+    bt_list_addrs = addrs;
+    uint32_t until = menu_until;
+    show_menu(MENU_BT, "PAIR BT", labels, values, sel);
+    menu_until = keep_cursor ? until : millis() + BT_LIST_IDLE_MS;
+    ui::menu_bars_set(bars);
+}
+
+// The list open: brought up to date when a remote turns up, goes or names
+// itself, and its bars as the signals change.
+static void refresh_bt_list() {
+    std::vector<std::string> addrs;
+    std::vector<int8_t> bars;
+    auto hs = bt::heard();
+    for (auto& h : hs) {
+        addrs.push_back(h.address + "|" + h.name);
+        bars.push_back(wifi_bars(h.rssi));
+    }
+    if (addrs != bt_list_addrs) open_bt_list(true);
+    else if (!hs.empty()) ui::menu_bars_set(bars);
+}
+
 // A row's name as it shows: a profile's, or a Wi-Fi network's.
 static std::string subject_name(const std::string& subj) {
     if (subj.rfind("p:", 0) == 0 || subj.rfind("w:", 0) == 0) return subj.substr(2);
@@ -677,6 +762,8 @@ static void options_pick(const std::string& label) {
     const std::string subj = opts_subject;
     if (label == "Rename") {
         start_typing(TYPE_RENAME, subj, "Rename", subject_name(subj).substr(0, prof::MAX_NAME));
+    } else if (label == "Icon") {
+        open_icon_menu(subject_name(subj));
     } else if (label == "Delete") {
         show_menu(MENU_CONFIRM, "DELETE?", {"No, keep it", "Delete " + subject_name(subj)}, {"no", "yes"}, 0);
     } else if (subj.rfind("w:", 0) == 0) {
@@ -734,6 +821,25 @@ static void rename_subject(const std::string& subj, const std::string& typed) {
     ui::flash(ok ? "renamed\n" + to : err == "no name" ? err : std::string("not\nrenamed"));
 }
 
+// The feed could not be read (why): ask the hub whether it holds a newer build
+// for this board. Its answer comes over the band: remote.update with the
+// build's address and hash, or a word that this one is the newest.
+static void ask_hub_update(const std::string& why) {
+    if (!worker_on || !worker.hub_ok()) {
+        ui::card("", "", -1);
+        ui::flash("no feed,\nno hub");
+        return;
+    }
+    JsonDocument p;
+    p["worker"] = settings::name();
+    p["version"] = FW_VERSION;
+    p["build"] = BUILD_MONIKER;
+    p["board"] = BOARD;
+    if (!why.empty()) p["feed_error"] = why;
+    worker.emit("remote.update.check", p.as<JsonObjectConst>());
+    ui::card("UPDATE", "asking the hub", -2);
+}
+
 static void menu_pick(int i) {
     std::string label = i >= 0 && i < (int)menu_labels.size() ? menu_labels[i] : "";
     std::string value = i >= 0 && i < (int)menu_values.size() ? menu_values[i] : "";
@@ -742,6 +848,28 @@ static void menu_pick(int i) {
     mode = REMOTE;
     if (kind == MENU_OPTS) {
         options_pick(label);
+        return;
+    }
+    if (kind == MENU_ICON) {
+        std::string name = opts_subject.substr(2), err;
+        if (prof::set_icon(name, prof::icon_id(value), err)) {
+            reopen(MENU_MAIN, opts_subject);
+            ui::flash(label, 900, true);
+        } else {
+            logf("profile: %s", err.c_str());
+            ui::flash("not\nsaved");
+        }
+        return;
+    }
+    if (kind == MENU_BT) {
+        if (value.empty()) {                 // still looking
+            open_bt_list(false);
+            return;
+        }
+        bt_auto = false;
+        bt::pair(30, value);
+        bt::look(false);
+        ui::card("BLUETOOTH", "pairing " + label, -2);
         return;
     }
     if (kind == MENU_CONFIRM) {
@@ -803,22 +931,15 @@ static void menu_pick(int i) {
     if (label == "Find devs") {
         start_dev_scan();
     } else if (label == "Update") {
-        // Ask the hub whether it holds a newer build for this board. Its answer
-        // comes over the band: remote.update with the build's address and hash,
-        // or a word that this one is the newest.
-        if (!worker_on || !worker.hub_ok()) {
-            ui::flash("no hub");
+        // The direct route first: the feed on the firmware server (ota.h), no
+        // hub needed. When it can't be read, the hub is asked (ask_hub_update).
+        std::string err;
+        if (WiFi.status() != WL_CONNECTED) {
+            ui::flash("no\nWi-Fi");
+        } else if (!ota::check(BOARD, FW_VERSION, err)) {
+            logf("update: %s", err.c_str());
+            ui::flash(ota::busy() ? "busy" : "not\nnow");
         } else {
-            JsonDocument p;
-            p["worker"] = settings::name();
-            p["version"] = FW_VERSION;
-            p["build"] = BUILD_MONIKER;
-#ifdef ROOK_BRIDGE
-            p["board"] = "bridge-c3";
-#else
-            p["board"] = "s3";
-#endif
-            worker.emit("remote.update.check", p.as<JsonObjectConst>());
             mode = REMOTE;
             ui::card("UPDATE", "checking", -2);
         }
@@ -826,8 +947,8 @@ static void menu_pick(int i) {
     } else if (label == "Wi-Fi") {
         start_wifi_scan();
     } else if (label == "Pair BT") {
-        bt::pair();
-        ui::text(BT_PAIR_TEXT, 35);
+        bt::look(true);
+        open_bt_list(false);
     } else if (label == "Forget BT") {
         bt::forget();
         ui::flash("BT\ngone");
@@ -967,9 +1088,15 @@ static void on_button(const ButtonEvent& ev) {
             return;
         }
         // Back from the options or a confirm: the list they came from.
-        if ((menu_kind == MENU_OPTS || menu_kind == MENU_CONFIRM) && e.name == "back") {
+        if ((menu_kind == MENU_OPTS || menu_kind == MENU_CONFIRM || menu_kind == MENU_ICON) && e.name == "back") {
             ui::menu_end();
             reopen(opts_from, opts_subject);
+            return;
+        }
+        // Back from the remotes heard: nothing is paired, and the looking stops.
+        if (menu_kind == MENU_BT && e.name == "back") {
+            bt::look(false);
+            show_tab(TAB_SETTINGS);
             return;
         }
         // The profile key steps to the next device from the menu too (the menu goes away).
@@ -1117,6 +1244,17 @@ static void fill_bt(JsonObject o) {
         o["address"] = bt::address();
     }
     if (!bt::last_report().empty()) o["last_report"] = bt::last_report();
+    if (!bt::pair_error().empty()) o["pair_error"] = bt::pair_error();
+    if (bt::looking()) {                    // the remote's Pair BT list is open: what it has heard
+        JsonArray hs = o["heard"].to<JsonArray>();
+        for (auto& h : bt::heard()) {
+            JsonObject e = hs.add<JsonObject>();
+            e["address"] = h.address;
+            if (!h.name.empty()) e["name"] = h.name;
+            e["rssi"] = h.rssi;
+            e["pairing"] = h.pairing;
+        }
+    }
     JsonObject names = o["names"].to<JsonObject>();
     xSemaphoreTake(bt_names_mu, portMAX_DELAY);
     for (auto& kv : bt_names) names[kv.first] = kv.second;
@@ -1299,8 +1437,11 @@ static bool cap_wait(JsonObjectConst a, JsonObject r, std::string&) {
 static bool cap_bt(JsonObjectConst a, JsonObject r, std::string& err) {
     std::string action = a["action"] | "status";
     if (action == "pair") {
-        bt::pair();
-        ui::text(BT_PAIR_TEXT, 35);
+        // The first remote heard in pairing mode, or the one at address (from heard, below).
+        std::string addr = a["address"] | "";
+        bt_auto = false;
+        bt::pair(30, addr);
+        ui::text(addr.empty() ? std::string(BT_PAIR_TEXT) : "Pairing with\n" + addr, 35);
     } else if (action == "forget") {
         bt::forget();
     } else if (action == "find" || action == "quiet") {
@@ -1430,6 +1571,8 @@ static void fill_profiles(JsonObject r) {
     r["max"] = prof::MAX;
     r["bytes"] = (unsigned)prof::total_bytes();
     r["bytes_max"] = (unsigned)prof::MAX_TOTAL;
+    JsonArray ic = r["icons"].to<JsonArray>();      // the icons a profile can have
+    for (int i = prof::ICON_TV; i < prof::ICON_COUNT; i++) ic.add(prof::icon_name(i));
     r["nvs_free_entries"] = settings::nvs_free_entries();
     r["ir_pin"] = ir::pin();
 }
@@ -1451,8 +1594,13 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
         }
         JsonObjectConst keys = a["keys"].as<JsonObjectConst>();
         if (!a["keys"].isNull() && keys.isNull()) { err = "bad args: keys is a map, key name -> code"; return false; }
+        int icon = -1;                        // left out: as it was
+        if (!a["icon"].isNull()) {
+            icon = prof::icon_id(a["icon"] | "");
+            if (icon < 0) { err = "bad args: icon is one of " + prof::icon_names() + " (blank: none)"; return false; }
+        }
         bool created = false;
-        if (!prof::save(name, set_link, link, keys, a["merge"] | true, err, created)) return false;
+        if (!prof::save(name, set_link, link, keys, a["merge"] | true, err, created, icon)) return false;
         prof::Info p;
         prof::find(name, p);
         prof::Info cur;
@@ -1613,6 +1761,7 @@ static void fill_devices(JsonObject r) {
 }
 
 static bool cap_scan(JsonObjectConst, JsonObject r, std::string& err) {
+    if (ota::busy()) { err = "busy: a firmware update is downloading"; return false; }
     if (!dev::run("scan", "", "", 45000, err)) return false;
     fill_devices(r);
     return true;
@@ -2185,7 +2334,7 @@ void setup() {
         std::string body = nl == std::string::npos ? t : t.substr(nl + 1);
         std::replace(body.begin(), body.end(), '\n', ' ');
         ui::card("UPDATE", body, !body.empty() && body.back() == '%' ? atoi(body.c_str()) : -1);
-    });
+    }, [](bool on) { bt::pause(on); });     // a download has the radio: no Bluetooth scanning meanwhile
     lan::begin([](const char* m) { logf("%s", m); });
     dev::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) { ui::flash(t); });
     prof::begin();
@@ -2383,21 +2532,45 @@ void loop() {
     static std::string bt_was = "off";
     std::string bt_now = bt::state();
 #ifdef ROOK_BRIDGE
-    // Nothing to press here: keep looking for a remote to pair until there is one.
-    static uint32_t next_pair = 4000;
-    if (!bt::saved() && bt_now != "pairing" && (int32_t)(ms - next_pair) >= 0) {
-        next_pair = ms + 40000;
-        bt::pair(30);
-        ui::text(BT_PAIR_TEXT, 30);
-        bt_now = bt::state();
+    // Nothing to press here: while no remote is bonded, keep looking (never
+    // when one is) and bond with the first that says it is in pairing mode and
+    // is a HID remote, with a word on the screen about how. The Pair BT list,
+    // while it is open, has the say instead.
+    static uint32_t next_hint = 0;
+    if (!bt::saved() && !bt::looking() && ms > 4000) {
+        if (bt_now != "pairing") {
+            bt::pair(0, "", true);
+            bt_auto = true;
+            bt_now = bt::state();
+        }
+        if (bt_auto && mode == REMOTE && (int32_t)(ms - next_hint) >= 0) {
+            next_hint = ms + 30000;
+            ui::card("PAIR A REMOTE", "hold pair on your remote", -2);
+        }
     }
 #endif
+    if (bt_now != "pairing") bt_auto = false;
     if (bt_now != bt_was) {
         if (bt_was == "pairing") ui::text("", 0);
+        std::string why = bt::pair_error();
         if (bt_now == "connected") ui::flash("BT on\n" + bt::name());
-        else if (bt_was == "pairing" && bt_now != "pairing") ui::flash("BT:\nnone\nfound");
-        else if (bt_was == "connected") ui::flash("BT\nsleep");
+        else if (bt_was == "pairing" && bt_now != "pairing") ui::flash(why.empty() || why == "none found" ? std::string("BT:\nnone\nfound") : "BT:\n" + why);
+        else if (bt_was == "connected" && bt_now == "waiting") ui::flash("BT\nsleep");
         bt_was = bt_now;
+    }
+    // The list of remotes heard: kept up to date while it is open, and the looking stops when it closes.
+    static uint32_t bt_list_at = 0;
+    if (bt::looking()) {
+        if (!(mode == MENU && menu_kind == MENU_BT)) bt::look(false);
+        else if (ms - bt_list_at >= 700) {
+            bt_list_at = ms;
+            refresh_bt_list();
+        }
+    }
+    // The update feed could not be read: the hub is asked instead.
+    {
+        std::string why;
+        if (ota::take_fallback(why)) ask_hub_update(why);
     }
     if (wifi_pending && wifi_scan_state == 2) {
         wifi_pending = false;
@@ -2554,10 +2727,21 @@ void loop() {
         ui::network(up ? std::string(WiFi.SSID().c_str()) : std::string());
         ui::status_line(1, bt::state() == "connected" ? "TV: B" : "TV:");
         ui::status_line(2, chosen_name());
-        ota::tick(worker_on && worker.hub_ok());
-        // Left alone: the screen goes dark, then Wi-Fi goes off too. Not while something is going on.
+        {
+            prof::Info p;
+            ui::status_icon(active_profile(p) ? (int8_t)p.icon : ui::ICON_LABEL);
+        }
+        // A new build is kept once it has settled: on Wi-Fi, and (a bridge with
+        // a bonded remote) that remote back; or once the hub is reached.
+        bool settled = up;
+#if defined(ROOK_BRIDGE) && !defined(ROOK_GAMEPAD)
+        if (bt::saved()) settled = settled && bt::state() == "connected";
+#endif
+        ota::tick(worker_on && worker.hub_ok(), settled);
+        // Left alone: the screen goes dark, then Wi-Fi goes off too. Not while something is going on
+        // (the bridge pairing on its own, with nothing bonded, may rest meanwhile).
         if (mode == GAME || mode == TYPING || bt::voice_open() || ota::busy() || ui::asking() ||
-            bt::state() == "pairing" || buttons::learning() || thinking_until)
+            (bt::state() == "pairing" && !bt_auto) || bt::looking() || buttons::learning() || thinking_until)
             active();
         // millis() again: active() may have just moved last_active past this pass's ms,
         // and the difference, unsigned, would read as weeks of idling.

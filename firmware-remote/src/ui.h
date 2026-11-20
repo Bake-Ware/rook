@@ -44,6 +44,14 @@ void menu_move(int delta);
 int menu_selected();
 // Signal bars (0..4; -1 none) beside the rows of the menu just begun (the wide screen draws them).
 void menu_bars_set(const std::vector<int8_t>& bars);
+// Pictures for the rows of the menu just begun: a profile icon's id (prof.h's
+// Icon; 0 draws the generic one), ICON_PLUS, or ICON_LABEL (picked by what
+// the row says, as rows without one are).
+static const int8_t ICON_LABEL = -1, ICON_PLUS = -2;
+void menu_icons_set(const std::vector<int8_t>& icons);
+// The picked profile's icon (prof.h's Icon), drawn by its name on the status
+// screen; ICON_LABEL: none (nothing picked).
+void status_icon(int8_t icon);
 void menu_end();
 // The menu with tabs along the top (names; the one open is highlighted, and the
 // highlight slides when it changes): the open tab's rows, or body, which draws
