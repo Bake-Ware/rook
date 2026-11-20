@@ -1,0 +1,132 @@
+# Every design knob of the memory prototype, in one place.
+# A round of iteration is an edit to this file. None of these refuse anything or stop anything:
+# they only say how memory is made, kept and ranked.
+# Run any command with `--knobs other.toml` to try a second set side by side.
+
+[model]
+# The Claude Code command. Every model call is `claude -p` with no tools, no settings, no MCP
+# servers and no saved session, run in an empty folder, prompt on stdin.
+claude = "claude"
+# Model for reading sessions into episodes (many calls, one per stretch of a session).
+ingest_model = "sonnet"
+# Model for the dream pass (few calls; it writes the beliefs).
+dream_model = "opus"
+# Ask Claude Code to hold the model to the answer's JSON shape (`claude -p --json-schema`).
+# Without it, about one reply in ten came back as broken JSON and its stretch was lost.
+structured_output = true
+
+[ingest]
+# A session is read to the model in stretches of about this many characters of transcript.
+# Bigger stretches mean fewer calls and fewer, broader episodes.
+chunk_chars = 40000
+# How much of each tool call's input is kept (in the scratch pad and in what the model reads).
+tool_input_chars = 300
+# How much of each tool's output is kept. Tool output is most of a session's bulk; this is
+# what keeps the store small on a full disk. The source file keeps all of it.
+tool_result_chars = 400
+# User messages starting with any of these are harness chatter, not something that was said.
+skip_user_text_starting_with = ["<system-reminder>", "<local-command", "<command-name>", "<command-message>"]
+
+[dream]
+# A dream pass runs by itself after a session is taken in, once the importance of all episodes
+# not yet dreamed over adds up to this (the paper used 150). 0 dreams after every session;
+# a very large number leaves dreaming to the `dream` command.
+when_importance_sum_reaches = 150
+# How many salient questions a dream pass asks itself about the new episodes.
+questions = 5
+# For each question, how many memories (episodes and current beliefs) it retrieves to think over.
+retrieve_per_question = 15
+# How many beliefs it may write per question.
+beliefs_per_question = 5
+# After a dream, the scratch pad of all but this many most recent sessions is condensed: its
+# word-for-word entries are dropped, and the episodes (which point at the source lines) remain.
+keep_scratch_of_last_sessions = 1
+
+[recall]
+# Recency of a memory is this to the power of the hours since it was last read
+# (the paper: 0.995 per hour of game time). Lower forgets faster.
+recency_decay_per_hour = 0.995
+# The score of a memory is the sum of its recency, importance and relevance, each scaled to
+# 0..1 across the candidates, times these weights (the paper used 1, 1, 1).
+weight_recency = 1.0
+weight_importance = 1.0
+weight_relevance = 1.0
+# How many long-term memories (episodes and beliefs together) a turn is given.
+turn_memories = 10
+# How many scratch pad entries a turn is given, ranked the same way.
+turn_scratch = 8
+# The importance a scratch pad entry counts with (they have none of their own), 1..10.
+scratch_importance = 5
+# Whether superseded beliefs can still be retrieved (they are never deleted either way).
+include_superseded = false
+# Relevance is BM25 over words. These are its two usual constants.
+bm25_k1 = 1.5
+bm25_b = 0.75
+# Whether `ask` counts as reading what it returns (sets their last read time, as the paper does).
+# `ask --peek` never does.
+ask_marks_read = true
+
+[prompts]
+# The prompts. $names are filled in; everything else is sent as written.
+# What the model gets as its system prompt on every call.
+system = """You are the memory of a house agent: an AI that runs a person's machines through Rook.
+You read records of past work and answer with JSON only, no prose around it."""
+
+# Reading a stretch of a session into episodes. $session, $first_line, $last_line, $transcript.
+episodes = """Below is a stretch of a closed Claude Code session ($session, lines $first_line to $last_line).
+"user" lines are what the person (or a steward relaying them) wrote; "agent" is the agent; "tool" is a
+tool the agent ran; "result" is what came back, cut short.
+
+Write down what happened as episodes: plain-language records someone could remember later. One episode
+per meaningful event: a request, a decision and its reason, a finding, a fix, a failure, a result,
+something learned about a machine, a person or a project. Keep names, numbers, branches, pull request
+numbers, file paths and exact words of the person where they matter. One to three sentences each, past
+tense, standing on its own (no "it" or "this" without saying what). Skip pure mechanics (listing a
+folder, reading a file) unless what was found matters.
+
+Rate each episode's importance from 1 to 10: 1 is routine mechanics nobody will need again, 5 is
+ordinary progress on a task, 10 is a decision by the person that changes direction, or a lasting fact
+the house agent must never forget.
+
+Give the line range each episode comes from (the L numbers).
+
+Answer with JSON only:
+{"episodes": [{"what": "...", "importance": 6, "first_line": 123, "last_line": 140}]}
+
+$transcript"""
+
+# The dream pass, first step: salient questions over the new episodes. $count, $episodes.
+questions = """These are records of what happened recently:
+
+$episodes
+
+Given only the information above, what are the $count most salient high-level questions we can answer
+about the subjects in these records (the people, the machines, the projects, how work is done)?
+
+Answer with JSON only: {"questions": ["...", "..."]}"""
+
+# The dream pass, second step, once per question: beliefs from retrieved memories.
+# $question, $count, $memories.
+beliefs = """Question: $question
+
+Memories that bear on it. [e12] is an episode; [b3] is a belief already held, with its confidence:
+
+$memories
+
+What at most $count high-level beliefs can you infer from these memories that answer the question?
+A belief is a lasting statement the house agent should act on later (about the person, their wishes,
+the machines, the projects, how work goes), not a retelling of one event.
+
+For each belief:
+- "because": the ids of the memories that support it (at least one).
+- "confidence": 0 to 1, how sure the support makes you. One episode is weak; several agreeing are strong;
+  the person's own words are strong.
+- "importance": 1 to 10, as for episodes.
+- "supersedes": the id of a belief above that this one contradicts or refines, or null. Supersede when
+  the memories show the old belief is wrong, out of date, or better said now. Do not restate a held
+  belief that still stands unchanged; leave it out instead.
+- "how": "contradicts" or "refines" when it supersedes, else null.
+
+Answer with JSON only:
+{"beliefs": [{"belief": "...", "because": ["e12", "b3"], "confidence": 0.7, "importance": 6,
+  "supersedes": null, "how": null}]}"""
