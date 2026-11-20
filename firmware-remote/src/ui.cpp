@@ -88,6 +88,7 @@ int ask_sel = 0;
 bool menu_on = false;
 std::string menu_title;
 std::vector<std::string> menu_items;
+std::vector<int8_t> menu_bars;      // a signal strength (0..4) a row; -1 or past the end: none
 int menu_sel = 0;
 bool game_on = false;
 void (*canvas_fn)(Adafruit_GFX&) = nullptr;
@@ -331,6 +332,15 @@ void menu_draw(uint32_t ms) {
         oled.drawBitmap(3, y + 1, icon_for(item), 8, 8, SSD1306_WHITE);
         oled.setCursor(15, y + 2);
         int fit = (W - 4 - 16) / 6;
+        int lv = menu_first + r < (int)menu_bars.size() ? menu_bars[menu_first + r] : -1;
+        if (lv >= 0) {                   // four bars at the right, as many filled as it is strong
+            fit -= 2;
+            for (int b = 0; b < 4; b++) {
+                int bh = 2 + b * 2, bx = W - 18 + b * 3;
+                if (b < lv) oled.fillRect(bx, y + 9 - bh, 2, bh, SSD1306_WHITE);
+                else oled.drawPixel(bx, y + 8, SSD1306_WHITE);
+            }
+        }
         oled.print((menu_first + r == menu_sel ? window(item, fit, ms) : item.substr(0, fit)).c_str());
     }
     int target = Y0 + (menu_sel - menu_first) * ROW;
@@ -722,6 +732,7 @@ void menu_begin(const std::string& title, const std::vector<std::string>& items,
     menu_on = true;
     menu_title = title;
     menu_items = items;
+    menu_bars.clear();
     menu_sel = selected >= 0 && selected < (int)items.size() ? selected : 0;
     menu_first = 0;
     menu_hl = -1;
@@ -743,6 +754,7 @@ void menu_tabs(const std::vector<std::string>& names, int active, const std::vec
     tab_on = active >= 0 && active < (int)names.size() ? active : 0;
     tab_body = body;
     menu_items = items;
+    menu_bars.clear();
     menu_sel = selected >= 0 && selected < (int)items.size() ? selected : 0;
     menu_first = 0;
     menu_hl = -1;
@@ -761,6 +773,13 @@ void menu_move(int d) {
 }
 
 int menu_selected() { return menu_sel; }
+
+void menu_bars_set(const std::vector<int8_t>& bars) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    menu_bars = bars;
+    dirty = true;
+    xSemaphoreGive(mu);
+}
 
 void menu_end() {
     xSemaphoreTake(mu, portMAX_DELAY);

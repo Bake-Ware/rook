@@ -1,6 +1,6 @@
 // An on-screen keyboard for the remote's small screen: a grid of characters
 // walked with the direction keys, three pages (lower case, upper case,
-// symbols; digits on the first two) and four actions (next page, space,
+// symbols; digits on the first, their shifted marks !@#$%^&*() on the second) and four actions (next page, space,
 // delete, done). Laid out for whichever screen the build has.
 #pragma once
 #include <Arduino.h>

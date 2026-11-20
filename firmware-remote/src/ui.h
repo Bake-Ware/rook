@@ -42,6 +42,8 @@ bool asking();
 void menu_begin(const std::string& title, const std::vector<std::string>& items, int selected);
 void menu_move(int delta);
 int menu_selected();
+// Signal bars (0..4; -1 none) beside the rows of the menu just begun (the wide screen draws them).
+void menu_bars_set(const std::vector<int8_t>& bars);
 void menu_end();
 // The menu with tabs along the top (names; the one open is highlighted, and the
 // highlight slides when it changes): the open tab's rows, or body, which draws

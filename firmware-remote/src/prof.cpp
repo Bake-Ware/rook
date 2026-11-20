@@ -11,6 +11,8 @@
 //   then a key each: key id, type, and
 //     type 0 (NEC): address low, address high, command
 //     type 1 (raw): carrier (varint, Hz), count (varint), durations (varints, us)
+//     type 2 (lan): the key to send (length, name; blank: the key's own)
+//     type 3 (cap): cap, worker, args (JSON), each length then text
 namespace prof {
 
 static const char* const KEYS[] = {
@@ -35,7 +37,7 @@ static bool same(const std::string& a, const std::string& b) {
 
 int key_id(const std::string& name) {
     std::string n = name;
-    if (n == "bt_menu") n = "menu";
+    if (n == "bt_menu" || n == "settings") n = "menu";
     else if (n == "select" || n == "center" || n == "enter") n = "ok";
     else if (n == "volume_up") n = "vol_up";
     else if (n == "volume_down") n = "vol_down";
@@ -103,7 +105,7 @@ static bool decode(const std::string& b, Info& info, int want, Code* out, std::v
     if (r.u8() != 1) return false;
     info.name = r.str();
     info.link = r.str();
-    info.keys = 0;
+    info.keys = info.lan = info.cap = 0;
     info.bytes = (uint16_t)b.size();
     int n = r.u8();
     bool found = false;
@@ -127,11 +129,22 @@ static bool decode(const std::string& b, Info& info, int want, Code* out, std::v
                 uint32_t v = r.var();
                 if (keep) e.c.d.push_back(v);
             }
+        } else if (type == LAN) {
+            e.c.key = r.str();
+        } else if (type == CAP) {
+            e.c.cap = r.str();
+            e.c.worker = r.str();
+            e.c.args = r.str();
         } else {
             return false;
         }
+        e.c.type = type;
         if (r.bad) return false;
-        if (e.key < 64) info.keys |= 1ULL << e.key;
+        if (e.key < 64) {
+            info.keys |= 1ULL << e.key;
+            if (type == LAN) info.lan |= 1ULL << e.key;
+            if (type == CAP) info.cap |= 1ULL << e.key;
+        }
         if (out && e.key == want) {
             *out = e.c;
             found = true;
@@ -140,6 +153,11 @@ static bool decode(const std::string& b, Info& info, int want, Code* out, std::v
     }
     if (r.bad || info.name.empty()) return false;
     return want < 0 || found;
+}
+
+static void put_str(std::string& o, const std::string& v) {
+    o += (char)v.size();
+    o += v;
 }
 
 static std::string encode(const std::string& name, const std::string& link, const std::vector<Entry>& es) {
@@ -152,7 +170,15 @@ static std::string encode(const std::string& name, const std::string& link, cons
     o += (char)es.size();
     for (auto& e : es) {
         o += (char)e.key;
-        if (!e.c.raw) {
+        if (e.c.type == LAN) {
+            o += (char)LAN;
+            put_str(o, e.c.key);
+        } else if (e.c.type == CAP) {
+            o += (char)CAP;
+            put_str(o, e.c.cap);
+            put_str(o, e.c.worker);
+            put_str(o, e.c.args);
+        } else if (!e.c.raw) {
             o += (char)0;
             o += (char)(e.c.address & 0xFF);
             o += (char)(e.c.address >> 8);
@@ -223,7 +249,7 @@ size_t total_bytes() {
 }
 
 bool code(const Info& p, int key, Code& out, std::string& err) {
-    if (!has(p, key)) { err = p.name + " has no code for " + key_name(key); return false; }
+    if (!has(p, key)) { err = p.name + " has nothing for " + key_name(key); return false; }
     char k[8];
     slot_key(p.slot, k);
     std::string b;
@@ -237,9 +263,48 @@ bool code(const Info& p, int key, Code& out, std::string& err) {
 
 // ---- changes -------------------------------------------------------------------------
 
+static bool printable(const std::string& s);
+
 static bool parse_code(const std::string& key, JsonVariantConst v, Code& c, std::string& err) {
     JsonObjectConst o = v.as<JsonObjectConst>();
-    if (o.isNull()) { err = "bad args: keys." + key + " is {protocol: nec, address, command} or {raw: [...], carrier}"; return false; }
+    if (o.isNull()) {
+        err = "bad args: keys." + key + " is {protocol: nec, address, command}, {raw: [...], carrier}, {lan: true | key} or {cap, worker, args}";
+        return false;
+    }
+    if (!o["lan"].isNull()) {                  // the key on the linked device: this one's own name, or another
+        c.type = LAN;
+        if (o["lan"].is<bool>()) {
+            if (!o["lan"].as<bool>()) { err = "bad args: keys." + key + ".lan is true or a key name (null takes the key out)"; return false; }
+        } else {
+            c.key = o["lan"] | "";
+            if (c.key.empty() || c.key.size() > 24 || !printable(c.key)) {
+                err = "bad args: keys." + key + ".lan is true or a key name of 1..24 characters";
+                return false;
+            }
+        }
+        return true;
+    }
+    if (!o["cap"].isNull()) {                  // a Rook cap call, for the hub to make
+        c.type = CAP;
+        c.cap = o["cap"] | "";
+        c.worker = o["worker"] | "";
+        size_t dot = c.cap.find('.');
+        if (c.cap.size() > 48 || dot == std::string::npos || dot == 0 || dot + 1 == c.cap.size() || !printable(c.cap)) {
+            err = "bad args: keys." + key + ".cap is a cap's name, plugin.verb (at most 48 characters)";
+            return false;
+        }
+        if (c.worker.size() > 40 || !printable(c.worker)) { err = "bad args: keys." + key + ".worker is a worker's name or id, at most 40 characters"; return false; }
+        if (!o["args"].isNull()) {
+            if (!o["args"].is<JsonObjectConst>()) { err = "bad args: keys." + key + ".args is a map"; return false; }
+            serializeJson(o["args"], c.args);
+            if (c.args.size() > MAX_ARGS) {
+                err = "bad args: keys." + key + ".args is " + std::to_string(c.args.size()) + " bytes as JSON (at most " + std::to_string(MAX_ARGS) + ")";
+                return false;
+            }
+            if (c.args == "{}") c.args.clear();
+        }
+        return true;
+    }
     if (!o["raw"].isNull()) {
         JsonArrayConst a = o["raw"].as<JsonArrayConst>();
         if (a.isNull() || a.size() == 0 || a.size() > MAX_RAW) {
@@ -247,6 +312,7 @@ static bool parse_code(const std::string& key, JsonVariantConst v, Code& c, std:
             return false;
         }
         c.raw = true;
+        c.type = RAW;
         long long carrier = 38000;
         if (!o["carrier"].isNull()) carrier = o["carrier"].is<long long>() ? o["carrier"].as<long long>() : 0;
         if (carrier < 20000 || carrier > 100000) { err = "bad args: keys." + key + ".carrier is 20000..100000 Hz"; return false; }
@@ -290,6 +356,7 @@ static bool parse_code(const std::string& key, JsonVariantConst v, Code& c, std:
         return false;
     }
     c.raw = false;
+    c.type = NEC;
     c.address = (uint16_t)a;
     c.command = (uint8_t)cm;
     return true;
@@ -301,13 +368,19 @@ static bool printable(const std::string& s) {
     return true;
 }
 
-bool save(const std::string& name_in, bool set_link, const std::string& link_in, JsonObjectConst keys, bool merge,
-          std::string& err, bool& created) {
-    std::string name = name_in;
+std::string clean_name(const std::string& in) {
+    std::string name = in;
     while (!name.empty() && name.back() == ' ') name.pop_back();
     while (!name.empty() && name.front() == ' ') name.erase(0, 1);
+    if (name.empty() || name.size() > MAX_NAME || !printable(name)) return "";
+    return name;
+}
+
+bool save(const std::string& name_in, bool set_link, const std::string& link_in, JsonObjectConst keys, bool merge,
+          std::string& err, bool& created) {
+    std::string name = clean_name(name_in);
     created = false;
-    if (name.empty() || name.size() > MAX_NAME || !printable(name)) {
+    if (name.empty()) {
         err = "bad args: name is 1.." + std::to_string(MAX_NAME) + " characters";
         return false;
     }
@@ -423,12 +496,58 @@ bool relink(const std::string& name, const std::string& link) {
     return save(p.name, true, link, JsonObjectConst(), true, err, created);
 }
 
+bool rename(const std::string& name, const std::string& to_in, std::string& err) {
+    std::string to = clean_name(to_in);
+    if (to.empty()) { err = "a name is 1.." + std::to_string(MAX_NAME) + " characters"; return false; }
+    xSemaphoreTake(mu, portMAX_DELAY);
+    int at = -1;
+    bool taken = false;
+    for (size_t i = 0; i < idx.size(); i++) {
+        if (same(idx[i].name, name)) at = (int)i;
+        else if (same(idx[i].name, to)) taken = true;
+    }
+    std::vector<Entry> es;
+    char k[8];
+    std::string b;
+    Info i;
+    if (at < 0 || taken) {
+        xSemaphoreGive(mu);
+        err = at < 0 ? "no profile called " + name : "there is already a profile called " + to;
+        return false;
+    }
+    slot_key(idx[at].slot, k);
+    if (!settings::blob(k, b) || !decode(b, i, -1, nullptr, &es)) {
+        xSemaphoreGive(mu);
+        err = "profile " + name + " could not be read back";
+        return false;
+    }
+    b = encode(to, i.link, es);
+    es.clear();
+    if (!settings::set_blob(k, b)) {
+        xSemaphoreGive(mu);
+        err = "the remote's settings storage is full";
+        return false;
+    }
+    decode(b, i, -1, nullptr, nullptr);
+    i.slot = idx[at].slot;
+    idx[at] = i;
+    xSemaphoreGive(mu);
+    return true;
+}
+
 void fill(const Info& p, JsonObject o) {
     o["name"] = p.name;
     if (!p.link.empty()) o["link"] = p.link;
     JsonArray k = o["keys"].to<JsonArray>();
     for (int i = 0; i < NKEYS; i++)
         if (has(p, i)) k.add(KEYS[i]);
+    for (int t = 0; t < 2; t++) {               // which of them are lan, cap (the rest are ir)
+        uint64_t m = t ? p.cap : p.lan;
+        if (!m) continue;
+        JsonArray a = o[t ? "cap_keys" : "lan_keys"].to<JsonArray>();
+        for (int i = 0; i < NKEYS; i++)
+            if (m >> i & 1) a.add(KEYS[i]);
+    }
     o["bytes"] = p.bytes;
 }
 

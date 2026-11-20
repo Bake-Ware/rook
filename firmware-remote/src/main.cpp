@@ -43,7 +43,10 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.11.6"
+#define FW_VERSION "0.12.0"
+#ifndef BUILD_MONIKER
+#define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
+#endif
 #ifdef ROOK_BRIDGE
 static const int PIN_SDA = 6, PIN_SCL = 7;      // XIAO ESP32-C3: D4, D5
 #else
@@ -83,7 +86,9 @@ static uint32_t thinking_until = 0;
 static void active() { last_active = millis(); }
 // The menu on screen: the main one (in tabs), the Wi-Fi networks heard, the
 // saved ones to forget, or everything a device scan found.
-enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS };
+// MENU_OPTS: what the options (settings) key offers for the row it was pressed
+// on; MENU_CONFIRM: yes or no to a delete.
+enum MenuKind { MENU_MAIN, MENU_WIFI, MENU_FORGET, MENU_DEVS, MENU_OPTS, MENU_CONFIRM };
 // The main menu's tabs, left to right (left and right step through them, round).
 enum Tab { TAB_DEVICES, TAB_ASSIST, TAB_GAMES, TAB_SETTINGS, TAB_COUNT };
 static const char* const TAB_NAMES[TAB_COUNT] = {"Devices", "Assistant", "Games", "Settings"};
@@ -112,8 +117,20 @@ static bool devs_pending = false;           // the menu waits for a device scan
 static uint32_t devs_scans = 0;
 static MenuKind menu_kind = MENU_MAIN;
 static std::vector<std::string> menu_labels, menu_values;
-static std::string typing_ssid;             // the network whose password is being typed
+// What the on-screen keyboard is typing: a Wi-Fi password (for typing_ssid),
+// a new profile's name, or a new name for typing_ssid (p:<profile> or lan:<id>).
+enum TypeFor { TYPE_WIFI, TYPE_ADD, TYPE_RENAME };
+static TypeFor type_for = TYPE_WIFI;
+static std::string typing_ssid;
 static uint32_t typing_until = 0;
+// The row the options key was pressed on (a menu value) and the menu it was in.
+static std::string opts_subject, opts_label;
+static MenuKind opts_from = MENU_MAIN;
+// A network chosen in the Wi-Fi list: the Wi-Fi task tries it first, at once
+// (wifi_first, under wifi_mu), and says how it went: 1 trying, 2 joined,
+// 3 refused (wifi_reason: why), 4 not heard. join_ssid: the loop's copy.
+static std::string wifi_first, join_ssid;
+static volatile int wifi_first_state = 0, wifi_reason = 0, wifi_first_why = 0;
 // A scan asked of the Wi-Fi task (it owns the radio): 0 none, 1 wanted, 2 results in.
 struct WifiHeard { std::string ssid; int rssi; bool open; };
 static std::vector<WifiHeard> wifi_heard;
@@ -147,9 +164,8 @@ static bool chat_up() { return mode == MENU && menu_kind == MENU_MAIN && menu_ta
 static const uint32_t HOLD_MS = 600;        // a key down this long is held (the paired remote only says when it goes down)
 // A paired remote's key going down that means one thing tapped and another
 // held: the loop watches it (bt::held) until it is let go or HOLD_MS passes.
-static std::string guide_key, ok_key;       // its raw name
-static uint32_t guide_at = 0, ok_at = 0;    // when it went down (0: not watching)
-static int ok_index = -1;                   // the menu row OK went down on
+static std::string guide_key;               // its raw name
+static uint32_t guide_at = 0;               // when it went down (0: not watching)
 static uint32_t seq_all = 0;                // one count over the handheld's buttons and a paired remote's keys
 #ifdef ROOK_BRIDGE
 static const char* const BT_PAIR_TEXT = "Pair a remote:\n\nhold Back + Home on it\nuntil its light blinks";
@@ -232,7 +248,7 @@ static void close_chat() {
     mode = REMOTE;
 }
 
-static void show_menu(MenuKind kind, const char* title, const std::vector<std::string>& labels,
+static void show_menu(MenuKind kind, const std::string& title, const std::vector<std::string>& labels,
                       const std::vector<std::string>& values, int selected) {
     menu_kind = kind;
     menu_labels = labels;
@@ -316,9 +332,10 @@ static bool start_game(const std::string& label) {
     return false;
 }
 
-// A tab's rows. Devices: the hub's targets (values t:<index>), the IR
-// profiles (p:<name>), then the devices found on this network that the remote
-// can drive itself and no profile is linked to (lan:<id>).
+// A tab's rows. Devices: the hub's targets (values t:<index>), the profiles
+// (p:<name>), then the devices found on this network that the remote can
+// drive itself and no profile is linked to (lan:<id>: each is a profile too,
+// one whose keys all go to it), then Add device and Rescan.
 // Games: the games (the handheld's narrow screen has Tetris only). Settings:
 // Wi-Fi, a device scan, Update, Bluetooth.
 static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std::string>& values, int& selected) {
@@ -344,10 +361,10 @@ static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std:
             labels.push_back(d.name);
             values.push_back("lan:" + d.id);
         }
-        if (labels.empty()) {                // nothing yet: look for some
-            labels.push_back("Find devs");
-            values.push_back("Find devs");
-        }
+        labels.push_back("Add device");
+        values.push_back("add");
+        labels.push_back("Rescan");
+        values.push_back("scan");
     } else if (tab == TAB_GAMES) {
         for (auto& g : GAMES) {
 #ifndef ROOK_BRIDGE
@@ -357,7 +374,7 @@ static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std:
             values.push_back(g.label);
         }
     } else if (tab == TAB_SETTINGS) {
-        for (const char* s : {"Wi-Fi", "Find devs", "Update", "Pair BT"}) {
+        for (const char* s : {"Wi-Fi", "Find devs", "Update", "Pair BT", "About"}) {
             labels.push_back(s);
             values.push_back(s);
         }
@@ -418,7 +435,9 @@ static void open_devs_menu() {
         values.push_back((d.driver.empty() ? "x:" : "lan:") + d.id);
     }
     labels.push_back("Rescan");
-    values.push_back("");
+    values.push_back("scan");
+    labels.push_back("Add device");
+    values.push_back("add");
     show_menu(MENU_DEVS, "DEVICES", labels, values, 0);
 }
 
@@ -468,16 +487,38 @@ static void pick_profile(const std::string& name) {
         ui::flash(p.name, 1000, false);
 }
 
-// The networks heard (strongest first; * marks a saved one), then the saved ones to forget.
-static void open_wifi_menu() {
+// Signal strength in bars, 0..4.
+static int8_t wifi_bars(int rssi) { return rssi >= -55 ? 4 : rssi >= -65 ? 3 : rssi >= -75 ? 2 : rssi >= -85 ? 1 : 0; }
+
+// The saved networks first, in the order they are joined in (* marks them;
+// those not heard have no bars), then the others heard, strongest first; then
+// Rescan and Forget. select: the network to put the cursor on.
+static void open_wifi_menu(const std::string& select = "") {
     std::vector<std::string> labels, values;
+    std::vector<int8_t> bars;
     auto saved = settings::wifi();
+    int sel = 0;
+    auto row = [&](const std::string& ssid, bool known, int8_t lv) {
+        if (!select.empty() && settings::wifi_same(ssid, select)) sel = (int)labels.size();
+#ifdef ROOK_BRIDGE
+        labels.push_back((known ? "*" : "") + ssid);
+#else
+        labels.push_back((lv < 0 ? std::string("-") : std::to_string(lv)) + (known ? "*" : "") + ssid);   // no room for bars
+#endif
+        values.push_back(ssid);
+        bars.push_back(lv);
+    };
     xSemaphoreTake(wifi_mu, portMAX_DELAY);
+    for (auto& n : saved) {
+        int8_t lv = -1;
+        for (auto& h : wifi_heard)
+            if (settings::wifi_same(n.first, h.ssid)) lv = wifi_bars(h.rssi);
+        row(n.first, true, lv);
+    }
     for (auto& h : wifi_heard) {
         bool known = false;
         for (auto& n : saved) known = known || settings::wifi_same(n.first, h.ssid);
-        labels.push_back((known ? "*" : "") + h.ssid);
-        values.push_back(h.ssid);
+        if (!known) row(h.ssid, false, wifi_bars(h.rssi));
     }
     xSemaphoreGive(wifi_mu);
     labels.push_back("Rescan");
@@ -486,7 +527,8 @@ static void open_wifi_menu() {
         labels.push_back("Forget...");
         values.push_back("");
     }
-    show_menu(MENU_WIFI, "WI-FI", labels, values, 0);
+    show_menu(MENU_WIFI, "WI-FI", labels, values, sel);
+    ui::menu_bars_set(bars);
 }
 
 static void start_wifi_scan() {
@@ -496,23 +538,48 @@ static void start_wifi_scan() {
     ui::card("WI-FI", "scanning", -2);
 }
 
-static void save_wifi(const std::string& ssid, const std::string& pass) {
-    settings::wifi_add(ssid, pass);         // at the top: joined first from now on
-    wifi_kick = true;
-    ui::flash("joining\n" + ssid);
-}
-
 static bool wifi_saved(const std::string& ssid) {
     for (auto& n : settings::wifi())
         if (settings::wifi_same(n.first, ssid)) return true;
     return false;
 }
 
-// OK held on a saved network in the Wi-Fi menu: it goes to the top of the list (joined first).
-static void wifi_prefer_row(int i) {
-    if (i < 0 || i >= (int)menu_values.size() || !settings::wifi_prefer(menu_values[i])) return;
-    menu_until = millis() + MENU_IDLE_MS;
-    ui::flash("Preferred", 900, true);
+// Join this saved network now: the Wi-Fi task drops the one in use and tries
+// it first. How that went comes back through wifi_first_state (the loop).
+static void join_wifi(const std::string& ssid) {
+    if (WiFi.status() == WL_CONNECTED && settings::wifi_same(std::string(WiFi.SSID().c_str()), ssid)) {
+        ui::flash("joined\n" + ssid);
+        return;
+    }
+    xSemaphoreTake(wifi_mu, portMAX_DELAY);
+    wifi_first = ssid;
+    wifi_first_state = 1;
+    xSemaphoreGive(wifi_mu);
+    join_ssid = ssid;
+    wifi_kick = true;
+    ui::flash("joining\n" + ssid);
+}
+
+// A password typed: a new network goes to the top of the list (joined first
+// from now on), a saved one keeps its place. Then it is joined.
+static void save_wifi(const std::string& ssid, const std::string& pass) {
+    int at = -1, i = 0;
+    for (auto& n : settings::wifi()) {
+        if (settings::wifi_same(n.first, ssid)) at = i;
+        i++;
+    }
+    settings::wifi_add(ssid, pass);
+    if (at > 0) settings::wifi_move(ssid, at);
+    join_wifi(ssid);
+}
+
+static void start_typing(TypeFor what, const std::string& subject, const std::string& title, const std::string& initial) {
+    type_for = what;
+    typing_ssid = subject;
+    typing_until = millis() + 120000;
+    osk::begin(title, initial);
+    ui::canvas(osk::draw);
+    mode = TYPING;
 }
 
 // The devices the menu offers the buttons to: the hub's targets, then those on
@@ -568,12 +635,159 @@ static bool is_profile_key(const ButtonEvent& e) {
     return false;
 }
 
+static bool is_options_key(const std::string& n) { return n == "settings" || n == "bt_menu"; }
+
+// The menu the options came from, again (its cursor on subject, when it is there).
+static void reopen(MenuKind from, const std::string& subject = "") {
+    if (from == MENU_WIFI) {
+        open_wifi_menu(subject.rfind("w:", 0) == 0 ? subject.substr(2) : "");
+    } else if (from == MENU_DEVS) {
+        open_devs_menu();
+    } else {
+        show_tab(TAB_DEVICES);
+        for (size_t i = 0; i < menu_values.size(); i++)
+            if (menu_values[i] == subject) ui::menu_move((int)i - ui::menu_selected());
+    }
+}
+
+// The options (settings) key on a menu row: what can be done to it.
+//   a profile: Rename, Delete;  a device on the network: Rename, Forget pairing;
+//   a Wi-Fi network: Join, and (saved) Move up, Move down, Forget.
+static void open_options(int sel) {
+    if (sel < 0 || sel >= (int)menu_values.size()) return;
+    const std::string v = menu_values[sel];
+    std::vector<std::string> items;
+    bool devs = menu_kind == MENU_DEVS || (menu_kind == MENU_MAIN && menu_tab == TAB_DEVICES);
+    if (devs && v.rfind("p:", 0) == 0) {
+        items = {"Rename", "Delete"};
+        opts_subject = v;
+    } else if (devs && v.rfind("lan:", 0) == 0) {
+        items = {"Rename", "Forget pairing"};
+        opts_subject = v;
+    } else if (menu_kind == MENU_WIFI && !v.empty()) {
+        items = {"Join"};
+        if (wifi_saved(v)) items.insert(items.end(), {"Move up", "Move down", "Forget"});
+        opts_subject = "w:" + v;
+    } else {
+        return;
+    }
+    opts_label = menu_labels[sel];
+    if (!opts_label.empty() && opts_label[0] == '*') opts_label.erase(0, 1);
+    opts_from = menu_kind;
+    ui::menu_end();
+    show_menu(MENU_OPTS, opts_label, items, items, 0);
+}
+
+// A device's name as it shows: a profile's, or a network device's.
+static std::string subject_name(const std::string& subj) {
+    lan::Device d;
+    if (subj.rfind("p:", 0) == 0) return subj.substr(2);
+    if (subj.rfind("lan:", 0) == 0 && lan::find(subj.substr(4), d)) return d.name;
+    return subj.rfind("w:", 0) == 0 ? subj.substr(2) : "";
+}
+
+static void options_pick(const std::string& label) {
+    const std::string subj = opts_subject;
+    if (label == "Rename") {
+        start_typing(TYPE_RENAME, subj, "Rename", subject_name(subj).substr(0, prof::MAX_NAME));
+    } else if (label == "Delete") {
+        show_menu(MENU_CONFIRM, "DELETE?", {"No, keep it", "Delete " + subject_name(subj)}, {"no", "yes"}, 0);
+    } else if (label == "Forget pairing") {
+        std::string id = subj.substr(4), err;
+        if (local_id == id) set_local("");
+        dev::run("forget", id, "", 0, err);
+        reopen(opts_from);
+        ui::flash("forgot\n" + opts_label, 1200, true);
+    } else if (subj.rfind("w:", 0) == 0) {
+        std::string ssid = subj.substr(2);
+        if (label == "Join") {
+            join_wifi(ssid);
+        } else if (label == "Forget") {
+            settings::wifi_remove(ssid);
+            reopen(MENU_WIFI);
+            ui::flash("forgot\n" + ssid, 1200, true);
+        } else if (label == "Move up" || label == "Move down") {
+            int at = settings::wifi_move(ssid, label == "Move up" ? -1 : 1);
+            reopen(MENU_WIFI, subj);
+            ui::flash(at < 0 ? std::string("not saved") : std::to_string(at + 1) + ". " + ssid, 900, true);
+        }
+    }
+}
+
+// A new profile's name typed (Add device): it is made, empty, and picked.
+// Its keys are set afterwards, through remote.ir profile_save.
+static void add_profile(const std::string& typed) {
+    std::string name = prof::clean_name(typed.substr(0, prof::MAX_NAME)), err;
+    prof::Info p;
+    bool created = false;
+    if (name.empty()) {
+        ui::flash("no name");
+    } else if (prof::find(name, p)) {
+        select_profile(p);
+        ui::flash("have\n" + p.name);
+    } else if (!prof::save(name, false, "", JsonObjectConst(), true, err, created)) {
+        logf("profile: %s", err.c_str());
+        ui::flash(err.rfind("full", 0) == 0 ? "full" : "not\nsaved");
+    } else if (prof::find(name, p)) {
+        select_profile(p);
+        logf("profile: %s added", name.c_str());
+        ui::flash("added\n" + name);
+    }
+}
+
+// A new name typed for a profile, or for a device on the network (which then
+// becomes a profile of that name, linked to it, its keys all going to it).
+static void rename_subject(const std::string& subj, const std::string& typed) {
+    std::string to = prof::clean_name(typed.substr(0, prof::MAX_NAME)), err;
+    bool ok = false;
+    if (to.empty()) {
+        err = "no name";
+    } else if (subj.rfind("p:", 0) == 0) {
+        std::string old = subj.substr(2);
+        ok = prof::rename(old, to, err);
+        if (ok && sel_prof == old) {
+            sel_prof = to;
+            settings::set_kv("irsel", to);
+        }
+    } else if (subj.rfind("lan:", 0) == 0) {
+        prof::Info p;
+        bool created = false;
+        std::string id = subj.substr(4);
+        if (prof::find(to, p)) err = "there is already a profile called " + to;
+        else ok = prof::save(to, true, id, JsonObjectConst(), true, err, created);
+        if (ok) lan::keep(id);
+        if (ok && local_id == id && sel_prof.empty() && prof::find(to, p)) select_profile(p);
+    }
+    if (!ok) logf("rename: %s", err.c_str());
+    ui::flash(ok ? "renamed\n" + to : err == "no name" ? err : std::string("not\nrenamed"));
+}
+
 static void menu_pick(int i) {
     std::string label = i >= 0 && i < (int)menu_labels.size() ? menu_labels[i] : "";
     std::string value = i >= 0 && i < (int)menu_values.size() ? menu_values[i] : "";
     MenuKind kind = menu_kind;
     ui::menu_end();
     mode = REMOTE;
+    if (kind == MENU_OPTS) {
+        options_pick(label);
+        return;
+    }
+    if (kind == MENU_CONFIRM) {
+        std::string name = opts_subject.substr(2), err;
+        if (value == "yes" && opts_subject.rfind("p:", 0) == 0) {
+            bool was = sel_prof == name;
+            if (prof::remove(name, err)) {
+                if (was) set_local("");
+                reopen(opts_from);
+                ui::flash("deleted\n" + name, 1200, true);
+                return;
+            }
+            ui::flash("not\ndeleted");
+            return;
+        }
+        reopen(opts_from, opts_subject);
+        return;
+    }
     if (kind == MENU_WIFI) {
         if (label == "Rescan") {
             start_wifi_scan();
@@ -586,15 +800,9 @@ static void menu_pick(int i) {
             xSemaphoreTake(wifi_mu, portMAX_DELAY);
             for (auto& h : wifi_heard) open = open || (h.ssid == value && h.open);
             xSemaphoreGive(wifi_mu);
-            if (open) {
-                save_wifi(value, "");
-            } else {
-                typing_ssid = value;
-                typing_until = millis() + 120000;
-                osk::begin(value, "");
-                ui::canvas(osk::draw);
-                mode = TYPING;
-            }
+            if (wifi_saved(value)) join_wifi(value);          // its stored password; asked again only if refused
+            else if (open) save_wifi(value, "");
+            else start_typing(TYPE_WIFI, value, value, "");
         }
         return;
     }
@@ -603,6 +811,14 @@ static void menu_pick(int i) {
             settings::wifi_remove(value);
             ui::flash("forgot\n" + value);
         }
+        return;
+    }
+    if (value == "add") {
+        start_typing(TYPE_ADD, "", "Name", "");
+        return;
+    }
+    if (value == "scan") {
+        start_dev_scan();
         return;
     }
     if (value.rfind("lan:", 0) == 0) {
@@ -614,8 +830,7 @@ static void menu_pick(int i) {
         return;
     }
     if (kind == MENU_DEVS) {
-        if (label == "Rescan") start_dev_scan();
-        else ui::flash("no\ndriver");
+        ui::flash("no\ndriver");
         return;
     }
     auto ts = settings::targets();
@@ -637,6 +852,7 @@ static void menu_pick(int i) {
             JsonDocument p;
             p["worker"] = settings::name();
             p["version"] = FW_VERSION;
+            p["build"] = BUILD_MONIKER;
 #ifdef ROOK_BRIDGE
             p["board"] = "bridge-c3";
 #else
@@ -655,61 +871,75 @@ static void menu_pick(int i) {
     } else if (label == "Forget BT") {
         bt::forget();
         ui::flash("BT\ngone");
+    } else if (label == "About") {
+        ui::text(settings::name() + "\nfirmware " FW_VERSION "\nbuild " BUILD_MONIKER, 8);
     }
 }
 
-// A key for the profile or network device picked: by IR when the profile
-// has a code for it (queued: the IR task sends it), else to the linked or
-// picked network device (queued for the device task). Held on the paired
+// The bridge is a dispatcher: a key goes through the profile or network
+// device picked. The profile's action for it: ir, its code (queued: the IR task
+// sends it); lan, a key on the linked or picked network device (queued for
+// the device task); cap, a Rook cap call, handed back in call for the
+// remote.button event (the hub makes it: a worker cannot start a call). No
+// action: to the linked or picked network device, as lan (a network device
+// picked alone is a profile whose every key is lan). Held on the paired
 // remote, an NEC code goes on with repeat frames every 108 ms, a raw one is
 // sent again (volume, arrows, channels, seek only; power never). Answers
-// "ir", "lan" or null (nothing was sent).
-static const char* local_key(const ButtonEvent& e, const prof::Info* p) {
+// "ir", "lan", "cap" or null (nothing was done).
+static const char* local_key(const ButtonEvent& e, const prof::Info* p, prof::Code& call) {
     uint32_t ms = millis();
     int k = prof::key_id(e.name);
     std::string raw = e.lines.rfind("bt:", 0) == 0 ? e.lines.substr(3) : "";
+    std::string send = e.name;                 // the key a network device is sent
     if (p && prof::has(*p, k)) {
         // Already repeating this key (a game controller presses a held
         // direction again by itself): the repeat goes on, no new frame.
         if (rep.key == k && !raw.empty() && rep.raw == raw && !rep.code.raw) return "ir";
         prof::Code c;
         std::string err;
+        rep.key = -1;
         if (!prof::code(*p, k, c, err)) {
-            logf("ir: %s", err.c_str());
-            ui::flash("IR\nerror", 1000, false);
-            rep.key = -1;
+            logf("profile: %s", err.c_str());
+            ui::flash("profile\nerror", 1000, false);
             return nullptr;
         }
-        bool queued = c.raw ? ir::post(ir::POST_RAW, 0, 0, c.carrier, &c.d)
-                            : ir::post(ir::POST_NEC, c.address, c.command, 0, nullptr);
-        if (!queued) logf("ir: busy, %s dropped", e.name.c_str());
-        rep.key = -1;
-        if (queued && !raw.empty() && prof::repeats(k)) {
-            rep.key = k;
-            rep.raw = raw;
-            if (c.raw) {
-                uint32_t us = 0;
-                size_t sent = c.d.size() % 2 ? c.d.size() : c.d.size() - 1;   // a trailing space is not sent
-                for (size_t i = 0; i < sent; i++) us += c.d[i];
-                rep.every = std::max<uint32_t>(110, us / 1000 + 40);
-                rep.next = ms + std::max<uint32_t>(300, rep.every);      // a moment before it starts again
-            } else {
-                rep.every = 108;
-                rep.next = ms + 108;
-            }
-            rep.code = std::move(c);
-            rep.until = ms + 30000;                                    // never more than 30 s held
+        if (c.type == prof::CAP) {
+            call = std::move(c);
+            return "cap";
         }
-        return queued ? "ir" : nullptr;
+        if (c.type == prof::LAN) {
+            if (!c.key.empty()) send = c.key;
+        } else {
+            bool queued = c.raw ? ir::post(ir::POST_RAW, 0, 0, c.carrier, &c.d)
+                                : ir::post(ir::POST_NEC, c.address, c.command, 0, nullptr);
+            if (!queued) logf("ir: busy, %s dropped", e.name.c_str());
+            if (queued && !raw.empty() && prof::repeats(k)) {
+                rep.key = k;
+                rep.raw = raw;
+                if (c.raw) {
+                    uint32_t us = 0;
+                    size_t sent = c.d.size() % 2 ? c.d.size() : c.d.size() - 1;   // a trailing space is not sent
+                    for (size_t i = 0; i < sent; i++) us += c.d[i];
+                    rep.every = std::max<uint32_t>(110, us / 1000 + 40);
+                    rep.next = ms + std::max<uint32_t>(300, rep.every);      // a moment before it starts again
+                } else {
+                    rep.every = 108;
+                    rep.next = ms + 108;
+                }
+                rep.code = std::move(c);
+                rep.until = ms + 30000;                                    // never more than 30 s held
+            }
+            return queued ? "ir" : nullptr;
+        }
     }
     rep.key = -1;
     std::string target = !local_id.empty() ? local_id : p ? link_id(*p) : "";
     std::string err;
     if (!target.empty()) {
-        dev::run("key", target, e.name, 0, err);
+        dev::run("key", target, send, 0, err);
         return "lan";
     }
-    ui::flash("no code\n" + e.name, 1000, false);
+    ui::flash("nothing\nfor " + e.name, 1000, false);
     return nullptr;
 }
 
@@ -757,28 +987,29 @@ static void on_button(const ButtonEvent& ev) {
         if (done) {
             ui::canvas(nullptr);
             mode = REMOTE;
-            if (done > 0) save_wifi(typing_ssid, osk::text());
+            std::string typed = osk::text();
             osk::begin("", "");              // don't keep the password around
+            if (done > 0 && type_for == TYPE_WIFI) save_wifi(typing_ssid, typed);
+            else if (done > 0 && type_for == TYPE_ADD) add_profile(typed);
+            else if (done > 0) rename_subject(typing_ssid, typed);
         }
         return;
     }
     if (mode == MENU) {
         menu_until = millis() + (chat_up() ? CHAT_IDLE_MS : MENU_IDLE_MS);
         int sel = ui::menu_selected();
-        if (e.name == "ok" && menu_kind == MENU_WIFI && sel < (int)menu_values.size() &&
-            !menu_values[sel].empty() && wifi_saved(menu_values[sel])) {
-            // A saved network: OK tapped joins it, held puts it first. The
-            // handheld's buttons say "long" themselves; the paired remote's
-            // only go down, so the loop times those.
-            if (!strcmp(e.action, "long")) { wifi_prefer_row(sel); return; }
-            if (!strcmp(e.action, "press") && e.lines.rfind("bt:", 0) == 0) {
-                ok_key = e.lines.substr(3);
-                ok_index = sel;
-                ok_at = millis() | 1;
-                return;
-            }
-        }
         if (strcmp(e.action, "press")) return;
+        // The options key (the paired remote's settings key): what can be done to this row.
+        if (is_options_key(e.name)) {
+            open_options(sel);
+            return;
+        }
+        // Back from the options or a confirm: the list they came from.
+        if ((menu_kind == MENU_OPTS || menu_kind == MENU_CONFIRM) && e.name == "back") {
+            ui::menu_end();
+            reopen(opts_from, opts_subject);
+            return;
+        }
         // The profile key steps to the next device from the menu too (the menu goes away).
         if (is_profile_key(e) && !buttons::learning()) {
             ui::menu_end();
@@ -834,7 +1065,7 @@ static void on_button(const ButtonEvent& ev) {
         return;
     }
 #else
-    if ((e.name == "input" || e.name == "bt_menu") && !buttons::learning()) {
+    if ((e.name == "input" || is_options_key(e.name)) && !buttons::learning()) {
         if (!strcmp(e.action, "press")) open_menu();
         return;
     }
@@ -853,7 +1084,9 @@ static void on_button(const ButtonEvent& ev) {
     bool have_prof = active_profile(pi);
     bool local = !local_id.empty() || have_prof;
     const char* via = nullptr;
-    if (local && !strcmp(e.action, "press")) via = local_key(e, have_prof ? &pi : nullptr);
+    prof::Code call;
+    if (local && !strcmp(e.action, "press")) via = local_key(e, have_prof ? &pi : nullptr, call);
+    if (via && !strcmp(via, "cap") && !(worker_on && worker.hub_ok())) ui::flash("no hub", 1000, false);   // it waits in the queue
     if (worker_on) {
         JsonDocument p;
         p["button"] = e.name;
@@ -863,7 +1096,19 @@ static void on_button(const ButtonEvent& ev) {
         if (local) {
             p["target"] = have_prof ? pi.name : local_name;
             p["local"] = true;
+            if (have_prof) p["profile"] = pi.name;
             if (via) p["via"] = via;
+            if (via && !strcmp(via, "cap")) {
+                // The profile's cap action, for the hub to carry out.
+                JsonObject c = p["call"].to<JsonObject>();
+                c["cap"] = call.cap;
+                if (!call.worker.empty()) c["worker"] = call.worker;
+                JsonObject args = c["args"].to<JsonObject>();
+                if (!call.args.empty()) {
+                    JsonDocument ad;
+                    if (!deserializeJson(ad, call.args)) args.set(ad.as<JsonObjectConst>());
+                }
+            }
         } else if (!settings::target_name().empty()) p["target"] = settings::target_name();
         if (e.index < 0) p["source"] = "bt";
         worker.emit("remote.button", p.as<JsonObjectConst>());
@@ -919,6 +1164,7 @@ static void fill_bt(JsonObject o) {
 static void fill_state(JsonObject r) {
     r["name"] = settings::name();
     r["version"] = FW_VERSION;
+    r["build"] = BUILD_MONIKER;
     r["mode"] = mode == GAME ? "game" : chat_up() ? "chat" : mode == MENU ? "menu" : mode == TYPING ? "typing" : "remote";
     if (mode == MENU && menu_kind == MENU_MAIN) r["tab"] = TAB_NAMES[menu_tab];
     r["power"] = power_state == ASLEEP ? "asleep" : power_state == DIM ? "dim" : "awake";
@@ -1195,17 +1441,33 @@ static bool cap_ir_led(const std::string& action, JsonObjectConst a, JsonObject 
     return true;
 }
 
-// The profiles, for remote.ir's answers.
+// A device on the network the remote drives, with no profile linked to it:
+// it stands as a profile of its own (implicit), every key going to it.
+static bool implicit_profile(const std::string& name, lan::Device& d) {
+    return !name.empty() && lan::find(name, d) && !d.driver.empty() && !lan_has_profile(d, prof::list());
+}
+
+// The profiles, for remote.ir's answers: those kept, then the implicit ones.
 static void fill_profiles(JsonObject r) {
     JsonArray ps = r["profiles"].to<JsonArray>();
-    for (auto& p : prof::list()) {
+    auto all = prof::list();
+    for (auto& p : all) {
         JsonObject o = ps.add<JsonObject>();
         prof::fill(p, o);
         lan::Device d;
         if (!p.link.empty() && lan::find(p.link, d)) o["link_name"] = d.name;
     }
+    for (auto& d : lan::devices()) {
+        if (d.driver.empty() || lan_has_profile(d, all)) continue;
+        JsonObject o = ps.add<JsonObject>();
+        o["name"] = d.name;
+        o["link"] = d.id;
+        o["implicit"] = true;                  // every key goes to the device (lan); profile_save makes it a kept profile
+        o["keys"].to<JsonArray>();
+    }
     prof::Info act;
     if (active_profile(act)) r["selected"] = act.name;
+    else if (!local_id.empty()) r["selected"] = local_name;
     r["max"] = prof::MAX;
     r["bytes"] = (unsigned)prof::total_bytes();
     r["bytes_max"] = (unsigned)prof::MAX_TOTAL;
@@ -1221,6 +1483,13 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
         bool set_link = !a["link"].isNull();
         std::string link = a["link"] | "";
         lan::Device d;
+        prof::Info had;
+        bool adopt = false;                   // a network device's implicit profile, kept from now on
+        if (!set_link && !prof::find(name, had) && implicit_profile(name, d)) {
+            set_link = adopt = true;
+            link = d.id;
+            name = d.name;
+        }
         if (!link.empty() && lan::find(link, d)) {
             link = d.id;                      // kept by id (a MAC when the network gives one)
             lan::keep(d.id);
@@ -1236,6 +1505,7 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
         prof::find(name, p);
         prof::Info cur;
         if (!sel_prof.empty() && prof::find(sel_prof, cur) && cur.name == p.name) select_profile(p);   // its new link, if any
+        if (adopt && sel_prof.empty() && local_id == link) select_profile(p);              // it was picked as the device
         r["created"] = created;
         prof::fill(p, r["profile"].to<JsonObject>());
         logf("ir: profile %s saved (%u bytes)", p.name.c_str(), (unsigned)p.bytes);
@@ -1249,22 +1519,46 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
     } else if (action == "profile_select") {
         prof::Info p;
         if (name.empty()) { err = "bad args: name is needed (profile_release lets the buttons go)"; return false; }
-        if (!prof::find(name, p)) { err = "no profile called " + name; return false; }
-        select_profile(p);
+        lan::Device d;
+        if (prof::find(name, p)) select_profile(p);
+        else if (implicit_profile(name, d)) { lan::keep(d.id); set_local(d.id); }
+        else { err = "no profile called " + name; return false; }
     } else if (action == "profile_release") {
         prof::Info p;
-        if (active_profile(p)) set_local("");
+        if (active_profile(p) || !local_id.empty()) set_local("");
     } else if (action == "profile_send") {
         prof::Info p;
-        if (name.empty() ? !active_profile(p) : !prof::find(name, p)) {
+        lan::Device d;
+        std::string key = a["key"] | "", dev_id;
+        bool have = name.empty() ? active_profile(p) : prof::find(name, p);
+        if (!have && (name.empty() ? !local_id.empty() && lan::find(local_id, d) : implicit_profile(name, d))) dev_id = d.id;
+        if (!have && dev_id.empty()) {
             err = name.empty() ? "bad args: name is needed (no profile is selected)" : "no profile called " + name;
             return false;
         }
-        std::string key = a["key"] | "";
         int k = prof::key_id(key);
         if (k < 0) { err = "bad args: key is one of " + prof::key_names(); return false; }
         prof::Code c;
-        if (!prof::code(p, k, c, err)) return false;
+        if (have && prof::has(p, k) && !prof::code(p, k, c, err)) return false;
+        if (have && prof::has(p, k) && c.type == prof::CAP) {
+            // The hub makes cap calls; this one is handed back for the caller to make.
+            JsonObject o = r["call"].to<JsonObject>();
+            o["cap"] = c.cap;
+            if (!c.worker.empty()) o["worker"] = c.worker;
+            JsonDocument ad;
+            if (!c.args.empty() && !deserializeJson(ad, c.args)) o["args"] = ad.as<JsonObjectConst>();
+            else o["args"].to<JsonObject>();
+            r["sent"] = (have ? p.name : d.name) + " " + key + ": a cap action, not sent (call is what to call)";
+            return true;
+        }
+        if (!(have && prof::has(p, k)) || c.type == prof::LAN) {      // to the network device
+            if (dev_id.empty() && have) dev_id = link_id(p);
+            if (dev_id.empty()) { err = p.name + " has nothing for " + key + " and no device on the network linked to it"; return false; }
+            std::string out, send = c.type == prof::LAN && !c.key.empty() ? c.key : key;
+            if (!dev::run("key", dev_id, send, 20000, err, &out)) return false;
+            r["sent"] = (have ? p.name : d.name) + " " + key + ": " + send + " on the network";
+            return true;
+        }
         ir::Sent s;
         int repeats = a["repeats"] | 0;
         bool ok = c.raw ? ir::send_raw(c.carrier, c.d, s, err) : ir::send_nec(c.address, c.command, repeats, s, err);
@@ -1419,6 +1713,7 @@ static bool cap_update(JsonObjectConst a, JsonObject r, std::string& err) {
         r["started"] = true;
     }
     r["version"] = FW_VERSION;
+    r["build"] = BUILD_MONIKER;
     ota::fill(r);
     return true;
 }
@@ -1639,7 +1934,7 @@ static void poll_serial() {
 
 #ifdef ROOK_GAMEPAD
 static void devweb_begin() {
-    devweb.on("/", [] { devweb.send(200, "text/plain", "rook remote (gamepad) " FW_VERSION ": GET /log, POST /cmd, POST /ota\n"); });
+    devweb.on("/", [] { devweb.send(200, "text/plain", "rook remote (gamepad) " FW_VERSION " (" BUILD_MONIKER "): GET /log, POST /cmd, POST /ota\n"); });
     devweb.on("/log", [] {
         xSemaphoreTake(devweb_mu, portMAX_DELAY);
         std::string s = devweb_text;
@@ -1738,9 +2033,13 @@ static bool wifi_join(unsigned round) {
     WiFi.disconnect();
     vTaskDelay(pdMS_TO_TICKS(200));
     auto saved = settings::wifi();
+    std::string first;                         // chosen in the Wi-Fi list: tried before the rest
+    xSemaphoreTake(wifi_mu, portMAX_DELAY);
+    first.swap(wifi_first);
+    xSemaphoreGive(wifi_mu);
     // Waking up where it fell asleep: straight back to the same access point,
     // no scan, when that network is still the first on the list.
-    if (wifi_woke && wifi_have_quick && !saved.empty() && settings::wifi_same(saved[0].first, wifi_quick.ssid)) {
+    if (first.empty() && wifi_woke && wifi_have_quick && !saved.empty() && settings::wifi_same(saved[0].first, wifi_quick.ssid)) {
         wifi_woke = false;
         wifi_quick.pass = saved[0].second;
         logf("wifi: back to %s (ch %d)", wifi_quick.ssid.c_str(), wifi_quick.ch);
@@ -1752,6 +2051,11 @@ static bool wifi_join(unsigned round) {
     int n = WiFi.scanNetworks(false, true, false, 300);
     if (n < 0) {
         logf("wifi: scan failed (%d)", n);
+        if (!first.empty()) {                  // try it again next round
+            xSemaphoreTake(wifi_mu, portMAX_DELAY);
+            if (wifi_first.empty()) wifi_first = first;
+            xSemaphoreGive(wifi_mu);
+        }
         return false;
     }
     std::vector<WifiCandidate> heard;
@@ -1765,19 +2069,33 @@ static bool wifi_join(unsigned round) {
         heard.push_back(c);
     }
     WiFi.scanDelete();
+    if (!first.empty()) {
+        size_t at = heard.size();
+        for (size_t i = 0; i < heard.size(); i++)
+            if (settings::wifi_same(heard[i].ssid, first)) at = i;
+        if (at == heard.size()) wifi_first_state = 4;
+        else if (at) std::rotate(heard.begin(), heard.begin() + at, heard.begin() + at + 1);
+    }
     if (heard.empty()) {
         logf("wifi: heard %d networks, none of them saved", n);
         return false;
     }
     for (auto& c : heard) {
         if (wifi_interrupted()) return false;
+        bool chosen = !first.empty() && settings::wifi_same(c.ssid, first);
         bool low = (c.rssi > -45) != ((round & 1) != 0);
         logf("wifi: joining %s (ch %d, %d dBm) at %s power", c.ssid.c_str(), c.ch, c.rssi, low ? "low" : "full");
+        wifi_reason = 0;
         if (wifi_connect(c, low, 150)) {
             wifi_quick = c;
             wifi_quick_low = low;
             wifi_have_quick = true;
+            if (chosen) wifi_first_state = 2;
             return true;
+        }
+        if (chosen) {
+            wifi_first_why = wifi_reason;      // before the disconnect below says something else
+            wifi_first_state = 3;
         }
         logf("wifi: %s failed (status %d)", c.ssid.c_str(), (int)WiFi.status());
         WiFi.disconnect();
@@ -1888,6 +2206,7 @@ void setup() {
     ui::tick();
 
     WiFi.onEvent([](WiFiEvent_t ev, WiFiEventInfo_t info) {
+        if (ev == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) wifi_reason = info.wifi_sta_disconnected.reason;
         if (ev == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
             logf("wifi: disconnected from %.32s, reason %d", (const char*)info.wifi_sta_disconnected.ssid,
                  info.wifi_sta_disconnected.reason);
@@ -1990,7 +2309,7 @@ void setup() {
     bt_names_mu = xSemaphoreCreateMutex();
     load_bt_names();
     bt::begin([](const char* m) { logf("%s", m); });
-    logf("Rook remote %s ready; worker %s", FW_VERSION, worker_on ? "on" : "off (not enrolled)");
+    logf("Rook remote %s (%s) ready; worker %s", FW_VERSION, BUILD_MONIKER, worker_on ? "on" : "off (not enrolled)");
 }
 
 // What a held button (the handheld's, or the paired remote's) does in the game.
@@ -2097,15 +2416,21 @@ void loop() {
             open_chat();
         }
     }
-    if (ok_at) {
-        if (mode != MENU || menu_kind != MENU_WIFI) {
-            ok_at = 0;
-        } else if (bt::held() != ok_key) {
-            ok_at = 0;
-            menu_pick(ok_index);
-        } else if ((int32_t)(millis() - ok_at) >= (int32_t)HOLD_MS) {
-            ok_at = 0;
-            wifi_prefer_row(ok_index);
+    // A network chosen in the Wi-Fi list: joined, or refused (its password asked
+    // for again when the refusal was about the password), or not heard.
+    if (wifi_first_state >= 2) {
+        int st = wifi_first_state, why = wifi_first_why;
+        wifi_first_state = 0;
+        // 2 auth expired, 15 4-way handshake timeout, 202 auth failed, 204 handshake timeout
+        bool password = st == 3 && (why == 2 || why == 15 || why == 202 || why == 204);
+        if (st == 2) {
+            ui::flash("joined\n" + join_ssid);
+        } else if (password && (mode == REMOTE || mode == MENU)) {
+            if (mode == MENU) ui::menu_end();
+            logf("wifi: %s refused the password (reason %d)", join_ssid.c_str(), why);
+            start_typing(TYPE_WIFI, join_ssid, join_ssid, "");
+        } else {
+            ui::flash((st == 4 ? "not heard\n" : "join failed\n") + join_ssid);
         }
     }
     static std::string bt_was = "off";

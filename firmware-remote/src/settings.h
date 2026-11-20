@@ -29,6 +29,7 @@ void wifi_add(const std::string& ssid, const std::string& pass);
 void wifi_clear();
 void wifi_remove(const std::string& ssid);
 bool wifi_prefer(const std::string& ssid);     // to the top; false: not saved
+int wifi_move(const std::string& ssid, int delta);   // up (-1) or down (+1) the join order; its place now, -1: not saved
 void wifi_dedupe();                            // at boot: one entry a name, the first one's password
 
 // The worker key seed (32 bytes), made once on first boot.

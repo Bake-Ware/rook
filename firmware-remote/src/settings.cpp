@@ -3,6 +3,7 @@
 #include <nvs.h>
 #include <esp_random.h>
 #include <strings.h>
+#include <algorithm>
 #include "rc_sig.h"
 #include "rc_util.h"
 
@@ -171,6 +172,22 @@ bool wifi_prefer(const std::string& ssid) {
         return true;
     }
     return false;
+}
+
+int wifi_move(const std::string& ssid, int delta) {
+    auto nets = wifi();
+    for (size_t i = 0; i < nets.size(); i++) {
+        if (!same_ssid(nets[i].first, ssid)) continue;
+        int to = std::max(0, std::min((int)nets.size() - 1, (int)i + delta));
+        if (to != (int)i) {
+            auto n = nets[i];
+            nets.erase(nets.begin() + i);
+            nets.insert(nets.begin() + to, n);
+            put_wifi(nets);
+        }
+        return to;
+    }
+    return -1;
 }
 
 void wifi_dedupe() {

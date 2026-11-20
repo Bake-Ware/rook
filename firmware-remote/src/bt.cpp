@@ -345,7 +345,11 @@ const char* consumer_name(uint32_t u) {
         case 0xEA: return "vol_down";
         case 0xE2: return "mute";
         case 0x30: return "power";
-        case 0x40: return "bt_menu";
+        // The gear (settings) key: Menu, as the remote's gear key arrives (the
+        // only key the earlier builds sent on to the TV as its menu), and AL
+        // Control Panel, which some remotes use for it. remote.bt names can
+        // rename any other raw key to settings.
+        case 0x40: case 0x19F: return "settings";
         case 0xCD: return "play";
         case 0xB0: return "play";
         case 0xB1: return "pause";
@@ -371,7 +375,7 @@ const char* keyboard_name(uint32_t k) {
         case 0x51: return "down";
         case 0x52: return "up";
         case 0x4A: return "home";
-        case 0x65: return "bt_menu";
+        case 0x65: return "settings";
         case 0x66: return "power";
         case 0x7F: return "mute";
         case 0x80: return "vol_up";

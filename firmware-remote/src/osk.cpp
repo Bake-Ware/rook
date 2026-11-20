@@ -13,8 +13,8 @@ const int COLS = 5, CW = 6, X0 = 1, Y0 = 20, RP = 9, ACTION_ROWS = 4;
 #endif
 const int GRID_ROWS = (CELLS + COLS - 1) / COLS, ROWS = GRID_ROWS + ACTION_ROWS;
 const char* const PAGES[3] = {
-    "abcdefghijklmnopqrstuvwxyz0123456789",
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+    "abcdefghijklmnopqrstuvwxyz1234567890",
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()",       // shifted, the number row is a US keyboard's
     "!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~    ",
 };
 const char* const NEXT_PAGE[3] = {"ABC", "#+=", "abc"};

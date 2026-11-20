@@ -129,7 +129,7 @@ static bool roku_http(const lan::Device& d, bool post, const std::string& path, 
 static bool roku_key(const lan::Device& d, const std::string& name, std::string& err) {
     static const std::map<std::string, std::string> KEYS = {
         {"up", "Up"}, {"down", "Down"}, {"left", "Left"}, {"right", "Right"}, {"ok", "Select"},
-        {"back", "Back"}, {"home", "Home"}, {"menu", "Info"}, {"info", "Info"}, {"vol_up", "VolumeUp"},
+        {"back", "Back"}, {"home", "Home"}, {"menu", "Info"}, {"settings", "Info"}, {"info", "Info"}, {"vol_up", "VolumeUp"},
         {"vol_down", "VolumeDown"}, {"mute", "VolumeMute"}, {"power", "Power"}, {"play", "Play"},
         {"pause", "Play"}, {"rewind", "Rev"}, {"forward", "Fwd"}, {"replay", "InstantReplay"},
         {"ch_up", "ChannelUp"}, {"ch_down", "ChannelDown"}};
@@ -356,7 +356,7 @@ static bool lg_button(const lan::Device& d, const std::string& name, std::string
 static bool lg_key_press(const lan::Device& d, const std::string& name, std::string& err) {
     static const std::map<std::string, std::string> KEYS = {
         {"up", "UP"}, {"down", "DOWN"}, {"left", "LEFT"}, {"right", "RIGHT"}, {"ok", "ENTER"},
-        {"back", "BACK"}, {"home", "HOME"}, {"menu", "MENU"}, {"info", "INFO"}, {"exit", "EXIT"},
+        {"back", "BACK"}, {"home", "HOME"}, {"menu", "MENU"}, {"settings", "MENU"}, {"info", "INFO"}, {"exit", "EXIT"},
         {"vol_up", "VOLUMEUP"}, {"vol_down", "VOLUMEDOWN"}, {"mute", "MUTE"}, {"play", "PLAY"},
         {"pause", "PAUSE"}, {"stop", "STOP"}, {"rewind", "REWIND"}, {"forward", "FASTFORWARD"},
         {"ch_up", "CHANNELUP"}, {"ch_down", "CHANNELDOWN"}};
