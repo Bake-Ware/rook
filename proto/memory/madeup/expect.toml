@@ -1,0 +1,79 @@
+# What should hold after `play madeup/conversations.json` on an empty store. See rook_memory/check.py.
+
+[[check]]
+name = "Starscream is pinned"
+type = "belief"
+query = "Starscream is decommissioned and never coming back"
+closeness = 0.75
+pinned = true
+
+[[check]]
+name = "the claim that Starscream is back is linked against the pin, and the pin holds"
+type = "belief"
+query = "Starscream is decommissioned and never coming back"
+closeness = 0.75
+pinned = true
+min_against_since_pin = 1
+
+[[check]]
+name = "exactly one pin stands (the guest wifi pin was lifted)"
+type = "pins"
+count = 1
+
+[[check]]
+name = "the guest wifi note is an ordinary belief, unpinned once"
+type = "belief"
+query = "The guest wifi password is in the vault under guest-wifi"
+closeness = 0.75
+pinned = false
+unpinned_once = true
+
+[[check]]
+name = "the dashboard theme flipped and flipped back, and dark holds"
+type = "belief"
+query = "Bake likes dark mode on the dashboard"
+closeness = 0.75
+direction = 1
+min_flips = 2
+
+[[check]]
+name = "the steward's second-hand 'Bake wants PDFs' did not become a belief about Bake"
+type = "no_belief"
+about = "bake"
+query = "Bake wants all reports as PDFs"
+closeness = 0.80
+
+[[check]]
+name = "the steward's own wish (digest at 7) did not become Bake's"
+type = "no_belief"
+about = "bake"
+query = "The morning digest should come at 7:00"
+closeness = 0.80
+
+[[check]]
+name = "the log agent's choice did not become Bake's"
+type = "no_belief"
+about = "bake"
+query = "Compress logs older than a week with zstd"
+closeness = 0.80
+
+[[check]]
+name = "every belief about Bake stands on his own words only"
+type = "person_only"
+
+[[check]]
+name = "the garbled voice line made nothing confident"
+type = "voice_tentative"
+
+[[check]]
+name = "something never said is not remembered"
+type = "miss"
+query = "Who is my dentist?"
+
+[[check]]
+name = "the wake word: dropped, said on three separate days, so 'he uses it' no longer holds, maturely"
+type = "belief"
+query = "Bake uses the 'hey rook' wake word every day"
+closeness = 0.75
+direction = -1
+grade = "mature"

@@ -1,127 +1,192 @@
-"""Ranking memories for a question: recency + importance + relevance, as in generative agents.
+"""Recall: what memory hands a turn for a message, and why.
 
-- Recency: decay ** hours since the memory was last read.
-- Importance: the model's 1..10 when the memory was written (scratch entries count as a knob's value).
-- Relevance: BM25 of the question's words against the memory's words. Local, no model, no download.
+Three places are searched, by meaning (local embeddings, cosine closeness):
+- the scratch pad: what was said word for word and no dream has covered yet. Newer words win;
+- episodes: facts the dreams distilled, each with who it comes from;
+- beliefs: each with its standing, worked out from its links (see standing.py).
 
-Each of the three is scaled to 0..1 across the candidates (as the paper does), weighted, and summed.
+Anything less close than `miss_below` is not recalled at all. When nothing clears it, the turn is
+told to say "I don't remember", and nothing is written down about the miss.
 """
 
-import math
-import re
-from collections import Counter
 from dataclasses import dataclass, field
 
-from .store import now, parse_time
-
-WORD = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
-STOP = set("""a an and are as at be been but by can could did do does for from had has have how i if in
-into is it its me my no not of on or our so than that the their them then there these they this to
-up was we were what when where which who why will with would you your about after all also any just
-more most only other out over said some such too very""".split())
-
-
-def words(text):
-    """Lowercase words, with dotted and dashed names (agent.chat.send, ha/runtime parts) kept whole and
-    also split, so `agent.chat.send` matches a question about `chat`."""
-    out = []
-    for w in WORD.findall(text.lower()):
-        if w not in STOP:
-            out.append(w)
-        parts = re.split(r"[._-]", w)
-        if len(parts) > 1:
-            out.extend(p for p in parts if p and p not in STOP)
-    return out
+from . import embed, standing
+from .store import parse_time
 
 
 @dataclass
 class Item:
-    kind: str           # episode, belief, scratch
+    kind: str           # entry, episode, belief
     id: int
     text: str
-    last_read: str
-    importance: float
-    extra: dict = field(default_factory=dict)
+    who: str
+    when: str
+    closeness: float = 0.0
     recency: float = 0.0
-    relevance: float = 0.0
-    matched: list = field(default_factory=list)
-    scaled: dict = field(default_factory=dict)
+    certainty: float = 0.0
     score: float = 0.0
+    extra: dict = field(default_factory=dict)
 
     @property
     def tag(self):
-        return {"episode": "e", "belief": "b", "scratch": "s"}[self.kind] + str(self.id)
+        return {"entry": "s", "episode": "e", "belief": "b"}[self.kind] + str(self.id)
 
 
-def bm25(query, docs, k1, b):
-    """BM25 scores of `docs` (lists of words) for `query` (a list of words), and the query words each matched."""
-    n = len(docs)
-    if not n:
-        return [], []
-    avg = sum(len(d) for d in docs) / n or 1.0
-    df = Counter()
-    for d in docs:
-        df.update(set(d))
-    q = set(query)
-    scores, matched = [], []
-    for d in docs:
-        tf = Counter(d)
-        s, hit = 0.0, []
-        for w in q:
-            if tf[w]:
-                idf = math.log(1 + (n - df[w] + 0.5) / (df[w] + 0.5))
-                s += idf * tf[w] * (k1 + 1) / (tf[w] + k1 * (1 - b + b * len(d) / avg))
-                hit.append(w)
-        scores.append(s)
-        matched.append(sorted(hit))
-    return scores, matched
+@dataclass
+class Recall:
+    query: str
+    at: str
+    scratch: list
+    episodes: list
+    beliefs: list
+    best: float
+
+    @property
+    def missed(self):
+        return not (self.scratch or self.episodes or self.beliefs)
+
+    def items(self):
+        return self.scratch + self.episodes + self.beliefs
 
 
-def _scale(values):
-    lo, hi = min(values), max(values)
-    if hi == lo:
-        return [0.0 if hi == 0 else 1.0 for _ in values]
-    return [(v - lo) / (hi - lo) for v in values]
+def model_key(knobs):
+    s = knobs["search"]
+    return f"{s['model']}|{s['pooling']}"
 
 
-def rank(items, question, knobs, at=None):
-    """Score `items` for `question` and answer them best first. Every item keeps its raw and scaled parts."""
-    if not items:
-        return []
-    r = knobs["recall"]
-    at = parse_time(at or now())
-    for item in items:
-        hours = max(0.0, (at - parse_time(item.last_read)).total_seconds() / 3600)
-        item.recency = r["recency_decay_per_hour"] ** hours
-    rel, matched = bm25(words(question), [words(i.text) for i in items], r["bm25_k1"], r["bm25_b"])
-    for item, s, m in zip(items, rel, matched):
-        item.relevance, item.matched = s, m
-    parts = {"recency": _scale([i.recency for i in items]),
-             "importance": _scale([i.importance for i in items]),
-             "relevance": _scale([i.relevance for i in items])}
-    weights = {"recency": r["weight_recency"], "importance": r["weight_importance"], "relevance": r["weight_relevance"]}
-    for n, item in enumerate(items):
-        item.scaled = {k: parts[k][n] for k in parts}
-        item.score = sum(weights[k] * item.scaled[k] for k in parts)
-    return sorted(items, key=lambda i: (-i.score, i.kind, i.id))
+def _vectors(store, knobs, kind, rows, emb):
+    import numpy as np
+    key = model_key(knobs)
+    have = store.vectors(kind, key)
+    missing = [r for r in rows if r["id"] not in have]
+    if missing:
+        made = emb([r["text"] for r in missing])
+        pairs = [(r["id"], made[i].astype("float32").tobytes()) for i, r in enumerate(missing)]
+        store.put_vectors(kind, key, pairs)
+        have.update(dict(pairs))
+    return {r["id"]: np.frombuffer(have[r["id"]], dtype=np.float32) for r in rows}
 
 
-def memories(store, knobs):
-    """Every long-term memory a turn could be given: all episodes and the beliefs that stand."""
-    items = [Item("episode", e["id"], e["text"], e["last_read"], e["importance"],
-                  {"happened_at": e["happened_at"], "session": e["session"],
-                   "lines": (e["first_line"], e["last_line"])})
-             for e in store.q("SELECT * FROM episodes")]
-    sql = "SELECT * FROM beliefs" if knobs["recall"]["include_superseded"] else \
-        "SELECT * FROM beliefs WHERE superseded_by IS NULL"
-    items += [Item("belief", b["id"], b["text"], b["last_read"], b["importance"],
-                   {"confidence": b["confidence"], "superseded_by": b["superseded_by"]})
-              for b in store.q(sql)]
-    return items
+def embed_query(store, knobs, text, emb=None):
+    emb = emb or embed.embedder(store.folder, knobs)
+    return emb([knobs["search"]["query_prefix"] + text])[0]
 
 
-def scratch(store, knobs):
-    imp = knobs["recall"]["scratch_importance"]
-    return [Item("scratch", s["id"], f"{s['role']}: {s['text']}", s["at"], imp,
-                 {"session": s["session"], "line": s["line"], "at": s["at"]})
-            for s in store.q("SELECT * FROM scratch")]
+def _recency(knobs, last, at):
+    hours = max(0.0, (parse_time(at) - parse_time(last)).total_seconds() / 3600)
+    return knobs["search"]["recency_decay_per_hour"] ** hours
+
+
+def recall(store, knobs, query, at, exclude_entries=(), emb=None):
+    s = knobs["search"]
+    emb = emb or embed.embedder(store.folder, knobs)
+    q = embed_query(store, knobs, query, emb)
+    out = {"entry": [], "episode": [], "belief": []}
+    best = 0.0
+
+    entries = [r for r in store.scratch() if r["id"] not in set(exclude_entries) and r["at"] <= at]
+    episodes = [r for r in store.all("SELECT * FROM episodes ORDER BY id") if r["happened_at"] <= at]
+    beliefs = store.all("SELECT * FROM beliefs ORDER BY id")
+    vec = {"entry": _vectors(store, knobs, "entry", entries, emb),
+           "episode": _vectors(store, knobs, "episode", episodes, emb),
+           "belief": _vectors(store, knobs, "belief", beliefs, emb)}
+
+    for r in entries:
+        it = Item("entry", r["id"], r["text"], r["speaker"], r["at"], extra={"channel": r["channel"], "session": r["session"]})
+        it.closeness = float(vec["entry"][r["id"]] @ q)
+        it.recency = _recency(knobs, r["last_used"] or r["at"], at)
+        out["entry"].append(it)
+    for r in episodes:
+        it = Item("episode", r["id"], r["text"], r["said_by"], r["happened_at"],
+                  extra={"kind": r["kind"], "channel": r["channel"], "session": r["session"], "entries": r["entries"]})
+        it.closeness = float(vec["episode"][r["id"]] @ q)
+        it.recency = _recency(knobs, r["last_used"] or r["happened_at"], at)
+        out["episode"].append(it)
+    for r in beliefs:
+        st = standing.of(store, knobs, r["id"])
+        links = store.links(r["id"])
+        it = Item("belief", r["id"], r["text"], r["about"], r["made_at"],
+                  extra={"standing": st, "links": links, "about": r["about"]})
+        it.closeness = float(vec["belief"][r["id"]] @ q)
+        it.recency = _recency(knobs, r["last_used"] or (links[-1]["at"] if links else r["made_at"]), at)
+        it.certainty = abs(st["value"])
+        out["belief"].append(it)
+
+    for kind, items in out.items():
+        for it in items:
+            best = max(best, it.closeness)
+            it.score = (s["weight_closeness"] * it.closeness + s["weight_recency"] * it.recency
+                        + s["weight_certainty"] * it.certainty)
+        keep = sorted((i for i in items if i.closeness >= s["miss_below"]
+                       or (i.kind == "belief" and i.extra["standing"]["pinned"] and i.closeness >= s["pinned_miss_below"])),
+                      key=lambda i: -i.score)
+        out[kind] = keep[:s[{"entry": "turn_scratch", "episode": "turn_episodes", "belief": "turn_beliefs"}[kind]]]
+
+    # Newer words win: a scratch pad entry close to a belief and newer than its latest link.
+    for b in out["belief"]:
+        latest = b.extra["links"][-1]["at"] if b.extra["links"] else b.when
+        for e in out["entry"]:
+            if e.when > latest and float(vec["entry"][e.id] @ vec["belief"][b.id]) >= s["newer_words_closeness"]:
+                b.extra.setdefault("newer_words", []).append(e.tag)
+    return Recall(query, at, out["entry"], out["episode"], out["belief"], best)
+
+
+def _day(t):
+    return str(t)[:16].replace("T", " ")
+
+
+def belief_line(it, links_shown=3):
+    st = it.extra["standing"]
+    head = f"[{it.tag}] {standing.summary(st)}"
+    if st["pinned"]:
+        head += f", pinned {_day(st['pinned_at'])[:10]} from his words \"{(st.get('pinned_words') or '')[:120]}\""
+    if it.extra.get("newer_words"):
+        head += f"; newer words in {', '.join(it.extra['newer_words'])} go first"
+    lines = [head, f"     {it.text}"]
+    for l in it.extra["links"][-links_shown:]:
+        mark = "+" if l["stance"] > 0 else "-"
+        lines.append(f"     {mark} {_day(l['at'])[:10]} {l['said_by']} ({l['kind']}, {l['strength']:.2f}) [e{l['episode']}]"
+                     f" {l['episode_text'][:140]}" + (f"  ({l['note']})" if l["note"] else ""))
+    return "\n".join(lines)
+
+
+def for_turn(r):
+    """The memory block a live turn is given under the incoming message."""
+    if r.missed:
+        return "Memory: nothing close to this message. If it asks for something from before, say you don't remember."
+    out = ["Memory (closest first; ids let you pin):"]
+    if r.scratch:
+        out.append("Said recently, word for word (newest wins over beliefs):")
+        out += [f"  [{i.tag}] {_day(i.when)} {i.who}{' (voice)' if i.extra['channel'] == 'voice' else ''}: {i.text}"
+                for i in r.scratch]
+    if r.beliefs:
+        out.append("Beliefs (standing worked out from the evidence; + supports, - against):")
+        out += ["  " + belief_line(i) for i in r.beliefs]
+    if r.episodes:
+        out.append("Episodes:")
+        out += [f"  [{i.tag}] {_day(i.when)[:10]} from {i.who} ({i.extra['kind']}): {i.text}" for i in r.episodes]
+    return "\n".join(out)
+
+
+def explain(r):
+    """For `ask`: every recalled item with its scores and why it ranked."""
+    out = [f"Question: {r.query}", f"As of {_day(r.at)}; closest anything came: {r.best:.3f}"]
+    if r.missed:
+        out.append("Nothing cleared the closeness floor: the turn would say \"I don't remember\".")
+        return "\n".join(out)
+    for title, items in (("Scratch pad", r.scratch), ("Beliefs", r.beliefs), ("Episodes", r.episodes)):
+        if not items:
+            continue
+        out.append(f"\n{title}:")
+        for i in items:
+            why = f"score {i.score:.3f} = closeness {i.closeness:.3f} + recency {i.recency:.3f}"
+            if i.kind == "belief":
+                why += f" + certainty {i.certainty:.2f} (weighted)"
+                out.append(f"  {why}\n  " + belief_line(i, links_shown=6))
+            elif i.kind == "entry":
+                out.append(f"  {why}\n  [{i.tag}] {_day(i.when)} {i.who} ({i.extra['channel']}): {i.text}")
+            else:
+                out.append(f"  {why}\n  [{i.tag}] {_day(i.when)} from {i.who} ({i.extra['kind']}, {i.extra['channel']},"
+                           f" entries {i.extra['entries']}): {i.text}")
+    return "\n".join(out)

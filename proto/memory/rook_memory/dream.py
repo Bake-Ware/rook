@@ -1,100 +1,167 @@
-"""The dream pass (the paper's reflection, with Bake's additions).
+"""The dream: one more turn of the session, at compaction or when the session goes idle.
 
-1. Over the episodes not yet dreamed over, ask the model for the most salient questions.
-2. For each question, retrieve memories (episodes and the beliefs that stand) the way a turn would,
-   and ask the model for beliefs, each with a confidence, the memories that support it, and the held
-   belief it contradicts or refines, if any. That one is kept and marked superseded, never deleted.
-   Beliefs written for one question are there to be retrieved, and superseded, by the next.
-3. Mark those episodes dreamed over, and condense the scratch pad: drop the word-for-word entries of
-   all but the most recent sessions (the episodes still point at the source lines).
+It runs as a fork of the live Claude Code session (`claude -p --resume ID --fork-session`, saving
+nothing), so its own talk never lands in the real conversation and the whole context is in front of
+it, with the memory search tool. A conversation taken in from an export has no live session; it is
+replayed instead, one fresh call with the record in the prompt. Either way it is one call that does
+two things, in order, and asks itself no invented questions:
+
+1. Distil facts from the record since the last dream, each tied to the entries it comes from.
+2. Novelty: each fact against what is held. Already known: a link that supports. Conflicts: a link
+   against. Nothing matches: a new belief.
+
+The record, not the model, says who said what. A belief about what Bake wants is made, or moved,
+only by his own words: anything else that would do it is recorded and held back (see `held_back`).
+Pinned beliefs get their links like any other, and do not move.
 """
 
-import json
 from string import Template
 
-from . import model, recall, schemas
+from . import mcp, model, schemas, standing
+from .store import parse_time
 
 
-def due(store, knobs):
-    return store.undreamed_importance() >= knobs["dream"]["when_importance_sum_reaches"]
+def _when(t):
+    return str(t)[:16].replace("T", " ")
 
 
-def memory_line(item):
-    if item.kind == "episode":
-        return f"[{item.tag}] ({item.extra['happened_at'][:16].replace('T', ' ')}, importance {item.importance}) {item.text}"
-    return f"[{item.tag}] (belief, confidence {item.extra['confidence']:.2f}) {item.text}"
+def listing(entries):
+    return "\n".join(f"[s{e['id']}] {_when(e['at'])} {e['speaker']} ({e['channel']}): {e['text']}" for e in entries)
 
 
-def _ref(tag):
-    tag = str(tag).strip().lower().strip("[]")
-    kind = {"e": "episode", "b": "belief"}.get(tag[:1])
-    if kind and tag[1:].isdigit():
-        return kind, int(tag[1:])
-    return None
+def stretches(entries, chars):
+    run, size = [], 0
+    for e in entries:
+        n = len(e["text"]) + 40
+        if run and size + n > chars:
+            yield run
+            run, size = [], 0
+        run.append(e)
+        size += n
+    if run:
+        yield run
 
 
-def run(store, knobs, trigger="hand", log=print):
-    d = knobs["dream"]
-    new = store.undreamed()
-    dream = store.start_dream(trigger)
-    log(f"dream {dream} ({trigger}): {len(new)} new episodes, importance {sum(e['importance'] for e in new)}")
-    questions, made, superseded = [], 0, 0
-    if new:
-        listing = "\n".join(
-            f"[e{e['id']}] ({e['happened_at'][:16].replace('T', ' ')}, importance {e['importance']}) {e['text']}"
-            for e in new)
-        prompt = Template(knobs["prompts"]["questions"]).safe_substitute(count=d["questions"], episodes=listing)
+def due(store, knobs, session, at):
+    """Idle long enough since the session's last entry, with something not yet dreamed over."""
+    s = store.one("SELECT * FROM sessions WHERE id = ?", session)
+    if not s or not s["last_at"] or not store.undreamed(session):
+        return False
+    idle = (parse_time(at) - parse_time(s["last_at"])).total_seconds() / 60
+    return idle >= knobs["dream"]["idle_minutes"]
+
+
+def run(store, knobs, session, trigger="hand", log=print):
+    s = store.one("SELECT * FROM sessions WHERE id = ?", session)
+    entries = store.undreamed(session)
+    if not entries:
+        log(f"{s['name']}: nothing new to dream over")
+        return None
+    when = entries[-1]["at"]
+    mode = "fork" if knobs["dream"]["fork"] and s["cc_session"] else "replay"
+    dream = store.start_dream(session, mode, trigger, entries[0]["id"], entries[-1]["id"])
+    log(f"dream {dream} ({trigger}, {mode}) over {s['name']}: entries s{entries[0]['id']}-s{entries[-1]['id']}")
+    chosen = knobs["model"]["dream_model"] or knobs["model"]["turn_model"]
+    tools = mcp.config(store, knobs, "dream", session=session, at=when)
+    facts = []
+    runs = [entries] if mode == "fork" else list(stretches(entries, knobs["dream"]["replay_stretch_chars"]))
+    for n, part in enumerate(runs, 1):
+        body = Template(knobs["prompts"]["dream"]).safe_substitute(entries=listing(part), now=_when(when))
         try:
-            answer = model.ask(store, knobs, f"dream {dream} questions", knobs["model"]["dream_model"], prompt,
-                               schemas.QUESTIONS)
-            questions = [str(q).strip() for q in answer.get("questions") or [] if str(q).strip()][:d["questions"]]
+            if mode == "fork":
+                reply = model.call(store, knobs, f"dream {dream}", body, model=chosen, schema=schemas.dream(knobs),
+                                   resume=s["cc_session"], fork=True, persist=False, mcp=tools, tools=["search"])
+            else:
+                prompt = Template(knobs["prompts"]["replay"]).safe_substitute(name=s["name"], dream=body)
+                reply = model.call(store, knobs, f"dream {dream} {n}/{len(runs)}", prompt, model=chosen,
+                                   system=knobs["prompts"]["house"], schema=schemas.dream(knobs), persist=False,
+                                   mcp=tools, tools=["search"])
         except model.ModelError as e:
-            log(f"  no questions ({e}); the episodes stay new for the next dream")
-            store.finish_dream(dream, json.dumps([]), [], 0, 0, 0)
-            return {"dream": dream, "questions": [], "made": 0, "superseded": 0, "condensed": 0}
-        for n, question in enumerate(questions, 1):
-            log(f"  question {n}: {question}")
-            items = recall.rank(recall.memories(store, knobs), question, knobs)[:d["retrieve_per_question"]]
-            for kind in ("episode", "belief"):
-                store.touch(kind, [i.id for i in items if i.kind == kind])
-            prompt = Template(knobs["prompts"]["beliefs"]).safe_substitute(
-                question=question, count=d["beliefs_per_question"],
-                memories="\n".join(memory_line(i) for i in items))
-            try:
-                answer = model.ask(store, knobs, f"dream {dream} beliefs {n}", knobs["model"]["dream_model"], prompt,
-                                   schemas.BELIEFS)
-            except model.ModelError as e:
-                log(f"    no beliefs ({e})")
+            log(f"  no answer ({e}); these entries stay undreamed")
+            store.finish_dream(dream, 0, 0, 0, [{"why": str(e)}], None)
+            return None
+        facts += reply["structured_output"].get("facts") or []
+    result = apply(store, knobs, dream, session, entries, {"facts": facts}, when, log)
+    last = entries[-1]["id"]
+    if knobs["dream"]["condense_after_dream"]:
+        store.run("UPDATE entries SET condensed_at = ? WHERE session = ? AND id <= ? AND condensed_at IS NULL",
+                  when, session, last)
+    store.run("UPDATE sessions SET dreamed_to = ? WHERE id = ?", last, session)
+    return result
+
+
+def _ids(tags, prefix):
+    out = []
+    for t in tags or []:
+        t = str(t).strip().strip("[]").lower()
+        if t.startswith(prefix) and t[1:].isdigit():
+            out.append(int(t[1:]))
+    return out
+
+
+def apply(store, knobs, dream, session, entries, answer, when, log=print):
+    """Writes what the dream answered: episodes, links and new beliefs, with the record's rules."""
+    person = knobs["people"]["person"]
+    abouts = [person, "world", *knobs["people"]["others"]]
+    mine = {e["id"]: e for e in entries}
+    held_back, n_facts, n_links, n_new = [], 0, 0, 0
+    for f in answer.get("facts") or []:
+        text = str(f.get("fact") or "").strip()
+        srcs = [mine[i] for i in _ids(f.get("entries"), "s") if i in mine]
+        if not text:
+            continue
+        if not srcs:
+            held_back.append({"fact": text, "why": "names no entry of this dream's record"})
+            continue
+        # Whose words the fact rests on: the model names them, but only a speaker of the entries it cites
+        # counts. A fact resting on the agent's answer to Bake's question is the agent's.
+        speakers = [e["speaker"] for e in srcs]
+        said_by = f.get("said_by") if f.get("said_by") in speakers else speakers[0]
+        srcs = [e for e in srcs if e["speaker"] == said_by] or srcs
+        channel = "voice" if any(e["channel"] == "voice" for e in srcs) else "chat"
+        kind = f.get("kind") if f.get("kind") in ("correction", "statement", "mention", "unclear") else "mention"
+        at = min(e["at"] for e in srcs)
+        ep = store.add_episode(session, text, said_by, channel, kind, [e["id"] for e in srcs], at, dream, at=when)
+        n_facts += 1
+        weight = standing.strength(knobs, kind, said_by, channel)
+        occ = standing.occasion(knobs, at, session)
+        log(f"  e{ep} [{said_by}, {kind}, {channel}] {text}")
+        for h in f.get("held") or []:
+            ids = _ids([h.get("belief")], "b")
+            b = store.one("SELECT * FROM beliefs WHERE id = ?", ids[0]) if ids else \
+                store.one("SELECT * FROM beliefs WHERE lower(text) = lower(?)", str(h.get("belief") or "").strip())
+            if not b:
+                held_back.append({"fact": text, "why": f"links to {h.get('belief')!r}, which is no belief"})
                 continue
-            for b in (answer.get("beliefs") or [])[:d["beliefs_per_question"]]:
-                text = str(b.get("belief") or "").strip()
-                if not text:
-                    continue
-                because = []
-                for tag in b.get("because") or []:
-                    ref = _ref(tag)
-                    table = {"episode": "episodes", "belief": "beliefs"}.get(ref[0]) if ref else None
-                    if table and store.one(f"SELECT 1 FROM {table} WHERE id = ?", ref[1]):
-                        because.append(ref)
-                old = _ref(b.get("supersedes")) if b.get("supersedes") is not None else None
-                old_id = old[1] if old and old[0] == "belief" else None
-                how = b.get("how") if b.get("how") in ("contradicts", "refines") else None
-                try:
-                    confidence = float(b.get("confidence", 0.5))
-                except (TypeError, ValueError):
-                    confidence = 0.5
-                try:
-                    importance = max(1, min(10, int(round(float(b.get("importance", 5))))))
-                except (TypeError, ValueError):
-                    importance = 5
-                new_id, replaced = store.add_belief(text, confidence, importance, dream=dream, question=question,
-                                                    because=because, supersedes=old_id, how=how)
-                made += 1
-                note = f", supersedes b{replaced} ({how or 'refines'})" if replaced else ""
-                log(f"    b{new_id} ({confidence:.2f}, {len(because)} supports{note}) {text}")
-                if replaced:
-                    superseded += 1
-    condensed = store.condense_scratch(d["keep_scratch_of_last_sessions"])
-    store.finish_dream(dream, json.dumps(questions), [e["id"] for e in new], made, superseded, condensed)
-    log(f"  dream {dream} done: {made} beliefs, {superseded} superseded, {condensed} scratch entries condensed")
-    return {"dream": dream, "questions": questions, "made": made, "superseded": superseded, "condensed": condensed}
+            stance = -1 if h.get("stance") == "against" else 1
+            w, note = weight, None
+            if b["about"] == person and said_by != person:
+                w, note = 0.0, f"not {person}'s own words: recorded, not counted"
+            elif w <= 0:
+                note = f"{said_by}'s words: recorded, not counted"
+            elif store.pinned(b["id"]):
+                note = "pinned: recorded, does not move it"
+            store.add_link(b["id"], ep, stance, w, occ, dream, why=h.get("why"), note=note, at=when)
+            n_links += 1
+            log(f"      {'+' if stance > 0 else '-'} b{b['id']} ({w:.2f}{'; ' + note if note else ''}) {b['text']}")
+        nb = f.get("new_belief")
+        if isinstance(nb, dict) and str(nb.get("belief") or "").strip():
+            about = nb.get("about") if nb.get("about") in abouts else "world"
+            if about == person and said_by != person:
+                held_back.append({"fact": text, "belief": nb["belief"],
+                                  "why": f"about what {person} wants, but from {said_by}'s words"})
+                log(f"      held back (from {said_by}, not {person}): {nb['belief']}")
+                continue
+            if weight <= 0:
+                held_back.append({"fact": text, "belief": nb["belief"],
+                                  "why": f"{said_by}'s words count for nothing, so a belief on them would stand on nothing"})
+                log(f"      held back (stands on nothing): {nb['belief']}")
+                continue
+            bid = store.add_belief(nb["belief"].strip(), about, dream, at=when)
+            store.add_link(bid, ep, +1, weight, occ, dream, why="made from this", at=when)
+            n_new += 1
+            n_links += 1
+            log(f"      new b{bid} [{about}] {nb['belief'].strip()}")
+    store.finish_dream(dream, n_facts, n_links, n_new, held_back, answer)
+    log(f"  dream {dream} done: {n_facts} facts, {n_links} links, {n_new} new beliefs, {len(held_back)} held back")
+    return {"dream": dream, "facts": n_facts, "links": n_links, "new": n_new, "held_back": held_back}

@@ -1,1 +1,1 @@
-"""The house agent's memory, as a standalone prototype (brief MEM1). Not wired into anything."""
+"""The house agent's memory, as a standalone prototype (briefs MEM1 and MEM2). Not wired into anything."""

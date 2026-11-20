@@ -1,22 +1,33 @@
-"""The plain mechanics: the store, scoring, supersedence, reading sessions, condensing, and the dream
-pass's wiring (with a stand-in for the model). Nothing here tests what a model writes."""
+"""The plain mechanics (round two): standing from links, pins, who-said-it rules when a dream's answer
+is written, recall and the two clocks, the importer, the MCP tools and the command line. The model
+and the embedding model are stand-ins here; nothing tests what a model writes (that is
+madeup/expect.toml, run with `check`)."""
 
+import io
 import json
-import sys
 import pathlib
+import sys
 
 import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from rook_memory import dream, ingest, knobs as knobs_mod, model, recall, transcript  # noqa: E402
+from rook_memory import dream, importer, knobs as knobs_mod, mcp, model, pin, recall, standing, turn  # noqa: E402
 from rook_memory.__main__ import main  # noqa: E402
 from rook_memory.store import Store  # noqa: E402
+
+MADEUP = pathlib.Path(__file__).resolve().parent.parent / "madeup" / "conversations.json"
 
 
 @pytest.fixture
 def knobs():
-    return knobs_mod.load()
+    k = knobs_mod.load()
+    k["search"]["model"] = "fake"
+    k["search"]["query_prefix"] = ""
+    k["search"]["miss_below"] = 0.3
+    k["search"]["pin_match"] = 0.7
+    k["search"]["newer_words_closeness"] = 0.5
+    return k
 
 
 @pytest.fixture
@@ -26,198 +37,305 @@ def store(tmp_path):
     s.close()
 
 
-def session_file(path, records):
-    path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
-    return path
+def link(i, stance, strength, at, occ=None):
+    return {"id": i, "stance": stance, "strength": strength, "at": at, "occasion": occ or at[:10]}
 
 
-def user(text, at):
-    return {"type": "user", "timestamp": at, "message": {"role": "user", "content": text}}
+# --- standing: the three cases from the brief ---
+
+def test_one_statement_against_a_mature_belief_is_a_tentative_conflict(knobs):
+    held = [link(1, 1, 0.6, "2026-05-04"), link(2, 1, 0.6, "2026-05-19"), link(3, 1, 0.6, "2026-06-20")]
+    before = standing.standing(held, knobs)
+    assert before["direction"] == 1 and before["certainty"] >= knobs["weigh"]["mature_at"]
+    after = standing.standing(held + [link(4, -1, 0.6, "2026-07-01")], knobs)
+    assert after["direction"] == -1                       # the most recent is what we go on
+    assert after["certainty"] < knobs["weigh"]["tentative_below"]  # but one occasion is tentative
+    assert after["conflict"] and "ask before acting" in after["label"]
+    assert after["flips"] == 1
 
 
-def agent(text, at, tool=None):
-    content = [{"type": "text", "text": text}]
-    if tool:
-        content.append({"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": tool}})
-    return {"type": "assistant", "timestamp": at, "message": {"role": "assistant", "content": content}}
+def test_the_same_statement_on_three_separate_days_matures_and_ends_the_conflict(knobs):
+    held = [link(1, 1, 0.6, "2026-05-04"), link(2, 1, 0.6, "2026-05-19"), link(3, 1, 0.6, "2026-06-20")]
+    three = held + [link(4, -1, 0.6, "2026-07-01"), link(5, -1, 0.6, "2026-07-08"), link(6, -1, 0.6, "2026-07-20")]
+    s = standing.standing(three, knobs)
+    assert s["direction"] == -1 and s["occasions"] == 3
+    assert s["certainty"] >= knobs["weigh"]["mature_at"] and not s["conflict"]
+    # the same thing said three times in one sitting is one occasion
+    same_day = held + [link(4, -1, 0.6, "2026-07-01"), link(5, -1, 0.6, "2026-07-01"), link(6, -1, 0.6, "2026-07-01")]
+    assert standing.standing(same_day, knobs)["occasions"] == 1
+    assert standing.standing(same_day, knobs)["conflict"]
 
 
-def result(text, at):
-    return {"type": "user", "timestamp": at,
-            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": text}]}}
+def test_a_flip_and_a_flip_back(knobs):
+    links = [link(1, 1, 0.6, "2026-05-19"), link(2, -1, 0.6, "2026-07-08"), link(3, 1, 0.6, "2026-07-20")]
+    s = standing.standing(links, knobs)
+    assert s["direction"] == 1 and s["flips"] == 2
+    # the older support counts at before_flip_weight: more than the newest alone, less than both in full
+    alone = standing.standing([link(3, 1, 0.6, "2026-07-20")], knobs)["certainty"]
+    full = standing.standing([link(1, 1, 0.6, "2026-05-19"), link(3, 1, 0.6, "2026-07-20")], knobs)["certainty"]
+    assert alone < s["certainty"] < full
 
 
-def test_a_session_reads_into_entries_with_their_lines(tmp_path, knobs):
-    f = session_file(tmp_path / "s.jsonl", [
-        {"type": "mode"},
-        user("Port the house agent.", "2026-11-19T10:00:00Z"),
-        user("<system-reminder>noise</system-reminder>", "2026-11-19T10:00:01Z"),
-        agent("Reading the brief.", "2026-11-19T10:00:02Z", tool="cat brief.md"),
-        result("x" * 1000, "2026-11-19T10:00:03Z"),
-        {"type": "user", "isMeta": True, "timestamp": "2026-11-19T10:00:04Z", "message": {"content": "meta"}},
-    ])
-    entries = transcript.read(f, knobs)
-    assert [(e.line, e.role) for e in entries] == [(2, "user"), (4, "agent"), (4, "tool"), (5, "result")]
-    assert entries[0].text == "Port the house agent."
-    assert entries[2].text.startswith('Bash {"command": "cat brief.md"}')
-    assert entries[3].text.startswith("x" * knobs["ingest"]["tool_result_chars"] + " [... 600 more characters]")
-    assert [e.line for e in transcript.read(f, knobs, after_line=4)] == [5]
-    runs = list(transcript.chunks(entries, 60))
-    assert sum(len(r) for r in runs) == len(entries) and all(runs)
+def test_one_garbled_voice_line_is_barely_anything(knobs):
+    w = standing.strength(knobs, "unclear", "bake", "voice")
+    s = standing.standing([link(1, 1, w, "2026-06-10")], knobs)
+    assert s["certainty"] < 0.1 and "tentative" in s["label"]
 
 
-def test_a_superseded_belief_is_kept_marked_and_linked(store):
-    b1, old = store.add_belief("Bake wants a wake word.", 0.6, 5)
-    assert old is None
-    b2, old = store.add_belief("Bake wants no wake word anywhere.", 0.9, 8, supersedes=b1, how="contradicts")
-    assert old == b1
-    row = store.one("SELECT * FROM beliefs WHERE id = ?", b1)
-    assert row["text"] == "Bake wants a wake word." and row["superseded_by"] == b2 and row["how"] == "contradicts"
-    assert [b["id"] for b in store.current_beliefs()] == [b2]
-    # Superseding a belief that was already superseded supersedes the one standing in its place.
-    b3, old = store.add_belief("Bake wants the watch as the first trigger, no wake word.", 0.9, 8,
-                               supersedes=b1, how="refines")
-    assert old == b2 and store.head(b1) == b3
-    assert [b["id"] for b in store.current_beliefs()] == [b3]
-    assert store.one("SELECT COUNT(*) AS n FROM beliefs")["n"] == 3
-    # Naming a belief that does not exist supersedes nothing.
-    b4, old = store.add_belief("Unrelated.", 0.5, 3, supersedes=999)
-    assert old is None
+def test_strength_is_kind_by_who_by_channel(knobs):
+    assert standing.strength(knobs, "correction", "bake", "chat") == 1.0
+    assert standing.strength(knobs, "correction", "steward", "chat") == pytest.approx(0.6)
+    assert standing.strength(knobs, "statement", "bake", "voice") == pytest.approx(0.36)
 
 
-def test_support_points_at_episodes_and_beliefs(store):
-    sid = store.session("/tmp/x.jsonl")["id"]
-    e = store.add_episode(sid, 10, 20, "2026-11-19T10:00:00Z", 7, "Bake chose sqlite.")
-    b, _ = store.add_belief("Bake likes small stores.", 0.7, 6)
-    c, _ = store.add_belief("Keep it small.", 0.8, 6, because=[("episode", e), ("belief", b), ("episode", e)])
-    assert [(s["kind"], s["ref"]) for s in store.support_of(c)] == [("episode", e), ("belief", b)]
+def test_the_house_agents_own_words_count_for_nothing(knobs, store):
+    assert standing.strength(knobs, "statement", "house", "chat") == 0
+    sid = store.session("s", "live", "s")["id"]
+    h = store.add_entry(sid, "2026-06-16T14:00:20Z", "house", "chat", "Starscream is decommissioned, so no retry.")
+    held = store.add_belief("Starscream is decommissioned", "world")
+    answer = {"facts": [{"fact": "The house agent said Starscream is decommissioned.", "entries": [f"s{h}"],
+                         "said_by": "house", "kind": "statement", "held": [{"belief": f"b{held}", "stance": "supports"}],
+                         "new_belief": {"belief": "No retries on Starscream", "about": "world"}}]}
+    d = store.start_dream(sid, "fork", "hand", h, h)
+    out = dream.apply(store, knobs, d, sid, store.undreamed(sid), answer, "2026-06-16T14:01:00Z", log=lambda *a: None)
+    assert out["new"] == 0 and "stand on nothing" in out["held_back"][0]["why"]
+    assert store.links(held)[0]["strength"] == 0
 
 
-def test_scoring_adds_scaled_recency_importance_and_relevance(knobs):
-    k = json.loads(json.dumps(knobs))
-    at = "2026-11-20T00:00:00Z"
-    items = [
-        recall.Item("episode", 1, "the wizard installs the beta", "2026-11-19T23:00:00Z", 2),
-        recall.Item("episode", 2, "the dock shows the house agent", "2026-11-10T00:00:00Z", 9),
-        recall.Item("belief", 3, "Bake wants the wizard to install workers", "2026-11-15T00:00:00Z", 5,
-                    {"confidence": 0.8}),
-    ]
-    ranked = recall.rank(items, "How does the wizard install things?", k, at)
-    by = {i.id: i for i in ranked}
-    assert by[1].scaled["recency"] == 1.0 and by[2].scaled["recency"] == 0.0
-    assert by[2].scaled["importance"] == 1.0 and by[1].scaled["importance"] == 0.0
-    assert by[2].scaled["relevance"] == 0.0 and by[2].matched == []
-    assert "wizard" in by[1].matched and "install" not in by[1].matched  # words match exactly, no stemming
-    assert by[1].recency == pytest.approx(0.995 ** 1)
-    for i in ranked:
-        assert i.score == pytest.approx(sum(i.scaled.values()))
-    assert ranked[0].id == 3 and by[3].matched == ["install", "wizard"]  # the only one with both words
-    # Turning a weight changes the order: importance alone puts the dock first.
-    k["recall"].update(weight_recency=0, weight_relevance=0)
-    assert recall.rank(items, "wizard", k, at)[0].id == 2
+def test_zero_strength_links_are_history_only(knobs):
+    s = standing.standing([link(1, 1, 0.6, "2026-05-04"), link(2, -1, 0.0, "2026-06-01")], knobs)
+    assert s["direction"] == 1 and s["flips"] == 0 and s["links"] == 2 and s["counted"] == 1
 
 
-def test_words_keep_dotted_names_whole_and_split():
-    assert recall.words("Call agent.chat.send on the hub") == ["call", "agent.chat.send", "agent", "chat", "send", "hub"]
+# --- pins ---
+
+def entry(store, speaker="bake", text="x", at="2026-06-16T14:03:00Z", session=None):
+    session = session or store.session("t", "live", "t")["id"]
+    return store.add_entry(session, at, speaker, "chat", text)
 
 
-def test_condensing_keeps_the_most_recent_sessions_scratch(store, knobs):
-    E = transcript.Entry
-    for n, day in ((1, "10"), (2, "12"), (3, "11")):
-        sid = store.session(f"/tmp/s{n}.jsonl")["id"]
-        store.add_scratch(sid, [E(1, f"2026-11-{day}T00:00:00Z", "user", f"hello {n}"),
-                                E(2, f"2026-11-{day}T01:00:00Z", "agent", f"hi {n}")])
-    assert store.condense_scratch(1) == 4
-    left = store.q("SELECT DISTINCT session FROM scratch")
-    assert [r["session"] for r in left] == [2]
-    assert store.one("SELECT scratch_condensed_at FROM sessions WHERE id = 1")["scratch_condensed_at"]
-    assert store.one("SELECT scratch_condensed_at FROM sessions WHERE id = 2")["scratch_condensed_at"] is None
+def test_pin_makes_a_new_pinned_belief_from_his_words_and_unpin_drops_it_back(store, knobs):
+    e = entry(store, text="Pin this: Starscream is decommissioned for good.")
+    bid, said = pin.pin(store, knobs, "Starscream is decommissioned for good", e)
+    assert bid and "new belief" in said and store.pinned(bid)
+    links = store.links(bid)
+    assert len(links) == 1 and links[0]["said_by"] == "bake" and links[0]["kind"] == "correction"
+    assert standing.of(store, knobs, bid)["pinned"]
+    e2 = entry(store, text="no, don't pin that", at="2026-06-16T14:04:00Z")
+    got, said = pin.unpin(store, knobs, e2)
+    assert got == bid and not store.pinned(bid) and "ordinary" in said
+    assert [p["action"] for p in store.pins(bid)] == ["pin", "unpin"]
+    assert store.one("SELECT COUNT(*) AS n FROM beliefs")["n"] == 1   # kept, never removed
 
 
-class FakeModel:
-    """Stands in for `claude -p`: answers by what the call is for, and records the prompts."""
-
-    def __init__(self, answers):
-        self.answers, self.prompts = answers, []
-
-    def __call__(self, store, knobs, purpose, model_name, prompt, schema=None):
-        self.prompts.append((purpose, prompt))
-        store.add_call(purpose, model_name, 0.1, 0.001, 100, 10, True)
-        answer = self.answers(purpose, prompt)
-        if isinstance(answer, Exception):
-            raise answer
-        return answer
+def test_pin_matches_a_close_held_belief(store, knobs):
+    held = store.add_belief("starscream is decommissioned", "world")
+    e = entry(store, text="pin it: starscream is decommissioned")
+    bid, said = pin.pin(store, knobs, "starscream is decommissioned", e)
+    assert bid == held and "closest held belief" in said
 
 
-def test_take_dream_and_supersede_end_to_end(tmp_path, store, knobs, monkeypatch, capsys):
-    f = session_file(tmp_path / "s.jsonl", [
-        user("Bake: no wake word anywhere.", "2026-11-19T10:00:00Z"),
-        agent("Understood, the watch triggers.", "2026-11-19T10:01:00Z"),
-    ])
-    old, _ = store.add_belief("Bake wants a wake word.", 0.5, 5, at="2026-11-01T00:00:00Z")
-
-    def answers(purpose, prompt):
-        if purpose.startswith("episodes"):
-            assert "L1 2026-11-19 10:00 user: Bake: no wake word anywhere." in prompt
-            return {"episodes": [{"what": "Bake said no wake word anywhere.", "importance": 9, "first_line": 1, "last_line": 1},
-                                 {"what": "", "importance": 3},
-                                 {"what": "The agent agreed.", "importance": "x", "first_line": 99}]}
-        if purpose.endswith("questions"):
-            return {"questions": ["What does Bake want for voice triggers?"]}
-        assert f"[b{old}] (belief, confidence 0.50) Bake wants a wake word." in prompt
-        return {"beliefs": [{"belief": "Bake wants no wake word; the watch triggers.", "because": ["e1", "e2", "e77", "b9"],
-                             "confidence": 0.9, "importance": 9, "supersedes": f"b{old}", "how": "contradicts"}]}
-
-    fake = FakeModel(answers)
-    monkeypatch.setattr(model, "ask", fake)
-    made = ingest.take(store, knobs, f, log=lambda *_: None)
-    assert len(made) == 2
-    eps = store.q("SELECT * FROM episodes ORDER BY id")
-    assert (eps[0]["first_line"], eps[0]["last_line"], eps[0]["importance"]) == (1, 1, 9)
-    assert (eps[1]["first_line"], eps[1]["last_line"], eps[1]["importance"]) == (2, 2, 5)  # clamped, defaulted
-    assert eps[0]["happened_at"] == eps[0]["last_read"] == "2026-11-19T10:00:00Z"
-    assert store.undreamed_importance() == 14 and not dream.due(store, knobs)
-    assert ingest.take(store, knobs, f, log=lambda *_: None) == []  # nothing new after the lines taken
-
-    got = dream.run(store, knobs, log=lambda *_: None)
-    assert got["made"] == 1 and got["superseded"] == 1
-    new = store.current_beliefs()[0]
-    assert new["text"] == "Bake wants no wake word; the watch triggers." and new["confidence"] == 0.9
-    assert [(s["kind"], s["ref"]) for s in store.support_of(new["id"])] == [("episode", 1), ("episode", 2)]
-    assert store.one("SELECT superseded_by, how FROM beliefs WHERE id = ?", old)[0:2] == (new["id"], "contradicts")
-    assert store.undreamed() == []
-    # The only session's scratch pad is the most recent one, so it stays.
-    assert store.one("SELECT COUNT(*) AS n FROM scratch")["n"] == 2
+def test_only_his_own_words_pin(store, knobs):
+    e = entry(store, speaker="steward", text="pin that Bake wants PDFs")
+    bid, said = pin.pin(store, knobs, "Bake wants PDFs", e)
+    assert bid is None and "Only his own words" in said
+    assert store.one("SELECT COUNT(*) AS n FROM beliefs")["n"] == 0
 
 
-def test_a_failed_question_call_leaves_the_episodes_for_the_next_dream(store, knobs, monkeypatch):
-    sid = store.session("/tmp/x.jsonl")["id"]
-    store.add_episode(sid, 1, 1, "2026-11-19T10:00:00Z", 7, "Something happened.")
-    monkeypatch.setattr(model, "ask", FakeModel(lambda p, _: model.ModelError("no JSON")))
-    assert dream.run(store, knobs, log=lambda *_: None)["made"] == 0
-    assert len(store.undreamed()) == 1
+def test_a_pinned_belief_does_not_move_but_its_evidence_shows(store, knobs):
+    e = entry(store, text="Starscream is gone, pin it")
+    bid, _ = pin.pin(store, knobs, "Starscream is decommissioned", e)
+    ep = store.add_episode(1, "An agent said Starscream is back", "agent", "chat", "statement", [e], "2026-08-05T10:00:00Z")
+    store.add_link(bid, ep, -1, 0.24, "2026-08-05")
+    s = standing.of(store, knobs, bid)
+    assert s["value"] == 1.0 and s["against_since_pin"] == 1 and "1 link against" in standing.summary(s)
 
 
-def test_extract_finds_the_json_in_a_reply():
-    assert model.extract('Here:\n```json\n{"a": [1, {"b": 2}]}\n```') == {"a": [1, {"b": 2}]}
-    with pytest.raises(model.ModelError):
-        model.extract("no json here")
+# --- writing a dream's answer: who said it ---
+
+def test_dream_answer_keeps_who_said_it(store, knobs):
+    sid = store.session("s", "live", "s")["id"]
+    st = store.add_entry(sid, "2026-06-02T15:02:00Z", "steward", "chat", "Bake said he wants all reports as PDFs.")
+    bk = store.add_entry(sid, "2026-06-02T15:03:00Z", "bake", "chat", "I like dark mode on everything.")
+    likes = store.add_belief("Bake likes short answers", "bake")
+    entries = store.undreamed(sid)
+    answer = {"facts": [
+        {"fact": "The steward said Bake wants PDFs.", "entries": [f"s{st}"], "said_by": "steward", "kind": "statement",
+         "held": [{"belief": f"b{likes}", "stance": "supports"}],
+         "new_belief": {"belief": "Bake wants all reports as PDFs", "about": "bake"}},
+        {"fact": "Bake said he likes dark mode.", "entries": [f"s{bk}"], "said_by": "bake", "kind": "statement", "held": [],
+         "new_belief": {"belief": "Bake likes dark mode", "about": "bake"}},
+        {"fact": "Something with no source.", "entries": ["s999"], "kind": "statement", "held": [], "new_belief": None},
+        {"fact": "Claimed as Bake's but the record says steward.", "entries": [f"s{st}"], "said_by": "bake",
+         "kind": "correction", "held": [], "new_belief": None},
+        {"fact": "Bake's line, but resting on the steward's.", "entries": [f"s{bk}", f"s{st}"], "said_by": "steward",
+         "kind": "statement", "held": [{"belief": "bake likes short answers", "stance": "supports"}], "new_belief": None},
+    ]}
+    d = store.start_dream(sid, "replay", "hand", entries[0]["id"], entries[-1]["id"])
+    out = dream.apply(store, knobs, d, sid, entries, answer, "2026-06-02T15:03:00Z", log=lambda *a: None)
+    assert out["facts"] == 4 and out["new"] == 1
+    whys = [h["why"] for h in out["held_back"]]
+    assert any("from steward's words" in w for w in whys) and any("names no entry" in w for w in whys)
+    assert [b["text"] for b in store.all("SELECT * FROM beliefs WHERE about = 'bake' ORDER BY id")] == \
+        ["Bake likes short answers", "Bake likes dark mode"]
+    steward_links = store.links(likes)
+    assert len(steward_links) == 2   # the second named the belief by its text
+    assert all(l["strength"] == 0 and "not bake's own words" in l["note"] for l in steward_links)
+    eps = store.all("SELECT * FROM episodes ORDER BY id")
+    assert [e["said_by"] for e in eps] == ["steward", "bake", "steward", "steward"]   # the record decides
+    assert json.loads(eps[-1]["entries"]) == [st]   # tied to the steward's line only
 
 
-def test_the_command_line_asks_shows_and_resets(tmp_path, capsys):
-    folder = tmp_path / "mem"
-    s = Store(folder)
-    sid = s.session("/tmp/x.jsonl")["id"]
-    s.add_scratch(sid, [transcript.Entry(3, "2026-11-19T10:00:00Z", "user", "the wizard takes 0.3.0")])
-    e = s.add_episode(sid, 3, 3, "2026-11-19T10:00:00Z", 6, "The wizard takes agents version 0.3.0.")
-    s.add_belief("Versions must rise for the beta to update.", 0.8, 7, because=[("episode", e)])
-    s.close()
-    main(["--store", str(folder), "ask", "which version does the wizard take?", "--at", "2026-11-19T12:00:00Z"])
-    out = capsys.readouterr().out
-    assert "[e1] episode" in out and "[b1] belief, confidence 0.80" in out and "[s1]" in out
-    assert "on: version, wizard" in out
-    main(["--store", str(folder), "show"])
-    out = capsys.readouterr().out
-    assert "== beliefs (1 standing, 0 superseded)" in out and "[e1] The wizard takes" in out
-    main(["--store", str(folder), "reset"])
-    assert not (folder / "memory.sqlite3").exists()
+# --- recall and the two clocks ---
+
+def seeded(store):
+    sid = store.session("s", "live", "s")["id"]
+    e = store.add_entry(sid, "2026-05-04T13:07:00Z", "bake", "chat", "starscream is gone backups go to cachyrig")
+    ep = store.add_episode(sid, "bake said starscream was decommissioned", "bake", "chat", "correction", [e],
+                           "2026-05-04T13:07:00Z")
+    b = store.add_belief("starscream is decommissioned", "world", at="2026-05-04T13:07:00Z")
+    store.add_link(b, ep, 1, 1.0, "2026-05-04")
+    return sid, e, ep, b
+
+
+def test_recall_finds_by_closeness_and_misses_say_nothing(store, knobs):
+    sid, e, ep, b = seeded(store)
+    r = recall.recall(store, knobs, "is starscream decommissioned", "2026-08-01T00:00:00Z")
+    assert [i.id for i in r.beliefs] == [b] and [i.id for i in r.episodes] == [ep]
+    miss = recall.recall(store, knobs, "sister birthday party", "2026-08-01T00:00:00Z")
+    assert miss.missed and "don't remember" in recall.for_turn(miss)
+    assert store.one("SELECT COUNT(*) AS n FROM beliefs")["n"] == 1   # nothing written about the miss
+
+
+def test_a_pinned_belief_clears_a_lower_floor(store, knobs):
+    sid, e, ep, b = seeded(store)
+    knobs["search"]["miss_below"] = 0.9
+    knobs["search"]["pinned_miss_below"] = 0.3
+    q = "is starscream back in service"
+    assert not recall.recall(store, knobs, q, "2026-08-01T00:00:00Z").beliefs
+    store.add_pin(b, "pin", "2026-06-16T14:03:00Z", e, "pin it")
+    assert [i.id for i in recall.recall(store, knobs, q, "2026-08-01T00:00:00Z").beliefs] == [b]
+
+
+def test_newer_words_in_the_scratch_pad_go_first(store, knobs):
+    sid, e, ep, b = seeded(store)
+    store.run("UPDATE entries SET condensed_at = 'x'")
+    store.add_entry(sid, "2026-08-01T00:00:00Z", "bake", "chat", "starscream is back and decommissioned no more")
+    r = recall.recall(store, knobs, "starscream decommissioned", "2026-08-02T00:00:00Z")
+    assert r.beliefs[0].extra.get("newer_words")
+
+
+def test_a_dream_reading_memory_is_not_use_a_turn_with_him_is(store, knobs, monkeypatch, tmp_path):
+    sid, e, ep, b = seeded(store)
+    out = io.StringIO()
+    lines = [json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+             json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                         "params": {"name": "search", "arguments": {"query": "starscream decommissioned"}}})]
+    mcp.serve(store, knobs, "dream", session=sid, at="2026-08-01T00:00:00Z", stdin=io.StringIO("\n".join(lines)), stdout=out)
+    replies = [json.loads(x) for x in out.getvalue().splitlines()]
+    assert [t["name"] for t in replies[0]["result"]["tools"]] == ["search"]
+    assert "starscream" in replies[1]["result"]["content"][0]["text"]
+    assert store.one("SELECT last_used FROM beliefs WHERE id = ?", b)["last_used"] is None
+
+    calls = []
+
+    def fake_call(store_, knobs_, purpose, prompt, **kw):
+        calls.append((purpose, prompt, kw))
+        return {"result": "Backups go to cachyrig.", "session_id": "cc-1"}
+    monkeypatch.setattr(model, "call", fake_call)
+    store.run("UPDATE sessions SET dreamed_to = ? WHERE id = ?", e, sid)   # no idle dream before this turn
+    s = store.one("SELECT * FROM sessions WHERE id = ?", sid)
+    answer, r = turn.say(store, knobs, s, "where do backups go now that starscream is gone", "bake", "2026-08-02T09:00:00Z")
+    assert answer == "Backups go to cachyrig." and "[b%d]" % b in calls[0][1] and calls[0][2]["new_session"]
+    assert store.one("SELECT last_used FROM beliefs WHERE id = ?", b)["last_used"] == "2026-08-02T09:00:00+00:00"
+    assert store.one("SELECT cc_session FROM sessions WHERE id = ?", sid)["cc_session"] == "cc-1"
+    # a turn from someone else does not move the clock
+    store.run("UPDATE beliefs SET last_used = NULL")
+    s = store.one("SELECT * FROM sessions WHERE id = ?", sid)
+    turn.say(store, knobs, s, "starscream decommissioned?", "agent", "2026-08-02T09:01:00Z")
+    assert calls[-1][2]["resume"] == "cc-1"
+    assert store.one("SELECT last_used FROM beliefs WHERE id = ?", b)["last_used"] is None
+
+
+# --- the dream's wiring (stand-in model) ---
+
+def test_dream_forks_a_live_session_condenses_and_an_idle_gap_triggers_it(store, knobs, monkeypatch):
+    sid = store.session("s", "live", "s")["id"]
+    store.run("UPDATE sessions SET cc_session = 'cc-9' WHERE id = ?", sid)
+    e = store.add_entry(sid, "2026-07-01T12:00:00Z", "bake", "chat", "We're dropping wake word.")
+    seen = []
+
+    def fake_call(store_, knobs_, purpose, prompt, **kw):
+        seen.append(kw)
+        return {"structured_output": {"facts": [{"fact": "Bake dropped the wake word.", "entries": [f"s{e}"],
+                                                 "kind": "correction", "held": [],
+                                                 "new_belief": {"belief": "Push to talk only", "about": "bake"}}]}}
+    monkeypatch.setattr(model, "call", fake_call)
+    assert not dream.due(store, knobs, sid, "2026-07-01T12:05:00Z")
+    assert dream.due(store, knobs, sid, "2026-07-01T12:30:00Z")
+    out = dream.run(store, knobs, sid, log=lambda *a: None)
+    assert seen[0]["resume"] == "cc-9" and seen[0]["fork"] and not seen[0]["persist"] and seen[0]["tools"] == ["search"]
+    assert out["new"] == 1 and not store.scratch()
+    assert store.one("SELECT dreamed_to FROM sessions WHERE id = ?", sid)["dreamed_to"] == e
+    assert dream.run(store, knobs, sid, log=lambda *a: None) is None   # nothing new
+
+
+def test_a_failed_dream_leaves_the_record_undreamed(store, knobs, monkeypatch):
+    sid = store.session("s", "x.json", "c1")["id"]
+    store.add_entry(sid, "2026-07-01T12:00:00Z", "bake", "chat", "hello")
+
+    def broken(*a, **kw):
+        raise model.ModelError("no")
+    monkeypatch.setattr(model, "call", broken)
+    assert dream.run(store, knobs, sid, log=lambda *a: None) is None
+    assert len(store.undreamed(sid)) == 1 and len(store.scratch()) == 1
+
+
+# --- taking conversations in ---
+
+def test_export_keeps_his_words_and_final_answers(tmp_path, knobs):
+    export = [{"uuid": "c1", "name": "a chat", "created_at": "2025-01-02T00:00:00Z", "chat_messages": [
+        {"sender": "human", "created_at": "2025-01-02T00:00:00Z", "text": "find it",
+         "content": [{"type": "text", "text": "find it"}], "attachments": [{"file_name": "notes.txt", "extracted_content": "secret"}]},
+        {"sender": "assistant", "created_at": "2025-01-02T00:00:10Z", "text": "",
+         "content": [{"type": "text", "text": "Let me search."}, {"type": "tool_use", "name": "web_search", "input": {}},
+                     {"type": "tool_result", "content": [{"type": "text", "text": "junk"}]},
+                     {"type": "text", "text": "Found it."}]}]}]
+    import zipfile
+    z = tmp_path / "export.zip"
+    with zipfile.ZipFile(z, "w") as f:
+        f.writestr("conversations.json", json.dumps(export))
+    c = importer.conversations(z, knobs)[0]
+    assert [(m["speaker"], m["text"]) for m in c["messages"]] == [("bake", "find it\n[attached: notes.txt]"), ("agent", "Found it.")]
+
+
+def test_the_made_up_set_is_marked_and_stamped(knobs, store):
+    convs = importer.conversations(MADEUP, knobs)
+    assert all(c["made_up"] and c["name"].startswith("MADE UP") for c in convs)
+    speakers = {m["speaker"] for c in convs for m in c["messages"]}
+    assert speakers == {"bake", "steward", "agent", "house"}
+    assert any(m["channel"] == "voice" for c in convs for m in c["messages"])
+    importer.take(store, knobs, MADEUP, convs[:2], log=lambda *a: None)
+    importer.take(store, knobs, MADEUP, convs[:2], log=lambda *a: None)   # again: nothing new
+    assert store.one("SELECT COUNT(*) AS n FROM entries")["n"] == sum(len(c["messages"]) for c in convs[:2])
+
+
+# --- the command line ---
+
+def test_command_line(tmp_path, capsys, monkeypatch):
+    k = tmp_path / "knobs.toml"
+    text = knobs_mod.DEFAULT.read_text().replace('model = "BAAI/bge-small-en-v1.5"', 'model = "fake"')
+    k.write_text(text.replace("miss_below = 0.62", "miss_below = 0.3").replace("pin_match = 0.86", "pin_match = 0.7"))
+    base = ["--store", str(tmp_path / "mem"), "--knobs", str(k)]
+    assert main(base + ["pin", "Starscream is decommissioned for good"]) == 0
+    assert "Pinned b1" in capsys.readouterr().out
+    assert main(base + ["ask", "starscream decommissioned"]) == 0
+    assert "PINNED" in capsys.readouterr().out
+    assert main(base + ["history", "b1"]) == 0
+    assert "PIN from his message" in capsys.readouterr().out
+    assert main(base + ["unpin"]) == 0
+    assert "Unpinned b1" in capsys.readouterr().out
+    assert main(base + ["show"]) == 0
+    assert "beliefs (1)" in capsys.readouterr().out
+    assert main(base + ["reset"]) == 0
+    assert not list((tmp_path / "mem").glob("memory.sqlite3*"))

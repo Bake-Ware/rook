@@ -7,5 +7,8 @@ DEFAULT = pathlib.Path(__file__).resolve().parent.parent / "knobs.toml"
 
 
 def load(path=None):
-    with open(path or DEFAULT, "rb") as f:
-        return tomllib.load(f)
+    path = pathlib.Path(path or DEFAULT).resolve()
+    with open(path, "rb") as f:
+        knobs = tomllib.load(f)
+    knobs["_path"] = str(path)
+    return knobs

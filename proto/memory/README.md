@@ -1,63 +1,76 @@
-# Memory prototype for the house agent (MEM1)
+# House agent memory: prototype, round two (not for merge)
 
-A prototype to learn from and iterate on with Bake, not something to merge. It is not wired into
-Rookie, the hub, any plugin or the beta. It reads closed Claude Code sessions and builds:
+A standalone prototype of the house agent's memory, rebuilt around Bake's answers of 20 November
+(brief MEM2). Not wired into Rookie, the hub, any plugin or the beta. Round one's code is in git at
+b5c364a3 and its findings in [REPORT.md](REPORT.md); round two's findings are in [REPORT2.md](REPORT2.md).
 
-- **a scratch pad**: everything said and done in a session, word for word (tool output cut short),
-  kept until a dream pass condenses it;
-- **episodes**: plain-language records of what happened, each with when, when last read, an
-  importance from 1 to 10 given by the model, and the session file and lines it came from;
-- **beliefs**: lasting statements made by a dream pass, each with a confidence, the episodes and
-  beliefs that support it, and, when it contradicts or refines an older belief, a link to it. The
-  old belief is kept and marked superseded, never deleted.
+## Shape
 
-What we found on real sessions is in `REPORT.md`.
+- **The record and the scratch pad.** Every message is recorded word for word, stamped with when
+  and who said it (bake, steward, agent, other) and the channel (chat, voice). The part no dream has
+  covered yet is the scratch pad.
+- **Episodes.** Facts a dream distilled, each tied to the entries it came from and to who said it
+  (taken from the record, not from the model).
+- **Beliefs.** Lasting statements. A belief has no score of its own: each **link** to an episode says
+  whether that episode supports it or counts against it, and how strongly (kind x who x channel). The
+  standing is worked out from the links: the most recent link sets the direction, and maturity (the
+  separate occasions behind that direction) sets the certainty. A fresh one-off against a mature
+  belief shows as "ask before acting". Nothing is retired or replaced.
+- **Pins.** Set only from Bake's own words in a live turn (the `pin` tool), lifted the same way
+  (`unpin`). A pinned belief stands whatever dreams link to it; the links still show.
+- **Two clocks.** When something happened never changes. When it was last used moves only when a
+  real turn with Bake pulls it up. A dream reading memory is not use.
+- **Live turns.** Each live session is a real Claude Code session (`claude -p`, then `--resume`).
+  Every turn, recall runs on the incoming message and the closest memories, with ids, go in front of
+  the agent; it has `search`, `pin` and `unpin` tools (a small MCP server in this package).
+- **The dream.** One more turn of the session: a fork (`claude -p --resume ID --fork-session`, saving
+  nothing) with the memory search tool. It distils facts, then compares each with what is held
+  (supports, against, or new). It runs when a session has been idle (a knob), at compaction (the
+  `hook` command, for Claude Code's PreCompact hook), or by hand. Conversations taken in from an
+  export have no live session; they are replayed in one fresh call instead.
+- **Search.** By meaning: BAAI/bge-small-en-v1.5, run on this machine in numpy (fetched once into
+  `<store>/models`). A search that clears nothing is "I don't remember", and nothing is written down.
 
-## Running it
+## Run it
 
-Python 3.11 or newer, no packages beyond the standard library, and Claude Code (`claude`) signed in
-on the machine. From this folder:
+Python 3.11 or newer with numpy (cachyrig's `python3` has it), and Claude Code signed in. From this
+folder:
 
 ```sh
-python -m rook_memory take ~/.claude/projects/<folder>/<session>.jsonl ...   # scratch pad + episodes; dreams by itself at the threshold
-python -m rook_memory dream                                                  # a dream pass now
-python -m rook_memory ask "What does Bake want from the voice app?"          # what a turn would be given, with scores
-python -m rook_memory show [sessions|episodes|beliefs|scratch|dreams|calls]  # everything, readable
-python -m rook_memory reset                                                  # remove the store
+python3 -m rook_memory play madeup/conversations.json   # live turns + a dream after each conversation
+python3 -m rook_memory check                            # the made-up set's expectations
+python3 -m rook_memory ask "What wake word am I using?" # what recall would hand a turn, and why
+python3 -m rook_memory history b3                       # one belief's whole history
+python3 -m rook_memory show [sessions|scratch|record|episodes|beliefs|dreams|calls|tools]
+python3 -m rook_memory say house "Is Starscream back?"  # one live turn (session "house")
+python3 -m rook_memory pin "Starscream is gone for good" ; python3 -m rook_memory unpin
+python3 -m rook_memory take EXPORT.zip --list           # a Claude data export
+python3 -m rook_memory take EXPORT.zip --pick NAME --dream
+python3 -m rook_memory dream [SESSION] [--all]
+python3 -m rook_memory cases                            # the three score cases with these knobs
+python3 -m rook_memory reset
 ```
 
-The store is one sqlite file, `~/.rook-memory-proto/memory.sqlite3` unless `--store DIR` says
-otherwise. `--knobs FILE` uses another knobs file.
+`--store DIR` (default `~/.rook-memory-proto`) and `--knobs FILE` go before the command.
 
-## Turning the knobs
+For compaction, a PreCompact hook in the house agent's Claude Code settings would run
+`python3 -m rook_memory hook` (it reads the hook's JSON on stdin and dreams that session). Nothing
+here installs it.
 
-Every knob is in `knobs.toml`, with a comment each: the models, how sessions are cut up, the dream
-threshold and sizes, the recency decay, the three weights, how many items a turn gets, and every
-prompt. A round of iteration is an edit to that file, then `reset` and `take` again (or `ask` again,
-for the ranking knobs, which need no model call).
+## Knobs
 
-## How it works
-
-- `take` reads a session file into entries (`rook_memory/transcript.py`), puts them in the scratch
-  pad, and reads them to the model in stretches of `chunk_chars`; the model writes episodes with an
-  importance and a line range. When the importance of the episodes not yet dreamed over adds up to
-  `when_importance_sum_reaches`, a dream pass follows.
-- `dream` (`rook_memory/dream.py`) asks the model for the most salient questions about the new
-  episodes; for each, retrieves memories as a turn would and asks for beliefs with confidence,
-  support and what they supersede. Then it condenses the scratch pad of all but the most recent
-  sessions.
-- `ask` (`rook_memory/recall.py`) scores every episode and standing belief, and separately every
-  scratch entry: recency (decay per hour since last read) + importance + relevance (BM25 over
-  words), each scaled to 0..1 across the candidates and weighted. It prints the top ones with every
-  part of their score and the words that matched.
-- Every model call is `claude -p` with no tools, settings, MCP servers or saved session, in an
-  empty folder (`rook_memory/model.py`), and is recorded with its time and cost (`show calls`).
+Every design knob is in [knobs.toml](knobs.toml), with a comment each: models, who is who, the
+import, when dreams run, the link strengths and maturity, search, and every prompt. None of them
+refuse or stop anything.
 
 ## Tests
 
-The plain mechanics (store, scoring, supersedence, condensing, the dream's wiring with a stand-in
-model), not model output. From the repository root:
+The plain mechanics (standing, pins, who-said-it rules, recall and the clocks, the importer, the MCP
+tools, the command line), with stand-ins for the model and the embedder:
 
 ```sh
-.venv/bin/python -m pytest proto/memory/tests
+uv run --no-project --with pytest --with numpy python -m pytest proto/memory/tests   # from the repo root
 ```
+
+What a model does with the rules is tested by the made-up set: `play` it into an empty store, then
+`check`.

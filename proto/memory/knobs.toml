@@ -1,132 +1,186 @@
-# Every design knob of the memory prototype, in one place.
+# Every design knob of the memory prototype (round two), in one place.
 # A round of iteration is an edit to this file. None of these refuse anything or stop anything:
-# they only say how memory is made, kept and ranked.
+# they only say how memory is made, kept, weighed and found.
 # Run any command with `--knobs other.toml` to try a second set side by side.
 
 [model]
-# The Claude Code command. Every model call is `claude -p` with no tools, no settings, no MCP
-# servers and no saved session, run in an empty folder, prompt on stdin.
+# The Claude Code command. Every model call is `claude -p`; no API key.
 claude = "claude"
-# Model for reading sessions into episodes (many calls, one per stretch of a session).
-ingest_model = "sonnet"
-# Model for the dream pass (few calls; it writes the beliefs).
-dream_model = "opus"
-# Ask Claude Code to hold the model to the answer's JSON shape (`claude -p --json-schema`).
-# Without it, about one reply in ten came back as broken JSON and its stretch was lost.
-structured_output = true
+# Model for the house agent's live turns (`say`, `play`).
+turn_model = "sonnet"
+# Model for the dream. Empty means the session's own model, which keeps the prompt cache of the
+# forked session warm (a different model reads the whole conversation again at full price).
+dream_model = ""
+# Permission mode for live turns and dreams (`claude -p --permission-mode`). Only the memory tools
+# are offered, and they are pre-allowed, so this decides nothing else here.
+permission_mode = "auto"
 
-[ingest]
-# A session is read to the model in stretches of about this many characters of transcript.
-# Bigger stretches mean fewer calls and fewer, broader episodes.
-chunk_chars = 40000
-# How much of each tool call's input is kept (in the scratch pad and in what the model reads).
-tool_input_chars = 300
-# How much of each tool's output is kept. Tool output is most of a session's bulk; this is
-# what keeps the store small on a full disk. The source file keeps all of it.
-tool_result_chars = 400
-# User messages starting with any of these are harness chatter, not something that was said.
-skip_user_text_starting_with = ["<system-reminder>", "<local-command", "<command-name>", "<command-message>"]
+[people]
+# Who is who. Every scratch pad entry and episode carries who said it; the importer stamps it here
+# (in the real thing the hub does). The person whose wishes beliefs may describe:
+person = "bake"
+# Names for the others: the steward relays and asks for things, "agent" is any other agent reporting
+# in, "house" is the house agent itself (its own replies).
+others = ["steward", "agent", "house", "other"]
+
+[import]
+# In a Claude data export, the human is Bake talking directly; the assistant is an agent.
+export_human = "bake"
+export_assistant = "agent"
+# Assistant messages that used tools: keep only the text after the last tool call (the final
+# answer), or all its text.
+assistant_text = "final"
+# Attachments in the export: note their file names in his message, not their contents.
+note_attachments = true
 
 [dream]
-# A dream pass runs by itself after a session is taken in, once the importance of all episodes
-# not yet dreamed over adds up to this (the paper used 150). 0 dreams after every session;
-# a very large number leaves dreaming to the `dream` command.
-when_importance_sum_reaches = 150
-# How many salient questions a dream pass asks itself about the new episodes.
-questions = 5
-# For each question, how many memories (episodes and current beliefs) it retrieves to think over.
-retrieve_per_question = 15
-# How many beliefs it may write per question.
-beliefs_per_question = 5
-# After a dream, the scratch pad of all but this many most recent sessions is condensed: its
-# word-for-word entries are dropped, and the episodes (which point at the source lines) remain.
-keep_scratch_of_last_sessions = 1
+# A dream runs when a session has been idle this long (minutes, in the conversation's own time)
+# and the next message arrives, and by `play` at the end of each made-up session. It also runs by
+# hand (`dream`) and is meant to run from Claude Code's PreCompact hook.
+idle_minutes = 10
+# Dream as a fork of the live Claude Code session (`claude -p --resume ID --fork-session`) when the
+# session has one. Sessions taken in from an export have none, so they dream as a replay: one fresh
+# call with the conversation in the prompt.
+fork = true
+# A replayed conversation longer than this many characters is dreamed in stretches of this size,
+# one call each (the only case that needs more than one model call).
+replay_stretch_chars = 150000
+# After a dream, the word-for-word entries it covered leave the scratch pad (they stay in the
+# record, and episodes point at them). false keeps them searchable as scratch pad forever.
+condense_after_dream = true
 
-[recall]
-# Recency of a memory is this to the power of the hours since it was last read
-# (the paper: 0.995 per hour of game time). Lower forgets faster.
-recency_decay_per_hour = 0.995
-# The score of a memory is the sum of its recency, importance and relevance, each scaled to
-# 0..1 across the candidates, times these weights (the paper used 1, 1, 1).
-weight_recency = 1.0
-weight_importance = 1.0
-weight_relevance = 1.0
-# How many long-term memories (episodes and beliefs together) a turn is given.
-turn_memories = 10
-# How many scratch pad entries a turn is given, ranked the same way.
-turn_scratch = 8
-# The importance a scratch pad entry counts with (they have none of their own), 1..10.
-scratch_importance = 5
-# Whether superseded beliefs can still be retrieved (they are never deleted either way).
-include_superseded = false
-# Relevance is BM25 over words. These are its two usual constants.
-bm25_k1 = 1.5
-bm25_b = 0.75
-# Whether `ask` counts as reading what it returns (sets their last read time, as the paper does).
-# `ask --peek` never does.
-ask_marks_read = true
+[weigh]
+# The strength of one link between an episode and a belief is
+#   kind x who said it x channel
+# The dream says which kind each fact is; who said it and the channel come from the record.
+kind_correction = 1.0   # he corrected something ("no, Starscream is gone")
+kind_statement = 0.6    # said plainly, in passing or not
+kind_mention = 0.3      # implied, assumed, or said by the way
+kind_unclear = 0.1      # garbled, half-heard, or guessed at
+by_person = 1.0         # Bake's own words
+by_steward = 0.6
+by_agent = 0.4          # another agent's claim
+by_house = 0.0          # the house agent's own replies: they mostly repeat what memory handed it, so
+                        # counting them would let it mature its own beliefs by saying them. 0 means
+                        # recorded, never counted, and no belief is founded on them alone.
+by_other = 0.4
+channel_chat = 1.0
+channel_voice = 0.6     # voice transcripts: words can be misheard
+# Links from the same occasion count once (the strongest), so saying it three times in one sitting
+# is one occasion. "day" or "session".
+occasion = "day"
+# Maturity: certainty = 1 - exp(-(summed strength of the occasions behind the current
+# direction) / maturity_scale). One correction gives 0.49, three on three days give 0.86, one
+# statement 0.33, one unclear voice line 0.04.
+maturity_scale = 1.5
+# Occasions for the current direction from before its latest contrary link count this much
+# (a flip back regains part of the old maturity, not all of it).
+before_flip_weight = 0.5
+# Below this certainty a belief is "tentative".
+tentative_below = 0.5
+# At or above this, a belief (or its contrary history) is "mature".
+mature_at = 0.6
+
+[search]
+# The local embedding model (any BERT-shaped model on Hugging Face in safetensors). Swapping it
+# re-embeds what is stored on first use. "fake" is the tests' stand-in.
+model = "BAAI/bge-small-en-v1.5"
+# "cls" for bge models, "mean" for sentence-transformers' MiniLM family.
+pooling = "cls"
+# bge's advice: a short question searches better with this in front of it.
+query_prefix = "Represent this sentence for searching relevant passages: "
+# A memory whose closeness to the question (cosine, 0..1) is below this is not recalled at all.
+# When nothing clears it, the turn is told to say "I don't remember". Nothing is ever written down
+# about a miss.
+miss_below = 0.62
+# Pinned beliefs clear a lower floor, so a pin reaches the turn when the message is only loosely about
+# it (a pinned belief missed is the costliest miss).
+pinned_miss_below = 0.5
+# The score that ranks what clears it: closeness, recency and (beliefs) certainty, times these.
+weight_closeness = 1.0
+weight_recency = 0.5
+weight_certainty = 0.3
+# Recency is this to the power of the hours since a memory was last used by a real turn with a
+# person (or since it happened, if never used). A dream reading a memory is not use.
+recency_decay_per_hour = 0.999
+# How many of each kind a turn (or a search) is given.
+turn_scratch = 6
+turn_episodes = 6
+turn_beliefs = 6
+# How close (cosine) a scratch pad entry must be to a belief to count as newer words on it,
+# which then go first.
+newer_words_closeness = 0.72
+# `pin` without a belief id pins the closest belief at or above this closeness; below it, it makes
+# a new belief from his words.
+pin_match = 0.86
 
 [prompts]
-# The prompts. $names are filled in; everything else is sent as written.
-# What the model gets as its system prompt on every call.
-system = """You are the memory of a house agent: an AI that runs a person's machines through Rook.
-You read records of past work and answer with JSON only, no prose around it."""
+# The house agent's system prompt for live turns (a forked dream inherits it).
+house = """You are the house agent: an AI that runs Bake's machines through Rook. This is a test world
+for a memory prototype; you cannot act on machines here, so say in a sentence what you would do.
 
-# Reading a stretch of a session into episodes. $session, $first_line, $last_line, $transcript.
-episodes = """Below is a stretch of a closed Claude Code session ($session, lines $first_line to $last_line).
-"user" lines are what the person (or a steward relaying them) wrote; "agent" is the agent; "tool" is a
-tool the agent ran; "result" is what came back, cut short.
+Each message starts with who sent it and when, e.g. [2026-06-16 10:02, bake] or [steward]. Only
+messages marked bake are Bake himself. A "Memory" block may follow the message: what memory turned
+up for it, closest first, each with an id. Use it. If it does not answer something you are asked,
+say you don't remember; never invent. Words in the scratch pad are newer than beliefs and win.
+A belief marked "ask before acting" has a fresh one-off against a mature belief: if you are about
+to act on it, ask Bake which holds.
 
-Write down what happened as episodes: plain-language records someone could remember later. One episode
-per meaningful event: a request, a decision and its reason, a finding, a fix, a failure, a result,
-something learned about a machine, a person or a project. Keep names, numbers, branches, pull request
-numbers, file paths and exact words of the person where they matter. One to three sentences each, past
-tense, standing on its own (no "it" or "this" without saying what). Skip pure mechanics (listing a
-folder, reading a file) unless what was found matters.
+Tools: search (look memory up), pin and unpin.
+- Pin only when Bake himself asks for it in so many words ("pin this", "pin that", "make that
+  permanent"). A correction is not a pin, however sharp or repeated, and neither is a firm
+  preference. Never offer to pin; he knows he can ask. When he asks, call pin with his statement,
+  then say "okay, got it, that's pinned".
+- If he says a pin was not meant ("no, don't pin that"), call unpin straight away and say so.
+- Nobody but Bake can pin or unpin, and nothing else changes a pinned belief.
 
-Rate each episode's importance from 1 to 10: 1 is routine mechanics nobody will need again, 5 is
-ordinary progress on a task, 10 is a decision by the person that changes direction, or a lasting fact
-the house agent must never forget.
+Keep replies short."""
 
-Give the line range each episode comes from (the L numbers).
+# The dream: one more turn of the session. $entries, $now.
+dream = """[Memory dream. This turn is a fork: nothing you write here reaches the conversation.]
 
-Answer with JSON only:
-{"episodes": [{"what": "...", "importance": 6, "first_line": 123, "last_line": 140}]}
+It is $now. Below is the record of the conversation since the last dream, one entry per message,
+each with its id, when, who said it and the channel. The house agent's own replies are "house":
+they are context (often repeating what memory told it), never evidence for or against a belief.
 
-$transcript"""
+$entries
 
-# The dream pass, first step: salient questions over the new episodes. $count, $episodes.
-questions = """These are records of what happened recently:
+Do two things, in order. Ask yourself no other questions.
 
-$episodes
+1. Distil facts. Anything in the record that can stand as a fact: about the machines, the projects,
+   the people, what someone wants, decided, asked for or corrected. Each fact says who it comes from
+   in its own words ("Bake said...", "The steward asked...", "The agent chose..."), names the entry
+   ids it comes from, says whose words it rests on ("said_by"), and has a kind:
+   - correction: someone corrected what was assumed or said;
+   - statement: said plainly;
+   - mention: implied, assumed, or said in passing;
+   - unclear: garbled, half-heard, or a guess (voice transcripts that do not read right).
+   Skip greetings, thanks and pure mechanics. A question is not a claim: someone asking about a
+   thing is no evidence for or against it.
 
-Given only the information above, what are the $count most salient high-level questions we can answer
-about the subjects in these records (the people, the machines, the projects, how work is done)?
+2. Novelty. For each fact, search memory for what is already held (use the search tool; one search
+   per fact is usually enough). Then:
+   - a held belief the fact supports: list it under "held" with "supports";
+   - a held belief the fact counts against (something changed): list it with "against";
+   - name held beliefs by their id (b12);
+   - nothing held matches: give a "new_belief", a lasting statement the house agent should act on
+     later, and say what it is about: "bake" (what Bake wants, likes, decided), "world" (machines,
+     projects, how things are), or "steward" / "agent" / "other" (their wishes or decisions).
+   A fact may do both. When a fact contradicts a held belief, link it "against" that belief even
+   when it also supports another one or makes a new one.
+   Never write a belief about what is not known, not remembered or not yet recorded: a miss is
+   said in the moment and never written down.
 
-Answer with JSON only: {"questions": ["...", "..."]}"""
+Who said it matters most. A fact rests on one speaker's words: the agent's answer to Bake's
+question is the agent's, not Bake's; a question Bake asked is not a statement by him. A belief about what Bake wants comes only from Bake's own words (entries
+marked bake). What the steward or an agent said, asked for or decided is theirs: write it as theirs,
+never as "Bake wants". Bake's words quoted by someone else are what happened, not a belief about
+him. One garbled line is "unclear" and should not make confident claims.
 
-# The dream pass, second step, once per question: beliefs from retrieved memories.
-# $question, $count, $memories.
-beliefs = """Question: $question
+Answer with the JSON asked for."""
 
-Memories that bear on it. [e12] is an episode; [b3] is a belief already held, with its confidence:
+# Replaying a conversation taken in from an export (no live session to fork). It is the dream
+# prompt with the conversation's name in front. $name, $dream.
+replay = """This conversation, "$name", is over. You are the memory of the house agent, reading it back.
 
-$memories
-
-What at most $count high-level beliefs can you infer from these memories that answer the question?
-A belief is a lasting statement the house agent should act on later (about the person, their wishes,
-the machines, the projects, how work goes), not a retelling of one event.
-
-For each belief:
-- "because": the ids of the memories that support it (at least one).
-- "confidence": 0 to 1, how sure the support makes you. One episode is weak; several agreeing are strong;
-  the person's own words are strong.
-- "importance": 1 to 10, as for episodes.
-- "supersedes": the id of a belief above that this one contradicts or refines, or null. Supersede when
-  the memories show the old belief is wrong, out of date, or better said now. Do not restate a held
-  belief that still stands unchanged; leave it out instead.
-- "how": "contradicts" or "refines" when it supersedes, else null.
-
-Answer with JSON only:
-{"beliefs": [{"belief": "...", "because": ["e12", "b3"], "confidence": 0.7, "importance": 6,
-  "supersedes": null, "how": null}]}"""
+$dream"""

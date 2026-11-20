@@ -1,116 +1,126 @@
-"""What is in memory, in a form a person can read."""
+"""What is in memory, in a form a person can read; and one belief's whole history."""
 
 import json
 import textwrap
 
-from .ingest import short
-from .store import now, parse_time
+from . import standing
 
 
-def _wrap(text, indent="    "):
-    return textwrap.fill(" ".join(text.split()), width=110, initial_indent=indent, subsequent_indent=indent)
+def _wrap(text, indent="     "):
+    return textwrap.fill(" ".join(str(text).split()), width=110, initial_indent=indent, subsequent_indent=indent)
 
 
 def _when(at):
-    return at[:16].replace("T", " ")
-
-
-def _ago(at, ref=None):
-    hours = (parse_time(ref or now()) - parse_time(at)).total_seconds() / 3600
-    return f"{hours:.0f} h ago" if hours < 48 else f"{hours / 24:.0f} days ago"
+    return str(at or "")[:16].replace("T", " ")
 
 
 def sessions(store, out=print):
-    out("== sessions taken in")
-    for s in store.q("SELECT s.*, (SELECT COUNT(*) FROM scratch WHERE session = s.id) AS scratch,"
-                     " (SELECT COUNT(*) FROM episodes WHERE session = s.id) AS episodes FROM sessions s ORDER BY s.id"):
-        state = f"scratch condensed {_when(s['scratch_condensed_at'])}" if s["scratch_condensed_at"] else \
-            f"{s['scratch']} scratch entries"
-        out(f"  {s['id']}. {short(s['path'])}  {_when(s['first_at'] or '')} to {_when(s['last_at'] or '')}, "
-            f"{s['lines_taken']} lines, {s['episodes']} episodes, {state}")
-        out(f"     {s['path']}")
+    out("== sessions")
+    for s in store.all("SELECT s.*, (SELECT COUNT(*) FROM entries WHERE session = s.id) AS n,"
+                       " (SELECT COUNT(*) FROM entries WHERE session = s.id AND condensed_at IS NULL) AS scratch,"
+                       " (SELECT COUNT(*) FROM episodes WHERE session = s.id) AS eps FROM sessions s ORDER BY s.started_at, s.id"):
+        live = f", Claude Code session {s['cc_session'][:8]}" if s["cc_session"] else ""
+        out(f"  {s['id']}. {s['name']}{' (made up)' if s['made_up'] else ''}  {_when(s['started_at'])} to {_when(s['last_at'])}:"
+            f" {s['n']} entries ({s['scratch']} still in the scratch pad), {s['eps']} episodes{live}")
 
 
-def episodes(store, out=print, session=None, limit=None):
-    sql = "SELECT e.*, s.path FROM episodes e JOIN sessions s ON s.id = e.session"
-    args = ()
+def entries(store, out=print, session=None, scratch_only=False):
+    sql, args = "SELECT * FROM entries WHERE 1", []
     if session:
-        sql += " WHERE e.session = ?"
-        args = (session,)
-    sql += " ORDER BY e.happened_at, e.id"
-    rows = store.q(sql, *args)
-    out(f"== episodes ({len(rows)})")
-    for e in rows[:limit] if limit else rows:
-        dreamed = f"dreamed in {e['dreamed_in']}" if e["dreamed_in"] else "not dreamed yet"
-        out(f"  [e{e['id']}] {_when(e['happened_at'])}  importance {e['importance']}  "
-            f"{short(e['path'])} L{e['first_line']}-{e['last_line']}  last read {_ago(e['last_read'])}  {dreamed}")
+        sql += " AND session = ?"
+        args.append(session)
+    if scratch_only:
+        sql += " AND condensed_at IS NULL"
+    rows = store.all(sql + " ORDER BY id", *args)
+    out(f"== {'scratch pad' if scratch_only else 'record'} ({len(rows)} entries)")
+    for e in rows:
+        state = "" if e["condensed_at"] is None else "  (dreamed over)"
+        out(f"  [s{e['id']}] {_when(e['at'])} {e['speaker']} ({e['channel']}){state}")
         out(_wrap(e["text"]))
 
 
-def _support(store, belief):
-    lines = []
-    for s in store.support_of(belief):
-        table = "episodes" if s["kind"] == "episode" else "beliefs"
-        row = store.one(f"SELECT text FROM {table} WHERE id = ?", s["ref"])
-        tag = ("e" if s["kind"] == "episode" else "b") + str(s["ref"])
-        lines.append(f"      [{tag}] {' '.join((row['text'] if row else '(gone)').split())[:150]}")
-    return lines
+def episodes(store, out=print, session=None):
+    sql, args = "SELECT * FROM episodes", []
+    if session:
+        sql += " WHERE session = ?"
+        args.append(session)
+    rows = store.all(sql + " ORDER BY happened_at, id", *args)
+    out(f"== episodes ({len(rows)})")
+    for e in rows:
+        used = f", last used {_when(e['last_used'])}" if e["last_used"] else ""
+        made = f"dream {e['dream']}" if e["dream"] else "a pin"
+        out(f"  [e{e['id']}] {_when(e['happened_at'])} from {e['said_by']} ({e['kind']}, {e['channel']}),"
+            f" entries {e['entries']}, by {made}{used}")
+        out(_wrap(e["text"]))
 
 
-def beliefs(store, out=print):
-    rows = store.q("SELECT * FROM beliefs ORDER BY id")
-    standing = [b for b in rows if b["superseded_by"] is None]
-    out(f"== beliefs ({len(standing)} standing, {len(rows) - len(standing)} superseded)")
+def beliefs(store, knobs, out=print):
+    rows = store.all("SELECT * FROM beliefs ORDER BY id")
+    out(f"== beliefs ({len(rows)})")
     for b in rows:
-        state = "" if b["superseded_by"] is None else \
-            f"  SUPERSEDED by b{b['superseded_by']} ({b['how']}) {_when(b['superseded_at'])}"
-        out(f"  [b{b['id']}] confidence {b['confidence']:.2f}  importance {b['importance']}  dream {b['dream']}{state}")
+        st = standing.of(store, knobs, b["id"])
+        out(f"  [b{b['id']}] about {b['about']}: {standing.summary(st)}")
         out(_wrap(b["text"]))
-        if b["question"]:
-            out(_wrap(f"from the question: {b['question']}", "      "))
-        out("    because:")
-        for line in _support(store, b["id"]) or ["      (no support it named exists)"]:
-            out(line)
-    chains = store.q("SELECT o.id AS old, o.text AS old_text, o.confidence AS oc, o.how, n.id AS new, n.text AS new_text,"
-                     " n.confidence AS nc FROM beliefs o JOIN beliefs n ON n.id = o.superseded_by ORDER BY o.id")
-    out(f"== what superseded what ({len(chains)})")
-    for c in chains:
-        out(f"  b{c['old']} ({c['oc']:.2f}) --{c['how']}--> b{c['new']} ({c['nc']:.2f})")
-        out(_wrap("was: " + c["old_text"]))
-        out(_wrap("now: " + c["new_text"]))
+        for l in store.links(b["id"]):
+            out(f"       {'+' if l['stance'] > 0 else '-'} {_when(l['at'])[:10]} {l['said_by']} {l['kind']} {l['strength']:.2f}"
+                f" [e{l['episode']}]" + (f" ({l['note']})" if l["note"] else ""))
 
 
-def scratch(store, out=print, limit=None):
-    rows = store.q("SELECT c.*, s.path FROM scratch c JOIN sessions s ON s.id = c.session ORDER BY c.session, c.line, c.id")
-    out(f"== scratch pad ({len(rows)} entries, word for word)")
-    for c in rows[-limit:] if limit else rows:
-        out(f"  [s{c['id']}] {short(c['path'])} L{c['line']} {_when(c['at'])} {c['role']}: "
-            f"{' '.join(c['text'].split())[:300]}")
+def history(store, knobs, belief, out=print):
+    b = store.one("SELECT * FROM beliefs WHERE id = ?", belief)
+    if not b:
+        out(f"no belief b{belief}")
+        return
+    made = f"dream {b['dream']}" if b["dream"] else "a pin"
+    out(f"[b{b['id']}] about {b['about']}, made {_when(b['made_at'])} by {made}")
+    out(_wrap(b["text"], "  "))
+    events = [("link", l["at"], l["id"], l) for l in store.links(belief)]
+    events += [("pin", p["at"], p["id"], p) for p in store.pins(belief)]
+    events.sort(key=lambda e: (str(e[1]), e[0] == "pin", e[2]))
+    out("\nIn the order it happened, with the standing after each:")
+    for kind, at, _, row in events:
+        if kind == "pin":
+            out(f"  {_when(at)}  {row['action'].upper()} from his message s{row['entry']}: \"{row['words']}\"")
+        else:
+            mark = "supports" if row["stance"] > 0 else "AGAINST "
+            out(f"  {_when(at)}  {mark} {row['strength']:.2f}  {row['said_by']}, {row['kind']}, {row['channel']}"
+                f" [e{row['episode']}, dream {row['dream'] or '-'}]" + (f"  ({row['note']})" if row["note"] else ""))
+            out(_wrap(row["episode_text"], "        "))
+            if row["why"]:
+                out(_wrap("why: " + row["why"], "        "))
+        st = standing.of(store, knobs, belief, upto=at)
+        out(f"        -> {standing.summary(st)}")
+    out(f"\nNow: {standing.summary(standing.of(store, knobs, belief))}")
+    uses = store.all("SELECT * FROM uses WHERE kind = 'belief' AND ref = ? ORDER BY id", belief)
+    if uses:
+        out(f"Used by real turns {len(uses)} times, last {_when(uses[-1]['at'])}.")
 
 
 def dreams(store, out=print):
-    rows = store.q("SELECT * FROM dreams ORDER BY id")
-    out(f"== dream passes ({len(rows)})")
-    for d in rows:
-        out(f"  dream {d['id']} ({d['trigger']}) {_when(d['started_at'])} to {_when(d['finished_at'] or '')}: "
-            f"{d['episodes_in']} episodes in, {d['beliefs_made']} beliefs, {d['superseded']} superseded, "
-            f"{d['scratch_condensed']} scratch entries condensed")
-        for q in json.loads(d["questions"] or "[]"):
-            out(_wrap("? " + q, "      "))
+    out("== dreams")
+    for d in store.all("SELECT d.*, s.name FROM dreams d JOIN sessions s ON s.id = d.session ORDER BY d.id"):
+        calls = store.one("SELECT COUNT(*) AS n, SUM(seconds) AS s, SUM(cost_usd) AS c, SUM(turns) AS t FROM calls"
+                          " WHERE purpose = ? OR purpose LIKE ?", f"dream {d['id']}", f"dream {d['id']} %")
+        out(f"  dream {d['id']} ({d['trigger']}, {d['mode']}) over {d['name']}: entries s{d['entries_from']}-s{d['entries_to']},"
+            f" {d['facts']} facts, {d['links']} links, {d['new_beliefs']} new beliefs;"
+            f" {calls['n']} call(s), {calls['t'] or 0} model turns, {calls['s'] or 0:.0f} s, ${calls['c'] or 0:.3f}")
+        for h in json.loads(d["held_back"] or "[]"):
+            out(_wrap(f"held back: {h.get('belief') or h.get('fact')} ({h['why']})", "     "))
 
 
 def calls(store, out=print):
-    rows = store.q("SELECT * FROM calls ORDER BY id")
-    out(f"== model calls ({len(rows)})")
-    by = {}
-    for c in rows:
-        key = (c["purpose"].split()[0], c["model"])
-        n, s, cost, tin, tout, bad = by.get(key, (0, 0.0, 0.0, 0, 0, 0))
-        by[key] = (n + 1, s + (c["seconds"] or 0), cost + (c["cost_usd"] or 0), tin + (c["input_tokens"] or 0),
-                   tout + (c["output_tokens"] or 0), bad + (0 if c["ok"] else 1))
-    for (kind, mdl), (n, s, cost, tin, tout, bad) in sorted(by.items()):
-        out(f"  {kind:9} {mdl:7} {n:4} calls  {s / 60:6.1f} min  ${cost:7.3f}  {tin:9} tokens in  {tout:7} out"
-            f"  {bad} failed")
-    for c in rows:
-        if not c["ok"]:
-            out(f"  failed: {c['purpose']}: {c['note']}")
+    out("== model calls")
+    for r in store.all("SELECT CASE WHEN purpose LIKE 'dream%' THEN 'dream' ELSE 'turn' END AS what, model,"
+                       " COUNT(*) AS n, SUM(seconds) AS s, SUM(cost_usd) AS c, SUM(turns) AS t, SUM(ok) AS ok"
+                       " FROM calls GROUP BY what, model"):
+        out(f"  {r['what']:5} {r['model']:8} {r['n']} calls ({r['ok']} ok), {r['t'] or 0} model turns inside,"
+            f" {r['s'] or 0:.0f} s, ${r['c'] or 0:.3f}")
+    for r in store.all("SELECT * FROM calls WHERE ok = 0"):
+        out(f"  failed: {r['purpose']}: {r['note']}")
+
+
+def tools(store, out=print):
+    out("== memory tool calls")
+    for t in store.all("SELECT * FROM tool_log ORDER BY id"):
+        out(f"  {t['role']} s{t['entry'] or '-'} {t['tool']} {t['args']}")
+        out(_wrap(t["answer"].splitlines()[0] if t["answer"] else "", "       "))
