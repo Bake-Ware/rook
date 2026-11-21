@@ -10,5 +10,6 @@ Each round starts its own hub and workers from this clone in a new directory und
 - Round 6, hub restart under load: `.venv/bin/python tests/stress/restart.py`
 - Round 7, long haul: `.venv/bin/python tests/stress/longhaul.py` (`--minutes N`, 60 unless given)
 - Round 8, journal and records at size: `.venv/bin/python tests/stress/size.py`
+- Memory's read path at size (brief MEM5): `.venv/bin/python tests/stress/memory.py 500 5000 50000`, and `--hub N` for a whole hub; under the AMD micro's limits with `systemd-run --user --scope -p CPUQuota=12.5% -p MemoryMax=600M -p MemorySwapMax=0` in front (the figures are in the pull request)
 
 `rig.py` is what they share; `plugin/` is round 8's own plugin, installed only on that round's hub.
