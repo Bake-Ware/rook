@@ -151,7 +151,7 @@ class Plugins:
     def _load(self, name, folder, manifest):
         """Import the plugin's hub module and run its setup(). Returns the declared Plugin."""
         from . import owner_only     # __init__.py imports this module first
-        declared = Plugin(name, folder)
+        declared = Plugin(name, folder, self.hub.state_dir / "plugin-data" / name)
         if "hub" not in manifest:
             return declared, None
         path = folder / manifest["hub"]["module"]

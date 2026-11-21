@@ -42,6 +42,7 @@ import importlib.util
 import json
 import logging
 import pathlib
+import sys
 import time
 
 from rook_hub.library import Error
@@ -81,6 +82,7 @@ def setup(plugin):
     for path in sorted(HERE.glob("hub_*.py")):
         spec = importlib.util.spec_from_file_location(f"{__name__}_{path.stem}", path)
         module = importlib.util.module_from_spec(spec)
+        module.agent = sys.modules[__name__]        # a part reaches the house agent's own functions (memory does)
         spec.loader.exec_module(module)
         module.setup(plugin)
         _parts.append(module)
@@ -183,9 +185,34 @@ def system_prompt(call, record):
 
 
 def memory_parts(call, record):
-    """The seam for the memory slice (Bake is designing memory): 0.5 added "## Notepad" (how to
-    write it), "## Memory" and "## Notepad since your last dream" here. Nothing yet."""
-    return []
+    """The memory's part of the system prompt (hub_memory.py, brief MEM5)."""
+    part = _from_parts("memory_parts")
+    return part(call, record) if part else []
+
+
+def speaker(call, person):
+    """Who said a message (brief MEM5): `person:<name>` for the person's own words (their own site
+    session, or acting as themselves), `agent:house` for the house agent messaging itself from a turn,
+    `agent:<token>` for an agent at the door with the person's token, `job:<job>` for a job's run; and
+    how it came (site, direct, door, job)."""
+    how = call.acting()
+    if how["job"]:
+        return f"job:{how['job']}", "job"
+    if call._actor.get("token") in _turning:
+        return f"agent:{HOUSE}", "door"
+    if how["token"] is None:
+        return f"person:{person['name']}", "direct"
+    if how["token"]["purpose"] == "session":
+        return f"person:{person['name']}", "site"
+    return f"agent:{how['token']['moniker']}", "door"
+
+
+def engine(call, agent):
+    """(the engine cap, the worker it runs on) for `agent`'s turns."""
+    backend = agent["body"].get("backend") or "default"
+    if backend == "default":
+        backend = call.settings["backend"] or ENGINE
+    return backend, engine_worker(call, backend)
 
 
 async def carried(call):
@@ -215,19 +242,26 @@ def engine_worker(call, backend):
                 "Say which one the house agent thinks on: setting.set {plugin: agents, key: worker, value: <moniker>}.")
 
 
-async def turn(call, record_guid, by, text):
+async def turn(call, record_guid, by, text, seq=None, said=None):
     """One turn, as 0.5's Runtime.turn: the prompt, the engine, the reply. Never raises: a turn that
-    fails says why in a status event, and the sender is answered with it."""
+    fails says why in a status event, and the sender is answered with it. `seq` is the message's place
+    in the conversation and `said` who said it (speaker()); the memory (hub_memory.py) adds what it
+    recalls for the message to the prompt, and the pins it made to the reply."""
     record = call.get(record_guid)
     stream, prompt_written, token = record["body"]["stream"], False, None
+    said = said or by
+    memory = {name: _from_parts(name) for name in ("before_turn", "after_turn", "replied", "precompact")}
     try:
         agent = house(call)
-        backend = agent["body"].get("backend") or "default"
-        if backend == "default":
-            backend = call.settings["backend"] or ENGINE
-        worker = engine_worker(call, backend)
+        backend, worker = engine(call, agent)
         same = record["body"].get("harness_backend") == backend     # another engine can't resume this one's session
-        args = {"prompt": f"Message from {by}:\n\n{text}{await carried(call)}", "system": system_prompt(call, agent)}
+        name = title(call, agent)
+        token = await call.call("hub", "token.create", {"purpose": "agent"},
+                                f"The door token of {name}'s turn answering {by}; revoked when the turn ends.")
+        _turning.add(token["token"])
+        head = f"Message from {by}" if said == by else f"Message from {said}, with {by}'s token (not {by}'s own words)"
+        recalled = await memory["before_turn"](call, record, seq, said, text, token["token"]) if memory["before_turn"] else ""
+        args = {"prompt": f"{head}:\n\n{text}{recalled}{await carried(call)}", "system": system_prompt(call, agent)}
         model = (agent["body"].get("model") or {}).get("two")
         if model and model != "default":
             args["model"] = model
@@ -235,11 +269,10 @@ async def turn(call, record_guid, by, text):
                            ("cwd", agent["body"].get("cwd"))):
             if value:
                 args[key] = value
-        name = title(call, agent)
-        token = await call.call("hub", "token.create", {"purpose": "agent"},
-                                f"The door token of {name}'s turn answering {by}; revoked when the turn ends.")
-        _turning.add(token["token"])
         args["door"] = token["token"]
+        hook = memory["precompact"](call) if memory["precompact"] else None
+        if hook:                                 # the engine's hook before compaction tells the hub: dream first
+            args["precompact"] = hook
         moniker, pending = await call.start(worker, backend, args, f"agent {HOUSE} answers {by}")
         call.append(stream, event("turn", f"agent:{HOUSE}", {"role": "prompt", "text": text, "by": by,
                                                               **({"call": moniker} if moniker else {})}))
@@ -250,9 +283,12 @@ async def turn(call, record_guid, by, text):
         if res.get("session"):
             call.update(record_guid, body=dict(call.get(record_guid)["body"], harness=res["session"],
                                                harness_backend=backend))
-        reply = {"role": "reply", "text": res["text"], **({"usage": res["usage"]} if res.get("usage") else {})}
-        seq = call.append(stream, event("turn", f"agent:{HOUSE}", reply)) + 1
-        return {"text": res["text"], "seq": seq}
+        text_out = memory["after_turn"](call, record, seq, token["token"], res["text"]) if memory["after_turn"] else res["text"]
+        reply = {"role": "reply", "text": text_out, **({"usage": res["usage"]} if res.get("usage") else {})}
+        reply_seq = call.append(stream, event("turn", f"agent:{HOUSE}", reply)) + 1
+        if memory["replied"]:
+            memory["replied"](call, record, reply_seq, text_out, call._hub.clock())
+        return {"text": text_out, "seq": reply_seq}
     except Exception as e:                       # every failure is the sender's answer (0.5)
         message = e.message["message"] if isinstance(e, Error) else f"{type(e).__name__}: {e}"
         if not isinstance(e, Error):
@@ -264,6 +300,9 @@ async def turn(call, record_guid, by, text):
     finally:
         if token is not None:
             _turning.discard(token["token"])
+            ended = _from_parts("turn_ended")
+            if ended:
+                ended(token["token"])                # the turn's memory context goes
             try:
                 await call.call("hub", "token.revoke", {"id": token["moniker"]}, "The turn ended: its door token goes.")
             except Error as e:
@@ -284,10 +323,16 @@ async def chat_send(call, args):
     own = call._actor.get("token") in _turning
     person = call.person()
     by = f"person:{person['name']}"
+    said, channel = speaker(call, person)
     sess = session(call, person, create=True)
-    seq = call.append(sess["body"]["stream"], event("input", by, {"text": text}), by_caller=True) + 1
+    at = call._hub.clock()
+    seq = call.append(sess["body"]["stream"], event("input", by, {"text": text, "from": said, "channel": channel}),
+                      by_caller=True) + 1
+    heard = _from_parts("heard")
+    if heard:
+        heard(call, sess, seq, said, channel, text, at)
     runner = call.as_caller(call.user) if own else call
-    task = call.later(HOUSE, lambda: turn(runner, sess["guid"], by, text))
+    task = call.later(HOUSE, lambda: turn(runner, sess["guid"], by, text, seq, said))
     out = {"agent": record["body"]["name"], "stream": _moniker(call, sess), "seq": seq}
     if not wait or own:
         return out
@@ -348,7 +393,11 @@ def _from_parts(name):
 
 
 async def site(call, args):
-    """What the hub site's chat dock needs (0.5's agent.site): {dock, ready, look, setup}."""
+    """What the hub site's chat dock needs (0.5's agent.site): {dock, ready, look, setup}. The dock asks it on
+    every page load, so it is where memory's idle waits are armed again after a start (hub_memory.arm)."""
+    arm = _from_parts("arm")
+    if arm:
+        arm(call)
     look, setup_state = _from_parts("look_state"), _from_parts("setup_state")
     look = look(call) if look else {"sound": False, "rookie": "pixel", "theme": "stone",
                                     "name": call.settings["house_name"] or HOUSE_NAME,

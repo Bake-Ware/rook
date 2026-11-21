@@ -31,7 +31,7 @@ async def turn(args):
     path = WORKER.data / "sessions.json"  # noqa: F821
     sessions = json.loads(path.read_text()) if path.exists() else {}
     session = args.get("session") or uuid.uuid4().hex
-    message = args["prompt"].split("\n\n", 1)[1].split("\n\n---\n")[0]
+    message = args["prompt"].split("\n\n", 1)[1].split("\n\n---\n")[0].split("\n\n## Memory")[0]
     said = sessions.setdefault(session, [])
     said.append(message)
     path.write_text(json.dumps(sessions))

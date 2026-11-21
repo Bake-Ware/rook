@@ -128,7 +128,11 @@ def test_send_and_read_through_the_door(tmp_path):
         read = await rig.events()
         assert [(e["seq"], e["type"], e["data"].get("role")) for e in read["events"]] == [
             (1, "input", None), (2, "turn", "prompt"), (3, "turn", "reply")]
-        assert read["events"][0]["by"] == "person:Alice" and read["events"][0]["data"] == {"text": "hello there"}
+        # who said it (brief MEM5): Alice's conversation, but an agent with her token, not her own words
+        token = next(t["moniker"] for t in (await rig.ok("hub", "token.list"))["tokens"] if t["minted_by"] is None
+                     and t["purpose"] == "agent")
+        assert read["events"][0]["by"] == "person:Alice" and read["events"][0]["data"] == {
+            "text": "hello there", "from": f"agent:{token}", "channel": "door"}
         assert read["events"][1]["data"]["by"] == "person:Alice" and read["events"][1]["data"]["call"]
         assert read["events"][2]["data"]["usage"]["input_tokens"] > 0
         assert read["next"] == 3 and read["stream"] == sent["stream"] and read["closed"] is False
@@ -203,7 +207,8 @@ def test_a_job_sends_the_house_agent_a_message(tmp_path):
                      call={"worker": "hub", "cap": "agent.chat.send", "args": {"agent": "house", "text": "from a job"}})
         await rig.ok("hub", "event.emit", name="house.ping", payload={})
         events = await rig.until(lambda got: len(replies(got)) == 1)
-        assert events[0]["data"] == {"text": "from a job"} and events[0]["by"] == "person:Alice"
+        assert events[0]["by"] == "person:Alice" and events[0]["data"]["text"] == "from a job"
+        assert events[0]["data"]["from"].startswith("job:") and events[0]["data"]["channel"] == "job"   # MEM5
         assert replies(events)[0].startswith("echo 1: from a job")
     run(tmp_path, body)
 
@@ -230,7 +235,8 @@ def test_engine_settings_and_errors_say_what_to_do(tmp_path):
         listed = {s["key"]: s["value"] for s in (await rig.ok("hub", "setting.list", plugin="agents"))["settings"]}
         assert {k: listed[k] for k in ("house_name", "dock", "backend", "worker")} == {
             "house_name": None, "dock": "house", "backend": "echo-engine.turn", "worker": None}
-        assert set(listed) == {"house_name", "dock", "backend", "worker", "setup", "sound", "rookie", "rookie_theme"}  # HA3's
+        assert set(listed) == {"house_name", "dock", "backend", "worker", "setup", "sound", "rookie", "rookie_theme",  # HA3's
+                           "memory", "memory_idle_minutes", "memory_hops", "memory_beliefs"}                 # MEM5's
         assert listed["setup"]["done"] is True and listed["sound"] is None
         await rig.ok("hub", "setting.set", plugin="agents", key="house_name", value="Jeeves")
         assert "You are Jeeves" in (await rig.say("hi"))["text"]
@@ -278,7 +284,8 @@ def test_the_claude_code_engine_is_on_every_python_worker(tmp_path):
     async def body(rig):
         caps = (await rig.tool("caps", worker=rig.moniker, match="agents-claude-code."))[1]["caps"][0]["caps"]
         assert [c["name"] for c in caps] == ["agents-claude-code.turn"]
-        assert set(caps[0]["schema"]["properties"]) == {"prompt", "session", "cwd", "model", "effort", "system", "door"}
+        assert set(caps[0]["schema"]["properties"]) == {"prompt", "session", "cwd", "model", "effort", "system", "door",
+                                                        "fork", "schema", "precompact"}     # the last three: MEM5
     run(tmp_path, body)
 
 
@@ -291,7 +298,7 @@ def test_the_claude_code_turn_runs_claude_with_0_5s_arguments(tmp_path, monkeypa
         fake.write_text("#!/bin/sh\n"
                         f"printf '%s\\n' \"$@\" > {log}\n"
                         f"cat >> {log}\n"
-                        "for a in \"$@\"; do case $prev in --mcp-config) cat \"$a\" >> " + str(log) + ";; esac; prev=$a; done\n"
+                        "for a in \"$@\"; do case $prev in --mcp-config|--settings) cat \"$a\" >> " + str(log) + ";; esac; prev=$a; done\n"
                         "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,"
                         "\"result\":\"hi from claude\",\"session_id\":\"s-123\",\"usage\":{\"input_tokens\":5}}'\n")
         fake.chmod(0o755)
@@ -307,8 +314,10 @@ def test_the_claude_code_turn_runs_claude_with_0_5s_arguments(tmp_path, monkeypa
         args = log.read_text()
         assert args.splitlines()[:4] == ["-p", "--output-format", "json", "--model"]
         assert "--permission-mode\nauto\n" in args and "--strict-mcp-config" in args
-        assert "Message from person:Alice:\n\nping" in args and "Bearer ey" in args
+        assert ", with person:Alice's token (not person:Alice's own words):\n\nping" in args and "Bearer ey" in args
         assert f'"url": "{rig.url}/mcp"' in args
+        # The hook before compaction (brief MEM5): Claude Code calls agent.dream through the door and waits.
+        assert '"PreCompact"' in args and "precompact.py" in args and '"timeout": 315360000' in args
         await rig.say("again")
         assert "--resume\ns-123\n" in log.read_text()
     run(tmp_path, body)
