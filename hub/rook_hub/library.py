@@ -55,9 +55,10 @@ class Plugin:
     brief HA2) its settings, its skills, the skills it carries on an agent's turn while a
     condition holds, and what runs once it is loaded."""
 
-    def __init__(self, name, folder=None):
+    def __init__(self, name, folder=None, data=None):
         self.name = name
         self.folder = folder      # the installed copy of the plugin's folder (pathlib.Path)
+        self._data = data         # the plugin's own data folder at the hub (brief MEM5), made on first use
         self.caps = {}            # cap name -> (handler, {"description": ..., "schema": ...})
         self.record_types = []
         self.drivers = {}         # driver name -> Driver
@@ -74,6 +75,13 @@ class Plugin:
             self.caps[name] = (handler, {"description": description, "schema": schema})
             return handler
         return register
+
+    @property
+    def data(self):
+        """A folder of the plugin's own in the hub's data directory (`<data>/plugin-data/<plugin>`, brief
+        MEM5), as WORKER.data is on a worker: made on first use, owner-only, kept across restarts and
+        installs, and carried by backup.run (a SQLite file in it is copied consistently)."""
+        return _made(self._data)
 
     def setting(self, name, doc, where="hub", default=None):
         """Declare a setting the plugin keeps at the hub (brief HA2; 0.5's plugin settings).
@@ -113,6 +121,12 @@ class Plugin:
         """Declare a driver: what the hub uses to speak to one kind of device (D2)."""
         self.drivers[name] = Driver(name)
         return self.drivers[name]
+
+
+def _made(folder):
+    for f in reversed([folder, *folder.parents][:2]):     # plugin-data/ and the plugin's own: owner-only, as the rest
+        f.mkdir(mode=0o700, exist_ok=True)
+    return folder
 
 
 class Driver:
@@ -202,6 +216,30 @@ class Call:
         before setup existed (it has people: setup counts as done)."""
         with self._hub._lock:
             return self._hub.auth.has_users()
+
+    @property
+    def data(self):
+        """The plugin's own data folder at the hub (Plugin.data; brief MEM5)."""
+        return _made(self._hub.state_dir / "plugin-data" / self.plugin)
+
+    def acting(self):
+        """How the caller came in (brief MEM5: who said it): {"token": {"moniker", "purpose"} of the token they
+        came with (purpose "session" for a person's own site session, "agent" for an agent's), or None for a
+        person acting directly; "job": the moniker of the job whose run this call is, or None}."""
+        token = job = None
+        with self._hub._lock:
+            if self.token is not None:
+                row = self._hub._db.execute("SELECT moniker, purpose FROM tokens WHERE guid = ?", (self.token,)).fetchone()
+                token = {"moniker": row["moniker"], "purpose": row["purpose"]} if row else None
+            try:
+                task = asyncio.current_task()
+            except RuntimeError:
+                task = None
+            running = next((r for r in self._hub._running.values() if task is not None and r["task"] is task), None)
+            if running and running.get("job"):
+                row = self._hub._db.execute("SELECT moniker FROM jobs WHERE guid = ?", (running["job"],)).fetchone()
+                job = row["moniker"] if row else running["job"]
+        return {"token": token, "job": job}
 
     def install_facts(self):
         """What the installer wrote about this hub in `<data>/install.json` (brief HA4: its folder, units,

@@ -80,7 +80,7 @@ Every hub has a house agent, "house" (named Rookie until you name it: setting `h
 
 ## Backing up, restoring and moving a hub
 
-A backup is one file holding everything the hub needs to come back as itself: users and their sessions, tokens, the vault's secrets, installed plugins, records and blob bytes, the journal, stream recordings, heartbeat history, and the hub's own key, so its workers are still accepted. It can be taken while the hub is running: the hub keeps serving, and the backup holds the data as it was at one moment.
+A backup is one file holding everything the hub needs to come back as itself: users and their sessions, tokens, the vault's secrets, installed plugins and their own data folders (the house agent's memory among them), records and blob bytes, the journal, stream recordings, heartbeat history, and the hub's own key, so its workers are still accepted. It can be taken while the hub is running: the hub keeps serving, and the backup holds the data as it was at one moment.
 
 ```sh
 PYTHONPATH=protocol/python:hub .venv/bin/python -m rook_hub backup --data ~/rook-hub --vault-key ~/rook-vault.key --to ~/rook-hub.backup

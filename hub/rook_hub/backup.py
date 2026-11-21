@@ -3,7 +3,7 @@
 A backup is one file holding everything a hub needs to come back as itself: a
 consistent copy of the database, the hub's own key (`hub.key`, R5), its link key
 (`hub_link.key`, docs/link-design.md 2.2), the token secret (`token.secret`), the
-installed plugins' folders and the blob bytes. It is taken while the hub serves the directory and writes to it: the database is
+installed plugins' folders, the plugins' own data folders (`plugin-data/`, brief MEM5) and the blob bytes. It is taken while the hub serves the directory and writes to it: the database is
 copied through SQLite's backup API on a read-only connection, which sees one
 consistent moment and needs neither the hub nor its lock. That plain working
 copy is kept in the data directory itself (`.backup.db`), beside the database
@@ -200,6 +200,7 @@ def backup(data, vault_key_file, to, key=None):
                         tar.add(data / "plugins" / folder, arcname=f"plugins/{folder}", filter=_kept)
                     if (data / "blobs").is_dir():         # content-addressed: only ever added to (K3, K4)
                         tar.add(data / "blobs", arcname="blobs", filter=_kept)
+                    _plugin_data(tar, data, copy)
                 sealing.finish()
             except BaseException:
                 out.close()
@@ -209,6 +210,36 @@ def backup(data, vault_key_file, to, key=None):
         copy.unlink(missing_ok=True)
         held.close()
     return to.stat().st_size
+
+
+def _plugin_data(tar, data, copy):
+    """The plugins' own data folders (Plugin.data, brief MEM5): each file as it is, except a SQLite
+    database, which is copied as hub.db is, through SQLite's backup API (one consistent moment while the
+    plugin goes on writing), into the working copy and from there into the backup. A database's WAL
+    and shared-memory files are not data: the copy holds what they held."""
+    root = data / "plugin-data"
+    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.name.endswith(("-wal", "-shm", "-journal")) or "__pycache__" in path.parts:
+            continue
+        arcname = path.relative_to(data).as_posix()
+        with open(path, "rb") as f:
+            is_db = f.read(16) == b"SQLite format 3\x00"
+        if not is_db:
+            tar.add(path, arcname=arcname)
+            continue
+        with open(copy, "r+b") as held:
+            held.truncate(0)
+        source = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+        target = sqlite3.connect(copy)
+        target.execute("PRAGMA journal_mode=OFF")
+        try:
+            source.backup(target)
+        finally:
+            source.close()
+            target.close()
+        tar.add(copy, arcname=arcname)
 
 
 def _kept(info):
