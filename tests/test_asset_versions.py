@@ -209,11 +209,10 @@ async def in_chrome(tmp_path):
                 await page.until("document.body.classList.contains('dock-open') && !document.querySelector('#dock').hidden")
                 await page.until("!!document.querySelector('main.main h1')")
                 await asyncio.sleep(1)
-            # A terminal's xterm (its modules and its stylesheet), loaded as a terminal loads it. Waited
-            # for as responses, however long they take: on plain HTTP/1.1 Chrome keeps six connections
-            # to the hub, and each page left above sits in its back-forward cache with its dock's 40 s
-            # agent.chat.read still open on one of them, so xterm's three requests can wait until the
-            # oldest of those reads ends. A clock of 20 s lost that race when the machine was busy.
+            # A terminal's xterm (its modules and its stylesheet), loaded as a terminal loads it, and
+            # waited for as the three responses themselves. The pages left above sit in the back-forward
+            # cache holding no connection (their dock's read is let go of on pagehide, brief HA7), so
+            # nothing stands in front of these requests; tests/test_dock_pagehide.py shows that.
             await page.js("import('/site/terminal.js').then(m => Vue.createApp(m.default, {stream: {moniker: 'none', "
                           "open: false, title: 'none'}}).mount(document.body.appendChild(document.createElement('div')))); true")
             await page.responded("xterm.css", "xterm.mjs", "addon-fit.mjs")

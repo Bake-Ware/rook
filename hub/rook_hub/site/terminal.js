@@ -7,7 +7,7 @@
    A stream that is a terminal (its cap takes cols and rows) is told the size it is shown at
    (Bake 13 Nov): when the view attaches, and again when the fitted size changes, once the
    window has stopped changing for a moment, so dragging a window does not flood the worker. */
-import { api, toast, asset } from '/site/shell.js';
+import { api, held, toast, asset } from '/site/shell.js';
 
 const WAIT = 25;            // seconds the hub may hold a read while nothing new arrives
 const SCROLLBACK = 100000;  // lines the view keeps; the hub keeps the whole recording
@@ -78,7 +78,7 @@ export default {
       while (!this.gone) {
         let read;
         try {
-          read = await api('GET', `/api/streams/${encodeURIComponent(this.stream.moniker)}/read?from=${this.position}&wait=${caughtUp && this.open ? WAIT : 0}`);
+          read = await held('GET', `/api/streams/${encodeURIComponent(this.stream.moniker)}/read?from=${this.position}&wait=${caughtUp && this.open ? WAIT : 0}`);   // let go while the page is left (HA7)
         } catch (e) {
           if (this.gone) return;
           this.failed = e.message;
