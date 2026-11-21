@@ -1261,8 +1261,17 @@ def pin(call, args):
                 return {"pinned": None, "note": f"There is no belief {args['belief']}; nothing was pinned."}
             how = "the belief named"
         else:
+            # Their later statement about the same thing replaces what was pinned (MEM5, answer 2): a pinned
+            # belief about a thing their words name, the most recently pinned first.
+            named = list(match_things(s, words(words_)))
+            same = s.one(f"""SELECT b.* FROM beliefs b JOIN edges e ON e.src_kind = 'belief' AND e.src = b.id AND
+                             e.rel = 'about' AND e.dst_kind = 'thing' AND e.dst IN ({','.join('?' * len(named))})
+                             WHERE b.pinned ORDER BY (SELECT MAX(id) FROM pins WHERE belief = b.id) DESC LIMIT 1""",
+                         *named) if named else None
             best = max(((dice(words_, r["text"]), r["id"]) for r in _held_close_any(s, words_)), default=None)
-            if best and best[0] >= PIN_MATCH:
+            if same is not None:
+                match, how = same, "the pinned belief about what their words name"
+            elif best and best[0] >= PIN_MATCH:
                 match, how = s.one("SELECT * FROM beliefs WHERE id = ?", best[1]), f"the closest held belief ({best[0]:.2f})"
         person = row["speaker"]
         ep = s.run("INSERT INTO episodes (session, text, said_by, channel, kind, entries, happened_at, made_at)"
@@ -1534,8 +1543,8 @@ Pins. Whether the person said something definitively, meant to hold for good, is
 final", "never again", "it is not coming back" usually are; an ordinary correction or a decision for now
 usually is not). Pin it with agent.memory.pin, quoting their words. Say so plainly in the same reply, in
 one line, with their words; if it was pinned already, say it is pinned again. When their own message
-says something different about what is pinned, pin their new words: that replaces the pin, and you say
-so ("that replaces what was pinned: ..."). They can undo any pin at any time, the next message or days
+says something different about what is pinned, pin their new words once, with belief= the pinned one's
+id: that replaces the pin, and you say so ("that replaces what was pinned: ..."). They can undo any pin at any time, the next message or days
 later ("unpin that", "that wasn't meant to be pinned"): call agent.memory.unpin with its id and say so.
 Beyond that one line, never talk about pinning. Only the person's own words pin, unpin or replace.
 

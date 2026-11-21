@@ -230,6 +230,13 @@ def test_pins_are_said_undone_replaced_and_never_moved_by_a_dream(tmp_path):
                              'as the lab box.", "belief": "b1"}>> <<reply: OK.>>')
         assert sent["text"] == ('OK.\n\n(That replaces what was pinned: "Starscream is gone for good.". '
                                 'Pinned now: "Starscream is back, as the lab box.")')
+        # Without an id, their later words about a thing a pinned belief is about replace that pin too.
+        rig.queue({"about": [{"belief": "b1", "thing": "Starscream"}], "things": [{"name": "Starscream", "aliases": []}]})
+        await rig.dream()
+        sent = await rig.own('Starscream is the lab box now. <<agent.memory.pin {"statement": "Starscream is the lab box '
+                             'now."}>> <<reply: OK.>>')
+        assert rig.said()[-1][0]["action"] == "replace" and rig.said()[-1][0]["pinned"] == "b1"
+        assert "That replaces what was pinned" in sent["text"]
         # An agent's message cannot pin, unpin or replace.
         await rig.say('<<agent.memory.unpin {"belief": "b1"}>>')
         assert rig.said()[-1][0]["unpinned"] is None and "not person:Alice's own words" in rig.said()[-1][0]["note"]
@@ -243,8 +250,9 @@ def test_pins_are_said_undone_replaced_and_never_moved_by_a_dream(tmp_path):
         history = await rig.show("b1")
         assert "Now: PINNED (1 link against since, not counted)" in history
         assert "REPLACE: \"Starscream is back, as the lab box.\" (was \"Starscream is gone for good.\")" in history
+        assert "REPLACE: \"Starscream is the lab box now.\"" in history
         pins = [r[0] for r in rig.db().execute("SELECT action FROM pins ORDER BY id")]
-        assert pins == ["pin", "unpin", "pin", "unpin", "pin", "replace"]
+        assert pins == ["pin", "unpin", "pin", "unpin", "pin", "replace", "replace"]
     run(tmp_path, body)
 
 
