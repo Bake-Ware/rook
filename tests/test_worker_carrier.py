@@ -508,10 +508,23 @@ def test_a_stall_of_20_s_makes_a_new_session(tmp_path):
             worker = rig.worker()
             await rig.approved(worker)
             first = rig.hub.sessions.live(worker.key)
+            # The hub takes a heartbeat on a link of a new session: the thing this test waits for, as
+            # long as it takes. (It waited 15 s by the clock; under load that guess could lose.) Measured
+            # here: back 3 s after the stall ends, as Telesthete's own timers have it: the worker gives the
+            # link up at PEER_TIMEOUT into the stall and links again at once, and that link's HELLO goes
+            # out again after 0.5, 1, 2 and 4 s, then every 5 s, so one goes out within 5 s of the stall's end.
+            back = asyncio.Event()
+            heartbeat = rig.hub.events.heartbeat
+
+            def heard(record):
+                heartbeat(record)
+                if rig.hub.sessions.live(worker.key) not in (None, first) and rig.online():
+                    back.set()
+            rig.hub.events.heartbeat = heard
             rig.proxy.stalled = True
             await asyncio.sleep(20)
             rig.proxy.stalled = False
-            await until(lambda: rig.hub.sessions.live(worker.key) not in (None, first) and rig.online(), timeout=15)
+            await back.wait()
             # The worker linked again by itself, on a new session (3.2). How many link attempts that took is the
             # transport's business (Bake, 17 Nov 18:45: "It's just part of normal transport retry."): Channel 0
             # gives up after its resends and HELLO is resent on its own schedule, so two or three, by timing.

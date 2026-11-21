@@ -78,13 +78,26 @@ class StandIn:
         raise AssertionError(f"the dock called {cap}")
 
 
+# Chrome's own work on the internet, off: on a new profile (each test's) it otherwise fetches its
+# components, optimization-guide models, a spelling dictionary and more while the test runs, and
+# on a busy machine that held a page's script back past the test's waits (brief HA6). Tests reach
+# no network but the hub's: everything but loopback goes to a proxy that is not there (port 9) and
+# fails at once; Chrome never sends loopback to a proxy.
+QUIET = ["--proxy-server=http://127.0.0.1:9",
+         "--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-default-apps",
+         "--disable-extensions", "--disable-client-side-phishing-detection", "--metrics-recording-only",
+         "--no-default-browser-check", "--disable-features=OptimizationGuideModelDownloading,OptimizationHintsFetching,"
+         "OptimizationTargetPrediction,OptimizationHints,Translate,MediaRouter"]
+
+
 class Chrome:
     """Headless Chrome with one page, driven over the DevTools protocol."""
 
     def __init__(self):
         self.profile = tempfile.mkdtemp(prefix="dock-chrome.")
         self.proc = subprocess.Popen([CHROME, "--headless=new", "--remote-debugging-port=0", f"--user-data-dir={self.profile}",
-                                      "--window-size=1360,850", "--no-first-run", "--enable-unsafe-swiftshader", "about:blank"],
+                                      "--window-size=1360,850", "--no-first-run", "--enable-unsafe-swiftshader", *QUIET,
+                                      "about:blank"],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.n, self.errors = 0, []
 
@@ -126,10 +139,15 @@ class Chrome:
         return reply["result"].get("value")
 
     async def until(self, expression, timeout=20):
-        """Wait until `expression` is truthy in the page (one that throws is not yet); its value."""
+        """Wait until `expression` is truthy in the page (one that throws is not yet); its value. A look
+        the page's own navigation cut off (DevTools answers an error, "Execution context was destroyed",
+        not a result: the dock opening a page does that) is not yet either."""
         start = time.monotonic()
         while time.monotonic() - start < timeout:
-            value = await self.js(f"(() => {{ try {{ return ({expression}); }} catch (e) {{ return false; }} }})()")
+            reply = await self.cmd("Runtime.evaluate", returnByValue=True, awaitPromise=True,
+                                   expression=f"(() => {{ try {{ return ({expression}); }} catch (e) {{ return false; }} }})()")
+            assert "exceptionDetails" not in reply, reply
+            value = reply["result"].get("value") if "result" in reply else None
             if value:
                 return value
             await asyncio.sleep(0.1)
