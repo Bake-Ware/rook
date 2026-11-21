@@ -157,13 +157,24 @@ def watching(Chrome):
                 message = json.loads(await self.ws.recv())
                 if message.get("id") == mine:
                     return message.get("result", message)
-                if message.get("method") == "Network.responseReceived":
-                    response = message["params"]["response"]
-                    headers = {k.lower(): v for k, v in response["headers"].items()}
-                    self.responses.append((response["url"], response["status"], headers.get("cache-control")))
-                if message.get("method") == "Runtime.exceptionThrown":
-                    details = message["params"]["exceptionDetails"]
-                    self.errors.append(details.get("exception", {}).get("description", details.get("text", "")))
+                self.note(message)
+
+        def note(self, message):
+            if message.get("method") == "Network.responseReceived":
+                response = message["params"]["response"]
+                headers = {k.lower(): v for k, v in response["headers"].items()}
+                self.responses.append((response["url"], response["status"], headers.get("cache-control")))
+            if message.get("method") == "Runtime.exceptionThrown":
+                details = message["params"]["exceptionDetails"]
+                self.errors.append(details.get("exception", {}).get("description", details.get("text", "")))
+
+        async def responded(self, *files):
+            """Wait for the page's response for each file named (the last part of its path), as long
+            as the browser takes to get it: the response itself, not a clock."""
+            def got(file):
+                return any(url.split("?")[0].endswith("/" + file) for url, _, _ in self.responses)
+            while not all(got(file) for file in files):
+                self.note(json.loads(await self.ws.recv()))
     Watching.responses = None
     return Watching
 
@@ -198,11 +209,14 @@ async def in_chrome(tmp_path):
                 await page.until("document.body.classList.contains('dock-open') && !document.querySelector('#dock').hidden")
                 await page.until("!!document.querySelector('main.main h1')")
                 await asyncio.sleep(1)
-            # A terminal's xterm (its modules and its stylesheet), loaded as a terminal loads it.
+            # A terminal's xterm (its modules and its stylesheet), loaded as a terminal loads it. Waited
+            # for as responses, however long they take: on plain HTTP/1.1 Chrome keeps six connections
+            # to the hub, and each page left above sits in its back-forward cache with its dock's 40 s
+            # agent.chat.read still open on one of them, so xterm's three requests can wait until the
+            # oldest of those reads ends. A clock of 20 s lost that race when the machine was busy.
             await page.js("import('/site/terminal.js').then(m => Vue.createApp(m.default, {stream: {moniker: 'none', "
                           "open: false, title: 'none'}}).mount(document.body.appendChild(document.createElement('div')))); true")
-            await page.until("['xterm.css', 'xterm.mjs', 'addon-fit.mjs'].every(f => "
-                             "performance.getEntriesByType('resource').some(e => e.name.includes(f)))")
+            await page.responded("xterm.css", "xterm.mjs", "addon-fit.mjs")
             await asyncio.sleep(1)
             await page.js("true")       # the page's events are read while a command waits: the last ones too
             assert not page.errors, page.errors
