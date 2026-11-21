@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.12.5
+version: 0.12.6
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -14,7 +14,7 @@ source: https://github.com/Bake-Ware/rook
 
 caps:
   state:
-    doc: "The remote's buttons, the last presses, the device its buttons are for (target), its mode and menu tab, what the screen shows, Wi-Fi and hub status, the network device it drives (local), the IR profile picked and how many it keeps, free memory (heap, heap_block, stack_free: the least the band task's stack has had), the event queue (events_sent, events_queued, events_bytes, events_dropped), the update's state, the firmware's version and build, and its health: reset (why it last started: power_on, software, panic, task_watchdog, brownout...), boots and crashes (starts, and those after a crash, kept across restarts), heap_check and heap_bad (where a heap check first found the heap broken, see remote.map heap_check), and coredump {size, summary} when a crash left one (summary: task, pc, cause, the code addresses on its stack and the build; remote.coredump reads it out)."
+    doc: "The remote's buttons, the last presses, the device its buttons are for (target), its mode and menu tab, what the screen shows, Wi-Fi and hub status, the network device it drives (local), the IR profile picked and how many it keeps, free memory (heap, heap_block, stack_free: the least the band task's stack has had), the event queue (events_sent, events_queued, events_bytes, events_dropped), the update's state, the firmware's version and build, and its health: reset (why it last started: power_on, software, panic, task_watchdog, brownout...), boots and crashes (starts, and those after a crash, kept across restarts), heap_check and heap_bad (where a heap check first found the heap broken, see remote.map heap_check), oom and throws (failed allocations and C++ exceptions this boot), last_fault (the last of those before the latest restart: out of memory with its size and task, a throw, terminate), and coredump {size, summary} when a crash left one (summary: task, pc, cause, the code addresses on its stack and the build; remote.coredump reads it out)."
     risk: read
     scope: local
     idempotent: true
@@ -91,6 +91,7 @@ caps:
       name: { type: str, max: 20, doc: "A profile's name, for the profile actions." }
       link: { type: str, max: 40, doc: "For profile_save: the network device that keys with no action (and lan actions) go to (blank: none)." }
       merge: { type: bool, default: true, doc: "For profile_save: false replaces the whole profile." }
+      list: { type: bool, default: false, doc: "With profile_save, profile_delete, profile_select, profile_release: answer the whole profiles listing too (else just the profile changed, profiles, bytes, bytes_max)." }
       icon: { type: str, max: 20, doc: "For profile_save: the profile's picture, tv, projector, speaker, streaming, light, phone, car, game or generic (blank: none, shown as generic; left out: as it was)." }
       pin: { type: int, min: -1, max: 48, doc: "The IR LED's GPIO, for pin (-1: none)." }
       protocol: { type: str, enum: [nec], doc: For send. }

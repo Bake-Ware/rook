@@ -25,4 +25,14 @@ void set_heap_check(bool on);
 bool heap_check_on();
 void check(const char* where);
 
+// Faults, kept in RTC memory (no allocation; it survives the restart they
+// may cause) and reported by remote.state after it: an allocation that failed
+// (oom: its size and task), a C++ exception thrown (throw: its task; one that
+// is caught is harmless, but on a C3 before 0.12.6 every throw was fatal),
+// std::terminate. Safe from any task, and from inside operator new.
+void note_oom(size_t size);
+void note_throw();
+void note_terminate();
+void install_fault_hooks();             // std::set_terminate; call first thing in setup()
+
 }  // namespace diag

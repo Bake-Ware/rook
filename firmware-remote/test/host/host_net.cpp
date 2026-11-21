@@ -6,10 +6,11 @@ HostEsp ESP;
 // The test's limit on allocations (worker_test.cpp) is the worker's: the
 // network's own copies of packets (lwIP's buffers on the chip) are not under it.
 extern size_t alloc_limit;
+extern int host_exempt;                 // > 0: no allocation fails (worker_test.cpp's fault injection)
 struct Unlimited {
     size_t was = alloc_limit;
-    Unlimited() { alloc_limit = 0; }
-    ~Unlimited() { alloc_limit = was; }
+    Unlimited() { alloc_limit = 0; host_exempt++; }
+    ~Unlimited() { alloc_limit = was; host_exempt--; }
 };
 HostWiFi WiFi;
 HostNet NET;

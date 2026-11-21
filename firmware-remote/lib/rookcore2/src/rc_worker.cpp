@@ -18,6 +18,17 @@ static std::string rand_hex(size_t bytes) {
     return hex(b, bytes);
 }
 
+// A mutex held for a scope, let go however it is left (a return, or an
+// exception unwinding through it: the worker would otherwise stop for good).
+struct Held {
+    SemaphoreHandle_t m;
+    bool on = true;
+    explicit Held(SemaphoreHandle_t mu) : m(mu) { xSemaphoreTake(m, portMAX_DELAY); }
+    ~Held() { if (on) xSemaphoreGive(m); }
+    void release() { if (on) xSemaphoreGive(m); on = false; }
+    Held(const Held&) = delete;
+};
+
 // Room to allocate n bytes, with some to spare. On the C3 a failed allocation
 // is an abort (exceptions there do not unwind), so sizes are checked first.
 static bool room_for(size_t n) { return ESP.getMaxAllocHeap() > n + 2048; }
@@ -236,7 +247,11 @@ void Worker::shed_replies() {
         std::string().swap(c.reply);
     }
     xSemaphoreGive(lock_);
-    if (freed && log) log(("memory is short: " + std::to_string(freed) + " bytes of kept replies let go").c_str());
+    if (freed && log) {
+        char b[80];                            // (runs from the out-of-memory paths: no allocation)
+        snprintf(b, sizeof b, "memory is short: %u bytes of kept replies let go", (unsigned)freed);
+        log(b);
+    }
 }
 
 // An allocation failed while answering call id: the replies kept go, and the
@@ -279,16 +294,16 @@ bool Worker::seen_call(JsonObjectConst req) {
     bool running = false, done = false;
     Again how = AGAIN_NONE;
     size_t size = 0;
-    xSemaphoreTake(lock_, portMAX_DELAY);
+    Held held(lock_);
     for (auto it = recent_.begin(); it != recent_.end(); ++it) {
         if (it->id != id) continue;
         if (it->nonce == (nonce ? nonce : "")) {
             done = it->done;
             how = it->again;
             size = it->size;
-            if (done) again = it->reply;
-            else running = it->acked;
-            xSemaphoreGive(lock_);
+            if (done && room_for(it->reply.size())) again = it->reply;
+            else running = !done && it->acked;
+            held.release();
             // Answered already, and its reply did not get there (else the hub
             // would not ask again): the reply again, one way or another.
             const char* what = running ? "acked" : "let be (still running)";
@@ -317,7 +332,6 @@ bool Worker::seen_call(JsonObjectConst req) {
     r.ack = ack;
     recent_.push_back(std::move(r));
     while ((int)recent_.size() > RECENT_MAX) recent_.pop_front();
-    xSemaphoreGive(lock_);
     return false;
 }
 
@@ -356,7 +370,20 @@ void Worker::unreadable(const uint8_t* data, size_t len, const char* why) {
 // sized first and checked against the largest free block, and the batch goes
 // out in pieces taken from the queue, never copied.
 
+// Never throws to its caller (the app's loop): an allocation that fails
+// drops the event and counts it, like one that is too big.
 bool Worker::emit(const char* event, JsonObjectConst payload) {
+    try {
+        return emit_one(event, payload);
+    } catch (const std::bad_alloc&) {
+        Held held(lock_);
+        dropped_++;
+        dropped_total_++;
+        return false;
+    }
+}
+
+bool Worker::emit_one(const char* event, JsonObjectConst payload) {
     size_t n = measureJson(payload);
     bool fits = n <= EVENT_MAX && room_for(n + 64);
     Event e;
@@ -366,11 +393,11 @@ bool Worker::emit(const char* event, JsonObjectConst payload) {
         e.payload.reserve(n);
         serializeJson(payload, e.payload);
     }
-    xSemaphoreTake(lock_, portMAX_DELAY);
+    Held held(lock_);
     if (!fits) {
         dropped_++;
         dropped_total_++;
-        xSemaphoreGive(lock_);
+        held.release();
         if (log) log((std::string("event ") + event + " dropped: " + std::to_string(n) + " bytes (max " +
                       std::to_string(EVENT_MAX) + ", largest block " + std::to_string(ESP.getMaxAllocHeap()) + ")").c_str());
         return false;
@@ -386,7 +413,6 @@ bool Worker::emit(const char* event, JsonObjectConst payload) {
     }
     outbox_bytes_ += e.payload.size();
     outbox_.push_back(std::move(e));
-    xSemaphoreGive(lock_);
     return true;
 }
 
@@ -398,7 +424,7 @@ bool Worker::emit(const char* event, JsonObjectConst payload) {
 // BATCH_BYTES (at least one), fewer when memory is short.
 void Worker::pump_events() {
     uint32_t ms = millis();
-    xSemaphoreTake(lock_, portMAX_DELAY);
+    Held held(lock_);
     if (!batch_id_.empty() && ms - batch_sent_ > 15000) {   // unanswered: resend with the same event ids
         batch_id_.clear();
         batch_sent_ = ms;
@@ -406,7 +432,7 @@ void Worker::pump_events() {
     }
     bool can = batch_id_.empty() && !outbox_.empty() && !gate.hub_node().empty() && hub_ok() &&
                (batch_sent_ == 0 || ms - batch_sent_ > batch_backoff_);
-    if (!can) { xSemaphoreGive(lock_); return; }
+    if (!can) return;
     size_t budget = BATCH_BYTES;
     if (!room_for(8192)) budget = 2048;       // memory short: small batches
     size_t n = 0, bytes = 0;
@@ -422,7 +448,7 @@ void Worker::pump_events() {
     if (!room_for(glue_size + (2 * n + 2) * sizeof(Band::Piece))) {
         batch_sent_ = ms;                     // no memory now: try again after the backoff
         batch_backoff_ = batch_backoff_ * 2 > 30000 ? 30000 : batch_backoff_ * 2;
-        xSemaphoreGive(lock_);
+        held.release();
         if (log) log("events wait: no memory for a batch");
         return;
     }
@@ -460,12 +486,11 @@ void Worker::pump_events() {
     batch_n_ = n;
     batch_sent_ = ms;
     band_.send(ps.data(), ps.size());
-    xSemaphoreGive(lock_);
 }
 
 void Worker::on_reply(JsonObjectConst rep) {
-    xSemaphoreTake(lock_, portMAX_DELAY);
-    if (batch_id_.empty() || batch_id_ != rep["id"].as<const char*>()) { xSemaphoreGive(lock_); return; }
+    Held held(lock_);
+    if (batch_id_.empty() || batch_id_ != rep["id"].as<const char*>()) return;
     batch_id_.clear();
     if (rep["ok"].as<bool>()) {
         for (size_t i = 0; i < batch_n_ && !outbox_.empty(); i++) {
@@ -481,9 +506,11 @@ void Worker::on_reply(JsonObjectConst rep) {
         batch_sent_ = millis();
         const char* e = rep["error"].as<const char*>();
         if (e && strstr(e, "unknown worker")) announce_due_ = true;
-        if (log) log((std::string("core.event refused: ") + (rep["error"].as<const char*>() ? rep["error"].as<const char*>() : "?")).c_str());
+        held.release();
+        char b[160];
+        snprintf(b, sizeof b, "core.event refused: %.120s", e ? e : "?");
+        if (log) log(b);
     }
-    xSemaphoreGive(lock_);
 }
 
 // ---- inbound ----------------------------------------------------------------
@@ -623,6 +650,7 @@ static_assert(sizeof(void*) <= sizeof(uint32_t), "jobs go to the standing task a
 
 void Worker::run_job(BlockingJob* j) {
     bool ok = false;
+    const char* fail = nullptr;               // set when the call broke off; err when it said why
     std::string out, err;
     try {
         JsonDocument res;
@@ -638,12 +666,12 @@ void Worker::run_job(BlockingJob* j) {
                 serializeJson(res, out);
             }
         }
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) {        // (a catch block that allocates can throw again: a fixed text only)
         ok = false;
-        err = "worker error: out of memory";
+        fail = "worker error: out of memory";
     } catch (...) {
         ok = false;
-        err = "worker error: the call failed";
+        fail = "worker error: the call failed";
     }
     xSemaphoreTake(lock_, portMAX_DELAY);
     bool late = j->answered;
@@ -656,6 +684,8 @@ void Worker::run_job(BlockingJob* j) {
             if (log) log((j->cap + " finished after the watchdog had answered it").c_str());
         } else if (ok) {
             reply_raw(j->id, out.empty() ? "{}" : out);
+        } else if (fail) {
+            reply_err(j->id, fail);
         } else {
             reply_err(j->id, err);
         }
@@ -720,7 +750,7 @@ void Worker::check_slow() {
     std::vector<Late> late;
     uint32_t ms = millis();
     bool replace = false;
-    xSemaphoreTake(lock_, portMAX_DELAY);
+    Held held(lock_);
     for (auto& s : slow_) {
         if (!s || s->answered || ms - s->started <= s->max_ms) continue;
         s->answered = true;
@@ -735,7 +765,7 @@ void Worker::check_slow() {
         slow_abandoned_++;
     }
     bool want = !slow_task_ && (replace || ms - slow_retry_ > 5000);
-    xSemaphoreGive(lock_);
+    held.release();
     for (auto& l : late) {
         char b[160];
         snprintf(b, sizeof b, "%s ran %u s, past its maximum: answered with an error, slot freed", l.cap.c_str(),
@@ -813,7 +843,9 @@ void Worker::on_request(JsonObjectConst req) {
     try {
         handle_request(req);
     } catch (const std::bad_alloc&) {
-        out_of_memory(id, std::string("answering ").append(req["cap"] | "a call").c_str());
+        char what[72];                         // (no allocation in a catch block: it could throw again)
+        snprintf(what, sizeof what, "answering %.48s", req["cap"] | "a call");
+        out_of_memory(id, what);
     } catch (...) {
         try {
             reply_err(id, "worker error: the call failed");
@@ -888,7 +920,22 @@ void Worker::handle_request(JsonObjectConst req) {
     reply_err(id, std::string("unknown capability: ") + cap);
 }
 
+// Everything the band task does each turn. An allocation that fails in it is
+// caught here (the batch waits, the announce goes next turn) rather than
+// leaving the task: the memory is checked first, so this is the last resort.
 void Worker::loop() {
+    try {
+        loop_once();
+    } catch (const std::bad_alloc&) {
+        shed_replies();
+        char b[120];
+        snprintf(b, sizeof b, "worker: out of memory in its loop (heap %u, largest block %u)", (unsigned)ESP.getFreeHeap(),
+                 (unsigned)ESP.getMaxAllocHeap());
+        if (log) log(b);
+    }
+}
+
+void Worker::loop_once() {
     check_slow();
     static uint32_t shed_at = 0;
     if (millis() - shed_at > 2000) {          // memory short: the kept replies are the first to go

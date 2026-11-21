@@ -44,7 +44,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.12.5"
+#define FW_VERSION "0.12.6"
 #ifndef BUILD_MONIKER
 #define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
 #endif
@@ -234,7 +234,11 @@ static void logf(const char* fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(b, sizeof b, fmt, ap);
     va_end(ap);
-    Serial.printf("# %s\n", b);
+    // Written as it is: Serial.printf allocates for a line over 63 characters,
+    // and this runs from the out-of-memory paths too.
+    Serial.write((const uint8_t*)"# ", 2);
+    Serial.write((const uint8_t*)b, strlen(b));
+    Serial.write((const uint8_t*)"\n", 1);
 #ifdef ROOK_GAMEPAD
     devweb_log(b);
 #endif
@@ -1831,7 +1835,17 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
         logf("ir: sent %s on GPIO %d", b, s.pin);
         return true;
     }
-    fill_profiles(r);
+    // Every profile, with their keys, only when asked: on a busy C3 that listing
+    // is the biggest thing a profile change would build.
+    if (action == "profiles" || (a["list"] | false)) {
+        fill_profiles(r);
+    } else {
+        prof::Info act;
+        if (active_profile(act)) r["selected"] = act.name;
+        r["profiles"] = (int)prof::list().size();
+        r["bytes"] = (unsigned)prof::total_bytes();
+        r["bytes_max"] = (unsigned)prof::MAX_TOTAL;
+    }
     return true;
 }
 
@@ -2268,7 +2282,12 @@ static void seed_wifi() {
 
 static void rook_task(void*) {
     for (;;) {
-        if (WiFi.status() == WL_CONNECTED) worker.loop();
+        try {
+            if (WiFi.status() == WL_CONNECTED) worker.loop();
+        } catch (...) {                  // the worker catches its own; this is the last line (diag has recorded it)
+            logf("rook: the band loop was interrupted by an error (heap %u, largest block %u)", (unsigned)ESP.getFreeHeap(),
+                 (unsigned)ESP.getMaxAllocHeap());
+        }
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
@@ -2477,6 +2496,7 @@ void setup() {
     wifi_mu = xSemaphoreCreateMutex();
     sel_mu = xSemaphoreCreateRecursiveMutex();
     settings::begin();
+    diag::install_fault_hooks();  // a terminate is recorded before it aborts
     diag::begin();                // why it started, and what the last crash left
     rc::heap_check = diag::check;
     ir::begin();                  // the IR LED's pin LOW before anything else

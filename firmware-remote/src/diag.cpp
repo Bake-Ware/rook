@@ -19,6 +19,25 @@ static volatile bool checking_ = false, found_ = false;
 struct HeapNote { uint32_t magic; uint32_t up_s; char where[40]; };
 static RTC_NOINIT_ATTR HeapNote heap_note;
 static const uint32_t HEAP_MAGIC = 0x48454150;   // "HEAP"
+// The last fault of each kind, this boot (counts) and as it stood when the
+// chip restarted (kept in RTC memory, moved to the settings at the next boot).
+struct FaultNote {
+    uint32_t magic, up_s, ooms, throws, oom_size;
+    char oom_task[16], throw_task[16], last[48];   // last: what happened last, in words
+};
+static RTC_NOINIT_ATTR FaultNote fault;
+static const uint32_t FAULT_MAGIC = 0x46415554;  // "FAUT"
+static std::string last_fault_;
+
+static void task_name(char out[16]) {
+    const char* n = pcTaskGetName(nullptr);
+    strlcpy(out, n ? n : "?", 16);
+}
+
+static void fault_begin() {                      // this boot's record, fresh
+    memset(&fault, 0, sizeof fault);
+    fault.magic = FAULT_MAGIC;
+}
 
 
 static const char* reason_word(esp_reset_reason_t r) {
@@ -98,7 +117,48 @@ void begin() {
     }
     heap_note.magic = 0;
     heap_bad_ = settings::kv("heapbad");
+    // What went wrong last before this start (an allocation failed, a throw, terminate): kept until the next.
+    if (fault.magic == FAULT_MAGIC && (fault.ooms || fault.throws || fault.last[0])) {
+        fault.last[sizeof fault.last - 1] = 0;
+        char b[160];
+        snprintf(b, sizeof b, "%s (%u s up, boot %u; %u failed allocations, %u throws)", fault.last[0] ? fault.last : "-",
+                 (unsigned)fault.up_s, (unsigned)(boots_ - 1), (unsigned)fault.ooms, (unsigned)fault.throws);
+        settings::set_kv("lastfault", b);
+    }
+    fault_begin();
+    last_fault_ = settings::kv("lastfault");
     checking_ = settings::kv("heapcheck") == "1";
+}
+
+void note_oom(size_t size) {
+    if (fault.magic != FAULT_MAGIC) fault_begin();
+    fault.ooms++;
+    fault.oom_size = (uint32_t)size;
+    fault.up_s = millis() / 1000;
+    task_name(fault.oom_task);
+    snprintf(fault.last, sizeof fault.last, "out of memory: %u bytes in %.15s", (unsigned)size, fault.oom_task);
+}
+
+void note_throw() {
+    if (fault.magic != FAULT_MAGIC) fault_begin();
+    fault.throws++;
+    fault.up_s = millis() / 1000;
+    task_name(fault.throw_task);
+    char was[48];
+    strlcpy(was, fault.last, sizeof was);
+    if (strncmp(was, "out of memory", 13) == 0)       // the throw that follows a failed allocation says so
+        snprintf(fault.last, sizeof fault.last, "throw after %.30s", was);
+    else
+        snprintf(fault.last, sizeof fault.last, "throw in %.15s", fault.throw_task);
+}
+
+void note_terminate() {
+    if (fault.magic != FAULT_MAGIC) fault_begin();
+    char t[16], was[48];
+    task_name(t);
+    strlcpy(was, fault.last, sizeof was);
+    snprintf(fault.last, sizeof fault.last, "terminate in %.15s: %.24s", t, was);
+    esp_rom_printf("terminate in %s (%s)\n", t, was);
 }
 
 void set_heap_check(bool on) {
@@ -123,6 +183,14 @@ void fill(JsonObject o) {
     o["boots"] = boots_;
     o["crashes"] = crashes_;
     if (checking_) o["heap_check"] = true;
+    if (fault.ooms) {
+        o["oom"] = fault.ooms;                    // allocations that failed, this boot
+        char b[48];
+        snprintf(b, sizeof b, "%u bytes in %.15s", (unsigned)fault.oom_size, fault.oom_task);
+        o["oom_last"] = b;
+    }
+    if (fault.throws) o["throws"] = fault.throws;
+    if (!last_fault_.empty()) o["last_fault"] = last_fault_;
     if (found_) o["heap_bad"] = std::string(heap_note.where) + " (now, " + std::to_string(heap_note.up_s) + " s up)";
     else if (!heap_bad_.empty()) o["heap_bad"] = heap_bad_;
     size_t size = 0;

@@ -131,6 +131,8 @@ private:
 
     void on_message(const uint8_t* data, size_t len);
     void handle_message(const uint8_t* data, size_t len);
+    void loop_once();
+    bool emit_one(const char* event, JsonObjectConst payload);
     void on_request(JsonObjectConst req);
     void on_reply(JsonObjectConst rep);
     void reply_ok(const std::string& id, JsonVariantConst result);

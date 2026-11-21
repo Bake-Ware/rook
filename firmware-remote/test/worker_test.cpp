@@ -9,6 +9,7 @@
 // Under AddressSanitizer and UBSan: add -g -fsanitize=address,undefined -fno-sanitize-recover=undefined,
 // run with ASAN_OPTIONS=detect_leaks=0.
 #include <ArduinoJson.h>
+#include <execinfo.h>
 #include <stdio.h>
 #include <new>
 #include <string>
@@ -26,7 +27,24 @@
 
 size_t alloc_limit = 0;                  // 0: no limit (host/host_net.cpp reads it too)
 static size_t alloc_refused = 0;
+// Or: the N-th allocation fails (once), or every one from the N-th on.
+int host_exempt = 0;                     // > 0: the hub's side and the pretend network, never failed
+static long alloc_n = 0, fail_at = -1;
+static bool fail_on = false;
 void* operator new(size_t n) {
+    if (!host_exempt && fail_at >= 0) {
+        long k = alloc_n++;
+        if (k == fail_at || (fail_on && k > fail_at)) {
+            static int shown = 0;
+            if (getenv("WT_BT") && shown++ < atoi(getenv("WT_BT"))) {
+                void* f[24];
+                int nf = backtrace(f, 24);
+                fprintf(stderr, "--- allocation %ld fails:\n", k);
+                backtrace_symbols_fd(f, nf, 2);
+            }
+            throw std::bad_alloc();
+        }
+    }
     if (alloc_limit && n > alloc_limit) {
         alloc_refused++;
         throw std::bad_alloc();
@@ -194,7 +212,11 @@ int main() {
     c.root = rc::pub_text(root_pub);
     for (int i = 0; i < 32; i++) c.seed[i] = (uint8_t)(200 + i);
     std::vector<std::string> logs;
-    w.log = [&](const char* m) { logs.push_back(m); };
+    w.log = [&](const char* m) {             // the app's logger (on the chip it allocates nothing): exempt
+        host_exempt++;
+        logs.push_back(m);
+        host_exempt--;
+    };
     expect(w.begin(c, REMOTE_MANIFEST_JSON, "remote"), "worker begins with the real manifest (" +
                                                            std::to_string(strlen(REMOTE_MANIFEST_JSON)) + " bytes)");
     // remote.state answers 3 KB: too big to keep for a resend
@@ -206,6 +228,7 @@ int main() {
     hub.on_message = [&hub](const uint8_t* m, size_t n) {
         size_t limit = alloc_limit;      // the hub's side is a PC: the limit is the worker's
         alloc_limit = 0;
+        host_exempt++;
         std::string s((const char*)m, n);
         if (!watching.empty() && s.find("\"id\":\"" + watching + "\"") != std::string::npos &&
             s.find("\"from\"") != std::string::npos)
@@ -235,6 +258,7 @@ int main() {
             batches.push_back(std::move(b));
         }
         alloc_limit = limit;
+        host_exempt--;
     };
     hub.begin(PSK, "relay:7000");
     run(w, hub);
@@ -567,6 +591,74 @@ int main() {
         a.send(&none, 1);                    // an empty message: one empty part, nothing delivered past the keepalive check
         for (int r = 0; r < 4; r++) b.poll();
         expect(true, "band: an empty message is sent without touching memory");
+    }
+    // 17. Fault injection over the worker's paths: the N-th allocation fails
+    //     (once, then from it on) for every N, while it answers core.manifests,
+    //     a 3 KB remote.state and an event batch. Nothing may escape the
+    //     worker, and afterwards it must still answer (no lock left taken).
+    {
+        // (the test's own work, the hub's send included, is exempt: only the worker's allocations fail)
+        auto scenario = [&](int which) {
+            host_exempt++;
+            watching = rand_hex(16);
+            got.clear();
+            batches.clear();
+            std::string req = which == 0 ? request(watching, rand_hex(16), "core.manifests", pa)
+                                         : request(watching, rand_hex(16), "remote.state", JsonObjectConst());
+            JsonDocument ev;
+            ev["button"] = "ok";
+            if (which != 2) hub.send(req);
+            host_exempt--;
+            if (which == 2) {
+                w.emit("remote.button", ev.as<JsonObjectConst>());
+                host_skip(31000);
+            }
+            for (int i = 0; i < 6; i++) {
+                w.loop();
+                host_exempt++;
+                hub.poll();
+                host_exempt--;
+            }
+        };
+        const char* names[] = {"core.manifests", "remote.state (3 KB)", "an event batch"};
+        for (int which = 0; which < 3; which++) {
+            fail_at = 1 << 30;                // count
+            alloc_n = 0;
+            scenario(which);
+            long count = alloc_n;
+            fail_at = -1;
+            int escaped = 0, wedged = 0;
+            for (int mode = 0; mode < 2; mode++) {
+                for (long at = 0; at <= count + 2 && at < 400; at++) {
+                    alloc_n = 0;
+                    fail_at = at;
+                    fail_on = mode == 1;
+                    try {
+                        scenario(which);
+                    } catch (...) {
+                        escaped++;
+                    }
+                    fail_at = -1;
+                    fail_on = false;
+                    if (host_exempt) { host_exempt = 0; escaped++; }      // a throw left the test's count raised
+                    // still answering?
+                    host_skip(31000);
+                    hub.send(hub_announce());
+                    watching = rand_hex(16);
+                    got.clear();
+                    hub.send(request(watching, rand_hex(16), "core.lease.drop", JsonObjectConst()));
+                    run(w, hub, 6);
+                    if (got.empty()) {
+                        wedged++;
+                        if (getenv("WT_LOG")) printf("     wedged after %s at %ld/%d: last log %s\n", names[which], at, mode,
+                                                     logs.empty() ? "-" : logs.back().c_str());
+                    }
+                }
+            }
+            expect(escaped == 0 && wedged == 0, std::string("fault injection, ") + names[which] + ": " + std::to_string(count) +
+                                                    " allocations, each failing in turn and from it on: nothing escapes, the worker still answers (" +
+                                                    std::to_string(escaped) + " escaped, " + std::to_string(wedged) + " wedged)");
+        }
     }
     printf("%d passed, %d failed (%u packets sent, %u lost on purpose)\n", passes, fails, NET.sent, NET.lost);
     return fails ? 1 : 0;
