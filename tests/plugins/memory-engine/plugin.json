@@ -1,0 +1,5 @@
+{
+  "name": "memory-engine",
+  "version": "1.0.0",
+  "worker": {"python": {"module": "worker.py"}}
+}

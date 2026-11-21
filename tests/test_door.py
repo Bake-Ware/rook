@@ -133,8 +133,9 @@ async def scenario(tmp_path):
                 "event.emit", "secret.create", "secret.set", "secret.delete", "secret.list", "journal.redact",
                 "plugin.install", "plugin.list", "worker.plugins", "device.add", "config.get", "config.set",
                 "backup.run", "backup.list", "backup.verify", "heartbeat.roll-up",
-                "agent.chat.read", "agent.chat.send", "agent.list", "agent.look", "agent.setup",   # the agents plugin (HA2;
-                "agent.site", "agent.skill"]                                                       # look and setup: HA3)
+                "agent.chat.read", "agent.chat.send", "agent.dream", "agent.list", "agent.look",   # the agents plugin (HA2;
+                "agent.memory.misses", "agent.memory.pin", "agent.memory.search", "agent.memory.show",  # look and setup:
+                "agent.memory.unpin", "agent.setup", "agent.site", "agent.skill"]                  # HA3; memory: MEM5)
             failed, matched = await tool(session, "caps", match="join")
             assert [(g["worker"], [c["name"] for c in g["caps"]]) for g in matched["caps"]] == [
                 ("hub", ["worker.join-token"]), (moniker, [])]
