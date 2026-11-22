@@ -12,6 +12,7 @@ struct HostNet {
     std::vector<WiFiUDP*> socks;
     std::function<bool(const WiFiUDP* from, const std::string& pkt)> drop;   // true: lost
     uint32_t sent = 0, lost = 0;
+    uint32_t locked_sends = 0;          // packets sent while a lock besides the band's own was held
 };
 extern HostNet NET;
 

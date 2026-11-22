@@ -660,6 +660,29 @@ int main() {
                                                     std::to_string(escaped) + " escaped, " + std::to_string(wedged) + " wedged)");
         }
     }
+    // 18. No lock but the band's own is held while a packet goes out: the app's
+    //     emit (the keys' loop) and the worker's other callers never wait on the network.
+    expect(NET.locked_sends == 0, "over the whole run, no packet went out with the worker's lock held (" +
+                                      std::to_string(NET.locked_sends) + " of " + std::to_string(NET.sent) + ")");
+    // 19. emit while a batch is in flight, the queue full: the new event is the one dropped,
+    //     and the batch's payloads (sent from where they lie) stay as they were.
+    {
+        answer_events = false;
+        host_skip(31000);
+        hub.send(hub_announce());
+        run(w, hub, 4);
+        batches.clear();
+        for (int i = 0; i < 5; i++) w.emit("remote.voice.part", voice_part(i).as<JsonObjectConst>());
+        run(w, hub, 4);                       // a batch goes, unanswered: in flight
+        size_t queued = w.events_queued();
+        uint32_t dropped = w.events_dropped();
+        bool refused = !w.emit("remote.voice.part", voice_part(9).as<JsonObjectConst>());
+        expect(!batches.empty() && refused && w.events_dropped() == dropped + 1 && w.events_queued() == queued,
+               "a batch in flight and the queue full: emit drops the new event, the queue is left as it was");
+        answer_events = true;
+        drain(10);
+        expect(w.events_queued() == 0, "the hub answering again, the queue empties");
+    }
     printf("%d passed, %d failed (%u packets sent, %u lost on purpose)\n", passes, fails, NET.sent, NET.lost);
     return fails ? 1 : 0;
 }

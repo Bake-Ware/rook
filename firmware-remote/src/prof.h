@@ -64,7 +64,9 @@ int key_id(const std::string& name);           // -1: not a key profiles have (a
 const char* key_name(int id);
 std::string key_names();                       // all of them, for errors
 inline bool has(const Info& p, int key) { return key >= 0 && (p.keys >> key & 1); }
-bool code(const Info& p, int key, Code& out, std::string& err);  // the key's action, read from NVS
+bool code(const Info& p, int key, Code& out, std::string& err);  // the key's action (from RAM once read: see warm)
+bool warm(const Info& p);                      // p's codes into RAM now (the profile picked): its keys read no flash
+uint32_t flash_reads();                        // flash reads made for codes, so far
 bool repeats(int key);                         // held, it repeats (volume, arrows, channels, seek)
 
 // keys: {key: {protocol: "nec", address, command} | {raw: [...], carrier?} | {lan: true | "<key>"} |

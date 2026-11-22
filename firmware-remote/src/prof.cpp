@@ -363,19 +363,67 @@ bool code(const Info& p, int key, Code& out, std::string& err) {
     return guarded(err, [&] { return code_read(p, key, out, err); });
 }
 
-static bool code_read(const Info& p, int key, Code& out, std::string& err) {
-    if (!has(p, key)) { err = p.name + " has nothing for " + key_name(key); return false; }
+// The blob of the profile the keys last came through, kept in RAM (at most
+// MAX_BYTES), so a key press reads no flash: the settings' storage is shared
+// with the Wi-Fi driver's, and a flash write stalls everything. Its own lock
+// (cmu), held only while the cache is read or replaced; dropped when that
+// profile is changed or deleted.
+static SemaphoreHandle_t cmu;
+static std::string cache_blob;
+static int cache_slot = -1;
+static uint16_t cache_bytes = 0;
+static uint32_t cache_reads = 0;               // flash reads made for codes (the host test counts them)
+
+static void cache_drop(int slot) {             // slot -1: whatever is cached
+    if (!cmu) return;
+    xSemaphoreTake(cmu, portMAX_DELAY);
+    if (slot < 0 || slot == cache_slot) {
+        cache_slot = -1;
+        std::string().swap(cache_blob);
+    }
+    xSemaphoreGive(cmu);
+}
+
+// p's blob in the cache (read from flash when it is not). Under cmu.
+static bool cache_fill(const Info& p, std::string& err) {
+    if (cache_slot == p.slot && cache_bytes == p.bytes && !cache_blob.empty()) return true;
     if (!room_for(2 * (size_t)p.bytes)) { err = "out of memory to read " + p.name + "'s code"; return false; }
     char k[8];
     slot_key(p.slot, k);
     std::string b;
+    cache_reads++;
+    if (!settings::blob(k, b)) { err = "profile " + p.name + " could not be read back"; return false; }
+    cache_blob.swap(b);
+    cache_slot = p.slot;
+    cache_bytes = (uint16_t)cache_blob.size();
+    return true;
+}
+
+static bool code_read(const Info& p, int key, Code& out, std::string& err) {
+    if (!has(p, key)) { err = p.name + " has nothing for " + key_name(key); return false; }
+    if (!cmu) cmu = xSemaphoreCreateMutex();
+    xSemaphoreTake(cmu, portMAX_DELAY);
+    struct Give { ~Give() { xSemaphoreGive(cmu); } } give;
+    if (!cache_fill(p, err)) return false;
     Info i;
-    if (!settings::blob(k, b) || !decode(b, i, key, &out, nullptr)) {
+    if (!decode(cache_blob, i, key, &out, nullptr)) {
         err = "profile " + p.name + " could not be read back";
         return false;
     }
     return true;
 }
+
+bool warm(const Info& p) {
+    std::string err;
+    return guarded(err, [&] {
+        if (!cmu) cmu = xSemaphoreCreateMutex();
+        xSemaphoreTake(cmu, portMAX_DELAY);
+        struct Give { ~Give() { xSemaphoreGive(cmu); } } give;
+        return cache_fill(p, err);
+    });
+}
+
+uint32_t flash_reads() { return cache_reads; }
 
 // ---- changes -------------------------------------------------------------------------
 
@@ -625,6 +673,7 @@ static bool save_bytes(const std::string& name_in, bool set_link, const std::str
     if (at >= 0) idx[at] = i;
     else idx.push_back(i);
     created = at < 0;
+    cache_drop(slot);
     return true;
 }
 
@@ -642,6 +691,7 @@ bool remove(const std::string& name, std::string& err) {
         char k[8];
         slot_key(idx[i].slot, k);
         settings::remove(k);
+        cache_drop(idx[i].slot);
         idx.erase(idx.begin() + i);
         return true;
     }
@@ -701,6 +751,7 @@ static bool rename_bytes(const std::string& name, const std::string& to_in, std:
     }
     i.slot = idx[at].slot;
     idx[at] = i;
+    cache_drop(i.slot);
     return true;
 }
 

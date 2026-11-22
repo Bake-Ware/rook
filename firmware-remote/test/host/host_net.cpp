@@ -23,6 +23,7 @@ uint8_t WiFiUDP::begin(uint16_t) {
 int WiFiUDP::endPacket() {
     Unlimited u;
     NET.sent++;
+    if (host_held() > 1) NET.locked_sends++;    // the band's lock is one; any other is a lock held across the network
     if (NET.drop && NET.drop(this, out_)) { NET.lost++; return 1; }
     for (auto* s : NET.socks) if (s != this) s->in_.push_back(out_);
     return 1;

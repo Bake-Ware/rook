@@ -363,7 +363,9 @@ void Band::on_datagram(const uint8_t* buf, size_t n) {
 void Band::poll() {
     uint32_t now = millis();
     if (!ready_ || (now - last_resolve_ > 600000)) {
-        if (now - last_resolve_ > 5000 || !ready_) {
+        // Not resolved (no DNS, no route): again every 5 s, not on every poll
+        // (each try can block this task for seconds and keeps the radio busy).
+        if (now - last_resolve_ > 5000) {
             bool was = ready_;
             if (resolve()) ready_ = true;
             if (ready_ && !was) last_keepalive_ = 0;

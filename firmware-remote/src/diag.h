@@ -11,7 +11,7 @@
 namespace diag {
 
 void begin();                          // once, early in setup(): counts this start, reads the summary
-void fill(JsonObject o);               // reset, boots, crashes, coredump {size, summary}
+void fill(JsonObject o);               // reset, boots, crashes, brownouts, coredump {size, summary}
 bool coredump_size(size_t& size);      // false: none
 // length bytes of the dump from offset, as base64. False with err.
 bool coredump_read(size_t offset, size_t& length, std::string& b64, std::string& err);   // length: what was read

@@ -24,6 +24,8 @@
 #include "diag.h"
 #include "ir.h"
 #include "lan.h"
+#include "netplan.h"
+#include <esp_coexist.h>
 #include "osk.h"
 #include "ota.h"
 #include "prof.h"
@@ -44,7 +46,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.12.6"
+#define FW_VERSION "0.12.7"
 #ifndef BUILD_MONIKER
 #define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
 #endif
@@ -77,6 +79,30 @@ static std::deque<ButtonEvent> recent;      // last presses, for state and wait
 static volatile int ask_answer = -1;        // set by the button handler while asking
 static std::string last_note;
 static volatile bool wifi_hold = false;     // the scan command has the radio: no joining meanwhile
+// The keys come first (netplan.h): the last key's time (any key, the paired
+// remote's included), and what the Wi-Fi task is doing with the radio now, so
+// a key can stop it (a scan, a join) before its IR goes out.
+static volatile uint32_t last_key_ms = 0;
+static volatile bool wifi_scanning = false, wifi_joining = false, wifi_aborted = false;
+static volatile bool net_off = false;       // Settings > Wi-Fi > Turn Wi-Fi off, remote.map net_off: IR only, radio off
+static volatile int wifi_power_step = 0;    // netplan::POWER: 11 dBm until a round fails
+
+// A key: the IR goes out before anything else, so the Wi-Fi task gets out of
+// its way. A scan or a join under way is stopped (the round is not counted as
+// failed and starts again once the keys are quiet), and none starts for
+// netplan::QUIET_MS. Called from the loop, before the key's IR is sent; takes
+// no lock (esp_wifi's calls are safe from any task).
+static void key_yield() {
+    last_key_ms = millis() | 1;
+    if (WiFi.status() == WL_CONNECTED) return;        // joined: nothing of ours is using the radio
+    if (wifi_scanning || wifi_joining) {
+        wifi_aborted = true;
+        if (wifi_scanning) esp_wifi_scan_stop();
+        if (wifi_joining) esp_wifi_disconnect();
+    }
+}
+
+static bool key_held_now() { return !buttons::held().empty() || !bt::held().empty(); }
 // What the buttons do now: the TV's (events to the hub), the menu's (the input
 // button opens it: pick the device the events are for, or the game), the game's.
 // (The conversation is the menu's Assistant tab.)
@@ -347,6 +373,7 @@ static void select_profile(const prof::Info& p) {
     sel_prof = p.name;
     settings::set_kv("irsel", p.name);
     rep.key = -1;
+    prof::warm(p);                           // its codes in RAM: its keys read no flash
 }
 
 // Is this network device shown under a profile linked to it (so not twice)?
@@ -598,8 +625,17 @@ static void open_wifi_menu(const std::string& select = "") {
         labels.push_back("Forget...");
         values.push_back("");
     }
+    labels.push_back("Turn Wi-Fi off");        // IR only: the radio stays off
+    values.push_back("");
     show_menu(MENU_WIFI, "WI-FI", labels, values, sel);
     ui::menu_bars_set(bars);
+}
+
+// Wi-Fi off for good (IR only: no radio, no hub) or back on. Kept across restarts.
+static void set_net_off(bool off) {
+    net_off = off;
+    settings::set_kv("net_off", off ? "1" : "");
+    logf(off ? "wifi: turned off by hand: IR only" : "wifi: turned back on");
 }
 
 static void start_wifi_scan() {
@@ -1017,7 +1053,13 @@ static void menu_pick(int i) {
         return;
     }
     if (kind == MENU_WIFI) {
-        if (label == "Rescan") {
+        if (label == "Turn Wi-Fi off") {
+            set_net_off(true);
+            ui::flash("Wi-Fi off\nIR only");
+        } else if (label == "Turn Wi-Fi on") {
+            set_net_off(false);
+            ui::flash("Wi-Fi on");
+        } else if (label == "Rescan") {
             start_wifi_scan();
         } else if (label == "Forget...") {
             std::vector<std::string> names;
@@ -1075,7 +1117,8 @@ static void menu_pick(int i) {
         }
     } else if (start_game(label)) {
     } else if (label == "Wi-Fi") {
-        start_wifi_scan();
+        if (net_off) show_menu(MENU_WIFI, "WI-FI", {"Turn Wi-Fi on"}, {""}, 0);     // off: nothing to scan
+        else start_wifi_scan();
     } else if (label == "Pair BT") {
         bt::look(true);
         open_bt_list(false);
@@ -1162,6 +1205,7 @@ static const char* local_key(const ButtonEvent& e, const prof::Info* p, prof::Co
 // A press: one of the handheld's buttons, or (index -1, lines "bt") a key of
 // the Bluetooth remote paired to it. Both do the same things.
 static void on_button(const ButtonEvent& ev) {
+    key_yield();                                     // first: the Wi-Fi task keeps off the radio while keys come
     SelLock sel_lock;
     ButtonEvent e = ev;
     e.seq = ++seq_all;
@@ -1304,22 +1348,25 @@ static void on_button(const ButtonEvent& ev) {
         return;
     }
 #endif
-    if (buttons::learning()) {
-        char b[24];
-        snprintf(b, sizeof b, "%s = %s", e.name.c_str(), e.lines.c_str());
-        ui::flash(b);
-    } else {
-        ui::flash(e.name + (strcmp(e.action, "long") ? "" : " (hold)"));
-    }
     // A profile or a device on this network picked in the menu: the remote
     // sends the key itself, by IR when the profile has a code for it, else to
-    // the network device (none of it waits on Wi-Fi or the hub).
+    // the network device. The IR goes first, before the screen and the event:
+    // its code is in RAM (prof::code), it is handed to the IR task (a step
+    // above this loop) without waiting, and nothing it needs is held by the
+    // band's or the Wi-Fi's tasks, so it goes the same with no Wi-Fi and no hub.
     prof::Info pi;
     bool have_prof = active_profile(pi);
     bool local = !local_id.empty() || have_prof;
     const char* via = nullptr;
     prof::Code call;
     if (local && !strcmp(e.action, "press")) via = local_key(e, have_prof ? &pi : nullptr, call);
+    if (buttons::learning()) {
+        char b[24];
+        snprintf(b, sizeof b, "%s = %s", e.name.c_str(), e.lines.c_str());
+        ui::flash(b);
+    } else if (!(via && !strcmp(via, "cap") && !(worker_on && worker.hub_ok()))) {
+        ui::flash(e.name + (strcmp(e.action, "long") ? "" : " (hold)"));
+    }
     if (via && !strcmp(via, "cap") && !(worker_on && worker.hub_ok())) ui::flash("no hub", 1000, false);   // it waits in the queue
     if (worker_on) {
         JsonDocument p;
@@ -1415,7 +1462,12 @@ static void fill_bt(JsonObject o) {
 }
 
 static void fill_state(JsonObject r) {
-    SelLock sel_lock;
+    std::string lid, lname;                  // copied under the lock, which is not held for the rest
+    {
+        SelLock sel_lock;
+        lid = local_id;
+        lname = local_name;
+    }
     r["name"] = settings::name();
     r["version"] = FW_VERSION;
     r["build"] = BUILD_MONIKER;
@@ -1456,9 +1508,11 @@ static void fill_state(JsonObject r) {
     r["wifi"]["ssid"] = WiFi.SSID();
     r["wifi"]["rssi"] = WiFi.RSSI();
     r["wifi"]["ip"] = WiFi.localIP().toString();
-    if (!local_id.empty()) {
-        r["local"]["id"] = local_id;
-        r["local"]["name"] = local_name;
+    r["wifi"]["tx_dbm"] = netplan::POWER[wifi_power_step] / 4.0;
+    if (net_off) r["wifi"]["off"] = true;
+    if (!lid.empty()) {
+        r["local"]["id"] = lid;
+        r["local"]["name"] = lname;
     }
     {
         prof::Info p;
@@ -1741,8 +1795,10 @@ static void fill_profiles(JsonObject r) {
 
 // remote.ir profiles / profile_save / profile_delete / profile_select /
 // profile_release / profile_send: IR device profiles kept on the remote (prof.h).
+// (sel_mu is taken only round the reads and changes of the selection, never
+// across a profile write: the keys' loop takes it too, and a write to the
+// settings flash can take a while.)
 static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObject r, std::string& err) {
-    SelLock sel_lock;
     std::string name = a["name"] | "";
     if (action == "profile_save") {
         bool set_link = !a["link"].isNull();
@@ -1767,7 +1823,10 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
         prof::Info p;
         prof::find(name, p);
         prof::Info cur;
-        if (!sel_prof.empty() && prof::find(sel_prof, cur) && cur.name == p.name) select_profile(p);   // its new link, if any
+        {
+            SelLock sel_lock;
+            if (!sel_prof.empty() && prof::find(sel_prof, cur) && cur.name == p.name) select_profile(p);   // its new link, if any
+        }
         r["created"] = created;
         prof::fill(p, r["profile"].to<JsonObject>());
         logf("ir: profile %s saved (%u bytes)", p.name.c_str(), (unsigned)p.bytes);
@@ -1783,13 +1842,19 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
         else { err = "no profile called " + name; return false; }
     } else if (action == "profile_release") {
         prof::Info p;
+        SelLock sel_lock;
         if (active_profile(p) || !local_id.empty()) set_local("");
     } else if (action == "profile_send") {
         prof::Info p;
         lan::Device d;
         std::string key = a["key"] | "", dev_id;
         bool have = name.empty() ? active_profile(p) : prof::find(name, p);
-        if (!have && name.empty() && !local_id.empty() && lan::find(local_id, d)) dev_id = d.id;   // a device picked by remote.device select
+        std::string lid;
+        {
+            SelLock sel_lock;
+            lid = local_id;
+        }
+        if (!have && name.empty() && !lid.empty() && lan::find(lid, d)) dev_id = d.id;   // a device picked by remote.device select
         if (!have && dev_id.empty()) {
             err = name.empty() ? "bad args: name is needed (no profile is selected)" : "no profile called " + name;
             return false;
@@ -2033,6 +2098,7 @@ static bool cap_map(JsonObjectConst a, JsonObject r, std::string&) {
     if (!a["screen_off"].isNull()) settings::set_kv("scr_off", std::to_string((int)(a["screen_off"] | 30)));
     if (!a["sleep"].isNull()) settings::set_kv("sleep", std::to_string((int)(a["sleep"] | 300)));
     if (!a["heap_check"].isNull()) diag::set_heap_check(a["heap_check"] | false);
+    if (!a["net_off"].isNull()) set_net_off(a["net_off"] | false);   // (off: this is the last answer until it is turned on by hand)
     if (!a["tz"].isNull()) {
         settings::set_kv("tz", a["tz"] | "");
         std::string tz = settings::kv("tz");
@@ -2044,6 +2110,7 @@ static bool cap_map(JsonObjectConst a, JsonObject r, std::string&) {
     r["screen_off"] = screen_off_s;
     r["sleep"] = sleep_s;
     r["heap_check"] = diag::heap_check_on();
+    r["net_off"] = (bool)net_off;
     JsonArray bs = r["buttons"].to<JsonArray>();
     for (int i = 0; i < buttons::count(); i++) bs.add(buttons::name(i));
     JsonArray to = r["targets"].to<JsonArray>();
@@ -2322,14 +2389,19 @@ static bool wifi_connect(const WifiCandidate& c, bool low, int tenths) {
         conf.sta.pmf_cfg.required = false;
         esp_wifi_set_config(WIFI_IF_STA, &conf);
     }
-    WiFi.setTxPower(low ? WIFI_POWER_8_5dBm : WIFI_POWER_19_5dBm);
+    // Moderate power first (the supply is shared with the IR LED): raised a step only after a round failed.
+    WiFi.setTxPower(low ? WIFI_POWER_8_5dBm : (wifi_power_t)netplan::POWER[wifi_power_step]);
+    wifi_joining = true;
     esp_wifi_connect();
-    for (int t = 0; t < tenths && WiFi.status() != WL_CONNECTED; t++) vTaskDelay(pdMS_TO_TICKS(100));
+    for (int t = 0; t < tenths && WiFi.status() != WL_CONNECTED && !wifi_aborted; t++) vTaskDelay(pdMS_TO_TICKS(100));
+    wifi_joining = false;
     return WiFi.status() == WL_CONNECTED;
 }
 
 // Something else wants the radio: leave the round.
-static bool wifi_interrupted() { return wifi_kick || wifi_sleep || wifi_hold || wifi_scan_state == 1; }
+static bool wifi_interrupted() { return wifi_kick || wifi_sleep || wifi_hold || wifi_scan_state == 1 || wifi_aborted || net_off; }
+
+
 
 static bool wifi_join(unsigned round) {
     if (WiFi.getMode() == WIFI_OFF) WiFi.mode(WIFI_STA);      // it was asleep
@@ -2351,7 +2423,15 @@ static bool wifi_join(unsigned round) {
         vTaskDelay(pdMS_TO_TICKS(200));
     }
     wifi_woke = false;
+    if (wifi_aborted) return false;
+    WiFi.setTxPower((wifi_power_t)netplan::POWER[wifi_power_step]);     // probe requests too
+    wifi_scanning = true;
     int n = WiFi.scanNetworks(false, true, false, 300);
+    wifi_scanning = false;
+    if (wifi_aborted) {
+        if (n >= 0) WiFi.scanDelete();
+        return false;
+    }
     if (n < 0) {
         logf("wifi: scan failed (%d)", n);
         if (!first.empty()) {                  // try it again next round
@@ -2412,7 +2492,11 @@ static void wifi_scan() {
         WiFi.disconnect();
         vTaskDelay(pdMS_TO_TICKS(200));
     }
+    if (WiFi.getMode() == WIFI_OFF) WiFi.mode(WIFI_STA);
+    WiFi.setTxPower((wifi_power_t)netplan::POWER[wifi_power_step]);
+    wifi_scanning = true;
     int n = WiFi.scanNetworks(false, false, false, 300);
+    wifi_scanning = false;
     std::vector<WifiHeard> heard;
     for (int i = 0; i < n; i++) {
         std::string ssid = WiFi.SSID(i).c_str();
@@ -2435,39 +2519,84 @@ static void wifi_scan() {
     logf("wifi: scan heard %d networks", (int)heard.size());
 }
 
+// Joins and keeps the remote on Wi-Fi, without getting in the keys' way
+// (netplan.h): a round that fails waits 10 s, 30 s, 60 s, then 2 min before
+// the next; no round or scan starts while a key is held or within 3 s of one,
+// and a key stops one under way. While it is not joined, Bluetooth has the
+// radio's preference (the paired remote's keys). Asleep, or with Wi-Fi turned
+// off (net_off), the radio stays off.
 static void wifi_task(void*) {
-    unsigned round = 0;
+    unsigned fails = 0;                  // rounds failed in a row
+    uint32_t next_round = 0;             // millis() from which the next round may start (0: now)
+    int coex = -1;
+    auto quiet = [] { return netplan::may_start(millis(), last_key_ms, key_held_now()); };
     for (;;) {
-        if (wifi_scan_state == 1) {
+        bool up = WiFi.status() == WL_CONNECTED;
+        int want = up ? ESP_COEX_PREFER_BALANCE : ESP_COEX_PREFER_BT;
+        if (want != coex && esp_coex_preference_set((esp_coex_prefer_t)want) == ESP_OK) coex = want;
+        if (wifi_scan_state == 1) {              // asked for in the Wi-Fi menu: once the keys are quiet
+            if (!quiet() && !wifi_aborted) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+            wifi_aborted = false;
             wifi_scan();
+            if (wifi_aborted) {                  // a key came: the menu gets what was heard, or nothing
+                wifi_aborted = false;
+            }
             wifi_scan_state = 2;
+            fails = 0;                           // the person is at it: rounds start over
+            next_round = 0;
         }
-        if (wifi_sleep) {                 // asleep: the radio stays off until a key wakes the remote
+        if (wifi_sleep || net_off) {             // asleep, or Wi-Fi turned off: the radio stays off
             if (WiFi.getMode() != WIFI_OFF) {
                 diag::check("wifi off, before");
                 WiFi.disconnect(true);
                 diag::check("wifi off, after");
                 wifi_woke = true;
-                logf("wifi: off");
+                logf(net_off ? "wifi: turned off (IR only)" : "wifi: off");
             }
+            next_round = 0;                      // back on: straight away (once the keys are quiet)
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
-        if (wifi_kick) {
+        if (wifi_kick) {                         // a network chosen in the menu: now
             wifi_kick = false;
             WiFi.disconnect();
             vTaskDelay(pdMS_TO_TICKS(300));
-            round = 0;
+            fails = 0;
+            next_round = 0;
         }
-        if (!wifi_hold && WiFi.status() != WL_CONNECTED && !settings::wifi().empty()) {
-            if (wifi_join(round)) {
-                round = 0;
-            } else {
-                round++;
-                logf("wifi: no saved network let us in (round %u)", round);
-            }
+        if (up) {
+            fails = 0;
+            next_round = 0;
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
         }
-        for (int t = 0; t < 10 && wifi_scan_state != 1 && !wifi_kick; t++) vTaskDelay(pdMS_TO_TICKS(500));
+        bool due = next_round == 0 || (int32_t)(millis() - next_round) >= 0;
+        if (wifi_hold || settings::wifi().empty() || !due || !quiet()) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
+        wifi_aborted = false;
+        bool joined = wifi_join(fails);
+        if (wifi_aborted) {                      // a key stopped it: not a failure; again once the keys are quiet
+            wifi_aborted = false;
+            WiFi.disconnect();
+            logf("wifi: a key came first; the round starts again after it");
+            next_round = 0;
+            continue;
+        }
+        wifi_power_step = netplan::power_step_after(wifi_power_step, joined);
+        if (joined) {
+            fails = 0;
+            next_round = 0;
+        } else {
+            fails++;
+            next_round = (millis() + netplan::retry_delay(fails)) | 1;
+            logf("wifi: no saved network let us in (round %u); next in %u s, at %d dBm", fails,
+                 (unsigned)(netplan::retry_delay(fails) / 1000), netplan::POWER[wifi_power_step] / 4);
+        }
     }
 }
 
@@ -2492,6 +2621,12 @@ static void load_replay(rc::Gate& g, const std::string& s) {
 void setup() {
     Serial.setRxBufferSize(4096);   // the enrollment bundle arrives as one ~1 KB line
     Serial.begin(115200);
+#if ARDUINO_USB_CDC_ON_BOOT && ARDUINO_USB_MODE
+    // A USB cable with nobody reading the port (a charger, a closed terminal):
+    // a line that does not fit is dropped, not waited on (up to 100 ms a write
+    // otherwise, in the loop that sends the keys' IR).
+    Serial.setTxTimeoutMs(0);
+#endif
     ev_mu = xSemaphoreCreateMutex();
     wifi_mu = xSemaphoreCreateMutex();
     sel_mu = xSemaphoreCreateRecursiveMutex();
@@ -2500,6 +2635,7 @@ void setup() {
     diag::begin();                // why it started, and what the last crash left
     rc::heap_check = diag::check;
     ir::begin();                  // the IR LED's pin LOW before anything else
+    ir::start();                  // and its sending task, while memory is whole
 #ifdef ROOK_GAMEPAD
     devweb_mu = xSemaphoreCreateMutex();
     seed_wifi();
@@ -2522,7 +2658,9 @@ void setup() {
         else if (ev == ARDUINO_EVENT_WIFI_STA_GOT_IP)
             logf("wifi: connected to %s, ip %s", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
     });
-    WiFi.mode(WIFI_STA);
+    WiFi.persistent(false);           // the networks are kept in our settings: no NVS write (a flash stall) on every join
+    net_off = settings::kv("net_off") == "1";
+    WiFi.mode(net_off ? WIFI_OFF : WIFI_STA);
     WiFi.setAutoReconnect(false);     // wifi_task rejoins: it picks the strongest network each time
     WiFi.setHostname(settings::name().c_str());
 #ifdef ROOK_GAMEPAD
@@ -2699,6 +2837,14 @@ void loop() {
     while (bt::next_key(bt_key)) {
         ButtonEvent e{0, -1, bt_name_of(bt_key), "bt:" + bt_key, "press", 0, ms};
         on_button(e);
+    }
+    // A key held (the handheld's or the paired remote's): the Wi-Fi task keeps waiting.
+    {
+        static uint32_t held_seen = 0;
+        if (ms - held_seen >= 100) {
+            held_seen = ms;
+            if (key_held_now()) last_key_ms = ms | 1;
+        }
     }
     // A profile key held: its code goes on (bt::held is the raw name).
     if (rep.key >= 0) {
@@ -2936,6 +3082,7 @@ void loop() {
         bool up = WiFi.status() == WL_CONNECTED;
         std::string s0;
         if (!settings::enrollment().ok) s0 = "setup";
+        else if (net_off) s0 = "IR only";
         else if (!up) s0 = settings::wifi().empty() ? "wifi?" : "wifi-";
         else if (!worker.clock_ok()) s0 = "clock";
         else s0 = worker.hub_ok() ? "band" : "hub?";

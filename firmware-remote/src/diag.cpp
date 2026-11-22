@@ -12,7 +12,7 @@
 namespace diag {
 
 static std::string reason_, summary_, heap_bad_;
-static uint32_t boots_ = 0, crashes_ = 0;
+static uint32_t boots_ = 0, crashes_ = 0, brownouts_ = 0;
 static volatile bool checking_ = false, found_ = false;
 // Where a heap check first failed, kept across the restart (RTC memory is not
 // cleared by a panic). magic says it was written by check().
@@ -56,9 +56,10 @@ static const char* reason_word(esp_reset_reason_t r) {
     }
 }
 
+// A crash: the program's fault. A brownout (the supply sagged: the battery
+// low, or the IR LED and the radio drawing at once) is counted apart.
 static bool abnormal(esp_reset_reason_t r) {
-    return r == ESP_RST_PANIC || r == ESP_RST_INT_WDT || r == ESP_RST_TASK_WDT || r == ESP_RST_WDT ||
-           r == ESP_RST_BROWNOUT;
+    return r == ESP_RST_PANIC || r == ESP_RST_INT_WDT || r == ESP_RST_TASK_WDT || r == ESP_RST_WDT;
 }
 
 static bool code_addr(uint32_t w) {
@@ -103,11 +104,13 @@ static void read_summary() {
 void begin() {
     esp_reset_reason_t r = esp_reset_reason();
     reason_ = reason_word(r);
-    std::string b = settings::kv("boots"), c = settings::kv("crashes");
+    std::string b = settings::kv("boots"), c = settings::kv("crashes"), bo = settings::kv("brownouts");
     boots_ = (b.empty() ? 0 : (uint32_t)strtoul(b.c_str(), nullptr, 10)) + 1;
     crashes_ = (c.empty() ? 0 : (uint32_t)strtoul(c.c_str(), nullptr, 10)) + (abnormal(r) ? 1 : 0);
+    brownouts_ = (bo.empty() ? 0 : (uint32_t)strtoul(bo.c_str(), nullptr, 10)) + (r == ESP_RST_BROWNOUT ? 1 : 0);
     settings::set_kv("boots", std::to_string(boots_));
     if (abnormal(r)) settings::set_kv("crashes", std::to_string(crashes_));
+    if (r == ESP_RST_BROWNOUT) settings::set_kv("brownouts", std::to_string(brownouts_));
     read_summary();
     // A heap check that failed before this start: kept in the settings until the next one fails.
     if (heap_note.magic == HEAP_MAGIC) {
@@ -181,7 +184,11 @@ void check(const char* where) {
 void fill(JsonObject o) {
     o["reset"] = reason_;
     o["boots"] = boots_;
-    o["crashes"] = crashes_;
+    o["crashes"] = crashes_;          // the program's (panic, watchdog); before 0.12.7 brownouts were counted here too
+    o["brownouts"] = brownouts_;
+    // The battery: the XIAO ESP32-C3 has no divider from its battery pads to an
+    // ADC pin, so its voltage cannot be read without adding one.
+    o["battery"] = "not measured (no divider on the XIAO C3)";
     if (checking_) o["heap_check"] = true;
     if (fault.ooms) {
         o["oom"] = fault.ooms;                    // allocations that failed, this boot

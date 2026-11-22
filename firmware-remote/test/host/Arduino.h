@@ -39,9 +39,26 @@ typedef int BaseType_t;
 #define pdTRUE 1
 #define pdFAIL 0
 enum eNotifyAction { eSetValueWithOverwrite };
-inline SemaphoreHandle_t xSemaphoreCreateMutex() { return (void*)1; }
-inline int xSemaphoreTake(SemaphoreHandle_t, uint32_t) { return 1; }
-inline int xSemaphoreGive(SemaphoreHandle_t) { return 1; }
+// Mutexes that count how many are held at once (single threaded, so a take
+// always succeeds): the network stand-in checks that no lock but the band's
+// own is held while a packet goes out (host_held()).
+struct HostMutex { int held = 0; };
+inline int& host_held() {
+    static int n = 0;
+    return n;
+}
+inline SemaphoreHandle_t xSemaphoreCreateMutex() { return new HostMutex(); }
+inline SemaphoreHandle_t xSemaphoreCreateRecursiveMutex() { return new HostMutex(); }
+inline int xSemaphoreTake(SemaphoreHandle_t m, uint32_t) {
+    if (m && ((HostMutex*)m)->held++ == 0) host_held()++;
+    return 1;
+}
+inline int xSemaphoreGive(SemaphoreHandle_t m) {
+    if (m && --((HostMutex*)m)->held == 0) host_held()--;
+    return 1;
+}
+inline int xSemaphoreTakeRecursive(SemaphoreHandle_t m, uint32_t t) { return xSemaphoreTake(m, t); }
+inline int xSemaphoreGiveRecursive(SemaphoreHandle_t m) { return xSemaphoreGive(m); }
 inline BaseType_t xTaskCreate(void (*)(void*), const char*, uint32_t, void*, int, TaskHandle_t*) { return pdFAIL; }
 inline BaseType_t xTaskNotify(TaskHandle_t, uint32_t, eNotifyAction) { return pdPASS; }
 inline BaseType_t xTaskNotifyWait(uint32_t, uint32_t, uint32_t*, uint32_t) { return 0; }

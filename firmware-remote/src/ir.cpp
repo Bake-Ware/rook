@@ -288,17 +288,23 @@ static void post_task(void* arg) {
     }
 }
 
-bool post(PostKind kind, uint16_t address, uint8_t command, uint32_t carrier_hz, const std::vector<uint32_t>* durations) {
-    if (!posts) {
-        // The task takes the queue as its argument: it runs at once (a step above the loop).
-        QueueHandle_t q = xQueueCreate(3, sizeof(Post*));
-        if (!q) return false;
-        if (xTaskCreate(post_task, "irtx", 3584, q, 2, nullptr) != pdPASS) {
-            vQueueDelete(q);
-            return false;
-        }
-        posts = q;
+// The sending task, made at boot (start) while memory is whole, so a key
+// never finds there is no room left for it; post makes it if start could not.
+bool start() {
+    if (posts) return true;
+    // The task takes the queue as its argument: it runs at once (a step above the loop).
+    QueueHandle_t q = xQueueCreate(3, sizeof(Post*));
+    if (!q) return false;
+    if (xTaskCreate(post_task, "irtx", 3584, q, 2, nullptr) != pdPASS) {
+        vQueueDelete(q);
+        return false;
     }
+    posts = q;
+    return true;
+}
+
+bool post(PostKind kind, uint16_t address, uint8_t command, uint32_t carrier_hz, const std::vector<uint32_t>* durations) {
+    if (!posts && !start()) return false;
     if (uxQueueSpacesAvailable(posts) == 0) return false;
     Post* p = new (std::nothrow) Post();
     if (!p) return false;

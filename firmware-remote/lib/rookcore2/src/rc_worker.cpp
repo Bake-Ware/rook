@@ -402,12 +402,19 @@ bool Worker::emit_one(const char* event, JsonObjectConst payload) {
                       std::to_string(EVENT_MAX) + ", largest block " + std::to_string(ESP.getMaxAllocHeap()) + ")").c_str());
         return false;
     }
-    // The batch in flight stays; the oldest queued after it go to make room.
-    size_t keep = batch_id_.empty() ? 0 : batch_n_;
-    while (outbox_.size() > keep &&
-           ((int)outbox_.size() >= OUTBOX_MAX || outbox_bytes_ + e.payload.size() > OUTBOX_BYTES)) {
-        outbox_bytes_ -= outbox_[keep].payload.size();
-        outbox_.erase(outbox_.begin() + keep);
+    // Room is made from the oldest, but never while a batch is in flight: the
+    // band task may be sending it from where it lies in the queue without the
+    // lock (an erase would move it), so then the new event is the one dropped.
+    // (push_back leaves the others where they are.)
+    bool full = (int)outbox_.size() >= OUTBOX_MAX || outbox_bytes_ + e.payload.size() > OUTBOX_BYTES;
+    if (full && !batch_id_.empty()) {
+        dropped_++;
+        dropped_total_++;
+        return false;
+    }
+    while (!outbox_.empty() && ((int)outbox_.size() >= OUTBOX_MAX || outbox_bytes_ + e.payload.size() > OUTBOX_BYTES)) {
+        outbox_bytes_ -= outbox_.front().payload.size();
+        outbox_.pop_front();
         dropped_++;
         dropped_total_++;
     }
@@ -419,8 +426,8 @@ bool Worker::emit_one(const char* event, JsonObjectConst payload) {
 // The batch: {"id":..,"cap":"core.event","target":..,"args":{"worker_id":..,
 // "events":[{"id":..,"event":..,"plugin":..,"payload":<as queued>},...],
 // "dropped":N}}, put together as pieces (the punctuation and names in one
-// small buffer, the payloads where they lie in the queue) and sent under
-// lock_, so the queue cannot change under it. As many events as fit
+// small buffer, the payloads where they lie in the queue) and sent after
+// lock_ is let go (see emit: the queue only grows while a batch is in flight). As many events as fit
 // BATCH_BYTES (at least one), fewer when memory is short.
 void Worker::pump_events() {
     uint32_t ms = millis();
@@ -485,6 +492,10 @@ void Worker::pump_events() {
     batch_id_ = id;
     batch_n_ = n;
     batch_sent_ = ms;
+    // Sent without the lock: the app's emit (the keys' loop) never waits on the
+    // network. The pieces stay good: with a batch in flight emit only appends,
+    // and only this task (on_reply) takes events off the queue.
+    held.release();
     band_.send(ps.data(), ps.size());
 }
 

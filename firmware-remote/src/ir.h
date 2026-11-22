@@ -44,6 +44,7 @@ bool send_nec_repeat(Sent& s, std::string& err);
 // Three may wait; more are dropped (false). fail is called on that task with
 // a send's error.
 enum PostKind : uint8_t { POST_NEC, POST_NEC_REPEAT, POST_RAW };
+bool start();                          // the sending task, made now (setup), before memory is in pieces
 bool post(PostKind kind, uint16_t address, uint8_t command, uint32_t carrier_hz, const std::vector<uint32_t>* durations);
 void on_fail(void (*fail)(const std::string& err));
 

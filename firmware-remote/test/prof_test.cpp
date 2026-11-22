@@ -220,6 +220,32 @@ int main() {
                "largest block 2.5 KB: the save is refused (" + err + "), the profile untouched, " + std::to_string(n) +
                    " allocations made");
     }
+    // The codes of the profile picked come from RAM: keys read no flash. A change to it drops the copy.
+    {
+        base();
+        prof::Info p;
+        prof::find("TV", p);
+        prof::warm(p);
+        uint32_t reads = prof::flash_reads();
+        int ok = 0;
+        for (int n = 0; n < 50; n++) {
+            prof::Code c;
+            std::string err;
+            ok += prof::code(p, prof::key_id(n % 2 ? "power" : "input"), c, err);
+        }
+        expect(ok == 50 && prof::flash_reads() == reads, "50 key presses after warm: every code found, " +
+                                                             std::to_string(prof::flash_reads() - reads) + " flash reads");
+        std::string err;
+        bool created;
+        prof::save("TV", false, "", ko, true, err, created);
+        prof::find("TV", p);
+        prof::Code c;
+        bool got = prof::code(p, prof::key_id("back"), c, err);
+        uint32_t after = prof::flash_reads();
+        prof::code(p, prof::key_id("home"), c, err);
+        expect(got && c.address == 51178 && after == reads + 1 && prof::flash_reads() == after,
+               "after a save the new codes are read once, then from RAM again");
+    }
     printf("%d passed, %d failed\n", passes, fails);
     return fails ? 1 : 0;
 }
