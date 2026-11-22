@@ -125,7 +125,8 @@ def door(name, arguments):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                        "params": {"name": name, "arguments": arguments}}).encode()
     request = urllib.request.Request(config["url"], data=body, method="POST",
-                                     headers=dict(config["headers"], **{"Content-Type": "application/json"}))
+                                     headers=dict(config["headers"], **{"Content-Type": "application/json",
+                                                                        "User-Agent": "rook-agents-claude-code"}))
     with urllib.request.urlopen(request) as reply:
         result = json.loads(reply.read())["result"]
     return json.loads(result["content"][0]["text"]) if not result["isError"] else {"error": result["content"][0]["text"]}

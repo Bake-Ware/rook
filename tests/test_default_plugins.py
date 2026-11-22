@@ -118,7 +118,7 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     hub.plugins.install(replacement, {"user": hub.auth.create_user("Alice", "a password")["guid"], "token": None})
     hub.close()
     again = Hub(tmp_path / "hub")
-    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.5.0", "agents-claude-code": "0.2.0",
+    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.5.0", "agents-claude-code": "0.2.1",
                                                                      "battery": "0.1.0", "file": "0.2.0", "net": "0.1.0",
                                                                      "shell": "9.0.0", "worker": "0.1.0"}
     again.close()
@@ -459,7 +459,8 @@ RECORDED = {
                "0.4.0": "ba113ee293f5b629cf888c673a9a96cb217841b75a9d7b1bee0106ae68527618",    # memory (MEM5)
                "0.5.0": "b162812e1d3a8d05545d7ce41bc0629cea66ae28d30ae5719a6a0c8b7871b996"},   # the dock's read let go of on pagehide (HA7)
     "agents-claude-code": {"0.1.0": "79653aecb79c275eb65a7f1d5d88081c22f33e3f31767d3ef963aa47c26b8eeb",
-                           "0.2.0": "8ba8ef43fb7160bc68a51939eb74dd0d074349f965c6e1f52ce15caa88e784e9"},  # fork, schema, precompact
+                           "0.2.0": "8ba8ef43fb7160bc68a51939eb74dd0d074349f965c6e1f52ce15caa88e784e9",   # fork, schema, precompact
+                           "0.2.1": "7d348fd4df50731a87406c363072e095badb72d58b24266f9f7fa3a7e2ef0b3a"},  # the hook names itself (User-Agent)
     "battery": {"0.1.0": "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"},
     "file": {"0.1.0": "fabb70ed8cd611a826a9eae004f255cf3c282f7e20fb6853990780182655d216",
              "0.2.0": "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"},
@@ -620,7 +621,7 @@ async def before_brief_54(tmp_path, monkeypatch):
     host, port = await hub.serve("127.0.0.1", 0)
     alice = hub.auth.create_user("Alice", "a password")["guid"]
     assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-        "agents": "0.5.0", "agents-claude-code": "0.2.0",
+        "agents": "0.5.0", "agents-claude-code": "0.2.1",
         "battery": "0.1.0", "file": "0.1.0", "net": "0.1.0", "shell": "0.2.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())
