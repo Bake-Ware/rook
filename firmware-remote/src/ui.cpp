@@ -5,6 +5,7 @@
 #include <Adafruit_ST7735.h>
 #include <SPI.h>
 #endif
+#include <Fonts/TomThumb.h>
 #include <Wire.h>
 #include <algorithm>
 #include <time.h>
@@ -92,6 +93,13 @@ std::vector<std::string> menu_items;
 std::vector<int8_t> menu_bars;      // a signal strength (0..4) a row; -1 or past the end: none
 std::vector<int8_t> menu_icons;     // a picture a row (ui::menu_icons_set); ICON_LABEL or past the end: by its label
 int8_t home_icon = -1;              // the picked profile's picture (ui::status_icon)
+uint8_t home_routes = 0;            // ...and the routes its keys take (ui::status_routes)
+int8_t key_icon = -1;               // the last key's box (ui::key_note): its route's picture,
+std::string key_text;               // what it says,
+uint32_t key_fresh_until = 0;       // and until when it is shown inverted (the key's flash)
+std::vector<uint8_t> menu_routes;   // route pictures a row (ui::menu_routes_set)
+int8_t title_icon = -1;             // a profile's icon and routes by the menu's title (ui::menu_title_icons)
+uint8_t title_routes = 0;
 int menu_sel = 0;
 bool game_on = false;
 void (*canvas_fn)(Adafruit_GFX&) = nullptr;
@@ -333,6 +341,9 @@ void tab_body_draw(int y0) {
 // The menu: a title bar with where you are in the list, rows with a picture
 // each, a highlight that slides to the row chosen, and a mark down the right
 // edge when there is more than fits. (The narrow screen keeps the plain list.)
+int draw_routes(int x, int y, int8_t prof_icon, uint8_t routes, uint16_t ink, int step = 10, int per_row = 8);
+int route_count(int8_t prof_icon, uint8_t routes);
+
 void menu_draw(uint32_t ms) {
     if (!tab_names.empty() && tab_body) {
         int y0 = tab_strip() + (W < 100 ? 0 : 1);
@@ -348,6 +359,12 @@ void menu_draw(uint32_t ms) {
             oled.print(menu_title.substr(0, COLS).c_str());
             oled.drawFastHLine(0, 9, W, SSD1306_WHITE);
             y = 12;
+            int n = route_count(title_icon, title_routes);       // a profile's options: its pictures under the title
+            if (n) {
+                draw_routes(1, 11, title_icon, title_routes, SSD1306_WHITE, 10, 3);
+                y = 12 + (n > 3 ? 20 : 10);
+                oled.drawFastHLine(0, y - 2, W, SSD1306_WHITE);
+            }
         }
         list(y, menu_items, menu_sel, ms, menu_icons.empty() ? nullptr : set_icon_of);
         return;
@@ -362,11 +379,15 @@ void menu_draw(uint32_t ms) {
     } else {
         oled.fillRect(0, 0, W, BAR, SSD1306_WHITE);
         oled.setTextColor(SSD1306_BLACK);
-        oled.setCursor(3, 2);
-        oled.print(menu_title.substr(0, 12).c_str());
         char where[12];
         snprintf(where, sizeof where, "%d/%d", menu_sel + 1, n);
-        oled.setCursor(W - 3 - (int)strlen(where) * 6, 2);
+        int wx = W - 3 - (int)strlen(where) * 6;
+        // A profile's options: its icon and routes' pictures in the bar, before the count.
+        int pics = route_count(title_icon, title_routes), pw = pics ? pics * 9 - 1 + 4 : 0;
+        if (pics) draw_routes(wx - pw, 1, title_icon, title_routes, SSD1306_BLACK, 9, 8);
+        oled.setCursor(3, 2);
+        oled.print(menu_title.substr(0, std::max(1, (wx - pw - 6) / 6)).c_str());
+        oled.setCursor(wx, 2);
         oled.print(where);
         oled.setTextColor(SSD1306_WHITE);
     }
@@ -376,6 +397,12 @@ void menu_draw(uint32_t ms) {
         oled.drawBitmap(3, y + 1, row_icon(menu_first + r), 8, 8, SSD1306_WHITE);
         oled.setCursor(15, y + 2);
         int fit = (W - 4 - 16) / 6;
+        // A profile row: the routes its keys take, as pictures at the right (9 px apart).
+        uint8_t rt = menu_first + r < (int)menu_routes.size() ? menu_routes[menu_first + r] : 0;
+        if (int nr = route_count(ui::ICON_LABEL, rt)) {
+            draw_routes(W - 6 - (nr * 9 - 1), y + 1, ui::ICON_LABEL, rt, SSD1306_WHITE, 9, 8);
+            fit -= (nr * 9 + 5) / 6;
+        }
         int lv = menu_first + r < (int)menu_bars.size() ? menu_bars[menu_first + r] : -1;
         if (lv >= 0) {                   // four bars at the right, as many filled as it is strong
             fit -= 2;
@@ -416,6 +443,83 @@ const uint8_t* note_pic() {
         case ui::NOTE_BT: return IC_BT;
         default: return nullptr;
     }
+}
+
+const uint8_t* note_pic_of(int8_t icon) {
+    int8_t was = note_icon;
+    note_icon = icon;
+    const uint8_t* p = note_pic();
+    note_icon = was;
+    return p;
+}
+
+// A profile's row of pictures: its own icon (prof_icon; ICON_LABEL: none),
+// then one for each route its keys take, IR, Rook, Wi-Fi, BT, step apart from
+// x, at most per_row a row (the next row 10 below). Answers the width drawn.
+const uint8_t* profile_icon(int id);
+int draw_routes(int x, int y, int8_t prof_icon, uint8_t routes, uint16_t ink, int step, int per_row) {
+    const uint8_t* pics[5];
+    int n = 0;
+    if (prof_icon != ui::ICON_LABEL) pics[n++] = profile_icon(prof_icon);
+    if (routes & ui::ROUTE_IR) pics[n++] = IC_IR;
+    if (routes & ui::ROUTE_ROOK) pics[n++] = IC_ROOK;
+    if (routes & ui::ROUTE_WIFI) pics[n++] = IC_WIFI;
+    if (routes & ui::ROUTE_BT) pics[n++] = IC_BT;
+    for (int i = 0; i < n; i++) oled.drawBitmap(x + (i % per_row) * step, y + (i / per_row) * 10, pics[i], 8, 8, ink);
+    return n ? (std::min(n, per_row) - 1) * step + 8 : 0;
+}
+
+int route_count(int8_t prof_icon, uint8_t routes) {
+    int n = prof_icon != ui::ICON_LABEL;
+    for (uint8_t b = 1; b <= ui::ROUTE_BT; b <<= 1) n += (routes & b) != 0;
+    return n;
+}
+
+// Small text (TomThumb: 3x5 glyphs, 4 pixels a character) with its baseline at y.
+void small_text(const std::string& t, int x, int y) {
+    oled.setFont(&TomThumb);
+    oled.setCursor(x, y);
+    oled.print(t.c_str());
+    oled.setFont(nullptr);
+}
+
+// The last key's box: a 1 px rounded frame, the route's picture at the left,
+// the text small beside it (or, with no picture, alone: "nothing for <key>"),
+// wrapped to the lines the box has room for. Filled in, the rest inverted, while fresh.
+void key_box(int x, int y, int w, int h, uint32_t ms) {
+    bool fresh = key_fresh_until && (int32_t)(key_fresh_until - ms) > 0;
+    uint16_t ink = fresh ? SSD1306_BLACK : SSD1306_WHITE;
+    if (fresh) oled.fillRoundRect(x, y, w, h, 3, SSD1306_WHITE);
+    else oled.drawRoundRect(x, y, w, h, 3, SSD1306_WHITE);
+    const uint8_t* pic = note_pic_of(key_icon);
+    bool beside = w >= 40;                    // the wide screen: picture left, text right; narrow: picture above
+    int tx = beside ? x + 3 : x + 2, ty = y + 3;
+    if (pic && beside) {
+        oled.drawBitmap(x + 3, y + (h - 8) / 2, pic, 8, 8, ink);
+        tx = x + 14;
+    } else if (pic) {
+        oled.drawBitmap(x + (w - 8) / 2, y + 3, pic, 8, 8, ink);
+        ty = y + 13;
+    }
+    int cols = std::max(1, (x + w - 1 - tx) / 4), rows = std::max(1, (y + h - 2 - ty) / 6);
+    // lines: broken at spaces when the words fit, else cut at cols
+    std::vector<std::string> ls;
+    std::string rest = key_text;
+    while (!rest.empty() && (int)ls.size() < rows) {
+        size_t cut = rest.size() <= (size_t)cols ? rest.size() : rest.rfind(' ', cols);
+        if (cut == std::string::npos || cut == 0) cut = std::min(rest.size(), (size_t)cols);
+        ls.push_back(rest.substr(0, cut));
+        rest.erase(0, cut);
+        while (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
+    }
+    int lines_h = (int)ls.size() * 6, base = beside || !pic ? y + (h - lines_h) / 2 + 5 : ty + 5;
+    oled.setTextColor(ink);
+    for (size_t i = 0; i < ls.size(); i++) {                    // narrow: each line centred
+        int lx = beside ? tx : x + std::max(1, (w - (int)ls[i].size() * 4 + 1) / 2);
+        small_text(ls[i], lx, base + (int)i * 6);
+    }
+    oled.setTextColor(SSD1306_WHITE);
+    if (fresh) anim = true;                   // so it is drawn plain again when the flash ends
 }
 
 // The wide screen at rest: a bar with the Wi-Fi network and what else the
@@ -500,57 +604,57 @@ int home_clock() {
     return w;
 }
 
+// The wide screen at rest: the bar; the device's frame, its icon and its
+// routes' pictures along the top, its name large under them; the last key in
+// its box at the bottom, the time beside it. A note that is not a key's (a
+// network joined...) takes the frame for its moment.
 void home_draw(uint32_t ms, bool noted) {
-    const std::string &target = status[2], &key = status[3];
+    const std::string& target = status[2];
     home_bar(ms);
-    oled.drawRoundRect(0, 15, W, 30, 5, SSD1306_WHITE);
-    // In the frame: what it says, large; the device's picture at its left (pic).
-    auto big = [&](const std::string& t, const uint8_t* pic) {
-        int left = pic ? 15 : 0, room = W - left;
-        if (pic) oled.drawBitmap(6, 26, pic, 8, 8, SSD1306_WHITE);
-        int n = (int)t.size();
-        if (n && n * 12 <= room - 8) {
+    oled.drawRoundRect(0, 13, W, 31, 5, SSD1306_WHITE);
+    // The frame's text: large on one line when it fits, else small lines.
+    auto big = [&](const std::string& t, int top, int bottom) {
+        int n = (int)t.size(), mid = (top + bottom) / 2;
+        if (n && n * 12 <= W - 12 && bottom - top >= 16) {        // large, with room to spare inside the frame
             oled.setTextSize(2);
-            oled.setCursor(left + (room - n * 12) / 2 + 1, 23);
+            oled.setCursor((W - n * 12) / 2 + 1, mid - 7);
             oled.print(t.c_str());
             oled.setTextSize(1);
             return;
         }
-        auto ls = wrap(t, 3);
-        int y = 30 - (int)ls.size() * 4 - (ls.size() > 1 ? 1 : 0);
+        auto ls = wrap(t, std::max(1, (bottom - top) / 9));
+        int y = mid - (int)ls.size() * 9 / 2 + 1;
         for (auto& l : ls) {
-            oled.setCursor(std::max(left + 4, left + (room - (int)l.size() * 6) / 2), y);
-            oled.print(l.substr(0, (room - 8) / 6).c_str());
+            oled.setCursor(std::max(4, (W - (int)l.size() * 6) / 2), y);
+            oled.print(l.substr(0, COLS - 1).c_str());
             y += 9;
         }
     };
-    const uint8_t* pic = home_icon == ui::ICON_LABEL || target.empty() ? nullptr : profile_icon(home_icon);
+    bool have = !target.empty();
+    int8_t picon = have && home_icon != ui::ICON_LABEL ? home_icon : (int8_t)ui::ICON_LABEL;
     if (noted) {
         std::string t = note;
         if (t.find('\n') != std::string::npos && t.size() <= 10)      // "BT\ngone": short enough for one large line
             std::replace(t.begin(), t.end(), '\n', ' ');
-        big(t, note_pic());                  // (the picture, when there is one, at the frame's left)
-        int clock = home_clock();            // the time stays where it was
-        oled.drawBitmap(1, 52, pic ? pic : IC_TV, 8, 8, SSD1306_WHITE);
-        oled.setCursor(13, 53);
-        oled.print(target.substr(0, (W - 13 - (clock ? clock + 8 : 0)) / 6).c_str());
-        return;
+        if (const uint8_t* np = note_pic()) oled.drawBitmap(5, 16, np, 8, 8, SSD1306_WHITE);
+        big(t, 15, 43);
+    } else {
+        int row = route_count(picon, have ? home_routes : 0) ? 10 : 0;
+        if (row) draw_routes(5, 16, picon, home_routes, SSD1306_WHITE);
+        big(have ? target : std::string("no device"), 14 + row, 43);
     }
-    big(target.empty() ? std::string("no device") : target, pic);
-    if (!key.empty()) {
-        std::string k = key.substr(0, 10);
-        int w = (int)k.size() * 6 + 9;
-        oled.fillRoundRect(0, 50, w, 13, 6, SSD1306_WHITE);
-        oled.setTextColor(SSD1306_BLACK);
-        oled.setCursor(5, 53);
-        oled.print(k.c_str());
-        oled.setTextColor(SSD1306_WHITE);
+    // the bottom: the last key's box, the time (or the menu hint) to its right
+    int clock = home_clock();
+    int bw = W - (clock ? clock + 6 : 28);
+    if (!key_text.empty()) {
+        key_box(0, 46, bw, 18, ms);
+    } else if (noted && have) {              // a note in the frame: the device stays named here
+        int w = draw_routes(1, 51, picon, 0, SSD1306_WHITE);
+        oled.setCursor(w ? w + 4 : 1, 52);
+        oled.print(target.substr(0, (bw - w - 4) / 6).c_str());
     }
-    // The time where the menu hint was; the hint until the clock is set.
-    if (home_clock()) {
-    } else if (key.size() <= 8) {
-        for (int i = 0; i < 3; i++) oled.drawFastHLine(W - 38, 54 + i * 2, 6, SSD1306_WHITE);     // the input key opens it
-        oled.setCursor(W - 29, 53);
+    if (!clock) {
+        oled.setCursor(W - 25, 52);
         oled.print("menu");
     }
 }
@@ -623,15 +727,25 @@ void draw() {
     } else if (W >= 100) {
         home_draw(ms, false);
     } else {
-        static const int Y[4] = {0, 14, 24, 44};
-        if (home_icon != ui::ICON_LABEL && !status[2].empty())        // the picked device's picture, under its name
-            oled.drawBitmap(1, 34, profile_icon(home_icon), 8, 8, SSD1306_WHITE);
-        for (int i = 0; i < 4; i++) {
+        // The narrow screen: the link and the remote's line, the device's name
+        // (it slides when long), its icon and routes' pictures under it (three
+        // a row), then the last key's box.
+        static const int Y[3] = {0, 14, 24};
+        for (int i = 0; i < 3; i++) {
             if (i == 2) { line(status[i], Y[i], ms); continue; }      // the target: slides when long
             oled.setCursor(1, Y[i]);
             oled.print(status[i].substr(0, COLS).c_str());
         }
         oled.drawFastHLine(0, 9, W, SSD1306_WHITE);
+        int8_t picon = !status[2].empty() && home_icon != ui::ICON_LABEL ? home_icon : (int8_t)ui::ICON_LABEL;
+        int n = status[2].empty() ? 0 : route_count(picon, home_routes);
+        if (n) draw_routes(1, 34, picon, home_routes, SSD1306_WHITE, 10, 3);
+        int by = 34 + (n ? (n > 3 ? 21 : 11) : 0);
+        if (!key_text.empty()) key_box(0, by, W, 34, ms);
+        else if (!status[3].empty()) {                                // (learning: "L3/11")
+            oled.setCursor(1, by + 2);
+            oled.print(status[3].substr(0, COLS).c_str());
+        }
     }
     oled.display();
 }
@@ -816,6 +930,9 @@ void menu_begin(const std::string& title, const std::vector<std::string>& items,
     menu_items = items;
     menu_bars.clear();
     menu_icons.clear();
+    menu_routes.clear();
+    title_icon = -1;
+    title_routes = 0;
     menu_sel = selected >= 0 && selected < (int)items.size() ? selected : 0;
     menu_first = 0;
     menu_hl = -1;
@@ -839,6 +956,9 @@ void menu_tabs(const std::vector<std::string>& names, int active, const std::vec
     menu_items = items;
     menu_bars.clear();
     menu_icons.clear();
+    menu_routes.clear();
+    title_icon = -1;
+    title_routes = 0;
     menu_sel = selected >= 0 && selected < (int)items.size() ? selected : 0;
     menu_first = 0;
     menu_hl = -1;
@@ -868,6 +988,36 @@ void menu_bars_set(const std::vector<int8_t>& bars) {
 void menu_icons_set(const std::vector<int8_t>& icons) {
     xSemaphoreTake(mu, portMAX_DELAY);
     menu_icons = icons;
+    dirty = true;
+    xSemaphoreGive(mu);
+}
+
+void status_routes(uint8_t routes) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    if (home_routes != routes) { home_routes = routes; dirty = true; }
+    xSemaphoreGive(mu);
+}
+
+void key_note(int8_t icon, const std::string& text, uint32_t fresh_ms) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    key_icon = icon;
+    key_text = text;
+    key_fresh_until = fresh_ms ? (millis() + fresh_ms) | 1 : 0;
+    dirty = true;
+    xSemaphoreGive(mu);
+}
+
+void menu_routes_set(const std::vector<uint8_t>& routes) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    menu_routes = routes;
+    dirty = true;
+    xSemaphoreGive(mu);
+}
+
+void menu_title_icons(int8_t icon, uint8_t routes) {
+    xSemaphoreTake(mu, portMAX_DELAY);
+    title_icon = icon;
+    title_routes = routes;
     dirty = true;
     xSemaphoreGive(mu);
 }

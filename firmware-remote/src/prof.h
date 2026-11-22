@@ -30,6 +30,12 @@ static const size_t MAX_TOTAL = 4096;          // all of them
 // name, so a build before 0.12.8 still reads the profile after a rollback.
 enum Type : uint8_t { NEC = 0, RAW = 1, LAN = 2, CAP = 3, ROOK = 4 };
 
+// The routes a profile's keys take (Info::routes), in the order the screen
+// shows them: IR (a code sent from the remote), Rook (to the hub: a cap action
+// or a rook key), Wi-Fi (a network device: a lan action, or keys with no action
+// going to the linked device), BT (kept for a route to come). The same bits as ui::ROUTE_*.
+enum Route : uint8_t { ROUTE_IR = 1, ROUTE_ROOK = 2, ROUTE_WIFI = 4, ROUTE_BT = 8 };
+
 // The pictures a profile can have. NONE shows as GENERIC.
 enum Icon : uint8_t { ICON_NONE = 0, ICON_TV, ICON_PROJECTOR, ICON_SPEAKER, ICON_STREAMING, ICON_LIGHT, ICON_PHONE,
                       ICON_CAR, ICON_GAME, ICON_GENERIC, ICON_COUNT };
@@ -59,6 +65,9 @@ struct Info {
     // custom[i]; masks by i, as above.
     std::vector<std::string> custom;
     uint32_t ckeys = 0, clan = 0, ccap = 0, crook = 0;
+    // The routes its keys use (ROUTE_*), worked out once when it is read or
+    // saved, for the pictures by its name (the screen draws them every frame).
+    uint8_t routes = 0;
     uint16_t bytes = 0;
     uint8_t slot = 0;
 };

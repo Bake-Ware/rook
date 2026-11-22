@@ -46,7 +46,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.12.9"
+#define FW_VERSION "0.12.10"
 #ifndef BUILD_MONIKER
 #define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
 #endif
@@ -417,7 +417,7 @@ static bool start_game(const std::string& label) {
 // Settings: Wi-Fi, Find devs (a device scan), Update, Bluetooth.
 // The Devices rows have pictures (icons): each profile's own, and a plus on Add device.
 static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std::string>& values, int& selected,
-                     std::vector<int8_t>& icons) {
+                     std::vector<int8_t>& icons, std::vector<uint8_t>& routes) {
     selected = 0;
     if (tab == TAB_DEVICES) {
         prof::Info act;
@@ -427,10 +427,12 @@ static void tab_rows(int tab, std::vector<std::string>& labels, std::vector<std:
             labels.push_back(p.name);
             values.push_back("p:" + p.name);
             icons.push_back((int8_t)p.icon);
+            routes.push_back(p.routes);
         }
         labels.push_back("Add device");
         values.push_back("add");
         icons.push_back(ui::ICON_PLUS);
+        routes.push_back(0);
     } else if (tab == TAB_GAMES) {
         for (auto& g : GAMES) {
 #ifndef ROOK_BRIDGE
@@ -456,14 +458,16 @@ static void show_tab(int tab) {
     std::vector<std::string> labels, values;
     std::vector<std::string> names(TAB_NAMES, TAB_NAMES + TAB_COUNT);
     std::vector<int8_t> icons;
+    std::vector<uint8_t> routes;
     int selected = 0;
     menu_tab = tab;
     menu_kind = MENU_MAIN;
-    if (tab != TAB_ASSIST) tab_rows(tab, labels, values, selected, icons);
+    if (tab != TAB_ASSIST) tab_rows(tab, labels, values, selected, icons, routes);
     menu_labels = labels;
     menu_values = values;
     ui::menu_tabs(names, tab, labels, selected, tab == TAB_ASSIST ? chat::draw : nullptr);
     if (!icons.empty()) ui::menu_icons_set(icons);
+    if (!routes.empty()) ui::menu_routes_set(routes);
     menu_until = millis() + (tab == TAB_ASSIST ? CHAT_IDLE_MS : MENU_IDLE_MS);
     mode = MENU;
 }
@@ -774,6 +778,9 @@ static void open_options(int sel) {
     opts_from = menu_kind;
     ui::menu_end();
     show_menu(MENU_OPTS, opts_label, items, items, 0);
+    prof::Info pi;
+    if (opts_subject.rfind("p:", 0) == 0 && prof::find(opts_subject.substr(2), pi))
+        ui::menu_title_icons((int8_t)pi.icon, pi.routes);          // the profile's pictures by its name
 }
 
 // The pictures a profile can have, each drawn by its name; the cursor on the one it has.
@@ -1390,8 +1397,10 @@ static void on_button(const ButtonEvent& ev) {
         int8_t icon = via && !strcmp(via, "ir") ? ui::NOTE_IR : via && !strcmp(via, "lan") ? ui::NOTE_WIFI
                     : via && !strcmp(via, "bt") ? ui::NOTE_BT : to_hub && !none ? ui::NOTE_ROOK : ui::NOTE_NONE;
         if (icon == ui::NOTE_ROOK && !(worker_on && worker.hub_ok())) icon = ui::NOTE_NO_HUB;     // the rook struck through
-        if (icon != ui::NOTE_NONE) ui::flash_icon(icon, e.name, 1000, false);   // the key's name, its route as a picture
-        else if (local) ui::flash("nothing\nfor " + e.name, 1000, false);
+        // In the last key's box: the route's picture at its left, the key's name small beside it;
+        // shown inverted for a moment (the flash), then plain until the next key.
+        if (icon != ui::NOTE_NONE) ui::key_note(icon, e.name, 1000);
+        else if (local) ui::key_note(ui::NOTE_NONE, "nothing for " + e.name, 1000);
     } else {
         ui::flash(e.name + (strcmp(e.action, "long") ? "" : " (hold)"));
     }
@@ -3190,7 +3199,9 @@ void loop() {
         ui::status_line(2, chosen_name());
         {
             prof::Info p;
-            ui::status_icon(active_profile(p) ? (int8_t)p.icon : ui::ICON_LABEL);
+            bool have = active_profile(p);
+            ui::status_icon(have ? (int8_t)p.icon : ui::ICON_LABEL);
+            ui::status_routes(have ? p.routes : 0);       // (worked out when the profile was read: prof::Info::routes)
         }
         // A new build is kept once it has settled: on Wi-Fi, and (a bridge with
         // a bonded remote) that remote back; or once the hub is reached.

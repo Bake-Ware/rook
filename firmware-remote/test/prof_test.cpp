@@ -362,6 +362,31 @@ int main() {
         }
         expect(escaped == 0 && stuck == 0, "custom keys with allocations failing from each point on: nothing escapes, the next save works");
     }
+    // The routes a profile's keys take, worked out when it is read or saved (Info::routes).
+    {
+        base();                                   // NEC and raw keys (IR), a cap key (Rook), linked (Wi-Fi)
+        prof::Info p;
+        prof::find("TV", p);
+        bool all3 = p.routes == (prof::ROUTE_IR | prof::ROUTE_ROOK | prof::ROUTE_WIFI);
+        JsonDocument k;
+        k["bt_c77"]["rook"] = true;
+        std::string err;
+        bool created;
+        prof::save("Deck", true, "", k.as<JsonObjectConst>(), false, err, created);
+        prof::find("Deck", p);
+        bool rook_only = p.routes == prof::ROUTE_ROOK;
+        JsonDocument k2;
+        k2["ok"]["protocol"] = "nec";
+        k2["ok"]["address"] = 1;
+        k2["ok"]["command"] = 2;
+        prof::save("Deck", false, "", k2.as<JsonObjectConst>(), true, err, created);
+        prof::find("Deck", p);
+        bool plus_ir = p.routes == (prof::ROUTE_IR | prof::ROUTE_ROOK);
+        prof::begin();                            // read back from the store
+        prof::find("Deck", p);
+        expect(all3 && rook_only && plus_ir && p.routes == (prof::ROUTE_IR | prof::ROUTE_ROOK),
+               "routes: IR, Rook and Wi-Fi from the keys and the link, kept up to date by saves and when read back");
+    }
     printf("%d passed, %d failed\n", passes, fails);
     return fails ? 1 : 0;
 }

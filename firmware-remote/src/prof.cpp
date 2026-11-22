@@ -262,6 +262,12 @@ static bool decode(const std::string& b, Info& info, int want, Code* out, std::v
     info.clan &= named;
     info.ccap &= named;
     info.crook &= named;
+    // The routes, once: an ir key is one with an action that is not lan, cap or rook.
+    info.routes = 0;
+    if ((info.keys & ~(info.lan | info.cap | info.rook)) || (info.ckeys & ~(info.clan | info.ccap | info.crook)))
+        info.routes |= ROUTE_IR;
+    if (info.cap || info.rook || info.ccap || info.crook) info.routes |= ROUTE_ROOK;
+    if (info.lan || info.clan || !info.link.empty()) info.routes |= ROUTE_WIFI;
     if (r.bad || info.name.empty()) return false;
     return want < 0 || found;
 }

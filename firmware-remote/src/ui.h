@@ -54,9 +54,22 @@ void menu_bars_set(const std::vector<int8_t>& bars);
 // the row says, as rows without one are).
 static const int8_t ICON_LABEL = -1, ICON_PLUS = -2;
 void menu_icons_set(const std::vector<int8_t>& icons);
+// Route pictures (ROUTE_* bits) at the right of each row of the menu just begun
+// (the wide screen; the narrow one has no room for them in a row).
+void menu_routes_set(const std::vector<uint8_t>& routes);
+// A profile's icon and routes by the menu's title (the profile's options).
+void menu_title_icons(int8_t icon, uint8_t routes);
 // The picked profile's icon (prof.h's Icon), drawn by its name on the status
 // screen; ICON_LABEL: none (nothing picked).
 void status_icon(int8_t icon);
+// The routes the picked profile's keys take (ROUTE_* bits, prof.h's Route):
+// drawn as pictures after its icon, by its name on the status screen.
+static const uint8_t ROUTE_IR = 1, ROUTE_ROOK = 2, ROUTE_WIFI = 4, ROUTE_BT = 8;
+void status_routes(uint8_t routes);
+// The last key, in its box on the status screen: icon (a NoteIcon: the route
+// it took; NOTE_NONE: words only, "nothing for <key>") at the left, its text
+// small beside it. Shown inverted for fresh_ms, as the key's flash, then plain.
+void key_note(int8_t icon, const std::string& text, uint32_t fresh_ms);
 void menu_end();
 // The menu with tabs along the top (names; the one open is highlighted, and the
 // highlight slides when it changes): the open tab's rows, or body, which draws
