@@ -46,7 +46,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.12.8"
+#define FW_VERSION "0.12.9"
 #ifndef BUILD_MONIKER
 #define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
 #endif
@@ -1159,7 +1159,7 @@ static void menu_pick(int i) {
 static const char* local_key(const ButtonEvent& e, const prof::Info* p, prof::Code& call) {
     SelLock sel_lock;
     uint32_t ms = millis();
-    int k = prof::key_id(e.name);
+    int k = p ? prof::key_of(*p, e.name) : prof::key_id(e.name);    // a custom key (bt_c77...) too
     std::string raw = e.lines.rfind("bt:", 0) == 0 ? e.lines.substr(3) : "";
     std::string send = e.name;                 // the key a network device is sent
     if (p && prof::has(*p, k)) {
@@ -1374,10 +1374,11 @@ static void on_button(const ButtonEvent& ev) {
     const char* via = nullptr;
     prof::Code call;
     if (local && !strcmp(e.action, "press")) via = local_key(e, have_prof ? &pi : nullptr, call);
-    // What the key did, on the screen: IR (sent from the remote), Wi-Fi (to a
-    // network device), Rook (to the hub: a cap action, a rook key, or no
-    // profile picked, the hub's target), BT (kept for a Bluetooth-keyboard route
-    // to come); nothing for <key> only when nothing at all is assigned.
+    // What the key did, on the screen, as a picture beside its name: IR (sent
+    // from the remote), Wi-Fi (to a network device), the rook (to the hub: a cap
+    // action, a rook key, or no profile picked), struck through when the hub is
+    // not there, BT (kept for a Bluetooth-keyboard route to come); the words
+    // nothing for <key> only when nothing at all is assigned.
     bool none = via && !strcmp(via, "none");
     bool to_hub = !local || (via && (!strcmp(via, "cap") || !strcmp(via, "rook")));
     if (none) via = nullptr;
@@ -1386,10 +1387,10 @@ static void on_button(const ButtonEvent& ev) {
         snprintf(b, sizeof b, "%s = %s", e.name.c_str(), e.lines.c_str());
         ui::flash(b);
     } else if (!strcmp(e.action, "press") && (local || worker_on)) {
-        const char* route = via && !strcmp(via, "ir") ? "IR" : via && !strcmp(via, "lan") ? "Wi-Fi"
-                          : via && !strcmp(via, "bt") ? "BT" : to_hub && !none ? "Rook" : nullptr;
-        if (route && to_hub && !(worker_on && worker.hub_ok())) ui::flash(e.name + "\nRook: no hub", 1000, false);
-        else if (route) ui::flash(e.name + "\n" + route, 1000, false);
+        int8_t icon = via && !strcmp(via, "ir") ? ui::NOTE_IR : via && !strcmp(via, "lan") ? ui::NOTE_WIFI
+                    : via && !strcmp(via, "bt") ? ui::NOTE_BT : to_hub && !none ? ui::NOTE_ROOK : ui::NOTE_NONE;
+        if (icon == ui::NOTE_ROOK && !(worker_on && worker.hub_ok())) icon = ui::NOTE_NO_HUB;     // the rook struck through
+        if (icon != ui::NOTE_NONE) ui::flash_icon(icon, e.name, 1000, false);   // the key's name, its route as a picture
         else if (local) ui::flash("nothing\nfor " + e.name, 1000, false);
     } else {
         ui::flash(e.name + (strcmp(e.action, "long") ? "" : " (hold)"));
@@ -1943,8 +1944,12 @@ static bool cap_ir_profile(const std::string& action, JsonObjectConst a, JsonObj
             err = name.empty() ? "bad args: name is needed (no profile is selected)" : "no profile called " + name;
             return false;
         }
-        int k = prof::key_id(key);
-        if (k < 0) { err = "bad args: key is one of " + prof::key_names(); return false; }
+        if (!prof::valid_key(key)) {
+            err = "bad args: key is a named key (" + prof::key_names() + ") or any name the remote reports ([a-z0-9_], at most " +
+                  std::to_string(prof::MAX_KEY) + " characters)";
+            return false;
+        }
+        int k = have ? prof::key_of(p, key) : prof::key_id(key);   // -1: a key p has nothing for (it goes to the device)
         prof::Code c;
         if (have && prof::has(p, k) && !prof::code(p, k, c, err)) return false;
         if (have && prof::has(p, k) && c.type == prof::CAP) {

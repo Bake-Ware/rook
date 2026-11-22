@@ -274,6 +274,94 @@ int main() {
         expect(ok && got && c.type == prof::ROOK && listed && old_format && refused,
                "rook keys: saved, read back as rook, listed in rook_keys (cap keys apart), stored as a nameless cap; rook false refused");
     }
+    // Keys by any name the remote reports (bt_c77: the onn's YouTube key).
+    {
+        base();
+        JsonDocument k;
+        k["bt_c77"]["protocol"] = "nec";
+        k["bt_c77"]["address"] = 4;
+        k["bt_c77"]["command"] = 0x77;
+        k["bt_c19c"]["rook"] = true;
+        std::string err;
+        bool created;
+        bool ok = prof::save("TV", false, "", k.as<JsonObjectConst>(), true, err, created);
+        prof::Info p;
+        prof::find("TV", p);
+        int yt = prof::key_of(p, "bt_c77"), pk = prof::key_of(p, "bt_c19c");
+        prof::Code c, c2;
+        bool got = prof::code(p, yt, c, err) && prof::code(p, pk, c2, err);
+        JsonDocument f;
+        prof::fill(p, f.to<JsonObject>());
+        std::string keys;
+        serializeJson(f["keys"], keys);
+        bool listed = keys.find("bt_c77") != std::string::npos && keys.find("power") != std::string::npos &&
+                      f["rook_keys"][0] == "bt_c19c";
+        expect(ok && yt >= prof::CUSTOM && got && c.command == 0x77 && c2.type == prof::ROOK && listed && prof::has(p, prof::key_id("power")),
+               "custom keys: bt_c77 (IR) and bt_c19c (rook) saved beside the named ones, read back, listed");
+        // merge another custom key, drop one, keep the rest
+        JsonDocument k2;
+        k2["bt_c19c"] = nullptr;
+        k2["bt_c22"]["lan"] = true;
+        ok = prof::save("TV", false, "", k2.as<JsonObjectConst>(), true, err, created);
+        prof::find("TV", p);
+        bool merged = ok && prof::key_of(p, "bt_c19c") < 0 && prof::has(p, prof::key_of(p, "bt_c77")) &&
+                      prof::has(p, prof::key_of(p, "bt_c22")) && prof::code(p, prof::key_of(p, "bt_c77"), c, err) &&
+                      c.command == 0x77 && prof::has(p, prof::key_id("input"));
+        expect(merged, "custom keys: a merge drops one and adds one; the others and their codes stay (the table renumbered)");
+        // rename keeps them
+        prof::rename("TV", "Telly", err);
+        prof::find("Telly", p);
+        expect(prof::has(p, prof::key_of(p, "bt_c77")) && prof::code(p, prof::key_of(p, "bt_c77"), c, err) && c.command == 0x77,
+               "custom keys: kept through a rename");
+        // bad names
+        int refused = 0;
+        for (const char* bad : {"BT_C77", "bt-c77", "a_name_much_too_long", ""}) {
+            JsonDocument kb;
+            kb[bad]["rook"] = true;
+            if (!prof::save("Telly", false, "", kb.as<JsonObjectConst>(), true, err, created)) refused++;
+        }
+        expect(refused == 4 && prof::valid_key("bt_c77") && !prof::valid_key("Bad") && prof::valid_key("settings"),
+               "key names: [a-z0-9_], 1..15 characters (upper case, dashes, too long, blank refused)");
+        // a build before 0.12.9 stops reading after the icon: the profile reads, the named keys work, the custom ones are not there
+        exempt = true;
+        std::string raw = nvs["irp0"];
+        exempt = false;
+        prof::Info full;
+        prof::find("Telly", full);
+        size_t table = 1;
+        for (auto& n : full.custom) table += 1 + n.size();
+        std::string old_view = raw.substr(0, raw.size() - table);
+        exempt = true;
+        nvs["irp0"] = old_view;
+        exempt = false;
+        prof::begin();
+        prof::Info ov;
+        bool reads = prof::find("Telly", ov) && prof::has(ov, prof::key_id("power")) && prof::code(ov, prof::key_id("power"), c, err) &&
+                     ov.custom.empty() && ov.icon == prof::ICON_TV;
+        expect(reads, "a profile with custom keys, read as a build before 0.12.9 reads it: whole, named keys working, no custom ones");
+    }
+    // ...and under failing allocations
+    {
+        JsonDocument k;
+        for (const char* n : {"bt_c77", "bt_c19c", "bt_c22", "back"}) k[n]["rook"] = true;
+        int escaped = 0, stuck = 0;
+        for (long at = 0; at < 40; at++) {
+            base();
+            std::string err;
+            bool created;
+            arm(at, true);
+            try {
+                prof::save("TV", false, "", k.as<JsonObjectConst>(), true, err, created);
+            } catch (...) {
+                escaped++;
+            }
+            disarm();
+            JsonDocument one;
+            one["bt_c77"]["rook"] = true;
+            if (!prof::save("TV", false, "", one.as<JsonObjectConst>(), true, err, created)) stuck++;
+        }
+        expect(escaped == 0 && stuck == 0, "custom keys with allocations failing from each point on: nothing escapes, the next save works");
+    }
     printf("%d passed, %d failed\n", passes, fails);
     return fails ? 1 : 0;
 }

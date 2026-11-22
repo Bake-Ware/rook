@@ -55,6 +55,10 @@ struct Info {
     uint8_t icon = ICON_NONE;
     uint64_t keys = 0;                         // bit per key id with an action
     uint64_t lan = 0, cap = 0, rook = 0;       // those whose action is lan, cap, rook (the rest: ir)
+    // Keys by any other name the remote reports (bt_c77...): key id 64 + i is
+    // custom[i]; masks by i, as above.
+    std::vector<std::string> custom;
+    uint32_t ckeys = 0, clan = 0, ccap = 0, crook = 0;
     uint16_t bytes = 0;
     uint8_t slot = 0;
 };
@@ -63,10 +67,22 @@ void begin();
 std::vector<Info> list();
 bool find(const std::string& name, Info& out);                    // any case
 bool linked_to(const std::string& lan_id, Info& out);             // the first profile with this link
-int key_id(const std::string& name);           // -1: not a key profiles have (aliases: settings, bt_menu = menu...)
-const char* key_name(int id);
-std::string key_names();                       // all of them, for errors
-inline bool has(const Info& p, int key) { return key >= 0 && (p.keys >> key & 1); }
+// Keys: the named ones (power, vol_up... ids 0..63), and in a profile any
+// other name the remote reports (bt_c77, the onn's YouTube key; [a-z0-9_],
+// 1..MAX_KEY characters; at most MAX_CUSTOM a profile; ids 64 + i).
+static const size_t MAX_KEY = 15;
+static const int MAX_CUSTOM = 32, CUSTOM = 64;
+int key_id(const std::string& name);           // a named key's id; -1: not one (aliases: settings, bt_menu = menu...)
+int key_of(const Info& p, const std::string& name);   // its id in p (named or custom); -1: p has no such key
+bool valid_key(const std::string& name);       // a named key, or a name a custom key may have
+std::string key_label(const Info& p, int id);  // the key's name ("" for none)
+const char* key_name(int id);                  // a named key's name
+std::string key_names();                       // the named ones, for errors
+inline bool has(const Info& p, int key) {
+    if (key < 0) return false;
+    if (key < CUSTOM) return p.keys >> key & 1;
+    return key < CUSTOM + MAX_CUSTOM && (p.ckeys >> (key - CUSTOM) & 1);
+}
 bool code(const Info& p, int key, Code& out, std::string& err);  // the key's action (from RAM once read: see warm)
 bool warm(const Info& p);                      // p's codes into RAM now (the profile picked): its keys read no flash
 uint32_t flash_reads();                        // flash reads made for codes, so far

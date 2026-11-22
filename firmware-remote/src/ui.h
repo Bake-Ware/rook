@@ -29,6 +29,11 @@ std::string shown();                                  // what the screen says no
 void flash(const std::string& t);                     // a brief note (1.5 s) over the status screen
 // The same, for ms milliseconds; over_menu: drawn over an open menu too (a box on top of it).
 void flash(const std::string& t, uint32_t ms, bool over_menu);
+// The same with a picture beside the text: what a key just did (IR sent from
+// the remote, Wi-Fi to a network device, Rook to the hub, BT), or that the hub
+// it went for is not there (the rook struck through).
+enum NoteIcon : int8_t { NOTE_NONE = -1, NOTE_IR, NOTE_WIFI, NOTE_ROOK, NOTE_NO_HUB, NOTE_BT };
+void flash_icon(int8_t icon, const std::string& t, uint32_t ms, bool over_menu);
 void big(const std::string& t);                       // a few characters, large, until replaced
 
 // Question screen: prompt and options with a cursor.

@@ -112,6 +112,28 @@ int key_id(const std::string& name) {
 
 const char* key_name(int id) { return id >= 0 && id < NKEYS ? KEYS[id] : ""; }
 
+bool valid_key(const std::string& n) {
+    if (key_id(n) >= 0) return true;
+    if (n.empty() || n.size() > MAX_KEY) return false;
+    for (char c : n)
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+    return true;
+}
+
+int key_of(const Info& p, const std::string& name) {
+    int id = key_id(name);
+    if (id >= 0) return id;
+    for (size_t i = 0; i < p.custom.size(); i++)
+        if (p.custom[i] == name) return CUSTOM + (int)i;
+    return -1;
+}
+
+std::string key_label(const Info& p, int id) {
+    if (id >= 0 && id < NKEYS) return KEYS[id];
+    if (id >= CUSTOM && id - CUSTOM < (int)p.custom.size()) return p.custom[id - CUSTOM];
+    return "";
+}
+
 std::string key_names() {
     std::string s;
     for (int i = 0; i < NKEYS; i++) s += (i ? ", " : "") + std::string(KEYS[i]);
@@ -170,6 +192,8 @@ static bool decode(const std::string& b, Info& info, int want, Code* out, std::v
     info.name = r.str();
     info.link = r.str();
     info.keys = info.lan = info.cap = info.rook = 0;
+    info.custom.clear();
+    info.ckeys = info.clan = info.ccap = info.crook = 0;
     info.bytes = (uint16_t)b.size();
     int n = r.u8();
     bool found = false;
@@ -204,11 +228,17 @@ static bool decode(const std::string& b, Info& info, int want, Code* out, std::v
         }
         e.c.type = type == CAP && e.c.cap.empty() ? (uint8_t)ROOK : type;       // a cap with no name: rook
         if (r.bad) return false;
-        if (e.key < 64) {
+        if (e.key < CUSTOM) {
             info.keys |= 1ULL << e.key;
             if (e.c.type == LAN) info.lan |= 1ULL << e.key;
             if (e.c.type == CAP) info.cap |= 1ULL << e.key;
             if (e.c.type == ROOK) info.rook |= 1ULL << e.key;
+        } else if (e.key < CUSTOM + MAX_CUSTOM) {       // its name comes in the table after the keys
+            uint32_t b = 1u << (e.key - CUSTOM);
+            info.ckeys |= b;
+            if (e.c.type == LAN) info.clan |= b;
+            if (e.c.type == CAP) info.ccap |= b;
+            if (e.c.type == ROOK) info.crook |= b;
         }
         if (out && e.key == want) {
             *out = e.c;
@@ -221,6 +251,17 @@ static bool decode(const std::string& b, Info& info, int want, Code* out, std::v
         uint8_t ic = r.u8();
         if (ic < ICON_COUNT) info.icon = ic;
     }
+    if (!r.bad && r.at < r.n) {                // the custom keys' names, after the icon (0.12.9; earlier builds stop before)
+        int n = r.u8();
+        for (int i = 0; i < n && i < MAX_CUSTOM && !r.bad; i++) info.custom.push_back(r.str());
+        if (r.bad) info.custom.clear();
+    }
+    // a custom key with no name in the table is not one
+    uint32_t named = info.custom.size() >= 32 ? 0xFFFFFFFFu : ((1u << info.custom.size()) - 1);
+    info.ckeys &= named;
+    info.clan &= named;
+    info.ccap &= named;
+    info.crook &= named;
     if (r.bad || info.name.empty()) return false;
     return want < 0 || found;
 }
@@ -401,7 +442,7 @@ static bool cache_fill(const Info& p, std::string& err) {
 }
 
 static bool code_read(const Info& p, int key, Code& out, std::string& err) {
-    if (!has(p, key)) { err = p.name + " has nothing for " + key_name(key); return false; }
+    if (!has(p, key)) { err = p.name + " has nothing for " + key_label(p, key); return false; }
     if (!cmu) cmu = xSemaphoreCreateMutex();
     xSemaphoreTake(cmu, portMAX_DELAY);
     struct Give { ~Give() { xSemaphoreGive(cmu); } } give;
@@ -574,26 +615,41 @@ static bool save_bytes(const std::string& name_in, bool set_link, const std::str
     if (link_in.size() > MAX_LINK || !printable(link_in)) { err = "bad args: link is a device id, at most 40 characters"; return false; }
     if (icon >= ICON_COUNT) { err = "bad args: icon is one of " + icon_names(); return false; }
     // Everything given is parsed, checked and encoded before anything stored is touched.
-    struct Given { uint8_t key; std::string enc; };
+    // A key given: a named one (key: its id) or a custom one (cname: its name,
+    // its id set once the new name table is known).
+    struct Given { uint8_t key; std::string enc, cname; };
     std::vector<Given> given;
     std::vector<uint8_t> drop;
+    std::vector<std::string> drop_custom;
     size_t given_bytes = 0;
     if (!keys.isNull()) {
-        if (keys.size() > (size_t)NKEYS) { err = "bad args: at most " + std::to_string(NKEYS) + " keys"; return false; }
+        if (keys.size() > (size_t)(NKEYS + MAX_CUSTOM)) {
+            err = "bad args: at most " + std::to_string(NKEYS + MAX_CUSTOM) + " keys";
+            return false;
+        }
         if (!room_for(keys.size() * (sizeof(Given) + 16) + sizeof(Entry))) { err = OOM; return false; }
         given.reserve(keys.size());
         drop.reserve(keys.size());
         for (JsonPairConst kv : keys) {
             std::string k = kv.key().c_str();
             int id = key_id(k);
-            if (id < 0) { err = "bad args: no key called " + k + "; keys are " + key_names(); return false; }
+            if (id < 0 && !valid_key(k)) {
+                err = "bad args: " + k + " is not a key name: a named key (" + key_names() +
+                      ") or any name the remote reports, [a-z0-9_], at most " + std::to_string(MAX_KEY) + " characters";
+                return false;
+            }
+            std::string cname = id < 0 ? k : "";
             for (auto& g : given)
-                if (g.key == id) { err = "bad args: " + k + " is given twice"; return false; }
-            if (kv.value().isNull()) { drop.push_back((uint8_t)id); continue; }
+                if (id >= 0 ? g.key == id && g.cname.empty() : g.cname == cname) { err = "bad args: " + k + " is given twice"; return false; }
+            if (kv.value().isNull()) {
+                if (id >= 0) drop.push_back((uint8_t)id);
+                else drop_custom.push_back(cname);
+                continue;
+            }
             Entry e;
-            e.key = (uint8_t)id;
+            e.key = id >= 0 ? (uint8_t)id : (uint8_t)CUSTOM;       // a custom key's id is set below
             if (!parse_code(k, kv.value(), e.c, err)) return false;
-            Given g{e.key, ""};
+            Given g{e.key, "", cname};
             if (!room_for(16 + e.c.d.size() * 3 + e.c.args.size() + e.c.cap.size() + e.c.worker.size())) { err = OOM; return false; }
             encode_entry(g.enc, e);
             given_bytes += g.enc.size();
@@ -611,36 +667,67 @@ static bool save_bytes(const std::string& name_in, bool set_link, const std::str
     }
     std::string link = set_link ? link_in : (at >= 0 ? idx[at].link : "");
     uint8_t ic = icon >= 0 ? (uint8_t)icon : at >= 0 ? idx[at].icon : (uint8_t)ICON_NONE;
-    // The stored entries that stay (merging): where they are in the old blob.
+    // The stored entries that stay (merging): where they are in the old blob,
+    // and for a custom key its name (the old blob's table, after its keys).
     std::string old;
-    std::pair<uint16_t, uint16_t> keep[64];
+    struct Kept { uint16_t from, len; int8_t cust; };       // cust: index in names below, -1: a named key
+    Kept keep[CUSTOM + MAX_CUSTOM];
     size_t nkeep = 0, keep_bytes = 0;
+    std::vector<std::string> names;                          // the new table: the kept custom keys', then the given
+    names.reserve(MAX_CUSTOM);
     if (at >= 0 && merge) {
         char k[8];
         slot_key(idx[at].slot, k);
         if (!room_for(idx[at].bytes)) { err = OOM; return false; }
-        if (settings::blob(k, old)) {
+        Info oi;
+        if (settings::blob(k, old) && decode(old, oi, -1, nullptr, nullptr)) {
             Reader r{(const uint8_t*)old.data(), old.size()};
             bool ok = r.u8() == 1;
             skip_str(r);
             skip_str(r);
             int n = ok ? r.u8() : 0;
-            for (int i = 0; i < n && ok && nkeep < 64; i++) {
+            for (int i = 0; i < n && ok && nkeep < CUSTOM + MAX_CUSTOM; i++) {
                 size_t from = r.at;
                 uint8_t key;
                 if (!skip_entry(r, key)) { ok = false; break; }
                 bool replaced = false;
-                for (auto& g : given) replaced = replaced || g.key == key;
-                for (uint8_t d : drop) replaced = replaced || d == key;
-                if (replaced) continue;
-                keep[nkeep++] = {(uint16_t)from, (uint16_t)(r.at - from)};
+                if (key < CUSTOM) {
+                    for (auto& g : given) replaced = replaced || (g.cname.empty() && g.key == key);
+                    for (uint8_t d : drop) replaced = replaced || d == key;
+                    if (replaced) continue;
+                    keep[nkeep++] = {(uint16_t)from, (uint16_t)(r.at - from), -1};
+                } else {
+                    if (key - CUSTOM >= (int)oi.custom.size()) continue;       // no name: not a key
+                    const std::string& cn = oi.custom[key - CUSTOM];
+                    for (auto& g : given) replaced = replaced || g.cname == cn;
+                    for (auto& d : drop_custom) replaced = replaced || d == cn;
+                    if (replaced) continue;
+                    keep[nkeep++] = {(uint16_t)from, (uint16_t)(r.at - from), (int8_t)names.size()};
+                    names.push_back(cn);
+                }
                 keep_bytes += r.at - from;
             }
-            if (!ok || r.bad) nkeep = keep_bytes = 0;          // unreadable: start over
+            if (!ok || r.bad) {                                // unreadable: start over
+                nkeep = keep_bytes = 0;
+                names.clear();
+            }
         }
     }
+    // The given custom keys join the table; each one's id is its place in it.
+    for (auto& g : given) {
+        if (g.cname.empty()) continue;
+        if ((int)names.size() >= MAX_CUSTOM) {
+            err = "full: a profile has at most " + std::to_string(MAX_CUSTOM) + " keys besides the named ones";
+            return false;
+        }
+        g.enc[0] = (char)(CUSTOM + names.size());
+        names.push_back(g.cname);
+    }
+    size_t table = 0;
+    for (auto& n : names) table += 1 + n.size();
     size_t count = nkeep + given.size();
-    size_t total = 1 + 1 + name.size() + 1 + link.size() + 1 + keep_bytes + given_bytes + (ic ? 1 : 0);
+    size_t total = 1 + 1 + name.size() + 1 + link.size() + 1 + keep_bytes + given_bytes +
+                   (names.empty() ? (ic ? 1 : 0) : 1 + 1 + table);
     size_t others = 0;
     for (size_t i = 0; i < idx.size(); i++)
         if ((int)i != at) others += idx[i].bytes;
@@ -656,9 +743,19 @@ static bool save_bytes(const std::string& name_in, bool set_link, const std::str
     put_str(blob, name);
     put_str(blob, link);
     blob += (char)count;
-    for (size_t i = 0; i < nkeep; i++) blob.append(old, keep[i].first, keep[i].second);
+    for (size_t i = 0; i < nkeep; i++) {
+        size_t at0 = blob.size();
+        blob.append(old, keep[i].from, keep[i].len);
+        if (keep[i].cust >= 0) blob[at0] = (char)(CUSTOM + keep[i].cust);     // its place in the new table
+    }
     for (auto& g : given) blob += g.enc;
-    if (ic != ICON_NONE && ic < ICON_COUNT) blob += (char)ic;
+    if (!names.empty()) {                    // the icon (none: 0), then the custom keys' names
+        blob += (char)(ic < ICON_COUNT ? ic : ICON_NONE);
+        blob += (char)names.size();
+        for (auto& n : names) put_str(blob, n);
+    } else if (ic != ICON_NONE && ic < ICON_COUNT) {
+        blob += (char)ic;
+    }
     std::string().swap(old);
     uint8_t slot = 0;
     if (at >= 0) {
@@ -780,12 +877,17 @@ void fill(const Info& p, JsonObject o) {
     JsonArray k = o["keys"].to<JsonArray>();
     for (int i = 0; i < NKEYS; i++)
         if (has(p, i)) k.add(KEYS[i]);
+    for (size_t i = 0; i < p.custom.size(); i++)
+        if (p.ckeys >> i & 1) k.add(p.custom[i]);
     for (int t = 0; t < 3; t++) {               // which of them are lan, cap, rook (the rest are ir)
         uint64_t m = t == 0 ? p.lan : t == 1 ? p.cap : p.rook;
-        if (!m) continue;
+        uint32_t cm = t == 0 ? p.clan : t == 1 ? p.ccap : p.crook;
+        if (!m && !cm) continue;
         JsonArray a = o[t == 0 ? "lan_keys" : t == 1 ? "cap_keys" : "rook_keys"].to<JsonArray>();
         for (int i = 0; i < NKEYS; i++)
             if (m >> i & 1) a.add(KEYS[i]);
+        for (size_t i = 0; i < p.custom.size(); i++)
+            if (cm >> i & 1) a.add(p.custom[i]);
     }
     o["bytes"] = p.bytes;
 }

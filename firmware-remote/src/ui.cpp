@@ -81,6 +81,7 @@ bool agent_on = false, agent_big = false;
 std::string note;
 uint32_t note_until = 0;
 bool note_over = false;        // the note is drawn over the menu as well
+int8_t note_icon = -1;         // ui::NoteIcon drawn beside it (-1: none)
 bool ask_on = false;
 std::string ask_prompt;
 std::vector<std::string> ask_opts;
@@ -401,6 +402,21 @@ void menu_draw(uint32_t ms) {
 }
 
 const uint8_t IC_ROOK[] PROGMEM = {0xDB, 0xFF, 0x7E, 0x3C, 0x3C, 0x3C, 0x7E, 0xFF};
+// What a key did, beside its name in the note: an IR LED with its rays; the
+// rook (to the hub); the rook struck through (the hub not there: a diagonal cut out of it).
+const uint8_t IC_IR[] PROGMEM = {0x49, 0x2A, 0x00, 0x1C, 0x3E, 0x3E, 0x3E, 0x14};
+const uint8_t IC_ROOK_X[] PROGMEM = {0x5B, 0xBF, 0x5E, 0x2C, 0x34, 0x38, 0x7C, 0xFE};
+
+const uint8_t* note_pic() {
+    switch (note_icon) {
+        case ui::NOTE_IR: return IC_IR;
+        case ui::NOTE_WIFI: return IC_WIFI;
+        case ui::NOTE_ROOK: return IC_ROOK;
+        case ui::NOTE_NO_HUB: return IC_ROOK_X;
+        case ui::NOTE_BT: return IC_BT;
+        default: return nullptr;
+    }
+}
 
 // The wide screen at rest: a bar with the Wi-Fi network and what else the
 // remote is joined to (a rook: the band; Wi-Fi; a Bluetooth remote), the
@@ -513,7 +529,7 @@ void home_draw(uint32_t ms, bool noted) {
         std::string t = note;
         if (t.find('\n') != std::string::npos && t.size() <= 10)      // "BT\ngone": short enough for one large line
             std::replace(t.begin(), t.end(), '\n', ' ');
-        big(t, nullptr);
+        big(t, note_pic());                  // (the picture, when there is one, at the frame's left)
         int clock = home_clock();            // the time stays where it was
         oled.drawBitmap(1, 52, pic ? pic : IC_TV, 8, 8, SSD1306_WHITE);
         oled.setCursor(13, 53);
@@ -557,15 +573,24 @@ void draw() {
     } else if (menu_on) {
         menu_draw(ms);
         if (note_over && note_until && (int32_t)(note_until - ms) > 0) {
-            // A word about what was just done in it, in a box over the menu.
-            auto ls = wrap(note, W < 100 ? 4 : 2);
-            int h = (int)ls.size() * 9 + 6, y = (H - h) / 2;
+            // A word about what was just done in it, in a box over the menu; its
+            // picture at the left (the wide screen) or on a row of its own above (the narrow one).
+            const uint8_t* pic = note_pic();
+            bool row = pic && W < 100;
+            auto ls = wrap(note, W < 100 ? (row ? 3 : 4) : 2);
+            int h = (int)ls.size() * 9 + 6 + (row ? 10 : 0), y = (H - h) / 2;
             oled.fillRect(0, y, W, h, SSD1306_BLACK);
             oled.drawRect(0, y, W, h, SSD1306_WHITE);
-            int ly = y + 4;
+            int ly = y + 4, left = pic && !row ? 14 : 0;
+            if (row) {
+                oled.drawBitmap((W - 8) / 2, ly, pic, 8, 8, SSD1306_WHITE);
+                ly += 10;
+            } else if (pic) {
+                oled.drawBitmap(4, y + (h - 8) / 2, pic, 8, 8, SSD1306_WHITE);
+            }
             for (auto& l : ls) {
-                oled.setCursor(std::max(1, (W - (int)l.size() * 6) / 2), ly);
-                oled.print(l.substr(0, COLS).c_str());
+                oled.setCursor(std::max(1 + left, left + (W - left - (int)l.size() * 6) / 2), ly);
+                oled.print(l.substr(0, (W - left) / 6).c_str());
                 ly += 9;
             }
         }
@@ -577,7 +602,12 @@ void draw() {
         oled.setCursor(1, 0);
         oled.print(status[0].substr(0, COLS).c_str());
         oled.drawFastHLine(0, 9, W, SSD1306_WHITE);
-        lines(wrap(note, (H - 16) / 9), 16, 9);
+        if (const uint8_t* pic = note_pic()) {       // the narrow screen: the picture on its own row, the text under it
+            oled.drawBitmap(1, 15, pic, 8, 8, SSD1306_WHITE);
+            lines(wrap(note, (H - 27) / 9), 27, 9);
+        } else {
+            lines(wrap(note, (H - 16) / 9), 16, 9);
+        }
     } else if (agent_on && agent_big) {
         oled.setTextSize((int)agent_text.size() * 12 <= W ? 2 : 1);
         oled.setCursor(1, H / 2 - 12);
@@ -734,8 +764,11 @@ void big(const std::string& t) {
 
 void flash(const std::string& t) { flash(t, 1500, false); }
 
-void flash(const std::string& t, uint32_t ms, bool over_menu) {
+void flash(const std::string& t, uint32_t ms, bool over_menu) { flash_icon(NOTE_NONE, t, ms, over_menu); }
+
+void flash_icon(int8_t icon, const std::string& t, uint32_t ms, bool over_menu) {
     xSemaphoreTake(mu, portMAX_DELAY);
+    note_icon = icon;
     note = t;
     note_until = millis() + ms;
     if (!note_until) note_until = 1;
