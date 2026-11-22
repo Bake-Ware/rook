@@ -169,7 +169,7 @@ static bool decode(const std::string& b, Info& info, int want, Code* out, std::v
     if (r.u8() != 1) return false;
     info.name = r.str();
     info.link = r.str();
-    info.keys = info.lan = info.cap = 0;
+    info.keys = info.lan = info.cap = info.rook = 0;
     info.bytes = (uint16_t)b.size();
     int n = r.u8();
     bool found = false;
@@ -202,12 +202,13 @@ static bool decode(const std::string& b, Info& info, int want, Code* out, std::v
         } else {
             return false;
         }
-        e.c.type = type;
+        e.c.type = type == CAP && e.c.cap.empty() ? (uint8_t)ROOK : type;       // a cap with no name: rook
         if (r.bad) return false;
         if (e.key < 64) {
             info.keys |= 1ULL << e.key;
-            if (type == LAN) info.lan |= 1ULL << e.key;
-            if (type == CAP) info.cap |= 1ULL << e.key;
+            if (e.c.type == LAN) info.lan |= 1ULL << e.key;
+            if (e.c.type == CAP) info.cap |= 1ULL << e.key;
+            if (e.c.type == ROOK) info.rook |= 1ULL << e.key;
         }
         if (out && e.key == want) {
             *out = e.c;
@@ -235,7 +236,7 @@ static void encode_entry(std::string& o, const Entry& e) {
     if (e.c.type == LAN) {
         o += (char)LAN;
         put_str(o, e.c.key);
-    } else if (e.c.type == CAP) {
+    } else if (e.c.type == CAP || e.c.type == ROOK) {   // rook: a cap with no name, worker or args
         o += (char)CAP;
         put_str(o, e.c.cap);
         put_str(o, e.c.worker);
@@ -289,7 +290,7 @@ static std::string encode(const std::string& name, const std::string& link, cons
         if (e.c.type == LAN) {
             o += (char)LAN;
             put_str(o, e.c.key);
-        } else if (e.c.type == CAP) {
+        } else if (e.c.type == CAP || e.c.type == ROOK) {   // rook: a cap with no name, worker or args
             o += (char)CAP;
             put_str(o, e.c.cap);
             put_str(o, e.c.worker);
@@ -446,6 +447,14 @@ static bool parse_code(const std::string& key, JsonVariantConst v, Code& c, std:
                 return false;
             }
         }
+        return true;
+    }
+    if (!o["rook"].isNull()) {                 // the press to the hub, nothing else
+        if (!o["rook"].is<bool>() || !o["rook"].as<bool>()) {
+            err = "bad args: keys." + key + ".rook is true (null takes the key out)";
+            return false;
+        }
+        c.type = ROOK;
         return true;
     }
     if (!o["cap"].isNull()) {                  // a Rook cap call, for the hub to make
@@ -771,10 +780,10 @@ void fill(const Info& p, JsonObject o) {
     JsonArray k = o["keys"].to<JsonArray>();
     for (int i = 0; i < NKEYS; i++)
         if (has(p, i)) k.add(KEYS[i]);
-    for (int t = 0; t < 2; t++) {               // which of them are lan, cap (the rest are ir)
-        uint64_t m = t ? p.cap : p.lan;
+    for (int t = 0; t < 3; t++) {               // which of them are lan, cap, rook (the rest are ir)
+        uint64_t m = t == 0 ? p.lan : t == 1 ? p.cap : p.rook;
         if (!m) continue;
-        JsonArray a = o[t ? "cap_keys" : "lan_keys"].to<JsonArray>();
+        JsonArray a = o[t == 0 ? "lan_keys" : t == 1 ? "cap_keys" : "rook_keys"].to<JsonArray>();
         for (int i = 0; i < NKEYS; i++)
             if (m >> i & 1) a.add(KEYS[i]);
     }

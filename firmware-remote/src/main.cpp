@@ -46,7 +46,7 @@
 #include "tetris.h"
 #include "ui.h"
 
-#define FW_VERSION "0.12.7"
+#define FW_VERSION "0.12.8"
 #ifndef BUILD_MONIKER
 #define BUILD_MONIKER "unnamed"           // scripts/moniker.py sets it from the sources, at build time
 #endif
@@ -73,6 +73,7 @@ static const uint8_t PCF_ADDR = 0x20, OLED_ADDR = 0x3C;
 static rc::Worker worker;
 static bool worker_on = false;
 static TaskHandle_t rook_task_h = nullptr;      // for its stack's low-water mark in remote.state
+static TaskHandle_t wifi_task_h = nullptr;      // the same, the Wi-Fi task's
 static WiFiMulti wifi;
 static SemaphoreHandle_t ev_mu;
 static std::deque<ButtonEvent> recent;      // last presses, for state and wait
@@ -102,7 +103,20 @@ static void key_yield() {
     }
 }
 
-static bool key_held_now() { return !buttons::held().empty() || !bt::held().empty(); }
+// Held now, as far as the Wi-Fi task is concerned: for at most
+// netplan::HOLD_MAX_MS (a remote whose release report is lost would otherwise
+// keep the radio off for good).
+static volatile uint32_t held_since = 0;     // 0: nothing held
+static bool key_held_now() {
+    bool held = !buttons::held().empty() || !bt::held().empty();
+    uint32_t now = millis();
+    if (!held) {
+        held_since = 0;
+        return false;
+    }
+    if (!held_since) held_since = now | 1;
+    return netplan::held_counts(true, now, held_since);
+}
 // What the buttons do now: the TV's (events to the hub), the menu's (the input
 // button opens it: pick the device the events are for, or the game), the game's.
 // (The conversation is the menu's Assistant tab.)
@@ -1164,6 +1178,7 @@ static const char* local_key(const ButtonEvent& e, const prof::Info* p, prof::Co
             call = std::move(c);
             return "cap";
         }
+        if (c.type == prof::ROOK) return "rook";    // the press to the hub, nothing else
         if (c.type == prof::LAN) {
             if (!c.key.empty()) send = c.key;
         } else {
@@ -1198,8 +1213,7 @@ static const char* local_key(const ButtonEvent& e, const prof::Info* p, prof::Co
         dev::run("key", target, send, 0, err);
         return "lan";
     }
-    ui::flash("nothing\nfor " + e.name, 1000, false);
-    return nullptr;
+    return "none";                               // nothing assigned (on_button says so)
 }
 
 // A press: one of the handheld's buttons, or (index -1, lines "bt") a key of
@@ -1360,14 +1374,26 @@ static void on_button(const ButtonEvent& ev) {
     const char* via = nullptr;
     prof::Code call;
     if (local && !strcmp(e.action, "press")) via = local_key(e, have_prof ? &pi : nullptr, call);
+    // What the key did, on the screen: IR (sent from the remote), Wi-Fi (to a
+    // network device), Rook (to the hub: a cap action, a rook key, or no
+    // profile picked, the hub's target), BT (kept for a Bluetooth-keyboard route
+    // to come); nothing for <key> only when nothing at all is assigned.
+    bool none = via && !strcmp(via, "none");
+    bool to_hub = !local || (via && (!strcmp(via, "cap") || !strcmp(via, "rook")));
+    if (none) via = nullptr;
     if (buttons::learning()) {
         char b[24];
         snprintf(b, sizeof b, "%s = %s", e.name.c_str(), e.lines.c_str());
         ui::flash(b);
-    } else if (!(via && !strcmp(via, "cap") && !(worker_on && worker.hub_ok()))) {
+    } else if (!strcmp(e.action, "press") && (local || worker_on)) {
+        const char* route = via && !strcmp(via, "ir") ? "IR" : via && !strcmp(via, "lan") ? "Wi-Fi"
+                          : via && !strcmp(via, "bt") ? "BT" : to_hub && !none ? "Rook" : nullptr;
+        if (route && to_hub && !(worker_on && worker.hub_ok())) ui::flash(e.name + "\nRook: no hub", 1000, false);
+        else if (route) ui::flash(e.name + "\n" + route, 1000, false);
+        else if (local) ui::flash("nothing\nfor " + e.name, 1000, false);
+    } else {
         ui::flash(e.name + (strcmp(e.action, "long") ? "" : " (hold)"));
     }
-    if (via && !strcmp(via, "cap") && !(worker_on && worker.hub_ok())) ui::flash("no hub", 1000, false);   // it waits in the queue
     if (worker_on) {
         JsonDocument p;
         p["button"] = e.name;
@@ -1392,7 +1418,11 @@ static void on_button(const ButtonEvent& ev) {
             }
         } else if (!settings::target_name().empty()) p["target"] = settings::target_name();
         if (e.index < 0) p["source"] = "bt";
-        worker.emit("remote.button", p.as<JsonObjectConst>());
+        // A press the hub acts on goes at once, alone, and not at all if it
+        // could not go within 2 s (a stale burst is worse than a lost press);
+        // the rest wait for the next batch.
+        if (to_hub && !none) worker.emit_now("remote.button", p.as<JsonObjectConst>());
+        else worker.emit("remote.button", p.as<JsonObjectConst>());
     }
 }
 
@@ -1459,6 +1489,56 @@ static void fill_bt(JsonObject o) {
     xSemaphoreTake(bt_names_mu, portMAX_DELAY);
     for (auto& kv : bt_names) names[kv.first] = kv.second;
     xSemaphoreGive(bt_names_mu);
+}
+
+// ---- the trial of a new build ------------------------------------------------
+//
+// A build on trial writes how it is getting on into the settings as it goes
+// ("trial": booted; Wi-Fi joined or not; kept, or given up and why), with
+// which build it is ("trial_build"). The build that runs next, if it is not
+// that one (the bootloader went back), turns it into "last_trial", adding why
+// it itself started (a panic or a brownout of the trial build shows here) and
+// the last fault recorded. remote.state reports last_trial. (A build from
+// before 0.12.8 leaves the record alone; the next one that knows it reports it.)
+static std::string last_trial;
+static bool trial_wifi_noted = false;
+
+static void trial_begin() {
+    std::string me = FW_VERSION " (" BUILD_MONIKER ")";
+    std::string tb = settings::kv("trial_build"), tr = settings::kv("trial");
+    if (!tr.empty() && tb != me) {
+        std::string lf = settings::kv("lastfault");
+        last_trial = tb + " did not stay: " + tr + "; the next start's reset: " + diag::reset_word() +
+                     (lf.empty() ? std::string() : "; last fault: " + lf);
+        settings::set_kv("last_trial", last_trial);
+        settings::set_kv("trial", "");
+        logf("update: %s", last_trial.c_str());
+    } else {
+        last_trial = settings::kv("last_trial");
+    }
+    if (ota::on_trial()) {
+        settings::set_kv("trial_build", me);
+        settings::set_kv("trial", std::string("booted (reset ") + diag::reset_word() + "), Wi-Fi never joined");
+    }
+    ota::on_trial_end([](bool kept, const char* why) {
+        std::string me = FW_VERSION " (" BUILD_MONIKER ")";
+        if (kept) {
+            last_trial = me + " kept: " + why;
+            settings::set_kv("last_trial", last_trial);
+            settings::set_kv("trial", "");
+        } else {
+            settings::set_kv("trial", settings::kv("trial") + "; " + why + ": rolled back");
+        }
+    });
+}
+
+// The trial build joined Wi-Fi: noted, once.
+static void trial_wifi(uint32_t ms) {
+    if (trial_wifi_noted || !ota::on_trial() || WiFi.status() != WL_CONNECTED) return;
+    trial_wifi_noted = true;
+    char b[96];
+    snprintf(b, sizeof b, "booted (reset %s), Wi-Fi joined after %u s", diag::reset_word(), (unsigned)(ms / 1000));
+    settings::set_kv("trial", b);
 }
 
 static void fill_state(JsonObject r) {
@@ -1530,8 +1610,12 @@ static void fill_state(JsonObject r) {
     r["events_queued"] = (unsigned)worker.events_queued();
     r["events_bytes"] = (unsigned)worker.events_bytes();
     if (worker.events_dropped()) r["events_dropped"] = worker.events_dropped();
+    r["presses_sent"] = worker.live_sent();       // hub-bound presses sent at once
+    if (worker.live_dropped()) r["presses_dropped"] = worker.live_dropped();   // ...and those that could not go within 2 s
     if (rook_task_h) r["stack_free"] = (unsigned)uxTaskGetStackHighWaterMark(rook_task_h);   // the band task's, least seen
+    if (wifi_task_h) r["stack_free_wifi"] = (unsigned)uxTaskGetStackHighWaterMark(wifi_task_h);
     diag::fill(r);                          // reset, boots, crashes, coredump
+    if (!last_trial.empty()) r["last_trial"] = last_trial;
     r["uptime_s"] = millis() / 1000;
 }
 
@@ -2382,6 +2466,7 @@ static bool wifi_have_quick = false, wifi_quick_low = false;
 static bool wifi_woke = false;              // the radio was off (asleep): a quick rejoin may do
 
 static bool wifi_connect(const WifiCandidate& c, bool low, int tenths) {
+    int step = netplan::join_step(wifi_power_step, c.rssi);
     WiFi.begin(c.ssid.c_str(), c.pass.c_str(), c.ch, c.bssid, false);
     wifi_config_t conf;
     if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
@@ -2390,7 +2475,7 @@ static bool wifi_connect(const WifiCandidate& c, bool low, int tenths) {
         esp_wifi_set_config(WIFI_IF_STA, &conf);
     }
     // Moderate power first (the supply is shared with the IR LED): raised a step only after a round failed.
-    WiFi.setTxPower(low ? WIFI_POWER_8_5dBm : (wifi_power_t)netplan::POWER[wifi_power_step]);
+    WiFi.setTxPower(low ? WIFI_POWER_8_5dBm : (wifi_power_t)netplan::POWER[step]);
     wifi_joining = true;
     esp_wifi_connect();
     for (int t = 0; t < tenths && WiFi.status() != WL_CONNECTED && !wifi_aborted; t++) vTaskDelay(pdMS_TO_TICKS(100));
@@ -2467,7 +2552,8 @@ static bool wifi_join(unsigned round) {
         if (wifi_interrupted()) return false;
         bool chosen = !first.empty() && settings::wifi_same(c.ssid, first);
         bool low = (c.rssi > -45) != ((round & 1) != 0);
-        logf("wifi: joining %s (ch %d, %d dBm) at %s power", c.ssid.c_str(), c.ch, c.rssi, low ? "low" : "full");
+        logf("wifi: joining %s (ch %d, %d dBm) at %d dBm", c.ssid.c_str(), c.ch, c.rssi,
+             low ? 8 : netplan::POWER[netplan::join_step(wifi_power_step, c.rssi)] / 4);
         wifi_reason = 0;
         if (wifi_connect(c, low, 150)) {
             wifi_quick = c;
@@ -2528,12 +2614,13 @@ static void wifi_scan() {
 static void wifi_task(void*) {
     unsigned fails = 0;                  // rounds failed in a row
     uint32_t next_round = 0;             // millis() from which the next round may start (0: now)
-    int coex = -1;
     auto quiet = [] { return netplan::may_start(millis(), last_key_ms, key_held_now()); };
+    // The radio's sharing stays balanced (0.12.7 preferred Bluetooth whenever
+    // Wi-Fi was not joined, the join itself included, which a faint network
+    // could not get through): the keys get their turn from the rules above.
+    esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
     for (;;) {
         bool up = WiFi.status() == WL_CONNECTED;
-        int want = up ? ESP_COEX_PREFER_BALANCE : ESP_COEX_PREFER_BT;
-        if (want != coex && esp_coex_preference_set((esp_coex_prefer_t)want) == ESP_OK) coex = want;
         if (wifi_scan_state == 1) {              // asked for in the Wi-Fi menu: once the keys are quiet
             if (!quiet() && !wifi_aborted) {
                 vTaskDelay(pdMS_TO_TICKS(100));
@@ -2686,6 +2773,7 @@ void setup() {
         std::replace(body.begin(), body.end(), '\n', ' ');
         ui::card("UPDATE", body, !body.empty() && body.back() == '%' ? atoi(body.c_str()) : -1);
     }, [](bool on) { bt::pause(on); });     // a download has the radio: no Bluetooth scanning meanwhile
+    trial_begin();
     lan::begin([](const char* m) { logf("%s", m); });
     dev::begin([](const char* m) { logf("%s", m); }, [](const std::string& t) { ui::flash(t); });
     prof::begin();
@@ -2753,7 +2841,7 @@ void setup() {
         }
     }
     xTaskCreatePinnedToCore(rook_task, "rook", 16384, nullptr, 1, &rook_task_h, APP_CORE);
-    xTaskCreatePinnedToCore(wifi_task, "wifi", 4096, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore(wifi_task, "wifi", 6144, nullptr, 1, &wifi_task_h, 0);
     bt_names_mu = xSemaphoreCreateMutex();
     load_bt_names();
     bt::begin([](const char* m) { logf("%s", m); });
@@ -2838,7 +2926,8 @@ void loop() {
         ButtonEvent e{0, -1, bt_name_of(bt_key), "bt:" + bt_key, "press", 0, ms};
         on_button(e);
     }
-    // A key held (the handheld's or the paired remote's): the Wi-Fi task keeps waiting.
+    // A key held (the handheld's or the paired remote's): the Wi-Fi task keeps waiting
+    // (for at most netplan::HOLD_MAX_MS of one hold).
     {
         static uint32_t held_seen = 0;
         if (ms - held_seen >= 100) {
@@ -3100,7 +3189,8 @@ void loop() {
         }
         // A new build is kept once it has settled: on Wi-Fi, and (a bridge with
         // a bonded remote) that remote back; or once the hub is reached.
-        bool settled = up;
+        trial_wifi(ms);
+        bool settled = up || net_off;            // IR only (net_off): booted and, below, its remote back
 #if defined(ROOK_BRIDGE) && !defined(ROOK_GAMEPAD)
         if (bt::saved()) settled = settled && bt::state() == "connected";
 #endif

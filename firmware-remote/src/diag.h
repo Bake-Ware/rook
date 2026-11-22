@@ -11,6 +11,7 @@
 namespace diag {
 
 void begin();                          // once, early in setup(): counts this start, reads the summary
+const char* reset_word();              // why this start happened (power_on, panic, brownout, software...)
 void fill(JsonObject o);               // reset, boots, crashes, brownouts, coredump {size, summary}
 bool coredump_size(size_t& size);      // false: none
 // length bytes of the dump from offset, as base64. False with err.

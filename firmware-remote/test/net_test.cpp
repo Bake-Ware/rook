@@ -29,6 +29,10 @@ int main() {
     expect(POWER[0] == 44 && power_step_after(0, true) == 0 && power_step_after(0, false) == 1 &&
                power_step_after(1, false) == 2 && power_step_after(2, false) == 2 && power_step_after(2, true) == 2,
            "transmit power starts at 11 dBm and is raised a step (15, 19.5 dBm) only after a round fails");
+    expect(join_step(0, -50) == 0 && join_step(0, -62) == 1 && join_step(0, -70) == 2 && join_step(2, -40) == 2,
+           "a join starts at the power the access point's signal calls for: 11 dBm above -60, 15 to -67, 19.5 below");
+    expect(held_counts(true, 5000, 1) && !held_counts(true, 10001, 1) && !held_counts(false, 5000, 1),
+           "a key reported held counts for at most 10 s (a lost release cannot keep the radio off)");
     // A day with the network gone (the access point off): rounds of ~4 s scan + ~15 s join.
     auto busy = [](bool backoff) {
         uint32_t t = 0, radio = 0;

@@ -246,6 +246,34 @@ int main() {
         expect(got && c.address == 51178 && after == reads + 1 && prof::flash_reads() == after,
                "after a save the new codes are read once, then from RAM again");
     }
+    // rook: the press to the hub, nothing else; stored as a cap with no name (a build before 0.12.8 still reads it).
+    {
+        base();
+        JsonDocument k;
+        k["play"]["rook"] = true;
+        k["pause"]["rook"] = true;
+        std::string err;
+        bool created;
+        bool ok = prof::save("TV", false, "", k.as<JsonObjectConst>(), true, err, created);
+        prof::Info p;
+        prof::find("TV", p);
+        prof::Code c;
+        bool got = prof::code(p, prof::key_id("play"), c, err);
+        JsonDocument f;
+        prof::fill(p, f.to<JsonObject>());
+        bool listed = f["rook_keys"].size() == 2 && f["cap_keys"].size() == 1;     // the base's ok key is a real cap
+        exempt = true;
+        std::string raw = nvs["irp0"];
+        exempt = false;
+        // find play's entry: key id, then type 3 (cap), then three empty strings
+        uint8_t play = (uint8_t)prof::key_id("play");
+        bool old_format = raw.find(std::string{(char)play, (char)3, 0, 0, 0}) != std::string::npos;
+        JsonDocument bad;
+        bad["play"]["rook"] = false;
+        bool refused = !prof::save("TV", false, "", bad.as<JsonObjectConst>(), true, err, created);
+        expect(ok && got && c.type == prof::ROOK && listed && old_format && refused,
+               "rook keys: saved, read back as rook, listed in rook_keys (cap keys apart), stored as a nameless cap; rook false refused");
+    }
     printf("%d passed, %d failed\n", passes, fails);
     return fails ? 1 : 0;
 }

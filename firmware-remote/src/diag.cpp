@@ -164,6 +164,8 @@ void note_terminate() {
     esp_rom_printf("terminate in %s (%s)\n", t, was);
 }
 
+const char* reset_word() { return reason_.c_str(); }
+
 void set_heap_check(bool on) {
     checking_ = on;
     settings::set_kv("heapcheck", on ? "1" : "");

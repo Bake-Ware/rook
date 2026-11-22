@@ -4,7 +4,7 @@
 # the announce carries its hash.
 manifest: 1
 plugin: remote
-version: 0.12.7
+version: 0.12.8
 title: Rook remote
 doc: A handheld button remote with a small screen. Button presses arrive as remote.button events; agents can show text on it, ask a question and get the answer from a button press, or wait for the next press.
 package: core
@@ -79,7 +79,7 @@ caps:
       names: { type: map, doc: "What its keys are called, raw key name (bt_c3) to the name it is sent under (up). Merged into the names kept: each name given adds or replaces that key's, a blank or null one takes that key's name out; keys not given keep theirs." }
     result: { type: map }
   ir:
-    doc: "IR from the remote, and the device profiles it keeps. Profiles: each has a name, an icon (tv, projector, speaker, streaming, light, phone, car, game, generic), an optional link to a network device (remote.devices id, name or address) and keys (power, vol_up, vol_down, mute, input, up, down, left, right, ok, back, home, menu, play, pause, rewind, forward, ch_up, ch_down, info, exit, stop, next, prev, 0-9), each an action: ir {protocol: nec, address, command} or {raw: [us...], carrier}; lan {lan: true | \"<key>\"} sent to the linked device; or cap {cap, worker, args}, carried to the hub in the key's remote.button event (via cap, call). A key with no action goes to the linked device. The picked profile handles every key of the paired remote, no hub needed. profiles lists them (name, link, link_name, icon, keys, lan_keys, cap_keys, bytes) with selected, icons and limits; profile_save sets name's link (blank: none), icon and keys (null removes one; merge false replaces all); profile_delete, profile_select, profile_release; profile_send does key of name (blank: selected) now. Limits: 8 profiles, 1536 bytes each, 4096 in all, 256 durations a raw code, cap args 240 bytes. pin sets the IR LED GPIO (-1: none); send sends nec (address, command, repeats) or raw at carrier (refused over 500 ms or a mark over 20 ms). Raw IR-over-BLE (onn remote, D343BFC0-...): write code (hex) to char c1-c5, program (start, key, code, finish), suppress keys, clear; events lists IR_KEY_EVENTs of the last 5 s. Every answer has ir_pin."
+    doc: "IR from the remote, and the device profiles it keeps. Profiles: each has a name, an icon (tv, projector, speaker, streaming, light, phone, car, game, generic), an optional link to a network device (remote.devices id, name or address) and keys (power, vol_up, vol_down, mute, input, up, down, left, right, ok, back, home, menu, play, pause, rewind, forward, ch_up, ch_down, info, exit, stop, next, prev, 0-9), each an action: ir {protocol: nec, address, command} or {raw: [us...], carrier}; lan {lan: true | \"<key>\"} sent to the linked device; cap {cap, worker, args}, carried to the hub in the key's remote.button event (via cap, call); or rook {rook: true}, the press to the hub and nothing else (via rook; hub jobs on remote.button act on it). A key with no action goes to the linked device. The picked profile handles every key of the paired remote, no hub needed. profiles lists them (name, link, link_name, icon, keys, lan_keys, cap_keys, rook_keys, bytes) with selected, icons and limits; profile_save sets name's link (blank: none), icon and keys (null removes one; merge false replaces all); profile_delete, profile_select, profile_release; profile_send does key of name (blank: selected) now. Limits: 8 profiles, 1536 bytes each, 4096 in all, 256 durations a raw code, cap args 240 bytes. pin sets the IR LED GPIO (-1: none); send sends nec (address, command, repeats) or raw at carrier (refused over 500 ms or a mark over 20 ms). Raw IR-over-BLE (onn remote, D343BFC0-...): write code (hex) to char c1-c5, program (start, key, code, finish), suppress keys, clear; events lists IR_KEY_EVENTs of the last 5 s. Every answer has ir_pin."
     risk: write
     scope: local
     args:
@@ -87,7 +87,7 @@ caps:
       char: { type: str, doc: "c1..c5, for write." }
       key: { type: json, doc: "An Android keycode (0..65535), for write and program; a key's name, for profile_send." }
       code: { type: str, max: 2048, doc: "Bytes in hex (spaces and colons are ignored)." }
-      keys: { type: json, doc: "Android keycodes (a list), for suppress; for profile_save, a map of key name to {protocol: nec, address, command}, {raw: [...], carrier}, {lan: true | key}, {cap, worker, args} or null." }
+      keys: { type: json, doc: "Android keycodes (a list), for suppress; for profile_save, a map of key name to {protocol: nec, address, command}, {raw: [...], carrier}, {lan: true | key}, {cap, worker, args}, {rook: true} or null." }
       name: { type: str, max: 20, doc: "A profile's name, for the profile actions." }
       link: { type: str, max: 40, doc: "For profile_save: the network device that keys with no action (and lan actions) go to (blank: none)." }
       merge: { type: bool, default: true, doc: "For profile_save: false replaces the whole profile." }
@@ -190,7 +190,7 @@ emits:
       seq: { type: int, required: true }
       data: { type: str, required: true, doc: "Base64 of the audio bytes the remote sent, in order." }
   remote.button:
-    doc: "A button was pressed (press) or held (long). Not sent for the key that opens the menu (input; Guide on the bridge), the profile key, or while the menu or a game is up."
+    doc: "A button was pressed (press) or held (long). Not sent for the key that opens the menu (input; Guide on the bridge), the profile key, or while the menu or a game is up. A press the hub acts on (via cap or rook, or no profile picked) is sent at once on its own, and dropped if it cannot go within 2 s (remote.state presses_dropped); others come in batches."
     payload:
       button: { type: str, required: true, doc: The button's name. }
       action: { type: str, required: true, doc: press or long. }
@@ -200,5 +200,5 @@ emits:
       source: { type: str, doc: "bt when the key was pressed on the Bluetooth remote paired to this one." }
       local: { type: bool, doc: "true when target is a profile or a device on the remote's own network that the remote dispatched the key to itself (remote.ir profiles, remote.device select)." }
       profile: { type: str, doc: "The profile picked, when the key went through one." }
-      via: { type: str, doc: "What the key did: ir (a code sent), lan (a key sent to a network device), cap (call carries the profile's cap action; the remote did nothing itself)." }
+      via: { type: str, doc: "What the key did: ir (a code sent), lan (a key sent to a network device), cap (call carries the profile's cap action; the remote did nothing itself), rook (the press is for the hub's jobs; nothing else)." }
       call: { type: map, doc: "With via cap: the profile's cap action for this key, {cap, worker, args}, for the hub to make (a worker cannot start a call)." }

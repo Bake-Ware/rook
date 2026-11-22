@@ -683,6 +683,45 @@ int main() {
         drain(10);
         expect(w.events_queued() == 0, "the hub answering again, the queue empties");
     }
+    // 20. emit_now: a press for the hub goes at once, alone, even with a batch in flight and backing off.
+    {
+        host_skip(31000);
+        hub.send(hub_announce());
+        run(w, hub, 4);
+        answer_events = false;                // the hub ignores batches: one stays in flight, backing off
+        JsonDocument b;
+        b["button"] = "vol_up";
+        w.emit("remote.button", b.as<JsonObjectConst>());
+        run(w, hub, 4);
+        batches.clear();
+        uint32_t sent = w.live_sent();
+        JsonDocument p;
+        p["button"] = "play";
+        p["via"] = "rook";
+        w.emit_now("remote.button", p.as<JsonObjectConst>());
+        w.loop();                             // the band task's next turn
+        hub.poll();
+        bool alone = batches.size() == 1 && batches[0].events == 1 && batches[0].payloads[0].find("play") != std::string::npos;
+        if (getenv("WT_LOG")) {
+            printf("     live sent %u (was %u), dropped %u, hub_ok %d, batches %zu:", w.live_sent(), sent, w.live_dropped(), (int)w.hub_ok(), batches.size());
+            for (auto& bt : batches) printf(" [%zu events]", bt.events);
+            printf("\n");
+        }
+        expect(w.live_sent() == sent + 1 && alone, "emit_now: sent on the next turn, alone, past a batch in flight");
+        // 21. a press that sat over 2 s (on the chip: Wi-Fi down, so the band task
+        //     does not run) is dropped when the band task next runs, not sent late
+        uint32_t dropped = w.live_dropped();
+        w.emit_now("remote.button", p.as<JsonObjectConst>());
+        host_skip(2500);
+        batches.clear();
+        run(w, hub, 4);
+        bool late = false;
+        for (auto& bt : batches)
+            for (auto& pl : bt.payloads) late = late || pl.find("play") != std::string::npos;
+        expect(!late && w.live_dropped() == dropped + 1, "emit_now: a press that could not go within 2 s is dropped and counted, not sent late");
+        answer_events = true;
+        drain(10);
+    }
     printf("%d passed, %d failed (%u packets sent, %u lost on purpose)\n", passes, fails, NET.sent, NET.lost);
     return fails ? 1 : 0;
 }

@@ -25,7 +25,10 @@ static const size_t MAX_RAW = 256;             // durations in one raw code
 static const size_t MAX_BYTES = 1536;          // one profile, stored
 static const size_t MAX_TOTAL = 4096;          // all of them
 
-enum Type : uint8_t { NEC = 0, RAW = 1, LAN = 2, CAP = 3 };
+// ROOK: the key's press goes to the hub as its remote.button event and that is
+// all (jobs on the hub do what it means). Stored as a cap action with no cap
+// name, so a build before 0.12.8 still reads the profile after a rollback.
+enum Type : uint8_t { NEC = 0, RAW = 1, LAN = 2, CAP = 3, ROOK = 4 };
 
 // The pictures a profile can have. NONE shows as GENERIC.
 enum Icon : uint8_t { ICON_NONE = 0, ICON_TV, ICON_PROJECTOR, ICON_SPEAKER, ICON_STREAMING, ICON_LIGHT, ICON_PHONE,
@@ -51,7 +54,7 @@ struct Info {
     std::string name, link;
     uint8_t icon = ICON_NONE;
     uint64_t keys = 0;                         // bit per key id with an action
-    uint64_t lan = 0, cap = 0;                 // those whose action is lan, cap (the rest: ir)
+    uint64_t lan = 0, cap = 0, rook = 0;       // those whose action is lan, cap, rook (the rest: ir)
     uint16_t bytes = 0;
     uint8_t slot = 0;
 };
@@ -70,7 +73,7 @@ uint32_t flash_reads();                        // flash reads made for codes, so
 bool repeats(int key);                         // held, it repeats (volume, arrows, channels, seek)
 
 // keys: {key: {protocol: "nec", address, command} | {raw: [...], carrier?} | {lan: true | "<key>"} |
-//        {cap: "x.y", worker?, args?} | null (removes it)}.
+//        {cap: "x.y", worker?, args?} | {rook: true} | null (removes it)}.
 // merge false: the profile is exactly this. set_link false: the link stays as it was.
 // icon: an Icon, or -1 to keep the one it has.
 bool save(const std::string& name, bool set_link, const std::string& link, JsonObjectConst keys, bool merge,
@@ -80,7 +83,7 @@ bool relink(const std::string& name, const std::string& link);
 bool rename(const std::string& name, const std::string& to, std::string& err);
 bool set_icon(const std::string& name, int icon, std::string& err);
 std::string clean_name(const std::string& name);   // trimmed; blank when it is no good as a name
-void fill(const Info& p, JsonObject o);        // name, link, icon, keys, lan_keys, cap_keys, bytes
+void fill(const Info& p, JsonObject o);        // name, link, icon, keys, lan_keys, cap_keys, rook_keys, bytes
 size_t total_bytes();
 
 }  // namespace prof

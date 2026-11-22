@@ -429,6 +429,76 @@ bool Worker::emit_one(const char* event, JsonObjectConst payload) {
 // small buffer, the payloads where they lie in the queue) and sent after
 // lock_ is let go (see emit: the queue only grows while a batch is in flight). As many events as fit
 // BATCH_BYTES (at least one), fewer when memory is short.
+// The payload measured, checked against the room there is, and copied into e.
+// False: too big, or no memory (counted as dropped by the caller).
+bool Worker::make_event(const char* event, JsonObjectConst payload, Event& e) {
+    size_t n = measureJson(payload);
+    if (n > EVENT_MAX || !room_for(n + 64)) return false;
+    e.id = rand_hex(8);
+    e.event = event;
+    e.payload.reserve(n);
+    serializeJson(payload, e.payload);
+    return true;
+}
+
+bool Worker::emit_now(const char* event, JsonObjectConst payload) {
+    try {
+        Live l;
+        l.at = millis();
+        if (!make_event(event, payload, l.e)) {
+            Held held(lock_);
+            live_dropped_++;
+            return false;
+        }
+        Held held(lock_);
+        while ((int)live_.size() >= LIVE_MAX) {       // a burst the band could not take: the oldest go
+            live_.pop_front();
+            live_dropped_++;
+        }
+        live_.push_back(std::move(l));
+        return true;
+    } catch (const std::bad_alloc&) {
+        Held held(lock_);
+        live_dropped_++;
+        return false;
+    }
+}
+
+// The live events, each alone in a core.event request, ahead of any batch and
+// whatever its backoff; those older than LIVE_MAX_MS are dropped. Sent with
+// the lock let go (each is taken off the queue first).
+void Worker::pump_live() {
+    for (int k = 0; k < LIVE_MAX; k++) {
+        Live l;
+        {
+            Held held(lock_);
+            uint32_t ms = millis();
+            while (!live_.empty() && ms - live_.front().at > LIVE_MAX_MS) {
+                live_.pop_front();
+                live_dropped_++;
+            }
+            if (live_.empty() || gate.hub_node().empty() || !hub_ok()) return;
+            l = std::move(live_.front());
+            live_.pop_front();
+        }
+        std::string id = rand_hex(16);
+        char head[384];                       // ids of 32, 32, 32 and 16 characters and the names: about 230
+        int hn = snprintf(head, sizeof head,
+                          "{\"id\":\"%s\",\"cap\":\"core.event\",\"target\":\"%s\",\"args\":{\"worker_id\":\"%s\",\"events\":"
+                          "[{\"id\":\"%s\",\"event\":\"%.40s\",\"plugin\":\"%.24s\",\"payload\":",
+                          id.c_str(), gate.hub_node().c_str(), cfg_.worker_id.c_str(), l.e.id.c_str(), l.e.event.c_str(),
+                          plugin_.c_str());
+        if (hn <= 0 || hn >= (int)sizeof head) {
+            live_dropped_++;
+            continue;
+        }
+        static const char TAIL[] = "}]}}";
+        Band::Piece ps[] = {{head, (size_t)hn}, {l.e.payload.data(), l.e.payload.size()}, {TAIL, sizeof TAIL - 1}};
+        if (band_.send(ps, 3)) live_sent_++;
+        else live_dropped_++;
+    }
+}
+
 void Worker::pump_events() {
     uint32_t ms = millis();
     Held held(lock_);
@@ -965,6 +1035,7 @@ void Worker::loop_once() {
         next_hb_ = ms + 24000 + esp_random() % 12000;   // 30 s +-20 %
         send_heartbeat();
     }
+    pump_live();                              // presses the hub acts on: first, alone, now
     pump_events();
 }
 

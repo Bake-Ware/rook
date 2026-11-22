@@ -25,6 +25,8 @@ static SemaphoreHandle_t mu;
 static std::string state_ = "idle", error_, url_, sha_, board_, version_, fallback_;   // under mu
 static volatile int percent_ = 0;
 static volatile bool busy_ = false, trial_ = false, want_check_ = false, fell_back_ = false;
+static std::function<void(bool, const char*)> trial_end_;
+static const char* kept_why_ = "by hand";
 // How the last download went, for fill(): tries made, the least free heap seen
 // while it ran, and free heap and largest block when it failed (0: it did not).
 static volatile int tries_ = 0;
@@ -65,18 +67,25 @@ void confirm() {
     trial_ = false;
     esp_ota_mark_app_valid_cancel_rollback();
     say("update: build kept");
+    if (trial_end_) trial_end_(true, kept_why_);
 }
+
+bool on_trial() { return trial_; }
+void on_trial_end(std::function<void(bool, const char*)> f) { trial_end_ = f; }
 
 void tick(bool hub_ok, bool settled) {
     if (!trial_) return;
     if (hub_ok) {
         say("update: the hub is reached");
+        kept_why_ = "reached the hub";
         confirm();
     } else if (settled && millis() > SETTLE_MS) {
         say("update: settled (on Wi-Fi, its remote back)");
+        kept_why_ = "settled";
         confirm();
     } else if (millis() > TRIAL_MS) {
         say("update: not settled and no hub in %u s, going back to the build before", (unsigned)(TRIAL_MS / 1000));
+        if (trial_end_) trial_end_(false, "neither settled nor reached the hub in 5 min");
         if (show_) show_("Update\nfailed:\ngoing\nback");
         delay(1500);
         esp_ota_mark_app_invalid_rollback_and_reboot();

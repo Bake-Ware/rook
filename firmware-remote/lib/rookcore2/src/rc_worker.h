@@ -51,6 +51,15 @@ public:
     // False: not queued (its payload is over EVENT_MAX, or there is no memory
     // for it); it is counted in dropped, which rides the next batch.
     bool emit(const char* event, JsonObjectConst payload);
+    // An event to go now: alone in its own core.event request, on the band
+    // task's next turn (within a few ms), whatever a batch is waiting on; one
+    // that cannot go within LIVE_MAX_MS (no hub, no band) is dropped and
+    // counted (live_dropped), not sent late. For key presses the hub acts on.
+    bool emit_now(const char* event, JsonObjectConst payload);
+    static const uint32_t LIVE_MAX_MS = 2000;
+    static const int LIVE_MAX = 6;
+    uint32_t live_sent() const { return live_sent_; }
+    uint32_t live_dropped() const { return live_dropped_; }
     // Events: one payload at most EVENT_MAX bytes as JSON; the queue holds at
     // most OUTBOX_MAX of them and OUTBOX_BYTES of payload (the oldest not in
     // flight go first); a batch carries at most BATCH_MAX and BATCH_BYTES.
@@ -115,6 +124,11 @@ private:
     uint32_t next_hb_ = 0, last_announce_ = 0, calls_ = 0, events_sent_ = 0;
     bool announce_due_ = true, had_contact_ = false;
     std::deque<Event> outbox_;
+    struct Live { Event e; uint32_t at; };
+    std::deque<Live> live_;                   // under lock_
+    uint32_t live_sent_ = 0, live_dropped_ = 0;
+    void pump_live();
+    bool make_event(const char* event, JsonObjectConst payload, Event& e);
     size_t outbox_bytes_ = 0;                 // under lock_
     uint32_t dropped_ = 0, dropped_total_ = 0;
     std::string batch_id_;

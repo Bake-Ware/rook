@@ -28,6 +28,10 @@ void begin(std::function<void(const char*)> log, std::function<void(const std::s
 // Call often: keeps a build on trial once it has settled or the hub is reached, or gives it up.
 void tick(bool hub_ok, bool settled);
 void confirm();                        // keep the build on trial (by hand, over serial)
+bool on_trial();                       // this build is on trial now
+// Told when the trial ends: kept (why: "reached the hub", "settled", "by hand")
+// or given up (why: what it did not do), just before the restart into the build before.
+void on_trial_end(std::function<void(bool kept, const char* why)> f);
 bool busy();
 // Start an update in the background. False with err when it can't start.
 bool start(const std::string& url, const std::string& sha256, std::string& err);
