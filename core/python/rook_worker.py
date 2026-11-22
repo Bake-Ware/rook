@@ -93,6 +93,10 @@ from rook_protocol import (MAX_STREAM_DATA, PROTOCOL, ProtocolError, decode, enc
                            sign_link_key, sign_link_open, validate, verify_link_accept)
 
 VERSION = "0.1.0"
+# What this worker calls itself in its own requests to the hub (knock, link). Python's default
+# (Python-urllib/3.x) is refused by Cloudflare in front of a hub: 403, error 1010 (found 22 Nov 2026
+# joining a worker to a hub behind a Cloudflare tunnel).
+USER_AGENT = f"rook-worker/{VERSION}"
 RETRY_FIRST, RETRY_MOST, RETRY_JITTER = 0.5, 30.0, 0.2   # a failed attempt: 0.5 s doubling to 30 s, ±20 % (link design 3.2)
 HTTP_TIMEOUT = 10.0      # seconds a knock or link_open waits on the hub: Telesthete's WebSocket open timeout (Bake 13 Nov)
 SYS = pathlib.Path("/sys")    # where Linux exposes battery, temperature and GPU (H4); a test points it elsewhere
@@ -444,7 +448,7 @@ class Worker:
 
     def _post(self, body, path="/knock"):
         request = urllib.request.Request(self.hub_url + path, data=body, method="POST",
-                                         headers={"Content-Type": "application/json"})
+                                         headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
         try:
             with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
                 return decode(response.read())
@@ -495,7 +499,8 @@ class Worker:
 
     def _get(self, path):
         try:
-            with urllib.request.urlopen(self.hub_url + path, timeout=HTTP_TIMEOUT) as response:
+            request = urllib.request.Request(self.hub_url + path, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
                 return decode(response.read())
         except urllib.error.HTTPError as e:
             return decode(e.read())
