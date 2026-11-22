@@ -1,7 +1,10 @@
 """A worker's own requests to the hub name themselves (User-Agent): a hub behind Cloudflare answers
 Python's default one (Python-urllib/3.x) with 403, error 1010. Found on 22 Nov 2026 joining a worker
 to a hub behind a Cloudflare tunnel: the knock never reached the hub. The engine's hook before
-compaction calls the hub's door the same way, so it names itself too."""
+compaction calls the hub's door the same way, so it names itself too.
+
+The same join then showed the link itself never opened to a hub reached by https: the websockets
+library refuses ssl=None, Telesthete's default, with a wss:// address. The last test here."""
 import http.server
 import importlib.util
 import json
@@ -13,6 +16,7 @@ import types
 
 import pytest
 
+import rook_link
 import rook_worker
 
 ENGINE = pathlib.Path(__file__).parent.parent / "hub/rook_hub/defaults/agents-claude-code/worker.py"
@@ -75,3 +79,10 @@ def test_the_hook_before_compaction_names_itself(tmp_path):
     finally:
         server.shutdown()
     assert agents == ["rook-agents-claude-code"]
+
+
+def test_a_link_to_a_hub_reached_by_https_has_tls_and_one_by_http_has_none():
+    for band_url, tls in (("wss://hub.example/band", True), ("ws://127.0.0.1:9/band", None)):
+        link = rook_link.TelestheteLink(rook_worker.Session("00" * 32, "a psk for the test only", band_url, None, None))
+        assert link.transport.url == band_url
+        assert link.transport.ssl is tls

@@ -90,7 +90,12 @@ class TelestheteLink:
     def __init__(self, session):
         self.key = session.key
         self.closed = False
-        self.transport = WebSocketTransport(session.band_url)       # ssl=None: the system's roots
+        # A wss:// link is checked against the system's roots (ssl=True); a ws:// link has no TLS. Said
+        # outright: the websockets library refuses ssl=None, Telesthete's default, with a wss:// address
+        # ("ssl=None is incompatible with a wss:// URI"), so a worker never linked to a hub reached by
+        # https (found 22 Nov 2026 joining a worker to a hub behind a Cloudflare tunnel).
+        self.transport = WebSocketTransport(session.band_url,
+                                            ssl=True if session.band_url.startswith("wss://") else None)
         self.band = Band(session.psk, transport=self.transport, reconnect=True)
         self._channel = None
         self._hub_start, self._read_hub_start = session.hub_start, session.read_hub_start
