@@ -45,6 +45,14 @@ async function call(cap, args, why) {
   return r && r.running ? r.follow() : r;
 }
 
+// call(), for a read with a wait: a page being left lets go of it, and a page shown again from
+// the back-forward cache asks it again from the same place (core's rookShell.callHeld; HA7).
+// Without that, each page left kept one of the browser's six connections to the hub for 40 s.
+async function callHeld(cap, args, why) {
+  const r = await rookShell.callHeld("hub", cap, args, why);
+  return r && r.running ? r.follow() : r;
+}
+
 const site = {};                    // agent.site's reply (0.5 merged page.site's in; core has none)
 const shown = rookShell.page;       // the core page this load shows: {id, label, path}
 let current = shown ? { page: shown.id, title: shown.label, frame: $("main.main") } : null;
@@ -617,7 +625,7 @@ async function refresh() {
 }
 
 async function read(wait) {
-  const r = await call("agent.chat.read", { agent: dock.agent, after: dock.next, limit: 500, wait },
+  const r = await (wait ? callHeld : call)("agent.chat.read", { agent: dock.agent, after: dock.next, limit: 500, wait },
     "Reading the conversation in the site's dock.");
   for (const ev of r.events) {
     show(ev, wait > 0);

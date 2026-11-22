@@ -19,11 +19,13 @@ export const store = reactive({ user: null, hub: { name: null }, nav: [], pins: 
   view: location.pathname + location.search });   // the page's current view, so the strip can follow it (P6)
 
 /* ---------------- Talking to the hub ---------------- */
-export async function api(method, path, body) {
+/* `signal`: an AbortController's, for a request the page may let go of (held, below). */
+export async function api(method, path, body, signal) {
   const response = await fetch(path, {
     method, credentials: 'same-origin',
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
   const data = await response.json().catch(() => ({}));
   if (response.status === 401 && path !== '/api/login') store.user = null;   // show the login
@@ -41,10 +43,54 @@ export async function api(method, path, body) {
    still running after the hub's wait (45 s) answers {running: true, id, worker, stream,
    follow}: `await answer.follow()` gives its result, or throws its error, when it ends. */
 export async function call(worker, cap, args, why) {
-  const reply = await api('POST', '/api/call', { worker, cap, args: args || {}, why });
+  return called(await api('POST', '/api/call', { worker, cap, args: args || {}, why }));
+}
+
+/* call(), for a call that reads with a wait (the dock's agent.chat.read): asked through held(). */
+export async function callHeld(worker, cap, args, why) {
+  return called(await held('POST', '/api/call', { worker, cap, args: args || {}, why }));
+}
+
+function called(reply) {
   if (reply.type === 'running')      // still running after the hub's wait (Bake 13 Nov): it goes on by itself
     return { running: true, id: reply.id, worker: reply.worker, stream: reply.stream, follow: () => follow(reply.stream) };
   return reply.type === 'result' ? reply.result : reply;
+}
+
+/* A read the hub may hold open while nothing new comes (one with a wait), asked so that a page
+   being left lets go of it (house agent brief HA7). On plain HTTP/1.1 a browser keeps six
+   connections to the hub, and a page left goes into the back-forward cache: had it kept its reads
+   open there, six pages left within a read's wait would hold every connection, and the next page's
+   own files would wait for the oldest read to end. So on pagehide every such read is let go of,
+   and on pageshow (the page back from the cache) each is asked again, the same read from the same
+   place, so nothing is missed. It ends nothing anyone asked for: the hub answers that read to no
+   one, and the page asks again once it is shown. Answers as api() does. */
+let away = null;                // while the page is left: a promise its next pageshow keeps
+let back = () => {};
+const holding = new Set();      // the AbortController of each such read open now
+addEventListener('pagehide', () => {
+  away = away || new Promise(done => { back = done; });
+  for (const reading of holding) reading.abort();
+});
+addEventListener('pageshow', () => {
+  const shown = back;
+  away = null;
+  back = () => {};
+  shown();
+});
+export async function held(method, path, body) {
+  for (;;) {
+    if (away) await away;
+    const reading = new AbortController();
+    holding.add(reading);
+    try {
+      return await api(method, path, body, reading.signal);
+    } catch (e) {
+      if (!reading.signal.aborted) throw e;      // let go of as the page was left: asked again once it is back
+    } finally {
+      holding.delete(reading);
+    }
+  }
 }
 
 /* A long call's stream, read with waits until the hub closes it at the call's end. Resolves to
@@ -55,7 +101,7 @@ export async function follow(stream) {
   let from = 0;
   const entries = [];
   for (;;) {
-    const read = await api('GET', `/api/streams/${encodeURIComponent(stream)}/read?from=${from}&wait=25`);
+    const read = await held('GET', `/api/streams/${encodeURIComponent(stream)}/read?from=${from}&wait=25`);
     entries.push(...read.entries);
     from = read.next;
     if (!read.open) break;
@@ -291,7 +337,7 @@ window.shellHooks = { starting: [] };
 let shellParts = null;
 function loadShellParts(parts, page) {
   if (shellParts) return shellParts;
-  window.rookShell = { api, call, follow, toast, store, page,
+  window.rookShell = { api, call, callHeld, held, follow, toast, store, page,
     async reloadNav() { store.nav = (await api('GET', '/api/session')).nav; } };
   shellParts = (async () => {
     for (const part of parts) {
