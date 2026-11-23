@@ -63,10 +63,10 @@ NMODES = 4
 SETTINGS_ROWS = ["CONTROLS", "D-PAD UP", "SKIN", "MUSIC", "SCREEN SHAKE", "SOUND", "HAPTICS", "GHOST", "DRAG SPEED",
                  "DAS (PAD)", "ARR (PAD)", "SOFT DROP (PAD)", "ANNOUNCER", "ANNOUNCER VOLUME", "ENERGY", "BACK"]
 HEAT_COL = [(54, 214, 231), (54, 214, 231), (247, 201, 72), (255, 92, 60)]       # the energy steps' colours
-CHAIN_MAX = 3          # BAKETRIS mode: blasts in a row at most (a settle can fill rows again)
+CHAIN_MAX = 2          # BAKETRIS mode: blasts in a row at most (a settle can fill rows again): ~3 s at worst
 GREY, ACCENT, GOLD = _c(0xFF7F8AA3), _c(0xFF36D6E7), _c(0xFFF7C948)
 WHITE, BLACK = (255, 255, 255), (0, 0, 0)
-PMAX, WMAX, AMB = 1600, 8, 70
+PMAX, WMAX, AMB = 900, 8, 70             # PMAX: the Deck's CPU, not the Android build's 1600
 SONG_NAMES = ["KOROBEINIKI", "MOUNTAIN KING", "MINUET IN G", "ODE TO JOY"]
 SONGS = len(SONG_NAMES)
 SHUFFLE, CYCLE, MUSIC_OFF = SONGS, SONGS + 1, SONGS + 2
@@ -1162,16 +1162,16 @@ class Baketris(G.Listener):
                 v = self.game.clear_colors[k][col]
                 color = self.col[v - 1] if v > 0 else WHITE
                 px = self.bx + (col + 0.5) * c
-                for j in range(9):
+                for j in range(6):
                     a = math.atan2(ry - cy, px - cx) + (r() - 0.5) * 1.6
                     sp = c * (12 + r() * 34)
                     self.spawn(px, ry, math.cos(a) * sp, math.sin(a) * sp - c * 10, 700 + r() * 700,
-                               c * (0.2 + r() * 0.45), WHITE if j < 2 else color)
-        for j in range(140):
+                               c * (0.2 + r() * 0.45), WHITE if j < 1 else color)
+        for j in range(90):
             a = r() * math.pi * 2
             sp = c * (30 + r() * 50)
             self.spawn(cx, cy, math.cos(a) * sp, math.sin(a) * sp, 350 + r() * 350, c * (0.08 + r() * 0.12), wc[j % 3])
-        for j in range(80):
+        for j in range(50):
             self.spawn(cx + (r() - 0.5) * c * 10, cy + (r() - 0.5) * c * 3, (r() - 0.5) * c * 10, -c * (8 + r() * 22),
                        1200 + r() * 900, c * (0.1 + r() * 0.18), wc[1] if r() < 0.5 else wc[2])
         if self.sound:
@@ -1197,12 +1197,12 @@ class Baketris(G.Listener):
                 self.energy.boost(0.15)
             if self.chain >= 2:
                 self.say("blast")
-            self.blast = blast.Blast(g.grid, rows, (self.seed, g.pieces, self.chain))
+            self.blast = blast.Blast(g.grid, rows, (self.seed, g.pieces, self.chain),
+                                     blast.MAX_STEPS if self.chain == 1 else blast.CHAIN_STEPS)
             self.add_trauma(0.5)
             if self.sound:
                 self.audio.play(A.HARD, 1.0, 0.8)
             return
-        self.blast.step()
         self.blast.step()
         if not self.blast.done:
             return
@@ -1229,10 +1229,8 @@ class Baketris(G.Listener):
             q = int(b.ang / (2 * math.pi) * 16) % 16
             key = ("rot", self.skin, c, t, q)
             spr = self._cache.get(key)
-            if spr is None:
-                base, m = self._block(c, t)
-                spr = pygame.transform.rotozoom(base, q * 22.5, 1.0)
-                self._cache[key] = spr
+            if spr is None:                       # not made ahead yet: unturned this frame, never made mid-frame
+                spr = self._block(c, t)[0]
             x = bx + (b.x + 0.5) * c
             y = top - b.y * c + c / 2
             s.blit(spr, spr.get_rect(center=(round(x), round(y))))
@@ -1664,8 +1662,8 @@ class Baketris(G.Listener):
             # the fire tint, then the white flash: one translucent fill that is both
             a1 = (70 * (self.fire_t / 900) ** 2 if self.fire_t > 0 else 0) / 255
             a2 = (120 * self.screen_flash_t / 280 if self.screen_flash_t > 0 else 0) / 255
-            if a1 > 0 or a2 > 0:
-                al = 1 - (1 - a1) * (1 - a2)
+            al = 1 - (1 - a1) * (1 - a2)
+            if al > 0.004:                                  # (a sliver of a flash rounds to nothing: skip it)
                 fire = SKIN_WAVES[self.skin][1]
                 col = tuple(min(255, int((f * a1 * (1 - a2) + 255 * a2) / al)) for f in fire)
                 self.tint.fill(col)

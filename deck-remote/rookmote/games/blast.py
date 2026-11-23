@@ -7,8 +7,10 @@ pushes it up). Then any complete rows clear as usual (settle_clear), and a
 4-line one blasts again: chains.
 
 Pure Python, no pygame: deterministic for a seed (its own random.Random), a
-fixed 1/120 s step (the screen runs two a frame), and a hash of nearby bodies
-so a full well's worth stays well inside a frame."""
+fixed 1/60 s step (one a frame), and a hash of nearby bodies so a full well's
+worth stays well inside a frame. Quick by design: heavy gravity, little
+bounce, a block lands after 3 slow steps, and all of it by 1.4 s (a chained
+blast 1.1 s): about a second from the blast to the next piece."""
 
 from __future__ import annotations
 
@@ -17,12 +19,13 @@ import random
 
 from . import rules as G
 
-DT = 1 / 120
-GRAV = -70.0                      # cells / s^2 (y is up, row 0 the floor)
-REST, WALL_REST = 0.32, 0.45      # bounce kept off the floor/blocks, off the walls
+DT = 1 / 60                       # one step a frame
+GRAV = -150.0                     # cells / s^2 (y is up, row 0 the floor): heavy, so it comes down decisively
+REST, WALL_REST = 0.15, 0.35      # bounce kept off the floor/blocks, off the walls: little
 CEIL = G.H - 2                    # the well goes up to H rows; nothing leaves it
-SLOW, STILL_STEPS = 1.6, 10       # under this speed for this many steps: it has landed
-MAX_STEPS = 6 * 120               # everything snaps by 6 s whatever it is doing
+SLOW, STILL_STEPS = 3.0, 3        # under this speed for this many steps: it has landed
+MAX_STEPS = 84                    # everything snaps by 1.4 s whatever it is doing
+CHAIN_STEPS = 66                  # a chained blast: 1.1 s
 
 
 class Body:
@@ -38,7 +41,8 @@ class Blast:
     rows: the rows that were cleared (where it blew from). Takes every block out
     of grid; step() until done, grid is then the new stack."""
 
-    def __init__(self, grid, rows, seed):
+    def __init__(self, grid, rows, seed, max_steps=MAX_STEPS):
+        self.max_steps = max_steps
         self.grid = grid
         self.rng = random.Random(repr(seed))          # a tuple seeds it too, the same every run
         r = self.rng.random
@@ -53,9 +57,9 @@ class Blast:
                 grid[row][col] = 0
                 dx, dy = col + 0.5 - cx, row + 0.5 - cy
                 d = math.hypot(dx, dy) or 1.0
-                power = 10 + r() * 12
-                vx = dx / d * power + (r() - 0.5) * 6
-                vy = abs(dy) / d * power * 0.6 + 14 + r() * 16          # out, and mostly up
+                power = 14 + r() * 14
+                vx = dx / d * power + (r() - 0.5) * 8
+                vy = abs(dy) / d * power * 0.6 + 20 + r() * 22          # out, and mostly up
                 self.bodies.append(Body(float(col), float(row), vx, vy, (r() - 0.5) * 30, v))
         self.count = len(self.bodies)
         self.steps = 0
@@ -119,7 +123,7 @@ class Blast:
                 b.still += 1
             else:
                 b.still = 0
-            if b.still >= STILL_STEPS or self.steps >= MAX_STEPS:
+            if b.still >= STILL_STEPS or self.steps >= self.max_steps:
                 self.snap(b)
             else:
                 keep.append(b)

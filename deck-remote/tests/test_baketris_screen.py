@@ -225,7 +225,7 @@ class Effects(unittest.TestCase):
         bk = playing(make())
         bk.key_down(pygame.K_F12)
         self.assertEqual(bk.action[0], "BAKETRIS!")
-        self.assertGreater(len(bk.parts), 500)
+        self.assertGreater(len(bk.parts), 300)                # (fewer than Android's: the Deck's CPU)
         self.assertEqual(len(bk.waves), 3)
         self.assertGreater(bk.punch, 0)
         self.assertEqual(bk.hitstop_t, 210)

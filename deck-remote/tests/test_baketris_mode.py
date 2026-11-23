@@ -149,6 +149,24 @@ class InTheGame(unittest.TestCase):
         self.assertGreaterEqual(bk.game.cur, 0, "the piece is back")
         self.assertIsNone(bk.stash)
 
+    def test_quick_landing(self):
+        """About a second a blast: the landing must not read as the game hanging."""
+        for seed in range(5):
+            b = blast.Blast(board(seed), [0, 1, 2, 3], seed)
+            settle(b)
+            self.assertLessEqual(b.steps, blast.MAX_STEPS)
+            self.assertLess(b.steps / 60, 1.3, seed)
+
+    def test_whole_wait_with_a_chain_is_short(self):
+        bk = self.play()
+        self.quad(bk, [[1 + (c % 7) for c in range(9)] + [0] for _ in range(14)])
+        n = 0
+        while (bk.blast is not None or bk.blast_pending is not None) and n < 1000:
+            bk.update(1000 / 60)
+            n += 1
+        self.assertLess(n / 60, 3.2, "the 4-line clear to the next piece, chain and all")
+        self.assertGreaterEqual(bk.game.cur, 0)
+
     def test_chain_and_its_cap(self):
         bk = self.play()
         self.quad(bk, [[1 + (c % 7) for c in range(9)] + [0] for _ in range(14)])     # 126 blocks above

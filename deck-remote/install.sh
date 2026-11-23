@@ -22,6 +22,7 @@ echo "== the app's venv (pygame-ce) in $DEST/venv"
 echo "== the app in $DEST/app"
 rm -rf "$DEST/app.new" && mkdir -p "$DEST/app.new"
 cp -r "$HERE/rookmote" "$DEST/app.new/"
+cp -r "$HERE/tools" "$DEST/app.new/"          # bench_baketris.py (run on the Deck by hand)
 find "$DEST/app.new" -name __pycache__ -prune -exec rm -rf {} +
 rm -rf "$DEST/app" && mv "$DEST/app.new" "$DEST/app"
 echo "== the worker plugin in $DEST/plugin/remote-deck"
