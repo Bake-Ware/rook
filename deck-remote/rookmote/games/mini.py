@@ -16,14 +16,27 @@ import pygame
 
 from ..paths import data_dir
 
-LEFT, RIGHT, DOWN, ROTATE, DROP, PAUSE, QUIT = 1, 2, 4, 8, 16, 32, 64
+LEFT, RIGHT, DOWN, ROTATE, DROP, PAUSE, QUIT, ROTATE_BACK, HOLD = 1, 2, 4, 8, 16, 32, 64, 128, 256
 
-# The firmware's game_key() for a flat game: up is ROTATE (up), ok is DROP, back is QUIT.
+# The firmware's game_key() for a flat game: up is ROTATE (up), ok is DROP, back is QUIT; the
+# bridge's volume keys (ROTATE_BACK) are Y and the shoulders here, its home key (HOLD) is X.
 PAD = {"dpleft": LEFT, "dpright": RIGHT, "dpdown": DOWN, "dpup": ROTATE, "a": DROP, "start": PAUSE,
-       "b": QUIT, "back": QUIT}
+       "b": QUIT, "back": QUIT, "y": ROTATE_BACK, "leftshoulder": ROTATE_BACK, "rightshoulder": ROTATE_BACK,
+       "x": HOLD}
 KEYS = {pygame.K_LEFT: LEFT, pygame.K_RIGHT: RIGHT, pygame.K_DOWN: DOWN, pygame.K_UP: ROTATE,
         pygame.K_RETURN: DROP, pygame.K_SPACE: DROP, pygame.K_p: PAUSE, pygame.K_ESCAPE: QUIT,
-        pygame.K_BACKSPACE: QUIT}
+        pygame.K_BACKSPACE: QUIT, pygame.K_TAB: ROTATE_BACK, pygame.K_h: HOLD}
+
+
+def cdiv(a: int, b: int) -> int:
+    """C's integer division: toward zero."""
+    q = abs(a) // abs(b)
+    return q if (a >= 0) == (b > 0) else -q
+
+
+def due(ms: int, t: int) -> bool:
+    """(int32_t)(ms - t) >= 0"""
+    return ((ms - t) & 0xFFFFFFFF) < 0x80000000
 
 
 def esp_random() -> int:

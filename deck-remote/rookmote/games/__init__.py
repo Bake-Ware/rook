@@ -6,7 +6,8 @@ class _Lazy(dict):
     """name -> its Screen class, imported when first opened."""
 
     def get(self, name, default=None):
-        mod = {"2048": ("g2048", "Game2048")}.get(name)
+        mod = {"2048": ("g2048", "Game2048"), "Towers": ("towers", "TowersGame"),
+               "Swarm": ("swarm", "SwarmGame")}.get(name)
         if not mod:
             return default
         import importlib

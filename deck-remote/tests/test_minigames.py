@@ -23,7 +23,7 @@ sys.path.insert(0, str(HERE.parent))
 
 import pygame  # noqa: E402
 
-from rookmote.games import g2048  # noqa: E402
+from rookmote.games import g2048, towers  # noqa: E402
 
 HARNESS = r'''
 #include "%(src)s"
@@ -122,6 +122,54 @@ class Against2048(unittest.TestCase):
         self.assertEqual((r.points, 16 - r.g.count(0)), (0, 2))
 
 
+@unittest.skipUnless(shutil.which("g++") and FW.is_dir(), "needs g++ and firmware-remote/src")
+class AgainstTowers(unittest.TestCase):
+    DUMP = r'''std::cout << " | " << gold << ' ' << lives << ' ' << wave << ' ' << to_spawn << ' ' << spawn_wait
+            << ' ' << kills << ' ' << cx << ' ' << cy << ' ' << sel << ' ' << over << paused << in_wave << ' '
+            << wave_at << ' ' << next_step << " |";
+        for (int i = 0; i < CELLS; i++) std::cout << ' ' << (int)cell[i] << ':' << (int)lvl[i] << ':' << (int)cool[i];
+        std::cout << " |";
+        for (auto& f : foes) if (f.on) std::cout << ' ' << (int)f.kind << ',' << f.hp << ',' << f.x << ',' << f.y << ',' << f.d << ',' << f.slow;
+        std::cout << " |";
+        for (auto& f : flashes) std::cout << ' ' << (int)f.t << ',' << (int)f.r << ',' << f.x1 << ',' << f.y1;'''
+
+    @staticmethod
+    def py(sc):
+        r = towers.Rules()
+        r.start(1)
+        out = []
+        for ms, k in sc:
+            ch = r.tick(ms, k)
+            line = (f"{int(ch)} {int(r.quit())} {r.score()} | {r.gold} {r.lives} {r.wave} {r.to_spawn} {r.spawn_wait} "
+                    f"{r.kills} {r.cx} {r.cy} {r.sel} {int(r.over)}{int(r.paused)}{int(r.in_wave)} {r.wave_at} "
+                    f"{r.next_step} |")
+            line += "".join(f" {r.cell[i]}:{r.lvl[i]}:{r.cool[i]}" for i in range(towers.CELLS)) + " |"
+            line += "".join(f" {f.kind},{f.hp},{f.x},{f.y},{f.d},{int(f.slow)}" for f in r.foes if f.on) + " |"
+            line += "".join(f" {f[4]},{f[5]},{f[2]},{f[3]}" for f in r.flashes)
+            out.append(line)
+        return out
+
+    def test_same_as_firmware(self):
+        # builds and upgrades all over, cursor moves, held keys, waves called early, pauses
+        bits = [1, 2, 4, 8, 16, 16, 16, 128, 256, 0, 0, 32, 1 | 16, 8 | 16]
+        for seed in (2, 11, 404):
+            sc = script(seed, 9000, bits, step=(16, 17, 33, 34, 50))
+            want = run_firmware("towers.cpp", "towers", self.DUMP, 1, sc)
+            got = self.py(sc)
+            self.assertEqual(len(want), len(got))
+            for i, (a, b) in enumerate(zip(want, got)):
+                self.assertEqual(a, b, f"seed {seed}, tick {i}")
+
+    def test_reaches_waves_and_game_over(self):
+        sc = [(1 + 33 * i, 0) for i in range(30000)] + [(1 + 33 * 30000, 64)]
+        want = run_firmware("towers.cpp", "towers", self.DUMP, 1, sc)
+        got = self.py(sc)
+        self.assertEqual(want, got)
+        last = got[-2].split("|")[1].split()
+        self.assertEqual(last[1], "0")           # no towers: the lives ran out
+        self.assertEqual(int(last[2]), 2)           # gone in the second wave
+
+
 class Screen2048(unittest.TestCase):
     def test_play_draw_best_and_leave(self):
         pygame.init()
@@ -147,3 +195,32 @@ class Screen2048(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScreenTowers(unittest.TestCase):
+    def test_touch_builds_and_buttons(self):
+        pygame.init()
+        s = pygame.display.set_mode((1280, 800))
+        from rookmote.games import mini
+        g = towers.TowersGame(bests=mini.Bests(Path(tempfile.mkdtemp()) / "games.json"))
+        g.update(16)
+        g.draw(s)
+        x = g.ox + 9 * towers.T * towers.S + 20          # tile (9, 0): grass
+        y = g.oy + towers.TOP * towers.S + 20
+        g.touch_down(1, x, y)                            # pick it
+        self.assertEqual((g.g.cx, g.g.cy), (9, 0))
+        g.update(16)
+        blast = next(r for r, fn in g.buttons if r.x == g.buttons[1][0].x)
+        g.touch_down(2, *blast.center)
+        self.assertEqual(g.g.sel, towers.BLAST)
+        g.touch_down(3, x, y)                            # the picked tile again: build
+        g.update(16)
+        self.assertEqual(g.g.cell[9], towers.BLAST)
+        self.assertEqual(g.g.gold, 5)
+        g.pad_down("x")                                  # the next wave now: +2
+        g.update(16)
+        self.assertEqual(g.g.gold, 7)
+        g.pad_up("x")
+        g.pad_down("b")
+        g.update(16)
+        self.assertTrue(g.done)
