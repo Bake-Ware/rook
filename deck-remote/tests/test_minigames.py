@@ -288,3 +288,211 @@ class ScreenSwarm(unittest.TestCase):
         g.pad_down("b")
         g.update(16)
         self.assertTrue(g.done)
+
+
+class SwarmExtras(unittest.TestCase):
+    """The Deck's additions to Swarm (Rules(extras=True)): capture, rescue to a double ship,
+    the bonus stage. The firmware-parity test above runs with them off."""
+
+    def setUp(self):
+        self.r = swarm.Rules(Lcg(5), extras=True)
+        self.r.start(1)
+        self.ms = 1
+        self.go(70)                                     # the formation has come down
+        self.r.next_dive = 0x7FFFFFFF                    # no dives but the ones a test makes
+
+    def go(self, n, keys=0, each=None):
+        for _ in range(n):
+            if each:
+                each()
+            self.ms += 33
+            self.r.tick(self.ms, keys)
+
+    def capture(self, boss=0):
+        r = self.r
+        f = r.foes[boss]
+        f.x, f.y, f.state, f.beam = r.slot_x(boss) * 16, r.slot_y(boss) * 16, swarm.CAPT, 0
+        for _ in range(400):
+            self.go(1)
+            if r.carry is not None:
+                break
+        self.assertIsNotNone(r.carry, "the beam caught the ship")
+        self.assertEqual(r.msg[0], "CAUGHT!")
+        for _ in range(400):
+            self.go(1)
+            if r.carry is None:
+                break
+        return f
+
+    def test_capture_takes_a_ship_and_holds_it(self):
+        r = self.r
+        f = self.capture()
+        self.assertTrue(f.cap)
+        self.assertEqual(r.lives, 2)
+        self.assertFalse(r.over)
+        self.go(200)
+        self.assertEqual(f.state, swarm.FORM, "back up in its place, captive and all")
+        self.assertTrue(f.cap)
+        self.assertTrue(swarm.due(self.ms, r.dead_until), "the next ship came in")
+
+    def test_capture_with_no_reserve_is_game_over(self):
+        self.r.lives = 1
+        self.capture()
+        self.assertTrue(self.r.over)
+
+    def shoot_boss(self, i, diving):
+        r = self.r
+        f = r.foes[i]
+        if diving:
+            f.state, f.x, f.y, f.vx = swarm.DIVE, 20 * 16, 40 * 16, 0
+        f.hp = 1
+        x, y = r.foe_x(i), r.foe_y(i)
+        r.shots[0][:] = [True, x + 3, y + swarm.FOE_H + 5]
+        self.go(1)
+
+    def test_rescue_makes_a_double_that_fires_two(self):
+        r = self.r
+        f = self.capture()
+        self.go(200)
+        self.shoot_boss(0, diving=True)
+        self.assertEqual(r.msg[0], "RESCUED!")
+        self.assertIsNotNone(r.rescue)
+        for _ in range(300):
+            self.go(1)
+            if r.dual:
+                break
+        self.assertTrue(r.dual)
+        self.assertEqual(r.msg[0], "DOUBLE SHIP!")
+        self.assertEqual(r.lives, 2, "the rescued ship is not a life: it is the double")
+        self.go(3, keys=swarm.DROP)
+        on = [s for s in r.shots if s[0]]
+        self.assertEqual(len(on), 2)
+        self.assertEqual(on[1][1] - on[0][1], swarm.SHIP_W + 1)
+
+    def test_shooting_the_boss_in_formation_loses_the_captive(self):
+        r = self.r
+        f = self.capture()
+        self.go(200)
+        self.assertEqual(f.state, swarm.FORM)
+        self.shoot_boss(0, diving=False)
+        self.assertFalse(f.cap)
+        self.assertIsNone(r.rescue)
+        self.assertEqual(r.msg[0], "CAPTIVE LOST")
+        self.go(100)
+        self.assertFalse(r.dual)
+
+    def test_shooting_the_captive_costs_it(self):
+        r = self.r
+        f = self.capture()
+        self.go(200)
+        x, y = r.captive_at(0)
+        r.shots[0][:] = [True, x + 4, y + swarm.SHIP_H + 5]
+        self.go(1)
+        self.assertFalse(f.cap)
+        self.assertNotEqual(f.state, swarm.GONE, "the boss lives on")
+        self.assertEqual(r.msg[0], "CAPTIVE LOST")
+
+    def test_losing_half_a_double(self):
+        r = self.r
+        for half in (1, 0):
+            r.dual, r.ship_x, r.safe_until = True, 20, 0
+            hx = r.ship_x + half * (swarm.SHIP_W + 1)
+            r.bombs[0][:] = [True, hx + 4, swarm.SHIP_Y - 1]
+            lives = r.lives
+            self.go(1)
+            self.assertFalse(r.dual)
+            self.assertEqual(r.lives, lives, "half a double is not a life")
+            self.assertEqual(r.ship_x, 20 if half else 20 + swarm.SHIP_W + 1, "the other half flies on")
+            self.assertEqual(r.msg[0], "HALF LOST")
+            self.go(60)
+
+    def test_single_ship_hit_still_costs_a_life(self):
+        r = self.r
+        r.safe_until = 0
+        r.bombs[0][:] = [True, r.ship_x + 4, swarm.SHIP_Y - 1]
+        self.go(1)
+        self.assertEqual(r.lives, 2)
+
+    def test_bonus_cadence(self):
+        self.assertEqual([s for s in range(1, 20) if swarm.bonus_due(s)], [2, 6, 10, 14, 18])
+
+    def clear_stage(self):
+        for f in self.r.foes:
+            f.state = swarm.GONE
+        self.go(40)
+
+    def test_bonus_after_stage_two_only(self):
+        r = self.r
+        self.clear_stage()
+        self.assertEqual((r.stage, r.bonus), (2, None), "no bonus after stage 1")
+        self.go(80)
+        self.clear_stage()
+        self.assertIsNotNone(r.bonus)
+        self.assertEqual(r.stage, 2)
+
+    def bonus(self):
+        r = self.r
+        r.stage = 2
+        self.clear_stage()
+        self.assertIsNotNone(r.bonus)
+
+    def aim(self, limit=None):
+        r = self.r
+
+        def each():
+            if r.bonus is None or (limit is not None and r.bonus["hits"] >= limit):
+                return
+            k = 0
+            for w, a, x, y in r.flyers:
+                if y >= 10 and k < len(r.shots):
+                    r.shots[k][:] = [True, int(x) + 3, int(y) + swarm.FOE_H + 5]
+                    k += 1
+        return each
+
+    def test_bonus_cannot_hurt_and_ends_with_a_perfect_tally(self):
+        r = self.r
+        self.bonus()
+        lives, points = r.lives, r.points
+        r.safe_until = 0
+        steps = 0
+        while r.bonus is not None and not r.bonus["tally"] and steps < 3000:
+            r.bombs[0][:] = [True, r.ship_x + 4, swarm.SHIP_Y - 1]      # nothing here can kill the ship
+            self.go(1, each=self.aim())
+            steps += 1
+        b = r.bonus
+        self.assertEqual(r.lives, lives)
+        self.assertEqual((b["hits"], b["total"], b["award"]), (40, 40, swarm.BONUS_PERFECT))
+        self.assertEqual(r.points, points + swarm.BONUS_PERFECT)
+        self.assertTrue(all(not f.state for f in r.foes), "no one dives or fires in it")
+        self.go(swarm.BONUS_TALLY + 5)
+        self.assertIsNone(r.bonus)
+        self.assertEqual(r.stage, 3)
+
+    def test_bonus_tally_counts_hits(self):
+        r = self.r
+        self.bonus()
+        points = r.points
+        for _ in range(3000):
+            if r.bonus["tally"]:
+                break
+            self.go(1, each=self.aim(limit=13))
+        self.assertEqual((r.bonus["hits"], r.bonus["award"]), (13, 13 * swarm.BONUS_HIT))
+        self.assertEqual(r.points, points + 1300)
+
+
+class SwarmExtrasDrawn(unittest.TestCase):
+    def test_every_new_state_draws(self):
+        pygame.init()
+        s = pygame.display.set_mode((1280, 800))
+        from rookmote.games import mini
+        g = swarm.SwarmGame(bests=mini.Bests(Path(tempfile.mkdtemp()) / "games.json"), rand=Lcg(2))
+        self.assertTrue(g.g.extras)
+        for _ in range(3000):
+            g.update(33)
+            if g.g.frame % 50 == 0:
+                g.draw(s)
+        g.g.bonus = None
+        g.g.start_bonus()
+        for _ in range(400):
+            g.update(33)
+        g.draw(s)
