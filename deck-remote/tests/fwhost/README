@@ -1,0 +1,3 @@
+Stub headers to compile firmware-remote/src's games on the host
+(tests/test_minigames.py): millis() is host_ms, esp_random() an LCG
+(host_rng = host_rng * 1664525 + 1013904223), drawing does nothing.

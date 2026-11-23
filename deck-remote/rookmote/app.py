@@ -285,7 +285,14 @@ class App:
 
     def open_game(self, name: str) -> None:
         if name != "Baketris":
-            self.say(f"{name} comes in the next update")
+            from .games import MINI
+            cls = MINI.get(name)
+            if cls is None:
+                self.say(f"{name} comes in the next update")
+                return
+            self.game = cls((W, H), rumble=self._rumble)
+            self.held.clear()
+            self.push_state()
             return
         from .games import audio, baketris
         if self.audio is None:
