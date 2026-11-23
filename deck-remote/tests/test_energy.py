@@ -27,48 +27,59 @@ from rookmote.games import energy as E  # noqa: E402
 from rookmote.games import rules as G  # noqa: E402
 
 
-def drive(en, aps, seconds, frame=16.667):
-    """aps inputs a second, spread over frames, for seconds."""
-    t, owed = 0.0, 0.0
+def drive(en, pps, seconds, aps=0.0, frame=1000 / 60):
+    """pps pieces and aps other inputs a second, spread over frames, for seconds."""
+    t, owe, owa = 0.0, 0.0, 0.0
     while t < seconds * 1000:
-        owed += aps * frame / 1000
-        while owed >= 1:
+        owe += pps * frame / 1000
+        owa += aps * frame / 1000
+        while owe >= 1:
+            en.piece()
+            owe -= 1
+        while owa >= 1:
             en.act()
-            owed -= 1
+            owa -= 1
         en.update(frame)
         t += frame
     return en
 
 
 class Curve(unittest.TestCase):
-    def test_idle_is_nothing(self):
+    def test_idle_and_calm_play_stay_calm(self):
         self.assertEqual(drive(E.Energy(), 0, 5).step, 0)
-        self.assertEqual(drive(E.Energy(), 0.7, 10).step, 0, "a calm pace stays calm")
+        self.assertEqual(drive(E.Energy(), 0.6, 10, aps=2).step, 0, "a relaxed game: a piece every 1.7 s")
 
-    def test_pace_sets_the_step(self):
-        steps = [drive(E.Energy(), aps, 6).step for aps in (1.6, 2.7, 3.9, 5.5)]
+    def test_pieces_a_second_set_the_step(self):
+        steps = [drive(E.Energy(), pps, 10, aps=pps * 3).step for pps in (0.6, 1.0, 1.5, 2.0)]
         self.assertEqual(steps, [0, 1, 2, 3])
 
-    def test_rises_fast(self):
+    def test_three_quick_drops_charge_it(self):
         en = E.Energy()
-        drive(en, 6, 1.5)
-        self.assertGreaterEqual(en.step, 2, "a second and a half of going for it")
+        for k in range(3):
+            en.piece()
+            for _ in range(20):                       # a drop every third of a second
+                en.update(1000 / 60)
+        self.assertGreaterEqual(en.step, 1)
+
+    def test_moves_alone_add_little(self):
+        self.assertLessEqual(drive(E.Energy(), 0, 6, aps=6).step, 0)
+        self.assertGreater(drive(E.Energy(), 1.0, 8, aps=8).e, drive(E.Energy(), 1.0, 8, aps=1).e)
 
     def test_falls_back_slowly(self):
-        en = drive(E.Energy(), 6, 4)
+        en = drive(E.Energy(), 2.5, 5)
         self.assertEqual(en.step, 3)
         drive(en, 0, 1.0)
         self.assertGreaterEqual(en.step, 2, "a breath doesn't drop it")
-        drive(en, 0, 6)
+        drive(en, 0, 7)
         self.assertEqual(en.step, 0)
 
     def test_clears_lift_it(self):
         en = E.Energy()
         en.clear(4, 0, True, 3, False)
-        self.assertAlmostEqual(en.e, 0.28 + 0.08 + 0.09)
+        self.assertAlmostEqual(en.e, 0.22 + 0.06 + 0.075)
         self.assertEqual(en.step, 1)
         en.clear(2, 2, True, 6, True)
-        self.assertEqual(en.e, 1.0)
+        self.assertGreater(en.e, 0.95)
 
     def test_steps_and_names(self):
         en = E.Energy()
@@ -105,17 +116,23 @@ class InTheGame(unittest.TestCase):
             bk.update(16.667)
         return bk, rates
 
-    def mash(self, bk, frames, every=4):
+    def mash(self, bk, frames, drop_every=24):
+        """Moves, and a hard drop every drop_every frames (24: 2.5 pieces a second)."""
         for i in range(frames):
-            if i % every == 0:
-                bk.press(B.A_LEFT if (i // every) % 2 else B.A_RIGHT)
+            if i % 4 == 0:
+                bk.press(B.A_LEFT if (i // 4) % 2 else B.A_RIGHT)
                 bk.release(B.A_LEFT)
                 bk.release(B.A_RIGHT)
+            if i % drop_every == drop_every - 1:
+                bk.last_drop_t = 0
+                bk.press(B.A_HARD)
+                for r in range(G.H):                    # (keep the well empty: no topping out, no restart)
+                    bk.game.grid[r] = [0] * G.W
             bk.update(16.667)
 
     def test_busy_play_heats_the_music_and_shake(self):
         bk, rates = self.play()
-        self.mash(bk, 300, every=3)                     # 20 inputs a second
+        self.mash(bk, 300)                              # 2.5 pieces a second
         self.assertEqual(bk.heat, 3)
         self.assertEqual(rates[-1][1], 3)
         self.assertAlmostEqual(rates[-1][0], 1 + 0.035 * 3, places=3)
@@ -128,9 +145,36 @@ class InTheGame(unittest.TestCase):
         self.assertEqual(bk.heat, 0, "eased off: back to calm")
         self.assertEqual(rates[-1][1], 0)
 
+    def test_first_drops_step_up_at_once(self):
+        bk, rates = self.play()
+        for k in range(4):
+            self.mash(bk, 20, drop_every=20)
+            if bk.heat:
+                break
+        self.assertGreaterEqual(bk.heat, 1, "a few quick drops")
+        self.assertGreater(bk.heat_toast_t, 0, "the banner shows at once")
+        self.assertEqual(rates[-1][1], bk.heat, "the music is asked for the step at once")
+
+    def test_a_step_up_is_heard_while_its_music_is_made(self):
+        bk, rates = self.play()
+        played = []
+        bk.audio.play = lambda k, vol, rate=1.0: played.append(k)
+        bk.music.playing_wanted = lambda: False          # the hotter version isn't cached yet
+        bk.energy.e = 0.8
+        for _ in range(120):                             # two seconds
+            bk.energy.e = max(bk.energy.e, 0.8)
+            bk.update(16.667)
+        self.assertEqual(bk.heat, 3)
+        self.assertGreaterEqual(len(played), 6, "a pulse of the skin's sounds keeps the beat")
+        played.clear()
+        bk.music.playing_wanted = lambda: True           # and stops once the real thing plays
+        for _ in range(60):
+            bk.update(16.667)
+        self.assertEqual(played, [])
+
     def test_off_keeps_it_calm(self):
         bk, rates = self.play(on=False)
-        self.mash(bk, 300, every=3)
+        self.mash(bk, 300)
         self.assertEqual(bk.heat, 0)
         self.assertTrue(all(h == 0 for _, h in rates))
 

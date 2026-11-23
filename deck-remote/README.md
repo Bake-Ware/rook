@@ -46,15 +46,17 @@ this worker, as it has for the firmware remote.
 
 ## Baketris's energy
 
-How much you are doing in a row (inputs a second, plus a lift for each clear:
-more for 4 lines, T-spins, back-to-back, combos, all clears and blasts) fills
-a meter under the stats; it climbs within a second or two of going for it and
-falls back over about six once you ease off. Its steps (CHARGED, SURGING,
-OVERDRIVE: about 2.5, 3.5 and 5 inputs a second) play the music a step faster
-and in a hotter arrangement (more drive; hats; a kick, rendered ahead in the
-background process like the rest of the sound), shake harder, throw more
-particles, warm the background and make the well's edge glow. Setting:
-ENERGY (on).
+How hard you are going fills a meter under the stats. Pieces placed a second
+drive it: each piece is a push at once, and about one a second holds CHARGED,
+1.5 SURGING, 2 or more OVERDRIVE (three quick drops reach CHARGED from
+nothing); moves past a busy pace and clears (more for 4 lines, T-spins,
+back-to-back, combos, all clears, blasts) add on top. It falls back over about
+six seconds once you ease off. Each step plays the music a step faster, louder
+and in a hotter arrangement (more drive; hats; a kick: the current song's are
+made in the background right after its base version; until one is ready a
+pulse of the skin's own sounds keeps the beat), shakes harder, throws more
+particles, warms the background and makes the well's edge glow, with a banner
+and a chime. Setting: ENERGY (on).
 
 ## Baketris's announcer
 

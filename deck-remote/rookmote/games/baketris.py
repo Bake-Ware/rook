@@ -642,7 +642,7 @@ class Baketris(G.Listener):
                 self.music.set_rate(target, self.heat)
         if self.duck_t > 0:
             self.duck_t = max(0.0, self.duck_t - dt)
-            self.music.set_volume(0.55 * (1 - 0.8 * (self.duck_t / 1400)))
+        self.music_level(dt)
         if self.move_snd and self.sound:
             self.audio.play(A.MOVE, 0.5)
         for k in ("heat_toast_t", "action_t", "flash_t", "trail_t", "pc_t", "quad_t", "song_toast_t", "screen_flash_t", "fire_t"):
@@ -670,6 +670,30 @@ class Baketris(G.Listener):
         self.music.tick()
         self.audio.tick_announcer()
         self.warm(1.5)
+
+    def music_level(self, dt: float) -> None:
+        """The music's volume: louder a step up the energy, down under a big clear (the kaboom's
+        duck) and a little under the announcer. While the hotter version of the song for this
+        step is still being made, a pulse from the skin's own sounds keeps the beat instead."""
+        v = 0.55 * (1 + 0.1 * self.heat)
+        if self.duck_t > 0:
+            v *= 1 - 0.8 * (self.duck_t / 1400)
+        if self.audio.speaking():
+            v *= 0.55
+        if abs(v - getattr(self, "_music_vol", -1)) > 0.01:
+            self._music_vol = v
+            self.music.set_volume(v)
+        if (self.heat and self.state == S_PLAY and self.music_sel != MUSIC_OFF and self.sound
+                and not self.music.playing_wanted()):
+            self.pulse_t = getattr(self, "pulse_t", 0.0) - dt
+            if self.pulse_t <= 0:
+                song = self.music.current() if self.music.current() >= 0 else self.cur_song
+                bpm = (138, 132, 138, 126)[song % 4] * self.music_rate
+                self.pulse_t += 60000 / bpm / 2              # eighths
+                self.beat = getattr(self, "beat", 0) + 1
+                self.audio.play(A.LOCK if self.beat % 2 else A.MOVE, 0.25 + 0.1 * self.heat)
+        else:
+            self.pulse_t = 0.0
 
     def add_trauma(self, t: float) -> None:
         t *= 1 + 0.3 * self.heat                     # the energy shakes harder
@@ -721,7 +745,7 @@ class Baketris(G.Listener):
                 return
         g, play = self.game, self.state == S_PLAY and not self.blasting() and self.game.cur >= 0
         if play:
-            self.energy.act(1.5 if a == A_HARD else 1.0)
+            self.energy.act(1.0)
         if a == A_LEFT:
             self.left_held, self.last_dir, self.das_t, self.charged = True, -1, 0.0, False
             if play:
@@ -1069,6 +1093,8 @@ class Baketris(G.Listener):
             if self.sound:
                 self.audio.play_shared("level", 0.6)
         self.call_lock(cleared, spin, b2b_bonus, combo, pc)
+        if self.energy_on and not self.blasting():
+            self.energy.piece()                   # a piece placed: what drives the energy most
         if self.energy_on and (cleared or spin):
             self.energy.clear(cleared, spin, b2b_bonus, combo, pc)
         if lines:

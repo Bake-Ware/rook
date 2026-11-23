@@ -349,7 +349,10 @@ class Audio:
         self.load_announcer()
         self.use(skin)
         self.jobs.want(("shared",))
-        for m in (1000, 1028, 1070):                # the start, the first level up, danger
+        self.music.want(song, 1000)                 # the start
+        for h in (1, 2, 3):                         # then its energy steps, so the first step-up isn't waiting
+            self.music.want(song, 1000 + 35 * h + HEAT * h)
+        for m in (1028, 1070):                      # the first level up, danger
             self.music.want(song, m)
         for i in range(4):
             self.music.want(i, 1000)
@@ -396,6 +399,9 @@ class Audio:
             return
         self.voice_vol = vol
         self.voice_q = [n for n in names if n][:3]
+
+    def speaking(self) -> bool:
+        return bool(self.ok and getattr(self, "voice", None) is not None and self.pg.mixer.Channel(1).get_busy())
 
     def tick_announcer(self) -> None:
         if not self.ok or not getattr(self, "voice_q", None):
@@ -472,6 +478,11 @@ class Music:
                 else:
                     self.order.append(old)
                     break
+
+    def playing_wanted(self) -> bool:
+        """Whether what plays is what was last asked for (rate and energy step): False while a
+        version is still being made (the game covers the wait: Baketris.update)."""
+        return self.cur is not None and self.cur == (self.want_song, self.milli)
 
     def _get(self, song: int, milli: int):
         with self.lock:
