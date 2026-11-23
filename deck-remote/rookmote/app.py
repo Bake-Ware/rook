@@ -20,7 +20,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import pygame  # noqa: E402
 
-from . import VERSION, bridge, draw as D, keys as K, lan, router  # noqa: E402
+from . import VERSION, bridge, draw as D, keys as K, lan, router, voice  # noqa: E402
 from .profiles import ICONS, ProfileError, Store, routes  # noqa: E402
 
 W, H = 1280, 800
@@ -90,6 +90,11 @@ class App:
         self.stick = [0.0, 0.0]
         self.client = None if headless else bridge.Client(self._from_plugin, hello={"version": VERSION})
         self.inbox = []
+        self.rec = None                   # voice.Recording while the microphone is open
+        self.voice_id = None
+        self.thinking_until = 0.0
+        self.chat_max = 0                 # how far back the conversation scrolls (set when drawn)
+        self.drag_y = None                # a finger scrolling the conversation
         self.game = None                  # a game on screen (games/): it gets the buttons, the screen, the frames
         self.audio = None                 # games/audio.Audio, made with the first game
 
@@ -108,6 +113,9 @@ class App:
             if msg.get("clear"):
                 self.chat = []
             if msg.get("text"):
+                if msg.get("who") in ("agent", "note") and self.thinking_until:
+                    self.thinking_until = 0.0
+                    self.chat_status = ""
                 self.chat.append((msg.get("who") or "agent", msg["text"]))
                 self.chat_scroll = 0
                 self.tab = TABS.index("Assistant")
@@ -118,6 +126,8 @@ class App:
             self.display = (str(msg.get("text") or ""), time.time() + secs if secs else 0) if msg.get("text") else None
         elif t == "profiles":
             self.store.reload(force=True)
+        elif t == "_voice":                       # the recording ended (from its thread)
+            self.voice_done(msg["summary"])
 
     def emit(self, event: str, payload: dict) -> bool:
         return bool(self.client and self.client.send({"t": "event", "event": event, "payload": payload}))
@@ -215,13 +225,54 @@ class App:
 
     def tab_assistant(self, b: str) -> None:
         if b == "dpup":
-            self.chat_scroll += 60
+            self.scroll_chat(60)
         elif b == "dpdown":
-            self.chat_scroll = max(0, self.chat_scroll - 60)
+            self.scroll_chat(-60)
         elif b == "a":
-            self.say("Voice to the house agent comes in the next update")
+            self.talk()
         elif b == "b":
+            if self.rec:
+                self.rec.stop()
             self.tab = 0
+
+    # -- voice: the microphone, as the firmware's Assistant key ------------------------
+    def talk(self) -> None:
+        """A: start listening; A again (or letting go after holding it) sends."""
+        if self.rec:
+            if time.monotonic() - self.rec.started > 0.4:
+                self.rec.stop()
+            return
+        if not (self.client and self.client.connected):
+            self.say("No worker: the remote-deck plugin isn't running")
+            return
+        uid = voice.new_id()
+
+        def part(seq, data):
+            self.emit("remote.voice.part", voice.part_event(uid, seq, data))
+        try:
+            self.rec = voice.Recording(part, lambda summary: self.inbox.append({"t": "_voice", "summary": summary}))
+        except OSError as e:
+            self.say(f"No microphone: {e}")
+            return
+        self.voice_id = uid
+        self.chat_status = "Listening..."
+        self.chat_scroll = 0
+
+    def voice_done(self, summary: dict) -> None:
+        uid, self.rec, self.voice_id = self.voice_id, None, None
+        if summary.get("error") and not summary.get("parts"):
+            self.chat_status = ""
+            self.say(f"Microphone: {summary['error']}", 6)
+        elif summary.get("parts") and uid:
+            self.emit("remote.voice", voice.done_event(uid, summary))
+            self.chat_status = "Thinking..."
+            self.thinking_until = time.monotonic() + 75
+        else:
+            self.chat_status = ""
+            self.say("Heard nothing")
+
+    def scroll_chat(self, dy: float) -> None:
+        self.chat_scroll = int(max(0, min(self.chat_max, self.chat_scroll + dy)))
 
     GAMES = ["Baketris", "2048", "Towers", "Swarm"]
 
@@ -418,6 +469,8 @@ class App:
         elif e.type == pygame.CONTROLLERBUTTONUP:
             n = _controller_names().get(e.button)
             self.held.pop(n, None)
+            if n == "a" and self.rec and time.monotonic() - self.rec.started > 0.6:
+                self.rec.stop()                   # held while talking: letting go sends
         elif e.type == pygame.CONTROLLERAXISMOTION and e.axis in (pygame.CONTROLLER_AXIS_TRIGGERLEFT,
                                                                   pygame.CONTROLLER_AXIS_TRIGGERRIGHT):
             n = "lefttrigger" if e.axis == pygame.CONTROLLER_AXIS_TRIGGERLEFT else "righttrigger"
@@ -435,6 +488,14 @@ class App:
             self.tap(e.pos)
         elif e.type == pygame.FINGERDOWN:
             self.tap((int(e.x * W), int(e.y * H)))
+            self.drag_y = e.y * H if TABS[self.tab] == "Assistant" else None
+        elif e.type == pygame.FINGERMOTION and self.drag_y is not None:
+            self.scroll_chat(e.y * H - self.drag_y)
+            self.drag_y = e.y * H
+        elif e.type == pygame.FINGERUP:
+            self.drag_y = None
+        elif e.type == pygame.MOUSEWHEEL and TABS[self.tab] == "Assistant":
+            self.scroll_chat(e.y * 60)
 
     def handle_game(self, e: pygame.event.Event) -> None:
         """A game has the controls: its own mapping (the exit chord, View + Start held, still works)."""
@@ -501,6 +562,9 @@ class App:
         if "back" in self.held and "start" in self.held:
             if now - max(self.held["back"][0], self.held["start"][0]) > HOLD_EXIT_S:
                 self.quit = True
+        if self.thinking_until and now > self.thinking_until:
+            self.thinking_until = 0.0
+            self.chat_status = "No answer came"
         if self.game:
             self.game.update(dt)
             if self.game.done:
@@ -729,7 +793,7 @@ class App:
         D.rounded(s, r, D.PANEL, 18)
         clip = s.get_clip()
         s.set_clip(r.inflate(-8, -8))
-        y = r.bottom - 24 + self.chat_scroll
+        y0 = y = r.bottom - 24 + self.chat_scroll
         f = D.font(34)
         for who, text in reversed(self.chat[-60:]):
             lines = _wrap(text, f, int(r.w * 0.62))
@@ -746,12 +810,24 @@ class App:
                 D.text(s, l, (br.x + 18, br.y + 12 + i * 38), 34, D.BG if mine else D.TEXT)
             y -= 14
         s.set_clip(clip)
+        total = y0 - y                                      # the conversation's height
+        self.chat_max = max(0, total - (r.h - 40))
+        if self.chat_max:                                   # where in it: a thumb on the right
+            th = max(40, int(r.h * (r.h - 40) / total))
+            ty = r.bottom - 8 - th - int((r.h - 16 - th) * self.chat_scroll / self.chat_max)
+            pygame.draw.rect(s, D.LINE, (r.right - 12, ty, 5, th), border_radius=3)
         if not self.chat:
             D.text(s, "Talk to the house agent: A starts, A again sends.", r.center, 34, D.DIM, anchor="center")
-        D.text(s, self.chat_status or "A: talk · up/down: read back", (32, H - 70), 30, D.DIM)
+        status = self.chat_status or "A: talk · up/down or drag: read back"
+        if self.rec:
+            status = f"Listening... {self.rec.seconds:.1f} s"
+            bar = pygame.Rect(W - 560, H - 66, 280, 26)
+            D.rounded(s, bar, D.PANEL2, 8)
+            D.rounded(s, (bar.x, bar.y, max(8, int(bar.w * self.rec.level)), bar.h), D.GOOD, 8)
+        D.text(s, status, (32, H - 70), 30, D.ACCENT if self.rec else D.DIM)
         btn = pygame.Rect(W - 260, H - 82, 236, 60)
-        D.rounded(s, btn, D.ACCENT, 14)
-        D.text(s, "Talk", btn.center, 36, D.BG, True, anchor="center")
+        D.rounded(s, btn, D.BAD if self.rec else D.ACCENT, 14)
+        D.text(s, "Send" if self.rec else "Talk", btn.center, 36, D.BG, True, anchor="center")
         self.taps.append((btn, lambda: self.tab_assistant("a")))
 
     def draw_games(self) -> None:
@@ -925,6 +1001,8 @@ def main(argv=None) -> int:
         app.render()
         pygame.display.flip()
         dt = clock.tick(60 if app.focused else 10)
+    if app.rec:
+        app.rec.stop()
     if app.client:
         app.client.close()
     if app.audio:

@@ -25,6 +25,18 @@ driven by its buttons and touchscreen, minus IR.
   `test_baketris_screen.py` (controls, settings, effects, the app);
   `render_baketris.py` (its screens to PNG, and frame times).
 
+## Voice
+
+On the Assistant tab, A (or Talk) opens the microphone (`pw-record`, the
+default input, 16 kHz; `ROOKMOTE_MIC=<node>` picks another); A again, or
+letting go after holding it, sends. The audio leaves as the firmware
+remote's does: ATVV IMA ADPCM frames in `remote.voice.part` events, then
+`remote.voice` (codec `adpcm16k`; the plugin adds its worker's name, from
+worker.yaml), so the hub's remote-voice plugin hears it and answers with
+`remote.chat`, which shows in the conversation (up/down or a finger scroll
+it). The hub needs a job running `remote-voice.hear` on `remote.voice` from
+this worker, as it has for the firmware remote.
+
 ## Baketris's sound
 
 Synthesizing it is pure Python and slow (a few seconds a skin's sounds, tens

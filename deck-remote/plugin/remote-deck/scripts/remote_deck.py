@@ -44,9 +44,12 @@ def _on_msg(msg: dict) -> None:
     t = msg.get("t")
     if t == "event" and msg.get("event") in EVENTS and isinstance(msg.get("payload"), dict):
         ctx = _ctx
+        payload = msg["payload"]
+        if msg["event"] == "remote.voice" and not payload.get("worker"):
+            payload = {**payload, "worker": worker_name()}      # who the hub's remote-voice answers (remote.chat)
         if ctx is not None:
             try:
-                ctx.emit(msg["event"], msg["payload"])
+                ctx.emit(msg["event"], payload)
             except Exception:           # a bad payload is the app's mistake: it must not stop the plugin
                 pass
     elif t in ("state", "hello"):
@@ -59,6 +62,33 @@ def _on_msg(msg: dict) -> None:
     elif t == "gone":
         with _lock:
             _app_state = {}
+
+
+_name: str | None = None
+
+
+def worker_name() -> str:
+    """This worker's name, as the hub knows it: worker.yaml's name (the worker runs
+    with --config <it>; enrolling writes the name there), else the host's name as
+    enrolling would have picked it."""
+    global _name
+    if _name:
+        return _name
+    name = None
+    try:
+        argv = sys.argv
+        cfg = Path(argv[argv.index("--config") + 1])
+        for line in cfg.read_text(encoding="utf-8").splitlines():
+            if line.startswith("name:"):
+                name = line.split(":", 1)[1].split("#", 1)[0].strip().strip("'\"") or None
+                break
+    except (ValueError, IndexError, OSError):
+        pass
+    if not name:
+        import socket
+        name = socket.gethostname().split(".")[0]
+    _name = name
+    return name
 
 
 def start(ctx):
