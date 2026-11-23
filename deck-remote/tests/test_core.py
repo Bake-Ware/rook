@@ -116,7 +116,7 @@ class PluginTest(unittest.TestCase):
     def test_caps_and_events(self):
         os.environ["ROOKMOTE_SOCKET"] = str(Path(tempfile.mkdtemp()) / "p.sock")
         spec = importlib.util.spec_from_file_location(
-            "remote_deck", HERE.parents[1] / "rook" / "plugins" / "remote-deck" / "scripts" / "remote_deck.py")
+            "remote_deck", HERE.parent / "plugin" / "remote-deck" / "scripts" / "remote_deck.py")
         rd = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(rd)
         emitted = []

@@ -4,7 +4,9 @@ The worker runs this; the app connects to its socket (rookmote.bridge). The
 app's key presses arrive as events to emit; the caps forward to the app when
 it is open and work on the shared profile file when it is not. The app's
 pure modules (rookmote: keys, profiles, router, lan) come from beside this
-file (the installer copies them) or, in the repository, from deck-remote/.
+file (the installer copies them) or, in the repository, from deck-remote/
+(this plugin lives in deck-remote/plugin/: it is installed by deck-remote's
+install.sh, not distributed by the hub as rook/plugins/ are).
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import time
 from pathlib import Path
 
 _here = Path(__file__).resolve().parent
-for _p in (_here, _here.parents[3] / "deck-remote"):
+for _p in (_here, _here.parents[2]):              # installed: beside this file; in the repo: deck-remote/
     if (_p / "rookmote" / "profiles.py").is_file():
         sys.path.insert(0, str(_p))
         break

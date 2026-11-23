@@ -6,7 +6,9 @@ driven by its buttons and touchscreen, minus IR.
 - `rookmote/`: the app (Python + pygame-ce). `keys`, `paths`, `profiles`,
   `bridge`, `lan`, `router` are standard library only: the worker plugin
   uses them too.
-- `../rook/plugins/remote-deck/`: the plugin for the Deck's worker. It emits
+- `plugin/remote-deck/`: the plugin for the Deck's worker (installed by
+  `install.sh`, not distributed by the hub, so it lives here and not in
+  `rook/plugins/`). It emits
   `remote.button` as the firmware does (the hub's jobs filter on profile and
   button, so the Deck's presses drive the same jobs) and serves `remote.state`,
   `remote.press`, `remote.ir` (profiles), `remote.chat`, `remote.display`.

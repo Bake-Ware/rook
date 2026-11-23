@@ -1,19 +1,19 @@
 #!/bin/sh
 # Install the Rook remote app and its worker plugin on a Steam Deck, as user
 # deck, under ~/.local/share/rookmote (no pacman, no root). Run it from this
-# repository's tree (it needs deck-remote/ and rook/plugins/remote-deck/), e.g.
-# after copying just those two folders over:
-#   git archive <branch> deck-remote rook/plugins/remote-deck | ssh deck@<deck> 'mkdir -p ~/rookmote-src && tar -x -C ~/rookmote-src'
+# repository's deck-remote/ (the app and the plugin are both in it), e.g.
+# after copying just that folder over:
+#   git archive <branch> deck-remote | ssh deck@<deck> 'mkdir -p ~/rookmote-src && tar -x -C ~/rookmote-src'
 #   ~/rookmote-src/deck-remote/install.sh
 # It does not edit the worker's config or restart it: it prints the line to add
 # and the command for the Steam shortcut. Run it again to update.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
-PLUGIN_SRC=$HERE/../rook/plugins/remote-deck
+PLUGIN_SRC=$HERE/plugin/remote-deck
 DEST=${ROOKMOTE_HOME:-$HOME/.local/share/rookmote}
 PY=${PYTHON:-python3}
 [ -f "$HERE/rookmote/app.py" ] || { echo "run this from the repository's deck-remote/" >&2; exit 1; }
-[ -f "$PLUGIN_SRC/plugin.yaml" ] || { echo "missing $PLUGIN_SRC (copy rook/plugins/remote-deck too)" >&2; exit 1; }
+[ -f "$PLUGIN_SRC/plugin.yaml" ] || { echo "missing $PLUGIN_SRC" >&2; exit 1; }
 mkdir -p "$DEST"
 echo "== the app's venv (pygame-ce) in $DEST/venv"
 [ -x "$DEST/venv/bin/python" ] || "$PY" -m venv "$DEST/venv"
