@@ -189,7 +189,7 @@ class Menus(unittest.TestCase):
             bk.skin = skin
             bk.apply_skin()
             bk.draw(s)
-        self.assertEqual(len(bk.menu_rects), 13)
+        self.assertEqual(len(bk.menu_rects), len(B.SETTINGS_ROWS))
 
     def test_pause_menu(self):
         bk = playing(make())

@@ -1,0 +1,65 @@
+Baketris's announcer clips, made by deck-remote/tools/make_announcer.py with Piper's en_US joe
+medium voice (rhasspy/piper-voices, MIT; dataset CC0), pitched down and processed with ffmpeg.
+Original audio. Measurements when made:
+{
+ "single": {
+  "mean_db": -16.9,
+  "peak_db": -1.8,
+  "lufs": -15.2,
+  "seconds": 1.46
+ },
+ "double": {
+  "mean_db": -19.2,
+  "peak_db": -2.9,
+  "lufs": -16.9,
+  "seconds": 1.32
+ },
+ "triple": {
+  "mean_db": -19.1,
+  "peak_db": -3.6,
+  "lufs": -17.0,
+  "seconds": 1.47
+ },
+ "baketris": {
+  "mean_db": -19.2,
+  "peak_db": -2.5,
+  "lufs": -16.7,
+  "seconds": 2.56
+ },
+ "tspin": {
+  "mean_db": -18.4,
+  "peak_db": -2.7,
+  "lufs": -15.9,
+  "seconds": 1.58
+ },
+ "combo": {
+  "mean_db": -18.6,
+  "peak_db": -2.0,
+  "lufs": -16.8,
+  "seconds": 1.42
+ },
+ "megacombo": {
+  "mean_db": -18.6,
+  "peak_db": -2.4,
+  "lufs": -17.3,
+  "seconds": 1.96
+ },
+ "backtoback": {
+  "mean_db": -18.8,
+  "peak_db": -3.1,
+  "lufs": -16.9,
+  "seconds": 1.66
+ },
+ "allclear": {
+  "mean_db": -17.9,
+  "peak_db": -3.4,
+  "lufs": -16.1,
+  "seconds": 1.73
+ },
+ "blast": {
+  "mean_db": -17.5,
+  "peak_db": -2.0,
+  "lufs": -15.0,
+  "seconds": 1.98
+ }
+}

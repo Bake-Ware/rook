@@ -264,7 +264,7 @@ class Audio:
                 freq, size, ch = pygame.mixer.get_init()
                 if (freq, size, ch) == (OUT_RATE, -16, 1):
                     pygame.mixer.set_num_channels(16)
-                    pygame.mixer.set_reserved(1)
+                    pygame.mixer.set_reserved(2)               # 0: music, 1: the announcer
                     self.pg = pygame
                     self.ok = True
                 else:
@@ -297,6 +297,7 @@ class Audio:
         """What a game needs first: this skin's set, the shared sounds, the song at rate 1; then the rest."""
         if not self.ok:
             return
+        self.load_announcer()
         self.use(skin)
         self.jobs.want(("shared",))
         for m in (1000, 1028, 1070):                # the start, the first level up, danger
@@ -323,6 +324,40 @@ class Audio:
         rate = max(0.5, min(2.0, rate))
         best = min(rates_for(k), key=lambda r: abs(r - rate))
         self._play(s.get(f"{k}@{best}"), vol)
+
+    # the announcer: committed clips (rookmote/games/announcer, made by tools/make_announcer.py)
+    def load_announcer(self) -> None:
+        """Loads the clips on a thread (small OGGs; decoding still takes a few ms each)."""
+        if not self.ok or getattr(self, "voice", None) is not None:
+            return
+        self.voice, self.voice_q, self.voice_vol = {}, [], 1.0
+
+        def run():
+            d = Path(__file__).resolve().parent / "announcer"
+            for f in sorted(d.glob("*.ogg")):
+                try:
+                    self.voice[f.stem] = self.pg.mixer.Sound(str(f))
+                except Exception as e:
+                    sys.stderr.write(f"baketris announcer {f.name}: {e}\n")
+        threading.Thread(target=run, name="baketris-voice", daemon=True).start()
+
+    def announce(self, names: list, vol: float) -> None:
+        """Say these, one after the other (a new call cuts what was queued, not what is being said)."""
+        if not self.ok or getattr(self, "voice", None) is None:
+            return
+        self.voice_vol = vol
+        self.voice_q = [n for n in names if n][:3]
+
+    def tick_announcer(self) -> None:
+        if not self.ok or not getattr(self, "voice_q", None):
+            return
+        ch = self.pg.mixer.Channel(1)
+        if ch.get_busy():
+            return
+        snd = self.voice.get(self.voice_q.pop(0))
+        if snd is not None:
+            ch.set_volume(self.voice_vol)
+            ch.play(snd)
 
     def play_shared(self, name: str, vol: float) -> None:
         self._play(self.shared.get(name), vol)

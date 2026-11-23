@@ -15,7 +15,9 @@ driven by its buttons and touchscreen, minus IR.
 - `rookmote/games/`: the Games tab. Baketris (`rules.py`, `baketris.py`,
   `sfx.py`, `music.py`, `audio.py`) is the Android Baketris (/home/bake/baketris)
   ported: Game.java's rules, GameView's skins, effects, menus, settings and
-  controller mapping, Sfx.java's and Music.java's synthesized sound.
+  controller mapping, Sfx.java's and Music.java's synthesized sound; plus the
+  Deck's own BAKETRIS mode (`blast.py`: a 4-line clear blows the stack up
+  and it lands as a new one) and announcer.
   2048, Towers and Swarm (`g2048.py`, `towers.py`, `swarm.py`, sharing
   `mini.py`) are the remote's own games, their rules ported from
   firmware-remote/src and held to it (`tests/test_minigames.py` compiles the
@@ -41,6 +43,20 @@ worker.yaml), so the hub's remote-voice plugin hears it and answers with
 `remote.chat`, which shows in the conversation (up/down or a finger scroll
 it). The hub needs a job running `remote-voice.hear` on `remote.voice` from
 this worker, as it has for the firmware remote.
+
+## Baketris's announcer
+
+A deep, gritty voice calls each clear: SINGLE, DOUBLE, TRIPLE, BAKETRIS (4
+lines), T-SPIN, BACK TO BACK, COMBO / MEGA COMBO (2+ / 5+), ALL CLEAR and,
+in the BAKETRIS mode, CHAIN BLAST. Settings: ANNOUNCER (on) and ANNOUNCER
+VOLUME. The clips (`rookmote/games/announcer/*.ogg`, ~140 KB together) are
+original: made on a desk machine by `tools/make_announcer.py` with the
+Piper TTS (piper-tts 1.8.0, GPL-3.0; used as a tool, the clips are its
+output) and its en_US "joe" medium voice (rhasspy/piper-voices, MIT; the
+voice's dataset is CC0 per its model card), then pitched down about 6
+semitones with rubberband and given low end, tanh grit, compression and a
+short slap-back echo with ffmpeg. The exact commands are in the script's
+docstring; the Deck never generates them.
 
 ## Baketris's sound
 

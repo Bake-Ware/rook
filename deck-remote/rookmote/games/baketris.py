@@ -58,6 +58,8 @@ SHAKE_L = ["OFF", "LOW", "MAX"]
 SHAKE_M = [0.0, 0.55, 1.0]
 MODE_NAMES = ["MARATHON", "SPRINT 40L", "ULTRA 2:00", "BAKETRIS"]
 NMODES = 4
+SETTINGS_ROWS = ["CONTROLS", "D-PAD UP", "SKIN", "MUSIC", "SCREEN SHAKE", "SOUND", "HAPTICS", "GHOST", "DRAG SPEED",
+                 "DAS (PAD)", "ARR (PAD)", "SOFT DROP (PAD)", "ANNOUNCER", "ANNOUNCER VOLUME", "BACK"]
 CHAIN_MAX = 3          # BAKETRIS mode: blasts in a row at most (a settle can fill rows again)
 GREY, ACCENT, GOLD = _c(0xFF7F8AA3), _c(0xFF36D6E7), _c(0xFFF7C948)
 WHITE, BLACK = (255, 255, 255), (0, 0, 0)
@@ -231,6 +233,8 @@ class Baketris(G.Listener):
         self.ghost = bool(p.get("ghost", True))
         self.sound = bool(p.get("sound", True))
         self.haptics = bool(p.get("haptics", True))
+        self.announcer = bool(p.get("announcer", True))
+        self.ann_vol = clamp(int(p.get("annvol", 4)), 1, 4)          # quarters
         self.best = [int(p.get(f"best{i}", 0)) for i in range(NMODES)]
         self.music = self.audio.music
         self.cur_song, self.song_toast_t, self.song_shown = 0, 0.0, -1
@@ -285,7 +289,8 @@ class Baketris(G.Listener):
     def _save_prefs(self) -> None:
         p = {"das": self.das, "arr": self.arr_idx, "sdf": self.sdf_idx, "shake": self.shake_lvl, "drag": self.drag_spd,
              "skin": self.skin, "song": self.music_sel, "pad": self.pad_mode, "updrop": self.up_drop,
-             "ghost": self.ghost, "sound": self.sound, "haptics": self.haptics}
+             "ghost": self.ghost, "sound": self.sound, "haptics": self.haptics,
+             "announcer": self.announcer, "annvol": self.ann_vol}
         for i in range(NMODES):
             p[f"best{i}"] = self.best[i]
         try:
@@ -635,6 +640,7 @@ class Baketris(G.Listener):
                 live.append(w)
         self.waves = live
         self.music.tick()
+        self.audio.tick_announcer()
         self.warm(1.5)
 
     def add_trauma(self, t: float) -> None:
@@ -1031,6 +1037,7 @@ class Baketris(G.Listener):
             cols.append(ACCENT)
             if self.sound:
                 self.audio.play_shared("level", 0.6)
+        self.call_lock(cleared, spin, b2b_bonus, combo, pc)
         if lines:
             self.action, self.action_col = lines, cols
             self.action_t = 2200.0 if cleared == 4 else 1600.0
@@ -1069,6 +1076,19 @@ class Baketris(G.Listener):
             if self.sound:
                 self.audio.play_shared("pc", 1.0)
             self.add_trauma(0.6)
+
+    def say(self, *names, force=False) -> None:
+        """The announcer (a setting, on by default, with its own volume)."""
+        if (self.announcer or force) and self.sound:
+            self.audio.announce(list(names), self.ann_vol / 4)
+
+    def call_lock(self, cleared, spin, b2b_bonus, combo, pc) -> None:
+        """What the announcer says for a lock: the clear (or the T-spin), then back-to-back and the combo."""
+        main = "allclear" if pc else "tspin" if spin else {1: "single", 2: "double", 3: "triple", 4: "baketris"}.get(cleared)
+        if not main:
+            return
+        self.say(main, "backtoback" if b2b_bonus else None,
+                 "megacombo" if combo >= 5 else "combo" if combo >= 2 else None)
 
     def burst(self, rows, cleared, per, spread, up) -> None:
         c, r = self.cell, self.rnd.random
@@ -1140,6 +1160,8 @@ class Baketris(G.Listener):
                 self.stash = (g.cur, g.rot, g.px, g.py)
                 g.cur = -1
             self.chain += 1
+            if self.chain >= 2:
+                self.say("blast")
             self.blast = blast.Blast(g.grid, rows, (self.seed, g.pieces, self.chain))
             self.add_trauma(0.5)
             if self.sound:
@@ -1213,7 +1235,7 @@ class Baketris(G.Listener):
 
     # -- input ----------------------------------------------------------------------------
     def menu_count(self) -> int:
-        return {S_MENU: NMODES + 2, S_SETTINGS: 13, S_PAUSE: 3, S_OVER: 2, S_CONTROLS: 1}.get(self.state, 0)
+        return {S_MENU: NMODES + 2, S_SETTINGS: len(SETTINGS_ROWS), S_PAUSE: 3, S_OVER: 2, S_CONTROLS: 1}.get(self.state, 0)
 
     def pad_down(self, b: str) -> None:
         """A controller button (the app's names: a, b, x, y, dpup, ..., leftshoulder, start, back)."""
@@ -1488,7 +1510,7 @@ class Baketris(G.Listener):
             else:
                 self.state, self.sel = S_CONTROLS, 0
         elif self.state == S_SETTINGS:
-            if i == 12:
+            if i == len(SETTINGS_ROWS) - 1:
                 self.leave_settings()
             else:
                 d = 1
@@ -1555,6 +1577,13 @@ class Baketris(G.Listener):
             self.arr_idx = clamp(self.arr_idx + d, 0, len(ARRS) - 1)
         elif i == 11:
             self.sdf_idx = clamp(self.sdf_idx + d, 0, len(SDF) - 1)
+        elif i == 12:
+            self.announcer = not self.announcer
+            if self.announcer:
+                self.say("baketris")
+        elif i == 13:
+            self.ann_vol = clamp(self.ann_vol + d, 1, 4)
+            self.say("single", force=True)
         else:
             return
         self._save_prefs()
@@ -1886,14 +1915,14 @@ class Baketris(G.Listener):
         self._text_c(s, "SETTINGS", vw / 2, vh * 0.06, min(vw * 0.09, vh * 0.05), WHITE, "center", 255)
         ms = self.music_sel
         song_l = SONG_NAMES[ms] if ms < SONGS else "SHUFFLE" if ms == SHUFFLE else "CYCLE" if ms == CYCLE else "OFF"
-        labels = ["CONTROLS", "D-PAD UP", "SKIN", "MUSIC", "SCREEN SHAKE", "SOUND", "HAPTICS", "GHOST", "DRAG SPEED",
-                  "DAS (PAD)", "ARR (PAD)", "SOFT DROP (PAD)", "BACK"]
+        labels = SETTINGS_ROWS
         lr = lambda v: f"‹  {v}  ›"                           # noqa: E731
         vals = ["ON-SCREEN PAD" if self.pad_mode else "TOUCH", "DROP" if self.up_drop else "NOTHING",
                 lr(SKIN_L[self.skin]), lr(song_l), lr(SHAKE_L[self.shake_lvl]),
                 "ON" if self.sound else "OFF", "ON" if self.haptics else "OFF", "ON" if self.ghost else "OFF",
                 lr(f"{self.drag_spd / 10:.1f}x"), lr(f"{self.das} ms"),
-                lr("INSTANT" if ARRS[self.arr_idx] == 0 else f"{ARRS[self.arr_idx]} ms"), lr(SDF_L[self.sdf_idx]), None]
+                lr("INSTANT" if ARRS[self.arr_idx] == 0 else f"{ARRS[self.arr_idx]} ms"), lr(SDF_L[self.sdf_idx]),
+                "ON" if self.announcer else "OFF", lr(f"{self.ann_vol * 25}%"), None]
         self.draw_items(s, labels, vals, vh * 0.1, 0.78, self.sh_x, self.sh_y)
         bs = round(min(vw / 16, vh / 40))
         for t in range(7):
