@@ -23,6 +23,8 @@ import pygame
 from ..paths import data_dir
 from . import audio as A
 from . import blast
+from .energy import NAMES as ENERGY_NAMES
+from .energy import Energy
 from . import rules as G
 
 S_MENU, S_SETTINGS, S_READY, S_PLAY, S_PAUSE, S_OVER, S_CONTROLS = range(7)
@@ -59,7 +61,8 @@ SHAKE_M = [0.0, 0.55, 1.0]
 MODE_NAMES = ["MARATHON", "SPRINT 40L", "ULTRA 2:00", "BAKETRIS"]
 NMODES = 4
 SETTINGS_ROWS = ["CONTROLS", "D-PAD UP", "SKIN", "MUSIC", "SCREEN SHAKE", "SOUND", "HAPTICS", "GHOST", "DRAG SPEED",
-                 "DAS (PAD)", "ARR (PAD)", "SOFT DROP (PAD)", "ANNOUNCER", "ANNOUNCER VOLUME", "BACK"]
+                 "DAS (PAD)", "ARR (PAD)", "SOFT DROP (PAD)", "ANNOUNCER", "ANNOUNCER VOLUME", "ENERGY", "BACK"]
+HEAT_COL = [(54, 214, 231), (54, 214, 231), (247, 201, 72), (255, 92, 60)]       # the energy steps' colours
 CHAIN_MAX = 3          # BAKETRIS mode: blasts in a row at most (a settle can fill rows again)
 GREY, ACCENT, GOLD = _c(0xFF7F8AA3), _c(0xFF36D6E7), _c(0xFFF7C948)
 WHITE, BLACK = (255, 255, 255), (0, 0, 0)
@@ -235,6 +238,11 @@ class Baketris(G.Listener):
         self.haptics = bool(p.get("haptics", True))
         self.announcer = bool(p.get("announcer", True))
         self.ann_vol = clamp(int(p.get("annvol", 4)), 1, 4)          # quarters
+        self.energy_on = bool(p.get("energy", True))
+        self.energy = Energy()
+        self.heat = 0                       # the energy step the game shows and plays at (0 with ENERGY off)
+        self.heat_toast_t = 0.0
+        self.music_heat = 0
         self.best = [int(p.get(f"best{i}", 0)) for i in range(NMODES)]
         self.music = self.audio.music
         self.cur_song, self.song_toast_t, self.song_shown = 0, 0.0, -1
@@ -256,6 +264,9 @@ class Baketris(G.Listener):
         self.over_t = self.hitstop_t = self.screen_flash_t = self.fire_t = self.duck_t = self.quad_t = 0.0
         self.trauma = self.kick_y = self.sh_x = self.sh_y = self.punch = 0.0
         self.music_rate = 1.0
+        self.music_heat = 0
+        self.energy.reset()
+        self.heat, self.heat_toast_t = 0, 0.0
         self.go_played = self.move_snd = self.new_best = self.danger = False
         self.action, self.action_col, self.flash_rows = [], [], []
         self.tr = (0, 0, 0, 0, 0)
@@ -290,7 +301,8 @@ class Baketris(G.Listener):
         p = {"das": self.das, "arr": self.arr_idx, "sdf": self.sdf_idx, "shake": self.shake_lvl, "drag": self.drag_spd,
              "skin": self.skin, "song": self.music_sel, "pad": self.pad_mode, "updrop": self.up_drop,
              "ghost": self.ghost, "sound": self.sound, "haptics": self.haptics,
-             "announcer": self.announcer, "annvol": self.ann_vol}
+             "announcer": self.announcer, "annvol": self.ann_vol,
+             "energy": self.energy_on}
         for i in range(NMODES):
             p[f"best{i}"] = self.best[i]
         try:
@@ -531,6 +543,9 @@ class Baketris(G.Listener):
         self.parts, self.waves = [], []
         self.last_level = 1
         self.music_rate = 1.0
+        self.music_heat = 0
+        self.energy.reset()
+        self.heat, self.heat_toast_t = 0, 0.0
         self.cur_song = self.rnd.randrange(SONGS) if self.music_sel in (SHUFFLE, CYCLE) else min(self.music_sel, SONGS - 1)
         self.music.set_cycle(self.music_sel == CYCLE)
         self.song_shown, self.song_toast_t = -1, 0.0
@@ -608,16 +623,29 @@ class Baketris(G.Listener):
                 self.song_shown = cs
                 if self.music_sel != MUSIC_OFF:
                     self.song_toast_t = 2600.0
-            target = 1 + (min(0.4, (g.level - 1) * 0.028) if self.mode in (G.MARATHON, G.BAKETRIS) else 0) + (0.07 if self.danger else 0)
-            if abs(target - self.music_rate) > 0.004:
+            if self.energy_on:
+                self.energy.update(dt)
+                step = self.energy.step
+                if step > self.heat:                      # a step up: you can feel it
+                    self.heat_toast_t = 1500.0
+                    self.screen_flash_t = max(self.screen_flash_t, 90.0)
+                    if self.sound:
+                        self.audio.play_shared("level", 0.45)
+                self.heat = step
+            else:
+                self.heat = 0
+            target = (1 + (min(0.4, (g.level - 1) * 0.028) if self.mode in (G.MARATHON, G.BAKETRIS) else 0)
+                      + (0.07 if self.danger else 0) + 0.035 * self.heat)
+            if abs(target - self.music_rate) > 0.004 or self.heat != self.music_heat:
                 self.music_rate = target
-                self.music.set_rate(target)
+                self.music_heat = self.heat
+                self.music.set_rate(target, self.heat)
         if self.duck_t > 0:
             self.duck_t = max(0.0, self.duck_t - dt)
             self.music.set_volume(0.55 * (1 - 0.8 * (self.duck_t / 1400)))
         if self.move_snd and self.sound:
             self.audio.play(A.MOVE, 0.5)
-        for k in ("action_t", "flash_t", "trail_t", "pc_t", "quad_t", "song_toast_t", "screen_flash_t", "fire_t"):
+        for k in ("heat_toast_t", "action_t", "flash_t", "trail_t", "pc_t", "quad_t", "song_toast_t", "screen_flash_t", "fire_t"):
             setattr(self, k, max(0.0, getattr(self, k) - dt))
         if self.state == S_OVER:
             self.over_t += dt
@@ -644,6 +672,7 @@ class Baketris(G.Listener):
         self.warm(1.5)
 
     def add_trauma(self, t: float) -> None:
+        t *= 1 + 0.3 * self.heat                     # the energy shakes harder
         self.trauma = min(1.0, self.trauma + t * SHAKE_M[self.shake_lvl])
 
     def tick_das(self, dt: float) -> None:
@@ -691,6 +720,8 @@ class Baketris(G.Listener):
             else:
                 return
         g, play = self.game, self.state == S_PLAY and not self.blasting() and self.game.cur >= 0
+        if play:
+            self.energy.act(1.5 if a == A_HARD else 1.0)
         if a == A_LEFT:
             self.left_held, self.last_dir, self.das_t, self.charged = True, -1, 0.0, False
             if play:
@@ -1038,6 +1069,8 @@ class Baketris(G.Listener):
             if self.sound:
                 self.audio.play_shared("level", 0.6)
         self.call_lock(cleared, spin, b2b_bonus, combo, pc)
+        if self.energy_on and (cleared or spin):
+            self.energy.clear(cleared, spin, b2b_bonus, combo, pc)
         if lines:
             self.action, self.action_col = lines, cols
             self.action_t = 2200.0 if cleared == 4 else 1600.0
@@ -1057,7 +1090,7 @@ class Baketris(G.Listener):
                 self.screen_flash_t = 180.0
             if big:
                 self.wave(self.bx + 5 * c, self.row_y(rows[0]) + c / 2, c * 9, 500, self.col[T], 0)
-            self.burst(rows, cleared, 5 if big else 3, 26 if big else 16, 18 if big else 12)
+            self.burst(rows, cleared, (5 if big else 3) + self.heat, 26 if big else 16, (18 if big else 12) + 3 * self.heat)
             if self.sound:
                 self.audio.play(A.C1 + cleared - 1, 1.0, 1 + max(0, combo) * 0.05)
                 if spin > 0:
@@ -1160,6 +1193,8 @@ class Baketris(G.Listener):
                 self.stash = (g.cur, g.rot, g.px, g.py)
                 g.cur = -1
             self.chain += 1
+            if self.energy_on:
+                self.energy.boost(0.15)
             if self.chain >= 2:
                 self.say("blast")
             self.blast = blast.Blast(g.grid, rows, (self.seed, g.pieces, self.chain))
@@ -1441,6 +1476,7 @@ class Baketris(G.Listener):
                     self.drag_move(q, x, y)
                     if q["tap"] and not q["swiped"] and not self.blasting() and self.game.cur >= 0:
                         self.game.rotate(1)
+                        self.energy.act(1.0)
                     self.ptrs.remove(q)
                     break
             return
@@ -1462,6 +1498,7 @@ class Baketris(G.Listener):
         vdx, vdy = x - q["ax"], y - q["ay"]
         if abs(vdy) > 30 * d and abs(vdy) > abs(vdx) * 1.4:
             q["swiped"] = True
+            self.energy.act(1.5)
             if vdy < 0:
                 self.game.do_hold()
             else:
@@ -1488,6 +1525,7 @@ class Baketris(G.Listener):
                 break
         if moved:
             q["ax"], q["ay"], q["tap"] = x, y, False
+            self.energy.act(1.0)
 
     def hit(self, x, y) -> int:
         for i, r in enumerate(self.menu_rects):
@@ -1581,6 +1619,9 @@ class Baketris(G.Listener):
             self.announcer = not self.announcer
             if self.announcer:
                 self.say("baketris")
+        elif i == 14:
+            self.energy_on = not self.energy_on
+            self.energy.reset()
         elif i == 13:
             self.ann_vol = clamp(self.ann_vol + d, 1, 4)
             self.say("single", force=True)
@@ -1590,7 +1631,11 @@ class Baketris(G.Listener):
 
     # -- drawing --------------------------------------------------------------------------
     def draw(self, screen: pygame.Surface) -> None:
-        screen.fill(SKIN_BG[self.skin])
+        bg = SKIN_BG[self.skin]
+        if self.heat and self.state in (S_PLAY, S_READY, S_PAUSE):      # the energy warms the background, on a pulse
+            pulse = 0.6 + 0.4 * math.sin(self.anim_t / (260 - 40 * self.heat))
+            bg = blend(bg, HEAT_COL[self.heat], 0.045 * self.heat * pulse)
+        screen.fill(bg)
         self.close_rect = None
         if self.state == S_MENU:
             self.draw_main_menu(screen)
@@ -1636,6 +1681,12 @@ class Baketris(G.Listener):
     def draw_game(self, s, ox, oy) -> None:
         c, g = self.cell, self.game
         bx, by = self.bx + ox, self.by + oy
+        if self.heat:                                   # and makes the well glow at its edge
+            pulse = 0.55 + 0.45 * math.sin(self.anim_t / (220 - 40 * self.heat))
+            w = 2 + 2 * self.heat
+            col = blend(SKIN_BG[self.skin], HEAT_COL[self.heat], 0.35 + 0.2 * self.heat * pulse / 3 + 0.25 * pulse)
+            pygame.draw.rect(s, col, (round(bx) - w, round(by) - w, 10 * c + 2 * w, 20 * c + 2 * w), w,
+                             border_radius=w + 2)
         s.blit(self.board, (round(bx), round(by)))
         self.draw_ambient(s, ox, oy)
         if self.danger:
@@ -1696,6 +1747,10 @@ class Baketris(G.Listener):
         if self.song_toast_t > 0 and self.song_shown >= 0:
             a = 220 * min(1.0, self.song_toast_t / 500) * min(1.0, (2600 - self.song_toast_t) / 250)
             self.text(s, "♪  " + SONG_NAMES[self.song_shown], bx + 5 * c, by + c * 1.3, c * 0.5, WHITE, "center", a)
+        if self.heat_toast_t > 0 and self.heat:
+            a = 255 * min(1.0, self.heat_toast_t / 400)
+            self.big_text(s, ENERGY_NAMES[self.heat], bx + 5 * c, by + c * 3.2, c * (0.9 + 0.1 * self.heat),
+                          HEAT_COL[self.heat], a)
         if self.pc_t > 0:
             a = 255 * min(1.0, self.pc_t / 600)
             sc = 1 + max(0.0, (self.pc_t - 1700) / 300.0) * 0.5
@@ -1822,6 +1877,25 @@ class Baketris(G.Listener):
             y = self.stat(s, "TIME", fmt_time(G.ULTRA_MS - g.time_ms), x, y)
             y = self.stat(s, "SCORE", fmt_num(g.score), x, y)
             self.stat(s, "LINES", str(g.lines), x, y)
+        if self.energy_on:
+            self.draw_energy(s, x, self.stats_top + oy + c * 4.9, hb[2] - hb[0])
+
+    def draw_energy(self, s, x, y, w) -> None:
+        """The energy meter: four segments in the steps' colours, the level filling them."""
+        c = self.cell
+        self.text(s, "ENERGY", x, y, c * 0.42, GREY)
+        if self.heat:
+            self.text(s, ENERGY_NAMES[self.heat], x + w, y, c * 0.42, HEAT_COL[self.heat], "right")
+        top, h = y + c * 0.3, c * 0.5
+        seg = (w - 3 * 4) / 4
+        e = self.energy.e
+        for k in range(4):
+            sx = x + k * (seg + 4)
+            pygame.draw.rect(s, (32, 39, 51), (round(sx), round(top), round(seg), round(h)), border_radius=4)
+            f = min(1.0, max(0.0, e * 4 - k))
+            if f > 0:
+                col = HEAT_COL[max(1, k)] if k else (54, 214, 231)
+                pygame.draw.rect(s, col, (round(sx), round(top), max(2, round(seg * f)), round(h)), border_radius=4)
 
     def stat(self, s, label, value, x, y) -> float:
         c = self.cell
@@ -1922,7 +1996,8 @@ class Baketris(G.Listener):
                 "ON" if self.sound else "OFF", "ON" if self.haptics else "OFF", "ON" if self.ghost else "OFF",
                 lr(f"{self.drag_spd / 10:.1f}x"), lr(f"{self.das} ms"),
                 lr("INSTANT" if ARRS[self.arr_idx] == 0 else f"{ARRS[self.arr_idx]} ms"), lr(SDF_L[self.sdf_idx]),
-                "ON" if self.announcer else "OFF", lr(f"{self.ann_vol * 25}%"), None]
+                "ON" if self.announcer else "OFF", lr(f"{self.ann_vol * 25}%"),
+                "ON" if self.energy_on else "OFF", None]
         self.draw_items(s, labels, vals, vh * 0.1, 0.78, self.sh_x, self.sh_y)
         bs = round(min(vw / 16, vh / 40))
         for t in range(7):

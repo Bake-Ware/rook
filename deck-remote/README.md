@@ -44,6 +44,18 @@ worker.yaml), so the hub's remote-voice plugin hears it and answers with
 it). The hub needs a job running `remote-voice.hear` on `remote.voice` from
 this worker, as it has for the firmware remote.
 
+## Baketris's energy
+
+How much you are doing in a row (inputs a second, plus a lift for each clear:
+more for 4 lines, T-spins, back-to-back, combos, all clears and blasts) fills
+a meter under the stats; it climbs within a second or two of going for it and
+falls back over about six once you ease off. Its steps (CHARGED, SURGING,
+OVERDRIVE: about 2.5, 3.5 and 5 inputs a second) play the music a step faster
+and in a hotter arrangement (more drive; hats; a kick, rendered ahead in the
+background process like the rest of the sound), shake harder, throw more
+particles, warm the background and make the well's edge glow. Setting:
+ENERGY (on).
+
 ## Baketris's announcer
 
 A deep, gritty voice calls each clear: SINGLE, DOUBLE, TRIPLE, BAKETRIS (4

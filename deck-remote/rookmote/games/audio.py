@@ -101,8 +101,12 @@ def pack_ready(name: str) -> bool:
     return (store() / f"{name}.json").exists()
 
 
-def song_rate_name(i: int, milli: int) -> str:
-    return f"song{i}_r{milli}"
+HEAT = 10000        # a variant number: the playback rate in thousandths + HEAT * the energy step (0-3)
+
+
+def song_rate_name(i: int, v: int) -> str:
+    heat, milli = divmod(v, HEAT)
+    return f"song{i}_r{milli}" + (f"_h{heat}" if heat else "")
 
 
 # -- the jobs (in the child process) ----------------------------------------------------
@@ -136,11 +140,56 @@ def _song_source(i: int) -> array:
     return a
 
 
-def job_song(i: int, milli: int) -> None:
+def heat_up(src: array, song: int, heat: int) -> array:
+    """The energy steps' music: 1 more drive, 2 and sixteenth-note hats, 3 and a kick on
+    every beat with more drive still. On the 24 kHz render, before the rate."""
+    import math
+    import random
     from . import music
-    src = _song_source(i)
+    if heat <= 0:
+        return src
+    rate = music.RATE
+    e8 = int(math.floor(rate * 60.0 / music.SONGS[song].bpm / 2 + 0.5))
+    x = [v / 32767.0 for v in src]
+    n = len(x)
+    if heat >= 2:                                           # hats: short high noise, every sixteenth
+        r = random.Random(song)
+        hat = [(r.random() * 2 - 1) * math.exp(-k / (rate * 0.006)) for k in range(int(rate * 0.025))]
+        lp = 0.0
+        for k in range(len(hat)):                           # a high-pass: only the hiss
+            lp += 0.3 * (hat[k] - lp)
+            hat[k] -= lp
+        amp = 0.10 if heat == 2 else 0.13
+        for t in range(0, n, e8 // 2):
+            acc = amp if (t // (e8 // 2)) % 2 else amp * 0.6
+            for k, h in enumerate(hat):
+                if t + k >= n:
+                    break
+                x[t + k] += h * acc
+    if heat >= 3:                                           # a kick on every beat
+        kick = []
+        ph = 0.0
+        for k in range(int(rate * 0.13)):
+            f = 45 + 70 * math.exp(-k / (rate * 0.025))
+            ph += f / rate
+            kick.append(math.sin(2 * math.pi * ph) * math.exp(-k / (rate * 0.05)) * 0.38)
+        for t in range(0, n, 2 * e8):
+            for k, v in enumerate(kick):
+                if t + k >= n:
+                    break
+                x[t + k] += v
+    drive = 1.0 + 0.45 * heat
+    norm = math.tanh(drive)
+    tanh = math.tanh
+    return array("h", (int(tanh(v * drive) / norm * 31000) for v in x))
+
+
+def job_song(i: int, v: int) -> None:
+    from . import music
+    heat, milli = divmod(v, HEAT)
+    src = heat_up(_song_source(i), i, heat)
     out = resample(src, music.RATE * (milli / 1000) / OUT_RATE)
-    _write(store() / f"{song_rate_name(i, milli)}.pcm", _le(out))
+    _write(store() / f"{song_rate_name(i, v)}.pcm", _le(out))
 
 
 def run_job(job: tuple) -> None:
@@ -462,13 +511,16 @@ class Music:
         self.pause()
         self.restart_req = True
 
-    def set_rate(self, r: float) -> None:
-        self.milli = int(round(r * 1000))
+    def set_rate(self, r: float, heat: int = 0) -> None:
+        """The playback rate, and the energy step's arrangement (heat 0-3; see heat_up)."""
+        milli = int(round(r * 1000))
+        self.milli = milli + HEAT * heat
         self.want(self.want_song, self.milli, first=True)
-        if self.a.ok:                               # the likely next ones: a level up, danger on/off
-            for m in (self.milli + 28, self.milli + 70, self.milli - 70):
-                if 1000 <= m <= 1470:
-                    self.want(self.want_song, m)
+        if self.a.ok:                               # the likely next ones: a level up, danger on/off, a step more
+            for m, h in ((milli + 28, heat), (milli + 70, heat), (milli - 70, heat), (milli + 35, heat + 1),
+                         (milli - 35, heat - 1)):
+                if 1000 <= m <= 1600 and 0 <= h <= 3:
+                    self.want(self.want_song, m + HEAT * h)
 
     def set_volume(self, v: float) -> None:
         self.vol = v
