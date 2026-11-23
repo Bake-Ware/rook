@@ -1,0 +1,95 @@
+# The Steam Deck as a Rook remote (deck-remote/: the app). Runs on the Deck's
+# worker: the app talks to it over a local socket, it emits the remote's
+# events (remote.button, as the firmware remote does: the hub's jobs filter
+# on profile and button, so the Deck's presses drive the same jobs) and
+# answers the remote's caps. Its caps are named as the firmware's (remote.*),
+# as hid-android and hid-desktop share hid.*: a call names its worker.
+manifest: 1
+plugin: remote-deck
+version: 0.1.0
+title: Steam Deck remote
+doc: The Steam Deck as a Rook remote, driven by its buttons and touchscreen (the Rook remote app); device profiles with Rook and Wi-Fi keys (no IR on a Deck).
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux]
+hooks:
+  start: scripts/remote_deck.py:start
+  stop: scripts/remote_deck.py:stop
+caps:
+  remote.state:
+    doc: "What the Deck's remote shows and holds: app (whether the app is open), screen, tab, profile (the one picked) with its routes, last (the last key, its route), profiles (how many), version."
+    risk: read
+    scope: local
+    idempotent: true
+    run: scripts/remote_deck.py:state
+  remote.press:
+    doc: "Press a key as if on the Deck: with the app open it does what the key does there (the menu, the game, the conversation, or the picked profile's action); with it closed, the picked profile's action. Answers via (ir, lan, cap, rook, none, hub)."
+    risk: write
+    scope: local
+    args:
+      button: { type: str, required: true, pattern: "^[a-z0-9_]{1,24}$" }
+    run: scripts/remote_deck.py:press
+  remote.ir:
+    doc: "The Deck's device profiles, as the firmware remote's remote.ir profile actions (the same JSON): profiles lists them (name, link, icon, keys, lan_keys, cap_keys, rook_keys, ir_keys); profile_save makes or changes name (keys: key -> {rook: true} | {cap, worker, args} | {lan: true | key} | an IR code (kept, unavailable: no IR LED) | null to take it out; link: roku@address or webos@address, blank none; icon; merge); profile_delete, profile_rename (to), profile_select, profile_release; profile_send does key of name (blank: the picked one). send and pin answer that the Deck has no IR."
+    risk: write
+    scope: local
+    args:
+      action: { type: str, enum: [status, profiles, profile_save, profile_delete, profile_rename, profile_select, profile_release, profile_send, send, pin], default: status }
+      name: { type: str, max: 20 }
+      to: { type: str, max: 20, doc: "For profile_rename: the new name." }
+      link: { type: str, max: 60, doc: "For profile_save: the device keys with no action (and lan actions) go to: roku@address or webos@address (blank: none; left out: as it was)." }
+      keys: { type: json, doc: "For profile_save: key name -> action, or null." }
+      merge: { type: bool, default: true }
+      icon: { type: str, max: 20, doc: "For profile_save: tv, projector, speaker, streaming, light, phone, car, game or generic (blank: none)." }
+      key: { type: str, max: 24, doc: "For profile_send." }
+      list: { type: bool, default: false }
+    run: scripts/remote_deck.py:ir
+  remote.chat:
+    doc: "The conversation with the house agent on the Deck's Assistant tab: text adds a message said by who (you, agent, note) and brings the conversation up; status sets the line under it; clear empties it."
+    risk: write
+    scope: local
+    args:
+      text: { type: str, max: 4000 }
+      who: { type: str, enum: [you, agent, note], default: agent }
+      status: { type: str, max: 120 }
+      clear: { type: bool, default: false }
+    run: scripts/remote_deck.py:chat
+  remote.display:
+    doc: Show text on the Deck's remote screen for seconds (0 until replaced).
+    risk: write
+    scope: local
+    args:
+      text: { type: str, required: true, max: 2000 }
+      seconds: { type: int, default: 0, min: 0, max: 86400 }
+    run: scripts/remote_deck.py:display
+emits:
+  remote.button:
+    doc: "A key was pressed on the Deck (its buttons, or the app's touch keys), as the firmware remote's remote.button: profile and button for the hub's jobs; via what the key did (ir is never sent from a Deck: unavailable), call a cap action's call."
+    payload:
+      button: { type: str, required: true }
+      action: { type: str, required: true }
+      index: { type: int }
+      held_ms: { type: int }
+      target: { type: str }
+      local: { type: bool }
+      profile: { type: str }
+      via: { type: str }
+      call: { type: map }
+      source: { type: str, doc: "deck." }
+  remote.voice:
+    doc: Someone finished saying something on the Deck's Assistant tab; the audio came before it in remote.voice.part events with the same id (as the firmware remote sends it).
+    payload:
+      id: { type: str, required: true }
+      parts: { type: int, required: true }
+      bytes: { type: int }
+      codec: { type: str }
+      worker: { type: str }
+      ms: { type: int }
+  remote.voice.part:
+    doc: A piece of what is being said (see remote.voice).
+    payload:
+      id: { type: str, required: true }
+      seq: { type: int, required: true }
+      data: { type: str, required: true }
+docs: { manual: docs/manual.md }
