@@ -146,19 +146,19 @@ class Controls(unittest.TestCase):
 class Menus(unittest.TestCase):
     def test_main_menu(self):
         bk = make()
-        self.assertEqual(bk.menu_count(), 5)
+        self.assertEqual(bk.menu_count(), 6)            # 4 modes (BAKETRIS too), settings, controls
         bk.pad_down("dpdown")
         bk.pad_down("a")
         self.assertEqual((bk.state, bk.mode), (B.S_READY, G.SPRINT))
 
     def test_controls_screen_and_back(self):
         bk = make()
-        bk.sel = 4
+        bk.sel = 5
         bk.pad_down("a")
         self.assertEqual(bk.state, B.S_CONTROLS)
         bk.draw(pygame.display.get_surface())
         bk.pad_down("b")
-        self.assertEqual((bk.state, bk.sel), (B.S_MENU, 4))
+        self.assertEqual((bk.state, bk.sel), (B.S_MENU, 5))
 
     def test_b_on_the_menu_leaves(self):
         bk = make()
@@ -167,7 +167,7 @@ class Menus(unittest.TestCase):
 
     def test_settings_change_and_persist(self):
         bk = make()
-        bk.sel = 3
+        bk.sel = 4
         bk.pad_down("a")
         self.assertEqual(bk.state, B.S_SETTINGS)
         for row, d in ((2, 1), (4, -1), (9, 1), (10, 1), (11, -1), (8, 1), (7, 0), (3, 1)):

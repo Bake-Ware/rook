@@ -22,6 +22,7 @@ import pygame
 
 from ..paths import data_dir
 from . import audio as A
+from . import blast
 from . import rules as G
 
 S_MENU, S_SETTINGS, S_READY, S_PLAY, S_PAUSE, S_OVER, S_CONTROLS = range(7)
@@ -55,7 +56,9 @@ SDF_L = ["5x", "10x", "20x", "40x", "INSTANT"]
 ARRS = [0, 8, 16, 25, 33, 50, 66, 83, 100]
 SHAKE_L = ["OFF", "LOW", "MAX"]
 SHAKE_M = [0.0, 0.55, 1.0]
-MODE_NAMES = ["MARATHON", "SPRINT 40L", "ULTRA 2:00"]
+MODE_NAMES = ["MARATHON", "SPRINT 40L", "ULTRA 2:00", "BAKETRIS"]
+NMODES = 4
+CHAIN_MAX = 3          # BAKETRIS mode: blasts in a row at most (a settle can fill rows again)
 GREY, ACCENT, GOLD = _c(0xFF7F8AA3), _c(0xFF36D6E7), _c(0xFFF7C948)
 WHITE, BLACK = (255, 255, 255), (0, 0, 0)
 PMAX, WMAX, AMB = 1600, 8, 70
@@ -228,7 +231,7 @@ class Baketris(G.Listener):
         self.ghost = bool(p.get("ghost", True))
         self.sound = bool(p.get("sound", True))
         self.haptics = bool(p.get("haptics", True))
-        self.best = [int(p.get(f"best{i}", 0)) for i in range(3)]
+        self.best = [int(p.get(f"best{i}", 0)) for i in range(NMODES)]
         self.music = self.audio.music
         self.cur_song, self.song_toast_t, self.song_shown = 0, 0.0, -1
         self.previewing = False
@@ -283,7 +286,7 @@ class Baketris(G.Listener):
         p = {"das": self.das, "arr": self.arr_idx, "sdf": self.sdf_idx, "shake": self.shake_lvl, "drag": self.drag_spd,
              "skin": self.skin, "song": self.music_sel, "pad": self.pad_mode, "updrop": self.up_drop,
              "ghost": self.ghost, "sound": self.sound, "haptics": self.haptics}
-        for i in range(3):
+        for i in range(NMODES):
             p[f"best{i}"] = self.best[i]
         try:
             tmp = self.prefs_path.with_name(self.prefs_path.name + ".tmp")
@@ -506,7 +509,12 @@ class Baketris(G.Listener):
     # -- game flow ---------------------------------------------------------------------
     def start_game(self, m: int) -> None:
         self.mode = m
-        self.game.reset(m, self._seed())
+        self.seed = self._seed()
+        self.game.reset(m, self.seed)
+        self.blast = None             # BAKETRIS mode: the blast flying (blast.Blast), and what waits for it
+        self.blast_pending = None
+        self.stash = None
+        self.chain = 0
         self.clear_inputs()
         self.state = S_READY
         self.ready_t = 1300.0
@@ -583,7 +591,9 @@ class Baketris(G.Listener):
                 if self.music_sel != MUSIC_OFF:
                     self.music.play()
         elif self.state == S_PLAY:
-            if self.hitstop_t > 0:
+            if self.blast is not None or self.blast_pending is not None:
+                self.tick_blast(dt)
+            elif self.hitstop_t > 0:
                 self.hitstop_t -= dt
             else:
                 self.tick_das(dt)
@@ -593,7 +603,7 @@ class Baketris(G.Listener):
                 self.song_shown = cs
                 if self.music_sel != MUSIC_OFF:
                     self.song_toast_t = 2600.0
-            target = 1 + (min(0.4, (g.level - 1) * 0.028) if self.mode == G.MARATHON else 0) + (0.07 if self.danger else 0)
+            target = 1 + (min(0.4, (g.level - 1) * 0.028) if self.mode in (G.MARATHON, G.BAKETRIS) else 0) + (0.07 if self.danger else 0)
             if abs(target - self.music_rate) > 0.004:
                 self.music_rate = target
                 self.music.set_rate(target)
@@ -662,11 +672,19 @@ class Baketris(G.Listener):
                 self.arr_t = 0.0
                 break
 
+    def blasting(self) -> bool:
+        return getattr(self, "blast", None) is not None or getattr(self, "blast_pending", None) is not None
+
     def press(self, a: int) -> None:
         if a == A_PAUSE:
             self.pause_game()
             return
-        g, play = self.game, self.state == S_PLAY
+        if self.blasting() or self.game.cur < 0:     # the piece is held off while the blast flies
+            if a in (A_LEFT, A_RIGHT, A_SOFT):
+                pass
+            else:
+                return
+        g, play = self.game, self.state == S_PLAY and not self.blasting() and self.game.cur >= 0
         if a == A_LEFT:
             self.left_held, self.last_dir, self.das_t, self.charged = True, -1, 0.0, False
             if play:
@@ -832,6 +850,12 @@ class Baketris(G.Listener):
         """The skin's particle sprites, made ahead (a frame's spare time at a time: update()),
         so the first quad doesn't stall on making hundreds of them."""
         skin = self.skin
+        for t in range(7):                            # the BAKETRIS mode's flying blocks, at 16 angles
+            for q in range(16):
+                key = ("rot", skin, self.cell, t, q)
+                if key not in self._cache:
+                    self._cache[key] = pygame.transform.rotozoom(self._block(self.cell, t)[0], q * 22.5, 1.0)
+                    yield None
         kind = PART_KIND.get(skin)
         if kind is None:
             return
@@ -1013,6 +1037,8 @@ class Baketris(G.Listener):
         c = self.cell
         if cleared == 4:
             self.kaboom(rows)
+            if self.mode == G.BAKETRIS and self.chain < CHAIN_MAX:
+                self.blast_pending = list(rows)       # after the kaboom's hitstop: everything goes up
         elif cleared > 0:
             self.flash_rows = list(rows[:cleared])
             self.flash_t = 260.0
@@ -1100,6 +1126,60 @@ class Baketris(G.Listener):
             self.audio.play(A.C4, 0.9)
         self.rumble(1.0, 1.0, 450)
 
+    # -- BAKETRIS mode: the blast ------------------------------------------------------
+    def tick_blast(self, dt: float) -> None:
+        """Hold the piece off; once the kaboom's hitstop is over, blow the stack up, fly it
+        two physics steps a frame, then land it, clear what it filled, and give the piece back."""
+        g = self.game
+        if self.blast is None:
+            if self.hitstop_t > 0:
+                self.hitstop_t -= dt
+                return
+            rows, self.blast_pending = self.blast_pending, None
+            if self.stash is None and g.cur >= 0:
+                self.stash = (g.cur, g.rot, g.px, g.py)
+                g.cur = -1
+            self.chain += 1
+            self.blast = blast.Blast(g.grid, rows, (self.seed, g.pieces, self.chain))
+            self.add_trauma(0.5)
+            if self.sound:
+                self.audio.play(A.HARD, 1.0, 0.8)
+            return
+        self.blast.step()
+        self.blast.step()
+        if not self.blast.done:
+            return
+        g.grid = self.blast.grid
+        self.blast = None
+        self.add_trauma(0.25)
+        n = blast.settle_clear(g)                 # may set blast_pending again: a chain
+        if self.blast_pending is not None:
+            return
+        self.chain = 0
+        if self.stash is not None:
+            g.cur, g.rot, g.px, g.py = self.stash
+            self.stash = None
+            g.grav_acc = g.lock_timer = 0.0
+            if not g.fits(g.cur, g.rot, g.px, g.py):
+                g._finish(False)                     # the landing buried where the piece comes in
+        del n
+
+    def draw_blast(self, s, bx, by) -> None:
+        c = self.cell
+        top = by + (G.VIS - 1) * c
+        for b in self.blast.bodies:
+            t = b.col - 1
+            q = int(b.ang / (2 * math.pi) * 16) % 16
+            key = ("rot", self.skin, c, t, q)
+            spr = self._cache.get(key)
+            if spr is None:
+                base, m = self._block(c, t)
+                spr = pygame.transform.rotozoom(base, q * 22.5, 1.0)
+                self._cache[key] = spr
+            x = bx + (b.x + 0.5) * c
+            y = top - b.y * c + c / 2
+            s.blit(spr, spr.get_rect(center=(round(x), round(y))))
+
     def on_end(self, win):
         self.state, self.sel, self.menu_down, self.over_t = S_OVER, 0, -1, 0.0
         self.clear_inputs()
@@ -1133,7 +1213,7 @@ class Baketris(G.Listener):
 
     # -- input ----------------------------------------------------------------------------
     def menu_count(self) -> int:
-        return {S_MENU: 5, S_SETTINGS: 13, S_PAUSE: 3, S_OVER: 2, S_CONTROLS: 1}.get(self.state, 0)
+        return {S_MENU: NMODES + 2, S_SETTINGS: 13, S_PAUSE: 3, S_OVER: 2, S_CONTROLS: 1}.get(self.state, 0)
 
     def pad_down(self, b: str) -> None:
         """A controller button (the app's names: a, b, x, y, dpup, ..., leftshoulder, start, back)."""
@@ -1216,7 +1296,7 @@ class Baketris(G.Listener):
         elif self.state == S_SETTINGS:
             self.leave_settings()
         elif self.state == S_CONTROLS:
-            self.state, self.sel = S_MENU, 4
+            self.state, self.sel = S_MENU, NMODES + 1
         elif self.state == S_PAUSE:
             self.resume_game()
         elif self.state == S_OVER:
@@ -1337,7 +1417,7 @@ class Baketris(G.Listener):
             for q in self.ptrs:
                 if q["id"] == pid:
                     self.drag_move(q, x, y)
-                    if q["tap"] and not q["swiped"]:
+                    if q["tap"] and not q["swiped"] and not self.blasting() and self.game.cur >= 0:
                         self.game.rotate(1)
                     self.ptrs.remove(q)
                     break
@@ -1350,6 +1430,9 @@ class Baketris(G.Listener):
     def drag_move(self, q, x, y) -> None:
         """The piece follows the finger column for column; a mostly vertical stroke is a swipe (up hold, down drop)."""
         d = DENSITY
+        if self.blasting() or self.game.cur < 0:
+            q["tap"] = False
+            return
         if math.hypot(x - q["x0"], y - q["y0"]) > 12 * d:
             q["tap"] = False
         if not q["primary"] or q["swiped"]:
@@ -1391,16 +1474,16 @@ class Baketris(G.Listener):
         return -1
 
     def leave_settings(self) -> None:
-        self.state, self.sel = S_MENU, 3
+        self.state, self.sel = S_MENU, NMODES
         if self.previewing:
             self.music.pause()
             self.previewing = False
 
     def activate(self, i: int, x: float) -> None:
         if self.state == S_MENU:
-            if i < 3:
+            if i < NMODES:
                 self.start_game(i)
-            elif i == 3:
+            elif i == NMODES:
                 self.state, self.sel = S_SETTINGS, 0
             else:
                 self.state, self.sel = S_CONTROLS, 0
@@ -1413,7 +1496,7 @@ class Baketris(G.Listener):
                     d = -1 if x < self.menu_rects[i].centerx else 1
                 self.adjust(i, d)
         elif self.state == S_CONTROLS:
-            self.state, self.sel = S_MENU, 4
+            self.state, self.sel = S_MENU, NMODES + 1
         elif self.state == S_PAUSE:
             if i == 0:
                 self.resume_game()
@@ -1562,6 +1645,8 @@ class Baketris(G.Listener):
                     self.block(s, bx + (g.px + q[0]) * c, row_y(r), c, g.cur, alpha)
         if self.flash_t > 0:
             self.draw_flash(s, bx, row_y)
+        if getattr(self, "blast", None) is not None:
+            self.draw_blast(s, bx, by)
         self.draw_particles(s, ox, oy)
         if self.action_t > 0:
             a = 255 * min(1.0, self.action_t / 450)
@@ -1696,7 +1781,7 @@ class Baketris(G.Listener):
             cy = nb[1] + mc * 0.3 + mc * 3 * (i + 0.5)
             self.mini(s, g.queue[i], (nb[0] + nb[2]) / 2, cy, mc if i == 0 else mc * 0.86, 255)
         x, y = hb[0], self.stats_top + oy
-        if self.mode == G.MARATHON:
+        if self.mode in (G.MARATHON, G.BAKETRIS):
             y = self.stat(s, "SCORE", fmt_num(g.score), x, y)
             y = self.stat(s, "LEVEL", str(g.level), x, y)
             self.stat(s, "LINES", str(g.lines), x, y)
@@ -1752,7 +1837,7 @@ class Baketris(G.Listener):
                     ("BEST", "--" if self.best[1] == 0 else fmt_time(self.best[1]))]
         else:
             rows = [("SCORE", fmt_num(g.score)), ("LINES", str(g.lines))]
-            if m == G.MARATHON:
+            if m in (G.MARATHON, G.BAKETRIS):
                 rows.append(("LEVEL", str(g.level)))
             rows += [("TIME", fmt_time(g.time_ms)), ("PPS", self.pps()), ("BEST", fmt_num(self.best[m]))]
         rs, y, w = min(vw * 0.055, vh * 0.032), vh * 0.3, min(vw * 0.7, 380 * DENSITY)
@@ -1782,8 +1867,9 @@ class Baketris(G.Listener):
             self.mini(s, t, gx + t * 4.6 * sz, ty + ts * 0.9, sz, 220)
         b = self.best
         subs = [f"BEST {fmt_num(b[0])}" if b[0] else "150 LINES", f"BEST {fmt_time(b[1])}" if b[1] else "RACE",
-                f"BEST {fmt_num(b[2])}" if b[2] else "SCORE ATTACK", None, None]
-        self.draw_items(s, MODE_NAMES + ["SETTINGS", "CONTROLS"], subs, -1, 0.9)
+                f"BEST {fmt_num(b[2])}" if b[2] else "SCORE ATTACK",
+                f"BEST {fmt_num(b[3])}" if b[3] else "4 LINES BLOW UP", None, None]
+        self.draw_items(s, MODE_NAMES + ["SETTINGS", "CONTROLS"], subs, ty + ts * 1.55, 0.9)
         hs = min(vw * 0.034, vh * 0.02)
         hints = ["d-pad / stick move  ·  up or R2 drop  ·  down soft  ·  A / B rotate  ·  Y 180",
                  "X / L1 / R1 / L2 hold  ·  START pause  ·  B back to the Rook remote"]

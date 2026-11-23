@@ -11,6 +11,7 @@ from __future__ import annotations
 W, H, VIS = 10, 40, 20
 I, O, T, S, Z, J, L = range(7)
 MARATHON, SPRINT, ULTRA = 0, 1, 2
+BAKETRIS = 3          # the Deck's own mode: Marathon's levels, no line limit (the 4-line blast is the screen's)
 LOCK_MS = 500.0
 LOCK_RESETS = 15
 SPRINT_LINES, MARATHON_LINES = 40, 150
@@ -379,7 +380,7 @@ class Game:
                 p = 3200
             self.score += p * self.level
         self.lines += cleared
-        if self.mode == MARATHON:
+        if self.mode in (MARATHON, BAKETRIS):
             self.level = min(self.lines // 10 + 1, 20)
         if self.listener:
             self.listener.on_lock(cleared, rows[:cleared], spin, b2b_bonus, self.combo, pc, self.hard_lock)
