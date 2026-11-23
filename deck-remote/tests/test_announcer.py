@@ -110,3 +110,79 @@ class Queue(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Robust(unittest.TestCase):
+    """Bake heard no voice on the Deck: on when an older settings file doesn't say, a TEST
+    VOICE row, the music dipping under a call, calls in every mode, a word when clips fail."""
+
+    def test_on_when_an_old_settings_file_does_not_say(self):
+        import json
+        p = Path(tempfile.mkdtemp()) / "baketris.json"
+        p.write_text(json.dumps({"das": 150, "skin": 2, "sound": True}))       # from before the announcer
+        bk = B.Baketris(prefs_path=p)
+        self.assertTrue(bk.announcer)
+        self.assertEqual(bk.ann_vol, 4)
+        self.assertTrue(bk.energy_on)
+
+    def test_test_row_speaks_even_when_off(self):
+        bk = B.Baketris(prefs_path=Path(tempfile.mkdtemp()) / "p.json")
+        said = []
+        bk.audio.announce = lambda names, vol: said.append([n for n in names if n])
+        bk.announcer = False
+        bk.state, bk.sel = B.S_SETTINGS, B.SETTINGS_ROWS.index("TEST VOICE")
+        bk.pad_down("a")
+        bk.pad_down("a")
+        self.assertEqual(said, [list(B.TEST_CALLS[0]), list(B.TEST_CALLS[1])])
+        bk.draw(pygame.display.get_surface())
+
+    def test_every_mode_calls(self):
+        for mode in (G.MARATHON, G.SPRINT, G.ULTRA, G.BAKETRIS):
+            bk = B.Baketris(prefs_path=Path(tempfile.mkdtemp()) / "p.json")
+            said = []
+            bk.audio.announce = lambda names, vol, said=said: said.append(names)
+            bk.start_game(mode)
+            bk.on_lock(2, [0, 1], 0, False, 0, False, True)
+            self.assertTrue(said, mode)
+
+    def test_music_dips_under_a_call(self):
+        bk = B.Baketris(prefs_path=Path(tempfile.mkdtemp()) / "p.json")
+        vols = []
+        bk.music.set_volume = vols.append
+        bk.audio.speaking = lambda: True
+        bk.music_level(16)
+        bk.audio.speaking = lambda: False
+        bk.music_level(16)
+        self.assertLess(vols[0], vols[1] * 0.7)
+
+    def test_missing_clips_are_said(self):
+        import io
+        a = A.Audio()
+        if not a.ok:
+            self.skipTest("no mixer")
+        a.jobs.stop()
+        err = io.StringIO()
+        old, sys.stderr = sys.stderr, err
+        real = A.Path
+        try:
+            class P(type(Path())):
+                def glob(self, pat):
+                    return iter([Path("/nonexistent/broken.ogg")]) if pat == "*.ogg" else super().glob(pat)
+            A.Path = P
+            a.load_announcer()
+            end = time.time() + 3
+            while "did not load" not in err.getvalue() and time.time() < end:
+                time.sleep(0.02)
+        finally:
+            A.Path = real
+            sys.stderr = old
+        self.assertIn("announcer clip broken.ogg did not load", err.getvalue())
+
+
+class Build(unittest.TestCase):
+    def test_build_names_version_and_commit(self):
+        import rookmote
+        b = rookmote.build()
+        self.assertTrue(b.startswith(rookmote.VERSION))
+        self.assertEqual((HERE.parent / ".gitattributes").read_text().strip(), "rookmote/BUILD export-subst")
+        self.assertIn(b, B.BUILD)

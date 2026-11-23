@@ -20,7 +20,7 @@ os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import pygame  # noqa: E402
 
-from . import VERSION, bridge, draw as D, keys as K, lan, router, voice  # noqa: E402
+from . import VERSION, bridge, build, draw as D, keys as K, lan, router, voice  # noqa: E402
 from .profiles import ICONS, ProfileError, Store, routes  # noqa: E402
 
 W, H = 1280, 800
@@ -327,7 +327,7 @@ class App:
                 self.modal = ("keymap", {})
             elif what == "About":
                 self.modal = ("text", {"title": "About", "lines": [
-                    f"Rook remote for the Steam Deck {VERSION}",
+                    f"Rook remote for the Steam Deck {build()}",
                     "The firmware remote's structure, the Deck's buttons and touch.",
                     "Left out (the OS does them, or a Deck has none): IR, Wi-Fi setup,",
                     "updates over the air, Bluetooth pairing, sleep, the button learner."]})

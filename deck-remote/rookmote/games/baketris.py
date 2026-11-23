@@ -22,6 +22,7 @@ import pygame
 
 from ..paths import data_dir
 from . import audio as A
+from .. import build as _build
 from . import blast
 from .energy import NAMES as ENERGY_NAMES
 from .energy import Energy
@@ -61,7 +62,10 @@ SHAKE_M = [0.0, 0.55, 1.0]
 MODE_NAMES = ["MARATHON", "SPRINT 40L", "ULTRA 2:00", "BAKETRIS"]
 NMODES = 4
 SETTINGS_ROWS = ["CONTROLS", "D-PAD UP", "SKIN", "MUSIC", "SCREEN SHAKE", "SOUND", "HAPTICS", "GHOST", "DRAG SPEED",
-                 "DAS (PAD)", "ARR (PAD)", "SOFT DROP (PAD)", "ANNOUNCER", "ANNOUNCER VOLUME", "ENERGY", "BACK"]
+                 "DAS (PAD)", "ARR (PAD)", "SOFT DROP (PAD)", "ANNOUNCER", "ANNOUNCER VOLUME", "TEST VOICE", "ENERGY", "BACK"]
+BUILD = _build()
+TEST_CALLS = [("baketris",), ("triple", "combo"), ("tspin", "backtoback"), ("double", "megacombo"),
+              ("single",), ("allclear",), ("blast",)]
 HEAT_COL = [(54, 214, 231), (54, 214, 231), (247, 201, 72), (255, 92, 60)]       # the energy steps' colours
 CHAIN_MAX = 2          # BAKETRIS mode: blasts in a row at most (a settle can fill rows again): ~3 s at worst
 GREY, ACCENT, GOLD = _c(0xFF7F8AA3), _c(0xFF36D6E7), _c(0xFFF7C948)
@@ -1639,16 +1643,20 @@ class Baketris(G.Listener):
             self.arr_idx = clamp(self.arr_idx + d, 0, len(ARRS) - 1)
         elif i == 11:
             self.sdf_idx = clamp(self.sdf_idx + d, 0, len(SDF) - 1)
-        elif i == 12:
+        elif SETTINGS_ROWS[i] == "ANNOUNCER":
             self.announcer = not self.announcer
             if self.announcer:
                 self.say("baketris")
-        elif i == 14:
-            self.energy_on = not self.energy_on
-            self.energy.reset()
-        elif i == 13:
+        elif SETTINGS_ROWS[i] == "ANNOUNCER VOLUME":
             self.ann_vol = clamp(self.ann_vol + d, 1, 4)
             self.say("single", force=True)
+        elif SETTINGS_ROWS[i] == "TEST VOICE":
+            self.test_call = (getattr(self, "test_call", -1) + 1) % len(TEST_CALLS)
+            self.say(*TEST_CALLS[self.test_call], force=True)
+            return
+        elif SETTINGS_ROWS[i] == "ENERGY":
+            self.energy_on = not self.energy_on
+            self.energy.reset()
         else:
             return
         self._save_prefs()
@@ -2002,6 +2010,7 @@ class Baketris(G.Listener):
                  "X / L1 / R1 / L2 hold  ·  START pause  ·  B back to the Rook remote"]
         for i, h in enumerate(hints):
             self._text_c(s, h, vw / 2, vh - hs * (2.0 + 1.8 * (len(hints) - 1 - i)), hs, GREY, "center", 255)
+        self._text_c(s, f"build {BUILD}", 16, 30, hs * 0.9, GREY, "left", 200)
         r = pygame.Rect(vw - 70, 14, 52, 44)                       # close: back to the remote (touch)
         pygame.draw.rect(s, _c(0xFF121725), r, 0, border_radius=10)
         pygame.draw.line(s, GREY, (r.x + 16, r.y + 12), (r.right - 16, r.bottom - 12), 4)
@@ -2021,6 +2030,7 @@ class Baketris(G.Listener):
                 lr(f"{self.drag_spd / 10:.1f}x"), lr(f"{self.das} ms"),
                 lr("INSTANT" if ARRS[self.arr_idx] == 0 else f"{ARRS[self.arr_idx]} ms"), lr(SDF_L[self.sdf_idx]),
                 "ON" if self.announcer else "OFF", lr(f"{self.ann_vol * 25}%"),
+                self.audio.voice_state(),
                 "ON" if self.energy_on else "OFF", None]
         self.draw_items(s, labels, vals, vh * 0.1, 0.78, self.sh_x, self.sh_y)
         bs = round(min(vw / 16, vh / 40))

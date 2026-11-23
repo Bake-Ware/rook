@@ -82,6 +82,15 @@ the rest) into `~/.cache/rookmote/baketris-audio-1/`, and the game plays
 from memory. Until a sound is cached it is silent. The cache can be deleted
 at any time; it is made again.
 
+## Which build is running
+
+`rookmote/__init__.py`'s VERSION goes up with every commit that changes the
+app, and `rookmote/BUILD` becomes the short commit when the tree is installed
+from `git archive` (export-subst, `.gitattributes`); both show on Settings >
+About and at the top left of Baketris's menu, e.g. `0.2.3 (4ae904d6)`. A
+running app keeps the code it started with: quit it and start it again after
+an install.
+
 ## Buttons
 
 On Home the Deck's buttons are the remote's keys (shown on screen; every key

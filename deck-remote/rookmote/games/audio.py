@@ -386,17 +386,31 @@ class Audio:
 
         def run():
             d = Path(__file__).resolve().parent / "announcer"
-            for f in sorted(d.glob("*.ogg")):
+            files = sorted(d.glob("*.ogg"))
+            for f in files:
                 try:
                     self.voice[f.stem] = self.pg.mixer.Sound(str(f))
                 except Exception as e:
-                    sys.stderr.write(f"baketris announcer {f.name}: {e}\n")
+                    sys.stderr.write(f"baketris: announcer clip {f.name} did not load: {e}\n")
+            if not files:
+                sys.stderr.write(f"baketris: no announcer clips in {d}\n")
         threading.Thread(target=run, name="baketris-voice", daemon=True).start()
+
+    def voice_state(self) -> str:
+        """For the settings row: what the announcer can do here."""
+        if not self.ok:
+            return "NO SOUND"
+        v = getattr(self, "voice", None)
+        if v is None:
+            return "PRESS A"
+        return f"PRESS A  ({len(v)} CLIPS)" if v else "NO CLIPS"
 
     def announce(self, names: list, vol: float) -> None:
         """Say these, one after the other (a new call cuts what was queued, not what is being said)."""
-        if not self.ok or getattr(self, "voice", None) is None:
+        if not self.ok:
             return
+        if getattr(self, "voice", None) is None:
+            self.load_announcer()                   # not loaded yet (a game opened some other way): now
         self.voice_vol = vol
         self.voice_q = [n for n in names if n][:3]
 
