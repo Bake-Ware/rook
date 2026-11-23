@@ -6,5 +6,6 @@
 #include <cstdlib>
 #include <cmath>
 #include <algorithm>
+#define PROGMEM
 extern uint32_t host_ms;
 inline uint32_t millis() { return host_ms; }

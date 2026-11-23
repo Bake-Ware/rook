@@ -20,6 +20,9 @@ public:
     template <typename... A> void setTextColor(A...) {}
     template <typename... A> void setCursor(A...) {}
     template <typename... A> void print(A...) {}
+    template <typename... A> void drawBitmap(A...) {}
+    template <typename... A> void setRotation(A...) {}
+    uint8_t getRotation() { return 0; }
     int16_t width() { return 128; }
     int16_t height() { return 64; }
 };

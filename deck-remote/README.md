@@ -16,6 +16,11 @@ driven by its buttons and touchscreen, minus IR.
   `sfx.py`, `music.py`, `audio.py`) is the Android Baketris (/home/bake/baketris)
   ported: Game.java's rules, GameView's skins, effects, menus, settings and
   controller mapping, Sfx.java's and Music.java's synthesized sound.
+  2048, Towers and Swarm (`g2048.py`, `towers.py`, `swarm.py`, sharing
+  `mini.py`) are the remote's own games, their rules ported from
+  firmware-remote/src and held to it (`tests/test_minigames.py` compiles the
+  firmware's .cpp on the host, stub headers in `tests/fwhost`). Bests are in
+  `~/.local/share/rookmote/games.json`.
 - `install.sh` / `uninstall.sh`: run on the Deck as user `deck`.
 - `tests/`: `test_core.py` (store, router, socket, plugin), `render_screens.py`
   (every screen to PNG, headless); `test_baketris_rules.py` and

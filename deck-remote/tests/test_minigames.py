@@ -23,7 +23,7 @@ sys.path.insert(0, str(HERE.parent))
 
 import pygame  # noqa: E402
 
-from rookmote.games import g2048, towers  # noqa: E402
+from rookmote.games import g2048, swarm, towers  # noqa: E402
 
 HARNESS = r'''
 #include "%(src)s"
@@ -170,6 +170,50 @@ class AgainstTowers(unittest.TestCase):
         self.assertEqual(int(last[2]), 2)           # gone in the second wave
 
 
+@unittest.skipUnless(shutil.which("g++") and FW.is_dir(), "needs g++ and firmware-remote/src")
+class AgainstSwarm(unittest.TestCase):
+    DUMP = r'''std::cout << " | " << ship_x << ' ' << lives << ' ' << stage << ' ' << sway << ' ' << enter_y << ' '
+            << frame << ' ' << fire_wait << ' ' << next_step << ' ' << dead_until << ' ' << safe_until << ' '
+            << clear_at << ' ' << next_dive << ' ' << over << paused << " |";
+        for (auto& f : foes) std::cout << ' ' << (int)f.state << ',' << (int)f.hp << ',' << f.x << ',' << f.y << ',' << f.vx;
+        std::cout << " |";
+        for (auto& x : shots) std::cout << ' ' << x.on << ',' << x.x << ',' << x.y;
+        for (auto& x : bombs) std::cout << ' ' << x.on << ',' << x.x << ',' << x.y;
+        for (auto& x : booms) std::cout << ' ' << x.x << ',' << x.y << ',' << (int)x.t;
+        for (int i = 0; i < 12; i++) std::cout << ' ' << (int)star_x[i] << ',' << (int)star_y[i];'''
+
+    @staticmethod
+    def py(seed, sc):
+        r = swarm.Rules(Lcg(seed))
+        r.start(1)
+        out = []
+        for ms, k in sc:
+            ch = r.tick(ms, k)
+            line = (f"{int(ch)} {int(r.quit())} {r.score()} | {r.ship_x} {r.lives} {r.stage} {r.sway} {r.enter_y} "
+                    f"{r.frame} {r.fire_wait} {r.next_step} {r.dead_until} {r.safe_until} {r.clear_at} {r.next_dive} "
+                    f"{int(r.over)}{int(r.paused)} |")
+            line += "".join(f" {f.state},{f.hp},{f.x},{f.y},{f.vx}" for f in r.foes) + " |"
+            line += "".join(f" {int(a)},{b},{c}" for a, b, c in r.shots + r.bombs)
+            line += "".join(f" {a},{b},{c}" for a, b, c in r.booms)
+            line += "".join(f" {r.star_x[i]},{r.star_y[i]}" for i in range(12))
+            out.append(line)
+        return out
+
+    def test_same_as_firmware(self):
+        # moving and firing mostly, pauses now and then; long enough for stages, deaths and game over
+        bits = [1 | 16, 2 | 16, 16, 16, 1, 2, 8, 0, 1 | 16, 2 | 16, 4 | 16, 128 | 2]
+        for seed in (3, 21, 777):
+            sc = script(seed, 30000, bits, step=(16, 17, 33, 34))
+            sc = [(ms, k | (32 if i % 4000 == 3999 else 0)) for i, (ms, k) in enumerate(sc)]
+            want = run_firmware("swarm.cpp", "swarm", self.DUMP, seed, sc)
+            got = self.py(seed, sc)
+            self.assertEqual(len(want), len(got))
+            for i, (a, b) in enumerate(zip(want, got)):
+                self.assertEqual(a, b, f"seed {seed}, tick {i}")
+            stages = {int(l.split("|")[1].split()[2]) for l in got}
+            self.assertGreater(max(stages), 1, "the script clears a stage")
+
+
 class Screen2048(unittest.TestCase):
     def test_play_draw_best_and_leave(self):
         pygame.init()
@@ -221,6 +265,26 @@ class ScreenTowers(unittest.TestCase):
         g.update(16)
         self.assertEqual(g.g.gold, 7)
         g.pad_up("x")
+        g.pad_down("b")
+        g.update(16)
+        self.assertTrue(g.done)
+
+
+class ScreenSwarm(unittest.TestCase):
+    def test_touch_moves_and_fires_then_leave(self):
+        pygame.init()
+        s = pygame.display.set_mode((1280, 800))
+        from rookmote.games import mini
+        g = swarm.SwarmGame(bests=mini.Bests(Path(tempfile.mkdtemp()) / "games.json"), rand=Lcg(9))
+        g.update(16)
+        x0 = g.g.ship_x
+        g.touch_down(1, g.ox + 2 * swarm.S, 700)         # a finger at the far left
+        for _ in range(30):
+            g.update(34)
+        self.assertLess(g.g.ship_x, x0)
+        self.assertTrue(any(on for on, _, _ in g.g.shots) or g.g.fire_wait > 0)
+        g.touch_up(1, 0, 0)
+        g.draw(s)
         g.pad_down("b")
         g.update(16)
         self.assertTrue(g.done)
