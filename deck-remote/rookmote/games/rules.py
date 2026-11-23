@@ -73,6 +73,12 @@ class JavaRandom:
             if bits - val + (bound - 1) < (1 << 31):    # Java's int overflow test
                 return val
 
+    def next_double(self) -> float:
+        return ((self._next(26) << 27) + self._next(27)) * (1.0 / (1 << 53))
+
+    def next_boolean(self) -> bool:
+        return self._next(1) != 0
+
 
 class Listener:
     """What the view hears (Game.Listener)."""

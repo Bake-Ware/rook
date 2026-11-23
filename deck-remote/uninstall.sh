@@ -5,6 +5,7 @@
 set -eu
 DEST=${ROOKMOTE_HOME:-$HOME/.local/share/rookmote}
 rm -rf "$DEST/app" "$DEST/plugin" "$DEST/venv" "$DEST/rookmote.sh"
+rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/rookmote"      # Baketris's synthesized sound: made again when needed
 if [ "${1:-}" = "--data" ]; then
     rm -rf "$DEST"
     echo "removed $DEST (profiles and settings too)"

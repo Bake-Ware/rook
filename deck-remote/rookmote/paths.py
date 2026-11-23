@@ -14,6 +14,14 @@ def data_dir() -> Path:
     return d
 
 
+def cache_dir() -> Path:
+    """~/.cache/rookmote: what can be made again (the games' synthesized sound)."""
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    d = Path(base) / "rookmote"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def socket_path() -> Path:
     """The plugin's socket, which the app connects to (the worker runs as a
     user service and the app in the user's session: both see XDG_RUNTIME_DIR)."""

@@ -87,8 +87,11 @@ class App:
         self.quit = False
         self.trigger_down = {"lefttrigger": False, "righttrigger": False}
         self.controllers = []
+        self.stick = [0.0, 0.0]
         self.client = None if headless else bridge.Client(self._from_plugin, hello={"version": VERSION})
         self.inbox = []
+        self.game = None                  # a game on screen (games/): it gets the buttons, the screen, the frames
+        self.audio = None                 # games/audio.Audio, made with the first game
 
     # -- the plugin --------------------------------------------------------------------
 
@@ -124,7 +127,7 @@ class App:
             return
         p = self.store.current()
         self.client.send({"t": "state", "state": {
-            "screen": "remote" if self.tab == 0 else "menu", "tab": TABS[self.tab],
+            "screen": "game" if self.game else "remote" if self.tab == 0 else "menu", "tab": TABS[self.tab],
             "profile": p["name"] if p else None,
             "last": {k: self.last[k] for k in ("key", "via")} if self.last else None}})
 
@@ -225,9 +228,34 @@ class App:
     def tab_games(self, b: str) -> None:
         self._move("Games", len(self.GAMES), b)
         if b == "a":
-            self.say(f"{self.GAMES[self.sel['Games']]} comes in the next update")
+            self.open_game(self.GAMES[self.sel["Games"]])
         elif b == "b":
             self.tab = 0
+
+    def open_game(self, name: str) -> None:
+        if name != "Baketris":
+            self.say(f"{name} comes in the next update")
+            return
+        from .games import audio, baketris
+        if self.audio is None:
+            self.audio = audio.Audio(enabled=not self.headless)
+        self.game = baketris.Baketris((W, H), self.audio, rumble=self._rumble)
+        self.audio.warm(self.game.skin, min(self.game.music_sel, 3))
+        self.held.clear()
+        self.push_state()
+
+    def _rumble(self, low: float, high: float, ms: int) -> None:
+        for c in self.controllers:
+            try:
+                c.rumble(low, high, ms)
+            except Exception:
+                pass
+
+    def close_game(self) -> None:
+        self.game = None
+        self.tab = TABS.index("Games")
+        self.held.clear()
+        self.push_state()
 
     SETTINGS = ["Find devices", "Button map", "About", "Exit"]
 
@@ -373,10 +401,14 @@ class App:
         elif e.type in (pygame.WINDOWFOCUSLOST, getattr(pygame, "WINDOWMINIMIZED", -1)):
             self.focused = False
             self.held.clear()
+            if self.game:
+                self.game.host_pause()
         elif e.type in (pygame.WINDOWFOCUSGAINED, getattr(pygame, "WINDOWRESTORED", -2)):
             self.focused = True
         elif not self.focused:
             return
+        elif self.game:
+            self.handle_game(e)
         elif e.type == pygame.CONTROLLERDEVICEADDED:
             self._open_controllers()
         elif e.type == pygame.CONTROLLERBUTTONDOWN:
@@ -404,6 +436,42 @@ class App:
         elif e.type == pygame.FINGERDOWN:
             self.tap((int(e.x * W), int(e.y * H)))
 
+    def handle_game(self, e: pygame.event.Event) -> None:
+        """A game has the controls: its own mapping (the exit chord, View + Start held, still works)."""
+        g = self.game
+        if e.type == pygame.CONTROLLERDEVICEADDED:
+            self._open_controllers()
+        elif e.type == pygame.CONTROLLERBUTTONDOWN:
+            n = _controller_names().get(e.button)
+            if n and n != "guide":
+                now = time.monotonic()
+                self.held[n] = (now, now)
+                g.pad_down(n)
+        elif e.type == pygame.CONTROLLERBUTTONUP:
+            n = _controller_names().get(e.button)
+            self.held.pop(n, None)
+            if n:
+                g.pad_up(n)
+        elif e.type == pygame.CONTROLLERAXISMOTION:
+            if e.axis in (pygame.CONTROLLER_AXIS_TRIGGERLEFT, pygame.CONTROLLER_AXIS_TRIGGERRIGHT):
+                g.trigger("lefttrigger" if e.axis == pygame.CONTROLLER_AXIS_TRIGGERLEFT else "righttrigger",
+                          e.value > 16384)
+            elif e.axis in (pygame.CONTROLLER_AXIS_LEFTX, pygame.CONTROLLER_AXIS_LEFTY):
+                self.stick[0 if e.axis == pygame.CONTROLLER_AXIS_LEFTX else 1] = max(-1.0, e.value / 32767)
+                g.stick_motion(*self.stick)
+        elif e.type == pygame.KEYDOWN:
+            g.key_down(e.key)
+        elif e.type == pygame.KEYUP:
+            g.key_up(e.key)
+        elif e.type in (pygame.FINGERDOWN, pygame.FINGERMOTION, pygame.FINGERUP):
+            x, y = e.x * W, e.y * H
+            fn = {pygame.FINGERDOWN: g.touch_down, pygame.FINGERMOTION: g.touch_move, pygame.FINGERUP: g.touch_up}[e.type]
+            fn(("finger", e.finger_id), x, y)
+        elif e.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP) and e.button == 1 and not getattr(e, "touch", False):
+            (g.touch_down if e.type == pygame.MOUSEBUTTONDOWN else g.touch_up)("mouse", *e.pos)
+        elif e.type == pygame.MOUSEMOTION and e.buttons[0] and not getattr(e, "touch", False):
+            g.touch_move("mouse", *e.pos)
+
     def down(self, b: str) -> None:
         now = time.monotonic()
         self.held[b] = (now, now + REPEAT_AFTER)
@@ -424,8 +492,8 @@ class App:
         except Exception:
             self.controllers = []
 
-    def step(self) -> None:
-        """Each frame: the plugin's messages, held buttons (repeat, and the exit chord), timers."""
+    def step(self, dt: float = 1000 / 60) -> None:
+        """Each frame: the plugin's messages, held buttons (repeat, and the exit chord), timers; a game's frame."""
         while self.inbox:
             self._handle_plugin(self.inbox.pop(0))
         self.store.reload()
@@ -433,6 +501,11 @@ class App:
         if "back" in self.held and "start" in self.held:
             if now - max(self.held["back"][0], self.held["start"][0]) > HOLD_EXIT_S:
                 self.quit = True
+        if self.game:
+            self.game.update(dt)
+            if self.game.done:
+                self.close_game()
+            return
         if self.tab == 0 and not self.modal:
             for b, (t0, nxt) in list(self.held.items()):
                 k = K.DEFAULT_MAP.get(b)
@@ -450,6 +523,9 @@ class App:
     def render(self) -> None:
         s = self.s
         self.taps = []
+        if self.game:
+            self.game.draw(s)
+            return
         s.fill(D.BG)
         self.draw_top()
         self.draw_tabs()
@@ -841,14 +917,17 @@ def main(argv=None) -> int:
     app = App(screen)
     app._open_controllers()
     clock = pygame.time.Clock()
+    dt = 0.0
     while not app.quit:
         for e in pygame.event.get():
             app.handle(e)
-        app.step()
+        app.step(dt)
         app.render()
         pygame.display.flip()
-        clock.tick(60 if app.focused else 10)
+        dt = clock.tick(60 if app.focused else 10)
     if app.client:
         app.client.close()
+    if app.audio:
+        app.audio.close()
     pygame.quit()
     return 0
