@@ -1,0 +1,5 @@
+{
+  "name": "clipboard-android",
+  "version": "0.1.0",
+  "worker": {"python": {"module": "worker.py"}}
+}

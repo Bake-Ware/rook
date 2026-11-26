@@ -97,7 +97,7 @@ class Rig:
 def test_a_new_hub_has_the_default_plugins_and_a_restart_keeps_them(tmp_path):
     hub = Hub(tmp_path / "hub")
     listed = hub.plugins.list()
-    assert [p["name"] for p in listed] == ["agents", "agents-claude-code", "battery", "file", "net", "shell", "worker"]
+    assert [p["name"] for p in listed] == ["agents", "agents-claude-code", "app-android", "battery", "clipboard-android", "file", "net", "phone", "shell", "sound-android", "worker"]
     assert all(p["worker"] and p["caps"] == [] and not p["site"] for p in listed[1:])   # worker parts only
     assert not listed[0]["worker"] and "agent.chat.send" in listed[0]["caps"]          # but agents: the hub's (HA2)
     assert listed[0]["site"]                                                          # and its site part, the dock (HA1)
@@ -106,7 +106,7 @@ def test_a_new_hub_has_the_default_plugins_and_a_restart_keeps_them(tmp_path):
 
     again = Hub(tmp_path / "hub")                       # present: loaded as installed, nothing reinstalled
     assert {p["name"]: p["guid"] for p in again.plugins.list()} == first
-    assert len(list((tmp_path / "hub" / "plugins").iterdir())) == 7
+    assert len(list((tmp_path / "hub" / "plugins").iterdir())) == 11
     again.close()
 
 
@@ -119,8 +119,10 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     hub.close()
     again = Hub(tmp_path / "hub")
     assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.6.0", "agents-claude-code": "0.2.1",
-                                                                     "battery": "0.1.0", "file": "0.2.0", "net": "0.1.0",
-                                                                     "shell": "9.0.0", "worker": "0.1.0"}
+                                                                     "app-android": "0.1.0", "battery": "0.2.0",
+                                                                     "clipboard-android": "0.1.0", "file": "0.2.0",
+                                                                     "net": "0.1.0", "phone": "0.1.0", "shell": "9.0.0",
+                                                                     "sound-android": "0.1.0", "worker": "0.1.0"}
     again.close()
 
 
@@ -129,7 +131,7 @@ def test_a_data_directory_made_before_the_default_plugins_gets_them_on_its_next_
     (tmp_path / "hub").mkdir()
     sqlite3.connect(tmp_path / "hub" / "hub.db").close()
     hub = Hub(tmp_path / "hub")
-    assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "battery", "file", "net", "shell", "worker"]
+    assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "app-android", "battery", "clipboard-android", "file", "net", "phone", "shell", "sound-android", "worker"]
     hub.close()
 
 
@@ -192,7 +194,7 @@ async def serves(tmp_path):
                 assert record[cap_name]["description"] == cap.description
                 assert record[cap_name]["schema"] == cap.schema
                 assert record[cap_name]["returns"] == ("stream" if cap.opens_stream else "result")
-        assert {p["name"] for p in rig.hub.get_worker(rig.guid)["plugins"]} == {"agents-claude-code", "battery", "file", "net", "shell", "worker"}
+        assert {p["name"] for p in rig.hub.get_worker(rig.guid)["plugins"]} == {"agents-claude-code", "app-android", "battery", "clipboard-android", "file", "net", "phone", "shell", "sound-android", "worker"}
 
         # shell.exec: argv with no shell; cmd in sh, with a pipe; the code; stdin; env; cwd.
         assert await rig.ok("shell.exec", argv=["echo", "a b", "$HOME"]) == \
@@ -427,13 +429,13 @@ async def older_core(tmp_path, monkeypatch):
         made = [r for r in after["records"] if r[3] == "agent"]          # the house agent, made at that start (HA2)
         assert len(made) == 1 and dict(after, records=[r for r in after["records"] if r[3] != "agent"]) == before
         rows = plugin_rows(data)
-        assert len(list((data / "plugins").iterdir())) == 7   # one copy per plugin: shell 0.1.0's is gone
+        assert len(list((data / "plugins").iterdir())) == 11   # one copy per plugin: shell 0.1.0's is gone
 
         # A second start with nothing new changes nothing.
         hub = Hub(data, vault_key_file=key)
         hub.close()
         assert plugin_rows(data) == rows and kept(data) == after
-        assert len(list((data / "plugins").iterdir())) == 7
+        assert len(list((data / "plugins").iterdir())) == 11
     finally:
         worker.stop()
         await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 30)
@@ -622,8 +624,9 @@ async def before_brief_54(tmp_path, monkeypatch):
     host, port = await hub.serve("127.0.0.1", 0)
     alice = hub.auth.create_user("Alice", "a password")["guid"]
     assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-        "agents": "0.6.0", "agents-claude-code": "0.2.1",
-        "battery": "0.1.0", "file": "0.1.0", "net": "0.1.0", "shell": "0.2.0", "worker": "0.1.0"}
+        "agents": "0.6.0", "agents-claude-code": "0.2.1", "app-android": "0.1.0", "battery": "0.2.0",
+        "clipboard-android": "0.1.0", "file": "0.1.0", "net": "0.1.0", "phone": "0.1.0", "shell": "0.2.0",
+        "sound-android": "0.1.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())
     try:
