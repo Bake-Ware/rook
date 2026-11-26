@@ -34,6 +34,25 @@ xterm.js 6.0.0 (npm package @xterm/xterm 6.0.0)
   Source: lib/addon-fit.mjs of the npm package, its sourceMappingURL line removed the same way
   (sha256 aa22c5f28e4d64118ac0e7d60276b3384188e59dd104c96e43760d6e2cedd771)
 
+QR Code generator library 1.8.0 (Project Nayuki)
+  hub/rook_hub/site/vendor/qrcodegen.js
+  Copyright (c) Project Nayuki
+  MIT License: hub/rook_hub/site/vendor/QRCODEGEN-LICENSE.txt
+  Source: typescript-javascript/qrcodegen.ts at tag v1.8.0 of github.com/nayuki/QR-Code-generator
+  (sha256 c4749095a91bf9696e3a303998b9905e467094f53041e64393e65e6d887737fd), its types removed by
+  Node 22's module.stripTypeScriptTypes (mode "transform"), with two lines added at the end that
+  make it an ES module
+
 The rest of rook-scene.js (the background rook scene), rook-logo.png and
 favicon.png are Rook's own, carried over from Rook 0.4 (P10), under the
 licence in LICENSE.
+
+The Android app (android/) bundles these libraries into the APK it builds, fetched by Gradle
+from Maven Central and Google's Maven repository at build time; none is kept in this
+repository. Each is under the Apache License, Version 2.0.
+
+ZXing Android Embedded 4.3.0 (com.journeyapps:zxing-android-embedded), Copyright (C) 2012-2018
+  ZXing authors, Journey Mobile: the address screen's QR scanner
+ZXing core 3.4.1 (com.google.zxing:core), Copyright (C) ZXing authors
+Kotlin standard library 2.1.20 and kotlinx.coroutines 1.8.1, Copyright JetBrains s.r.o. and
+  Kotlin Programming Language contributors

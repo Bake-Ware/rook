@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rook for Android</title>
+<link rel="icon" href="/site/assets/favicon.png">
+<link rel="stylesheet" href="/site/style.css">
+</head>
+<body class="app-page">
+<main class="panel app-box">
+  <div class="brand"><img src="/site/assets/rook-logo.png" alt="" width="30" height="45"><div><b>♜ ROOK</b><small>for Android</small></div></div>
+  <div id="phone-app"></div>
+</main>
+<script type="module">
+import { drawPhoneApp } from '/site/phone-app.js';
+drawPhoneApp(document.getElementById('phone-app'));
+</script>
+</body>
+</html>

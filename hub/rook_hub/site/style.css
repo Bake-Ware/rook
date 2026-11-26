@@ -560,3 +560,13 @@ pre.json .k{color:var(--accent)}pre.json .s{color:var(--good-fg)}pre.json .n{col
 .capline{display:flex;align-items:baseline;gap:8px;padding:3px 0;flex-wrap:wrap}
 .capline code{font-size:11px;color:var(--fg-soft)}
 .capline .note{font-size:11px}
+
+/* ---------- The phone app: /app, Settings > Phone app, the work pane (brief AP1) ---------- */
+.app-page{display:grid;place-items:center;min-height:100%;padding:16px}
+.app-box{display:flex;flex-direction:column;gap:18px;width:min(420px,100%);padding:22px}
+.phone-app{display:flex;flex-direction:column;align-items:flex-start;gap:14px;max-width:420px}
+.phone-app-qr svg{display:block;width:240px;height:240px;max-width:100%}
+.phone-app-get{font-size:13px;padding:10px 16px}
+.phone-app-note{margin:0;color:var(--fg-soft);font-size:13px}
+.phone-app-link{margin:0;color:var(--dim2);font-size:11px;overflow-wrap:anywhere}
+.phone-app-missing{margin:0}
