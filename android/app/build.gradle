@@ -55,4 +55,7 @@ android {
 
 dependencies {
     implementation project(":worker")
+    // The address screen's QR scanner (a build carrying no hub address): ZXing, Apache 2.0.
+    implementation "com.journeyapps:zxing-android-embedded:4.3.0"
+    testImplementation "junit:junit:4.13.2"
 }
