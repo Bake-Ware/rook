@@ -464,15 +464,20 @@ RECORDED = {
     "agents-claude-code": {"0.1.0": "79653aecb79c275eb65a7f1d5d88081c22f33e3f31767d3ef963aa47c26b8eeb",
                            "0.2.0": "8ba8ef43fb7160bc68a51939eb74dd0d074349f965c6e1f52ce15caa88e784e9",   # fork, schema, precompact
                            "0.2.1": "7d348fd4df50731a87406c363072e095badb72d58b24266f9f7fa3a7e2ef0b3a"},  # the hook names itself (User-Agent)
-    "battery": {"0.1.0": "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"},
+    "app-android": {"0.1.0": "186e318f162c98e13f358d4f3bd568c0de8923038b93a987967d3e47e16be06c"},   # the phone's apps (AP2)
+    "battery": {"0.1.0": "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a",
+                "0.2.0": "51134f64c5cc2d0ec08126c0ca81b967deb2010763506f930c791f8c5e0f8a53"},   # the phone's battery (AP2)
+    "clipboard-android": {"0.1.0": "a0f37225aa25fdca13be975ae5f9921f2cf0c4f3514a4d2fd3433922d0c2629c"},   # AP2
     "file": {"0.1.0": "fabb70ed8cd611a826a9eae004f255cf3c282f7e20fb6853990780182655d216",
              "0.2.0": "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"},
     "net": {"0.1.0": "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"},
+    "phone": {"0.1.0": "08a6199454b9e2daa784b6233e183bff6bfebda3ece190491b5198c54a009806"},   # find, vibrate, torch (AP2)
     "shell": {"0.1.0": "df540c027d5e5da20fa01465b0426033570f62fe8b59a6cc2edcc10f574817b7",
               "0.2.0": "95a8ed17f73d6d3e5baa8107031c8ff1b5ed7ed3230accb1493c37372259f633",
               "0.3.0": "31b456adeaa73e0063c4a8e18b19268d8a21bdba41cd5acdfd8d3770f14b09db",
               "0.4.0": "d40819a1ad1615bd82667077ebeb5ee6cc14be84684a2832b5d6ed09b157b37f",
               "0.5.0": "f57565e2f29bb6eb1ba20b4d33ab3efa329f9699bd9280d3e27b54dac8f73733"},
+    "sound-android": {"0.1.0": "bd87cf134638d18ae8e91520805709e32ad19fbdd4aa43cd15439d6c962d88e3"},   # AP2
     "worker": {"0.1.0": "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"},
 }
 SHIPPED = {name: next(reversed(versions.items())) for name, versions in RECORDED.items()}   # each one's newest
