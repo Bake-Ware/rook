@@ -85,6 +85,12 @@ const dock = { agent: null, next: 0, shown: 0, replies: 0, kicking: false, kicke
 // worker joins a few seconds after an install): not a message; wait and retry.
 const NOT_READY = /no single worker serves|nothing provides agent\.backend/i;
 
+// A phone-width screen (brief AP1): the chat is the whole screen, and one control (#dock-phone)
+// goes to the hub's pages and back. Which of the two shows is kept for the tab (sessionStorage),
+// so a new start, the phone app's too, opens on the chat; a wide screen keeps its choice for good.
+const PHONE = "(max-width: 760px)";
+const phone = () => matchMedia(PHONE).matches;
+
 // Bake, Nov 9: "I want to have like an X at the top right, and move the rookie
 // avatar to the bottom right corner when closed. Remove the chat button from
 // the like top nav on pages. Clicking rookie opens the chat sidebar."
@@ -92,7 +98,11 @@ function dockOpen(open) {
   const was = document.body.classList.contains("dock-open");
   if (!open && was && rookie.holder && !document.body.classList.contains("setup")) liftOff();   // he walks out before the chat goes
   document.body.classList.toggle("dock-open", open);
-  try { localStorage.setItem("rook.dock", open ? "1" : "0"); } catch (x) { /* private mode */ }
+  $("#dock-phone").textContent = open ? "Pages" : "Chat";
+  try {
+    if (phone()) sessionStorage.setItem("rook.dock.phone", open ? "1" : "0");
+    else localStorage.setItem("rook.dock", open ? "1" : "0");
+  } catch (x) { /* private mode */ }
   if (open) {
     scrollChat();
     // the field the work pane is open for keeps the cursor (a reload in setup), else the chat
@@ -284,21 +294,34 @@ function recall(key) {
 // a job already done shows as done.
 function openView(view, arg, args, live) {
   args = args || {};
+  // On a phone the chat covers the page: what the agent opens live is shown, and #dock-phone comes back.
+  const show = () => { if (live && phone() && !setupMode()) dockOpen(false); };
   if (view === "page") {
     const path = pagePath(arg);       // core: a page is its own address, not 0.5's #/<page>
     if (!path) return bubble("bad", `There's no page ${arg} here.`);
     hideWork();
+    show();
     if (path !== location.pathname) location.href = path;
     return;
   }
   const make = VIEWS[view];
   if (!make) return bubble("bad", `There's no ${view} view here yet.`);
   make(args, !!live);
+  show();
 }
 
 // Built-in views, by name: setup's (vault, account, network, look) come with the setup wizard
 // (brief HA3), in its shell file, which adds them here.
 const VIEWS = {};
+
+// The phone app (brief AP1): its QR code, download button and install line, as the public page
+// /app shows them ([[open: app]]).
+VIEWS.app = function () {
+  const pane = workView("app", "Phone app", "Rook for Android, from this hub: it opens this hub with nothing typed.");
+  const box = el("div");
+  pane.append(box);
+  import("/site/phone-app.js").then((m) => m.drawPhoneApp(box)).catch((x) => bubble("bad", x.message));
+};
 
 // The welcome view: setup's work pane when nothing is open.
 function idleWork() {
@@ -721,11 +744,15 @@ async function startDock(agent) {
   rookieInit();
   $("#dock").hidden = false;
   let open = true;
-  try { open = localStorage.getItem("rook.dock") !== "0" && innerWidth > 760; } catch (x) { /* private mode */ }
+  try {
+    open = phone() ? sessionStorage.getItem("rook.dock.phone") !== "0" : localStorage.getItem("rook.dock") !== "0";
+  } catch (x) { /* private mode */ }
+  if (open && phone()) dockOpen(true);     // a phone opens on the chat at once, not on the page while it reads
   try {
     while ((await read(0)) >= 500) { /* catch up on a long conversation */ }
   } catch (x) {                     // not someone who may talk to it: no dock
     $("#dock").hidden = true;
+    document.body.classList.remove("dock-open");
     return;
   }
   if (setupMode()) {                // a new hub: the chat is the whole site until setup is done
@@ -772,7 +799,8 @@ function mountDock() {
   <form id="dock-form"><textarea id="dock-text" rows="2" placeholder="Ask, or tell it what to set up"></textarea><button>Send</button></form>
 </aside>
 <div id="rookie-park" aria-hidden="true"></div>
-<div id="rookie-say" role="status" hidden></div>`);
+<div id="rookie-say" role="status" hidden></div>
+<button id="dock-phone" type="button">Chat</button>`);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(scrollChat);
   window.addEventListener("resize", keepPlace);
   $("main.main").addEventListener("scroll", keepPlace, { passive: true });     // core: the page area scrolls
@@ -800,6 +828,7 @@ function mountDock() {
   };
   $("#dock-skip").onclick = () => $("#dock-close").onclick();
   $("#dock-btn").onclick = () => dockOpen(true);          // never shown: the desktop app's "ask about this page"
+  $("#dock-phone").onclick = () => dockOpen(!document.body.classList.contains("dock-open"));   // a phone's one control
   $("#rookie-say").onclick = () => {                       // the chat, at that message
     $("#rookie-say").hidden = true;
     dockOpen(true);
