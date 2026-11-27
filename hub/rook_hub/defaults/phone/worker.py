@@ -5,8 +5,9 @@ rook/plugins/phone and the app's FindDeviceBridge.kt). phone.unlock comes with t
 (brief AP5); 0.5's phone.switch is not here (it switched between 0.4 and 0.5).
 
 Nothing here bounds a call (Bake, 17 November). phone.find rings for `seconds` when given and,
-without it, until phone.find_stop; phone.vibrate buzzes for the `ms` it is given. 0.5 capped both
-(120 s, 5000 ms) and gave each a default length (30 s, 300 ms); neither is kept.
+without it, until phone.find_stop; phone.vibrate buzzes for the `ms` it is given, as long as that is,
+and for 300 ms without it, as 0.5 did (the steward's decision on pull request 465, reported to Bake: a
+default is not a bound). 0.5 capped both (120 s, 5000 ms) and rang 30 s without `seconds`; neither is kept.
 
 phone.find plays the alarm sound on the alarm stream, at that stream's full volume, as 0.5 did, and
 puts the volume back when it stops; Do Not Disturb still applies. The ring is held here, in this
@@ -26,6 +27,7 @@ try:
 except ImportError:
     jclass = None
 
+VIBRATE_MS = 300               # phone.vibrate without ms, as 0.5
 NOTE = "Alarm volume raised to maximum; device Do Not Disturb policy applies. Volume restores when stopped."
 _ring = {}                      # the ring while it rings: player, volume to put back, timer
 _lock = threading.Lock()
@@ -138,8 +140,9 @@ def _vibrate(ms):
 
 
 async def vibrate(args):
-    _check(args, "phone.vibrate", ("ms",), ("ms",))
-    return await asyncio.to_thread(_vibrate, _whole(args, "ms", "phone.vibrate"))
+    _check(args, "phone.vibrate", ("ms",))
+    ms = _whole(args, "ms", "phone.vibrate")
+    return await asyncio.to_thread(_vibrate, VIBRATE_MS if ms is None else ms)
 
 
 def _torch(on):
@@ -171,9 +174,9 @@ CAPS = {} if jclass is None else {
         {"type": "object", "additionalProperties": False, "properties": {}},
         find_stop),
     "phone.vibrate": Cap(
-        "Buzz the phone for ms milliseconds.",
-        {"type": "object", "additionalProperties": False, "required": ["ms"],
-         "properties": {"ms": {"type": "integer", "minimum": 1}}},
+        "Buzz the phone for ms milliseconds (300 without it).",
+        {"type": "object", "additionalProperties": False,
+         "properties": {"ms": {"type": "integer", "minimum": 1, "default": VIBRATE_MS}}},
         vibrate),
     "phone.torch": Cap(
         "Turn the phone's flashlight on (on: true, the default) or off.",

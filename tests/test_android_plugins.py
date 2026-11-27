@@ -80,7 +80,7 @@ def refusal(name, cap, args):
 
 def test_what_they_refuse_before_reaching_android():
     assert "takes no argument seconds; it takes none" in refusal("phone", "phone.find_stop", {"seconds": 1})
-    assert "phone.vibrate needs ms" in refusal("phone", "phone.vibrate", {})
+    assert "1 or more" in refusal("phone", "phone.vibrate", {"ms": 0})
     assert "1 or more" in refusal("phone", "phone.find", {"seconds": 0})
     assert "on must be true or false" in refusal("phone", "phone.torch", {"on": "yes"})
     assert "give level, step, mute or ringer" in refusal("sound-android", "sound.set", {})
@@ -95,12 +95,13 @@ def test_what_they_refuse_before_reaching_android():
 
 
 def test_no_bound_is_kept_from_0_5():
-    """0.5 capped find at 120 s, vibrate at 5000 ms and step at 30, and cut app.list at 200 (Bake,
-    17 November: none of that)."""
+    """0.5 capped find at 120 s, vibrate at 5000 ms and step at 30, rang 30 s without seconds, and cut
+    app.list at 200 (Bake, 17 November: none of that). vibrate without ms is 0.5's 300 ms (PR 465)."""
     schemas = {cap: c.schema for name in ANDROID for cap, c in part(name, fake_java())["CAPS"].items()}
     assert "maximum" not in schemas["phone.find"]["properties"]["seconds"]
     assert "default" not in schemas["phone.find"]["properties"]["seconds"]
     assert "maximum" not in schemas["phone.vibrate"]["properties"]["ms"]
+    assert schemas["phone.vibrate"]["properties"]["ms"]["default"] == 300 and "required" not in schemas["phone.vibrate"]
     assert "minimum" not in schemas["sound.set"]["properties"]["step"]
     assert "default" not in schemas["app.list"]["properties"]["limit"]
     pick = part("app-android", fake_java())
@@ -121,3 +122,12 @@ def test_picking_an_app_and_a_volume_level():
     assert pick_app(apps, "zzz") == (None, [])
     level_index = part("sound-android", fake_java())["level_index"]
     assert (level_index(0, 1, 15), level_index(50, 0, 15), level_index(100, 0, 15)) == (1, 8, 15)
+
+
+def test_vibrate_without_ms_buzzes_300_ms_and_any_ms_given_as_is():
+    """0.5's default (the steward's decision on pull request 465); no upper bound."""
+    phone = part("phone", fake_java())
+    phone["_vibrate"] = lambda ms: {"ms": ms}           # what reaches Android, without Android
+    vibrate = phone["CAPS"]["phone.vibrate"].handler
+    assert asyncio.run(vibrate({})) == {"ms": 300}
+    assert asyncio.run(vibrate({"ms": 60000})) == {"ms": 60000}

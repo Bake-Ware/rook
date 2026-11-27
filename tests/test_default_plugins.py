@@ -121,7 +121,7 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.6.0", "agents-claude-code": "0.2.1",
                                                                      "app-android": "0.1.0", "battery": "0.2.0",
                                                                      "clipboard-android": "0.1.0", "file": "0.2.0",
-                                                                     "net": "0.1.0", "phone": "0.1.0", "shell": "9.0.0",
+                                                                     "net": "0.1.0", "phone": "0.1.1", "shell": "9.0.0",
                                                                      "sound-android": "0.1.0", "worker": "0.1.0"}
     again.close()
 
@@ -471,7 +471,8 @@ RECORDED = {
     "file": {"0.1.0": "fabb70ed8cd611a826a9eae004f255cf3c282f7e20fb6853990780182655d216",
              "0.2.0": "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"},
     "net": {"0.1.0": "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"},
-    "phone": {"0.1.0": "08a6199454b9e2daa784b6233e183bff6bfebda3ece190491b5198c54a009806"},   # find, vibrate, torch (AP2)
+    "phone": {"0.1.0": "08a6199454b9e2daa784b6233e183bff6bfebda3ece190491b5198c54a009806",   # find, vibrate, torch (AP2)
+              "0.1.1": "624242a8be87a87b6d471331659841c06ed072b38f30c2ce4435bb371976dbb7"},  # vibrate without ms: 300 ms (PR 465)
     "shell": {"0.1.0": "df540c027d5e5da20fa01465b0426033570f62fe8b59a6cc2edcc10f574817b7",
               "0.2.0": "95a8ed17f73d6d3e5baa8107031c8ff1b5ed7ed3230accb1493c37372259f633",
               "0.3.0": "31b456adeaa73e0063c4a8e18b19268d8a21bdba41cd5acdfd8d3770f14b09db",
@@ -630,7 +631,7 @@ async def before_brief_54(tmp_path, monkeypatch):
     alice = hub.auth.create_user("Alice", "a password")["guid"]
     assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
         "agents": "0.6.0", "agents-claude-code": "0.2.1", "app-android": "0.1.0", "battery": "0.2.0",
-        "clipboard-android": "0.1.0", "file": "0.1.0", "net": "0.1.0", "phone": "0.1.0", "shell": "0.2.0",
+        "clipboard-android": "0.1.0", "file": "0.1.0", "net": "0.1.0", "phone": "0.1.1", "shell": "0.2.0",
         "sound-android": "0.1.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())
