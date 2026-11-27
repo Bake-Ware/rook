@@ -118,7 +118,7 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     hub.plugins.install(replacement, {"user": hub.auth.create_user("Alice", "a password")["guid"], "token": None})
     hub.close()
     again = Hub(tmp_path / "hub")
-    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.6.0", "agents-claude-code": "0.2.2",
+    assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.6.1", "agents-claude-code": "0.2.2",
                                                                      "app-android": "0.1.0", "battery": "0.2.0",
                                                                      "clipboard-android": "0.1.0", "file": "0.2.0",
                                                                      "net": "0.1.0", "phone": "0.1.1", "shell": "9.0.0",
@@ -460,7 +460,8 @@ RECORDED = {
                "0.3.0": "a21cae8e3453a4b38a9242f235c14df7ea3a1750ac779aee0bf7fd6de374fa68",
                "0.4.0": "ba113ee293f5b629cf888c673a9a96cb217841b75a9d7b1bee0106ae68527618",    # memory (MEM5)
                "0.5.0": "b162812e1d3a8d05545d7ce41bc0629cea66ae28d30ae5719a6a0c8b7871b996",    # the dock's read let go of on pagehide (HA7)
-               "0.6.0": "054d95158063f1b1cb7748a9c5e15c063b82c79dc123e8863e53e609b55fe130"},   # the chat is a phone's whole screen; [[open: app]] (AP1)
+               "0.6.0": "054d95158063f1b1cb7748a9c5e15c063b82c79dc123e8863e53e609b55fe130",    # the chat is a phone's whole screen; [[open: app]] (AP1)
+               "0.6.1": "81b5e5b1f6533e9b856056303b23f121561b71cc8fba6fcb18a843f239517c81"},   # a choice made while the chat loads is kept (AP6)
     "agents-claude-code": {"0.1.0": "79653aecb79c275eb65a7f1d5d88081c22f33e3f31767d3ef963aa47c26b8eeb",
                            "0.2.0": "8ba8ef43fb7160bc68a51939eb74dd0d074349f965c6e1f52ce15caa88e784e9",   # fork, schema, precompact
                            "0.2.1": "7d348fd4df50731a87406c363072e095badb72d58b24266f9f7fa3a7e2ef0b3a",   # the hook names itself (User-Agent)
@@ -631,7 +632,7 @@ async def before_brief_54(tmp_path, monkeypatch):
     host, port = await hub.serve("127.0.0.1", 0)
     alice = hub.auth.create_user("Alice", "a password")["guid"]
     assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-        "agents": "0.6.0", "agents-claude-code": "0.2.2", "app-android": "0.1.0", "battery": "0.2.0",
+        "agents": "0.6.1", "agents-claude-code": "0.2.2", "app-android": "0.1.0", "battery": "0.2.0",
         "clipboard-android": "0.1.0", "file": "0.1.0", "net": "0.1.0", "phone": "0.1.1", "shell": "0.2.0",
         "sound-android": "0.1.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)

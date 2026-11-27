@@ -117,3 +117,72 @@ async def layout(tmp_path):
     finally:
         await hub.stop_serving()
         hub.close()
+
+
+class Held(StandIn):
+    """The stand-in agent, whose conversation read with no wait (the dock's first, as a page loads) is
+    held while `hold` is set, as a slow phone or hub holds it; `read_again` is set once the dock, its
+    load done, starts reading with a wait."""
+
+    def __init__(self, hub):
+        super().__init__(hub)
+        self.hold, self.read_again = None, asyncio.Event()
+
+    async def answer(self, cap, args):
+        if cap == "agent.chat.read" and not args.get("wait") and self.hold is not None:
+            await self.hold.wait()
+        if cap == "agent.chat.read" and args.get("wait") and self.hold is not None and self.hold.is_set():
+            self.read_again.set()
+        return await super().answer(cap, args)
+
+
+def test_a_tap_on_chat_while_the_conversation_loads_is_kept(tmp_path):
+    asyncio.run(tap_while_loading(tmp_path))
+
+
+async def tap_while_loading(tmp_path):
+    """Brief AP6: the dock read whether the chat was open, then waited for the conversation, then set the
+    chat to what it had read, so a tap on Chat made in between was undone."""
+    hub = Hub(tmp_path / "hub")
+    host, port = await hub.serve("127.0.0.1", 0)
+    base = f"http://{host}:{port}"
+    hub.auth.create_user("Alice", "correct horse", first=True)
+    agent = Held(hub)
+    real = hub.call_or_follow
+
+    async def call_or_follow(worker, cap, args, why, **actor):
+        if worker == "hub" and cap in ("agent.site", "agent.chat.send", "agent.chat.read"):
+            return {"type": "result", "id": "-", "result": await agent.answer(cap, args)}
+        return await real(worker, cap, args, why, **actor)
+    hub.call_or_follow = call_or_follow
+    try:
+        async with browser() as client:
+            assert (await login(client, base, "Alice", "correct horse"))[0] == 200
+            cookie = client.cookie_jar.filter_cookies(yarl.URL(base))["rook_session"].value
+        async with Chrome() as page:
+            await page.cmd("Network.setCookie", name="rook_session", value=cookie, url=base)
+            await page.cmd("Emulation.setDeviceMetricsOverride", **PHONE)
+            # On the pages, as the person left it.
+            await page.cmd("Page.navigate", url=base + "/workers")
+            await page.until("document.body.classList.contains('dock-open')")
+            await page.js("document.querySelector('#dock-phone').click(); true")
+            await page.until("!document.body.classList.contains('dock-open')")
+
+            # The next page's conversation read is held: the person taps Chat while it loads.
+            agent.hold = asyncio.Event()
+            await page.cmd("Page.navigate", url=base + "/jobs")
+            await page.until("location.pathname === '/jobs' && !!document.querySelector('#dock-phone') && "
+                             "!document.querySelector('#dock').hidden")
+            assert not await page.js("document.body.classList.contains('dock-open')")
+            await page.js("document.querySelector('#dock-phone').click(); true")
+            await page.until("document.body.classList.contains('dock-open')")
+
+            # The load ends (the dock reads with a wait again): the chat the person opened stays open.
+            agent.hold.set()
+            await asyncio.wait_for(agent.read_again.wait(), 20)
+            assert await page.js("document.body.classList.contains('dock-open')")
+            assert await page.js("document.querySelector('#dock-phone').textContent") == "Pages"
+            assert [e for e in page.errors if "WebGL" not in e] == []
+    finally:
+        await hub.stop_serving()
+        hub.close()
