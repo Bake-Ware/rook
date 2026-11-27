@@ -97,7 +97,7 @@ class Rig:
 def test_a_new_hub_has_the_default_plugins_and_a_restart_keeps_them(tmp_path):
     hub = Hub(tmp_path / "hub")
     listed = hub.plugins.list()
-    assert [p["name"] for p in listed] == ["agents", "agents-claude-code", "battery", "file", "net", "shell", "worker"]
+    assert [p["name"] for p in listed] == ["agents", "agents-claude-code", "app-android", "battery", "clipboard-android", "file", "net", "phone", "shell", "sound-android", "worker"]
     assert all(p["worker"] and p["caps"] == [] and not p["site"] for p in listed[1:])   # worker parts only
     assert not listed[0]["worker"] and "agent.chat.send" in listed[0]["caps"]          # but agents: the hub's (HA2)
     assert listed[0]["site"]                                                          # and its site part, the dock (HA1)
@@ -106,7 +106,7 @@ def test_a_new_hub_has_the_default_plugins_and_a_restart_keeps_them(tmp_path):
 
     again = Hub(tmp_path / "hub")                       # present: loaded as installed, nothing reinstalled
     assert {p["name"]: p["guid"] for p in again.plugins.list()} == first
-    assert len(list((tmp_path / "hub" / "plugins").iterdir())) == 7
+    assert len(list((tmp_path / "hub" / "plugins").iterdir())) == 11
     again.close()
 
 
@@ -119,8 +119,10 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     hub.close()
     again = Hub(tmp_path / "hub")
     assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.6.0", "agents-claude-code": "0.2.1",
-                                                                     "battery": "0.1.0", "file": "0.2.0", "net": "0.1.0",
-                                                                     "shell": "9.0.0", "worker": "0.1.0"}
+                                                                     "app-android": "0.1.0", "battery": "0.2.0",
+                                                                     "clipboard-android": "0.1.0", "file": "0.2.0",
+                                                                     "net": "0.1.0", "phone": "0.1.1", "shell": "9.0.0",
+                                                                     "sound-android": "0.1.0", "worker": "0.1.0"}
     again.close()
 
 
@@ -129,7 +131,7 @@ def test_a_data_directory_made_before_the_default_plugins_gets_them_on_its_next_
     (tmp_path / "hub").mkdir()
     sqlite3.connect(tmp_path / "hub" / "hub.db").close()
     hub = Hub(tmp_path / "hub")
-    assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "battery", "file", "net", "shell", "worker"]
+    assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "app-android", "battery", "clipboard-android", "file", "net", "phone", "shell", "sound-android", "worker"]
     hub.close()
 
 
@@ -192,7 +194,7 @@ async def serves(tmp_path):
                 assert record[cap_name]["description"] == cap.description
                 assert record[cap_name]["schema"] == cap.schema
                 assert record[cap_name]["returns"] == ("stream" if cap.opens_stream else "result")
-        assert {p["name"] for p in rig.hub.get_worker(rig.guid)["plugins"]} == {"agents-claude-code", "battery", "file", "net", "shell", "worker"}
+        assert {p["name"] for p in rig.hub.get_worker(rig.guid)["plugins"]} == {"agents-claude-code", "app-android", "battery", "clipboard-android", "file", "net", "phone", "shell", "sound-android", "worker"}
 
         # shell.exec: argv with no shell; cmd in sh, with a pipe; the code; stdin; env; cwd.
         assert await rig.ok("shell.exec", argv=["echo", "a b", "$HOME"]) == \
@@ -427,13 +429,13 @@ async def older_core(tmp_path, monkeypatch):
         made = [r for r in after["records"] if r[3] == "agent"]          # the house agent, made at that start (HA2)
         assert len(made) == 1 and dict(after, records=[r for r in after["records"] if r[3] != "agent"]) == before
         rows = plugin_rows(data)
-        assert len(list((data / "plugins").iterdir())) == 7   # one copy per plugin: shell 0.1.0's is gone
+        assert len(list((data / "plugins").iterdir())) == 11   # one copy per plugin: shell 0.1.0's is gone
 
         # A second start with nothing new changes nothing.
         hub = Hub(data, vault_key_file=key)
         hub.close()
         assert plugin_rows(data) == rows and kept(data) == after
-        assert len(list((data / "plugins").iterdir())) == 7
+        assert len(list((data / "plugins").iterdir())) == 11
     finally:
         worker.stop()
         await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 30)
@@ -462,15 +464,21 @@ RECORDED = {
     "agents-claude-code": {"0.1.0": "79653aecb79c275eb65a7f1d5d88081c22f33e3f31767d3ef963aa47c26b8eeb",
                            "0.2.0": "8ba8ef43fb7160bc68a51939eb74dd0d074349f965c6e1f52ce15caa88e784e9",   # fork, schema, precompact
                            "0.2.1": "7d348fd4df50731a87406c363072e095badb72d58b24266f9f7fa3a7e2ef0b3a"},  # the hook names itself (User-Agent)
-    "battery": {"0.1.0": "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a"},
+    "app-android": {"0.1.0": "186e318f162c98e13f358d4f3bd568c0de8923038b93a987967d3e47e16be06c"},   # the phone's apps (AP2)
+    "battery": {"0.1.0": "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a",
+                "0.2.0": "51134f64c5cc2d0ec08126c0ca81b967deb2010763506f930c791f8c5e0f8a53"},   # the phone's battery (AP2)
+    "clipboard-android": {"0.1.0": "a0f37225aa25fdca13be975ae5f9921f2cf0c4f3514a4d2fd3433922d0c2629c"},   # AP2
     "file": {"0.1.0": "fabb70ed8cd611a826a9eae004f255cf3c282f7e20fb6853990780182655d216",
              "0.2.0": "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"},
     "net": {"0.1.0": "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"},
+    "phone": {"0.1.0": "08a6199454b9e2daa784b6233e183bff6bfebda3ece190491b5198c54a009806",   # find, vibrate, torch (AP2)
+              "0.1.1": "624242a8be87a87b6d471331659841c06ed072b38f30c2ce4435bb371976dbb7"},  # vibrate without ms: 300 ms (PR 465)
     "shell": {"0.1.0": "df540c027d5e5da20fa01465b0426033570f62fe8b59a6cc2edcc10f574817b7",
               "0.2.0": "95a8ed17f73d6d3e5baa8107031c8ff1b5ed7ed3230accb1493c37372259f633",
               "0.3.0": "31b456adeaa73e0063c4a8e18b19268d8a21bdba41cd5acdfd8d3770f14b09db",
               "0.4.0": "d40819a1ad1615bd82667077ebeb5ee6cc14be84684a2832b5d6ed09b157b37f",
               "0.5.0": "f57565e2f29bb6eb1ba20b4d33ab3efa329f9699bd9280d3e27b54dac8f73733"},
+    "sound-android": {"0.1.0": "bd87cf134638d18ae8e91520805709e32ad19fbdd4aa43cd15439d6c962d88e3"},   # AP2
     "worker": {"0.1.0": "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"},
 }
 SHIPPED = {name: next(reversed(versions.items())) for name, versions in RECORDED.items()}   # each one's newest
@@ -622,8 +630,9 @@ async def before_brief_54(tmp_path, monkeypatch):
     host, port = await hub.serve("127.0.0.1", 0)
     alice = hub.auth.create_user("Alice", "a password")["guid"]
     assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-        "agents": "0.6.0", "agents-claude-code": "0.2.1",
-        "battery": "0.1.0", "file": "0.1.0", "net": "0.1.0", "shell": "0.2.0", "worker": "0.1.0"}
+        "agents": "0.6.0", "agents-claude-code": "0.2.1", "app-android": "0.1.0", "battery": "0.2.0",
+        "clipboard-android": "0.1.0", "file": "0.1.0", "net": "0.1.0", "phone": "0.1.1", "shell": "0.2.0",
+        "sound-android": "0.1.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())
     try:

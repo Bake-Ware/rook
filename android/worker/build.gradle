@@ -1,7 +1,17 @@
 plugins {
     id "com.android.library"
     id "org.jetbrains.kotlin.android"
+    id "com.chaquo.python" version "16.1.0"
 }
+
+// The repo's own Python worker, from the tree this APK is built from (brief AP2): the worker core and
+// the protocol library are read where they are, nothing is copied into git, and the packages are the
+// lines of requirements.txt a worker needs (the hub's aiohttp and the tests' mcp and pytest are not).
+def repo = rootProject.file("..")
+def workerNeeds = ["pynacl", "telesthete", "websockets"]
+def workerRequirements = new File(repo, "requirements.txt").readLines()
+    .collect { it.trim() }
+    .findAll { it && !it.startsWith("#") && workerNeeds.contains(it.split(/[ <>=!~@\[;]/)[0].toLowerCase()) }
 
 android {
     namespace "systems.bake.rook.core.worker"
@@ -9,6 +19,8 @@ android {
 
     defaultConfig {
         minSdk 24
+        // Chaquopy's Python and PyNaCl's wheels: phones (arm64) and the emulator (x86_64).
+        ndk { abiFilters "arm64-v8a", "x86_64" }
     }
 
     compileOptions {
@@ -17,6 +29,23 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version "3.13"
+        pip {
+            workerRequirements.each { install it }
+        }
+    }
+    sourceSets {
+        main {
+            srcDir "src/main/python"
+            srcDir new File(repo, "core/python")
+            srcDir new File(repo, "protocol/python")
+            include "rook_android.py", "rook_worker.py", "rook_link.py", "rook_protocol.py", "rook_net.py"
+        }
     }
 }
 

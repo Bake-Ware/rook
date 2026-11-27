@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: starting the worker by hand (brief AP2's proof), before the app's shell can.
+     adb shell am start -n systems.bake.rook.core/systems.bake.rook.core.worker.DebugStart, with the string extras hub and code, or the boolean extra stop (DebugStart.kt). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name=".DebugStart"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+    </application>
+</manifest>

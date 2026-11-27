@@ -14,6 +14,7 @@ The earlier code (0.4 on `master`, the 0.5 rework on `castling`) is reference on
 - `deploy/install/install.sh`: the installer: a hub and a worker as systemd user units, in one command.
 - `tests/`: the tests for all of the above.
 - `android/`: the Android app (`systems.bake.rook.core`). Build it with JDK 17 or newer and the Android SDK (platform 35): `cd android && ANDROID_HOME=~/Android/Sdk ./gradlew :app:assembleRelease`, which writes `app/build/outputs/apk/release/app-release.apk`. It signs with the key named in `~/.rook-android/signing.properties` (`storeFile`, relative to that folder, `storePassword`, `keyAlias`, `keyPassword`), or with the debug key, saying so, when that file is missing. A hub hands the app out: put the APK at `<data>/app/rook.apk` and open `<hub>/app` (no login), which shows a QR code and a download button; each copy it hands out carries the hub's address, so the app opens that hub with nothing typed.
+  The phone's worker (`android/worker`) is this repo's own Python worker, built into the APK with Chaquopy from the tree being built: the build needs a Python 3.13 on `PATH` as `python3.13` (`uv python install 3.13` gives one; stop a running Gradle daemon first, `./gradlew --stop`, so it sees the new `PATH`) and network access, to fetch Python 3.13 for Android and the worker's packages named in `requirements.txt`. A debug build can start the worker by hand: `adb shell am start -n systems.bake.rook.core/systems.bake.rook.core.worker.DebugStart -e hub HUB_URL -e code JOIN_TOKEN`.
 
 ## Tests
 
