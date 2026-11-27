@@ -131,9 +131,10 @@ object Bridge {
         return null
     }
 
-    /** The service came or went. */
+    /** The service came or went. Come, it answers an ask for it still open, however the person turned it on. */
     internal fun handsChanged() {
         synchronized(handsLock) { handsLock.notifyAll() }
+        if (Hands.on()) synchronized(waiting) { waiting.remove(ACCESSIBILITY) }?.countDown()
         Awake.handsChanged()
     }
 
