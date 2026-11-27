@@ -60,13 +60,20 @@ object Bridge {
     }
 
     /** Ask for `permission` for `cap` and wait for the person: null once it is granted, else what to tell the caller. */
-    @JvmStatic fun ask(permission: String, cap: String): String? {
-        if (granted(permission)) return null
-        val asked = request(permission, Intent(app, AskActivity::class.java).putExtra(AskActivity.PERMISSION, permission),
-            "Rook needs ${label(permission)}", "For $cap. Tap to answer.", app)
-            ?: return notShown(label(permission), cap)
+    @JvmStatic fun ask(permission: String, cap: String): String? = askAll(arrayOf(permission), cap)
+
+    /** Ask for several runtime permissions in one Android prompt (Android 12 wants fine and coarse location so),
+     *  as `ask` does: null once all are granted, else what to tell the caller about the first that is not. */
+    @JvmStatic fun askAll(permissions: Array<String>, cap: String): String? {
+        val missing = permissions.filter { !granted(it) }
+        if (missing.isEmpty()) return null
+        val key = missing.joinToString(",")
+        val asked = request(key, Intent(app, AskActivity::class.java).putExtra(AskActivity.PERMISSION, key),
+            "Rook needs ${label(missing[0])}", "For $cap. Tap to answer.", app)
+            ?: return notShown(label(missing[0]), cap)
         asked.await()
-        return if (granted(permission)) null else refused(permission, cap)
+        if (missing.any { granted(it) }) WorkerService.permitted()      // the service may take a type it now can
+        return missing.firstOrNull { !granted(it) }?.let { refused(it, cap) }
     }
 
     /** Open an activity for `cap`; first, where Android would not show it, ask to display over other apps. */
@@ -151,6 +158,8 @@ object Bridge {
         Manifest.permission.ACCESS_NOTIFICATION_POLICY -> "Do Not Disturb access"
         Manifest.permission.POST_NOTIFICATIONS -> "to show notifications"
         NOTIFICATION_ACCESS -> "notification access"
+        Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION -> "location"
+        Manifest.permission.ACCESS_BACKGROUND_LOCATION -> "location all the time"
         else -> permission.substringAfterLast('.')
     }
 
@@ -167,6 +176,10 @@ object Bridge {
                 "access > Notification access (Device & app notifications) > Rook, turn it on, then call again. If " +
                 "Android says it is a restricted setting (an app installed from a link), first Settings > Apps > Rook > " +
                 "the menu > Allow restricted settings."
+        Manifest.permission.ACCESS_BACKGROUND_LOCATION ->
+            "$cap needs Rook's location all the time ($permission), to answer with the app closed, and it is not " +
+                "given. On the phone, Settings > Apps > Rook > Permissions > Location, choose Allow all the time, " +
+                "then call again."
         else ->
             "$cap needs the permission $permission, and it was refused. On the phone, Settings > Apps > Rook > " +
                 "Permissions, allow it, then call again."

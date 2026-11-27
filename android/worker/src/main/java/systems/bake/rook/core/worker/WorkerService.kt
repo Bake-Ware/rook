@@ -7,10 +7,14 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
@@ -37,6 +41,7 @@ import kotlin.concurrent.thread
 class WorkerService : Service() {
     @Volatile private var stopping = false
     @Volatile private var worker: Thread? = null
+    private var shown = "Starting"                          // what the notification says
     private var running: Pair<String, String?>? = null      // the hub and join code the worker was started with
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
@@ -44,6 +49,7 @@ class WorkerService : Service() {
     override fun onCreate() {
         super.onCreate()
         Bridge.attach(this)
+        current = this
         val channel = NotificationChannel(CHANNEL, "Rook worker", NotificationManager.IMPORTANCE_LOW)
         channel.description = "Shows that this phone is a worker on its hub"
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -57,11 +63,7 @@ class WorkerService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIFICATION, notification("Starting"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(NOTIFICATION, notification("Starting"))
-        }
+        foreground()
         hold()
         ensure(hub, prefs.getString(RookWorker.CODE, null))
         return START_STICKY
@@ -129,13 +131,32 @@ class WorkerService : Service() {
         if (state is WorkerState.Linked) RookWorker.joined(this)
         if (state is WorkerState.Linked) Cards.flush(this)          // brief AP4: card answers kept while unlinked go now
         RookWorker.told(state)
-        val shown = when (state) {
+        shown = when (state) {
             is WorkerState.Linked -> "Linked as ${state.moniker}"
             is WorkerState.Failed -> "Stopped: ${state.message}"
             WorkerState.Joining -> text.replaceFirstChar { it.uppercase() }
             WorkerState.Stopped -> "Stopped"
         }
         if (!stopping) getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(shown))
+    }
+
+    /**
+     * Be a foreground service (again, when what it may do changed): type specialUse, and location too once
+     * the person has given Rook location all the time (brief AP3). Android lets an app in the background
+     * read where the phone is only now and then; a foreground service of type location reads it as often
+     * as an app in front. Without background location it is not added, so a start after boot never asks
+     * Android for what it would refuse.
+     */
+    private fun foreground() {
+        if (Build.VERSION.SDK_INT < 34) return startForeground(NOTIFICATION, notification(shown))
+        val located = checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
+        try {
+            startForeground(NOTIFICATION, notification(shown), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                (if (located) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0))
+        } catch (e: SecurityException) {            // Android would not have location now: specialUse alone
+            Log.w(TAG, "location type refused", e)
+            startForeground(NOTIFICATION, notification(shown), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        }
     }
 
     private fun hold() {
@@ -156,6 +177,7 @@ class WorkerService : Service() {
         wakeLock?.release()
         wifiLock?.release()
         RookWorker.told(WorkerState.Stopped)
+        if (current === this) current = null
         super.onDestroy()
     }
 
@@ -181,6 +203,13 @@ class WorkerService : Service() {
         private const val TAG = "RookWorker"
         private const val CHANNEL = "rook-worker"
         private const val NOTIFICATION = 1
+
+        @Volatile private var current: WorkerService? = null
+
+        /** What Rook may do changed (a permission was given): be the foreground service again, with the types that allows. */
+        internal fun permitted() {
+            current?.let { service -> Handler(Looper.getMainLooper()).post { service.foreground() } }
+        }
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, WorkerService::class.java))
