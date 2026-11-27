@@ -97,7 +97,7 @@ class Rig:
 def test_a_new_hub_has_the_default_plugins_and_a_restart_keeps_them(tmp_path):
     hub = Hub(tmp_path / "hub")
     listed = hub.plugins.list()
-    assert [p["name"] for p in listed] == ["agents", "agents-claude-code", "app-android", "battery", "clipboard-android", "file", "media-android", "net", "notification-android", "phone", "shell", "sound-android", "worker"]
+    assert [p["name"] for p in listed] == ["agents", "agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "location", "media-android", "net", "notification-android", "phone", "shell", "sms", "sound-android", "worker"]
     assert all(p["worker"] and p["caps"] == [] and not p["site"] for p in listed[1:])   # worker parts only
     assert not listed[0]["worker"] and "agent.chat.send" in listed[0]["caps"]          # but agents: the hub's (HA2)
     assert listed[0]["site"]                                                          # and its site part, the dock (HA1)
@@ -106,7 +106,7 @@ def test_a_new_hub_has_the_default_plugins_and_a_restart_keeps_them(tmp_path):
 
     again = Hub(tmp_path / "hub")                       # present: loaded as installed, nothing reinstalled
     assert {p["name"]: p["guid"] for p in again.plugins.list()} == first
-    assert len(list((tmp_path / "hub" / "plugins").iterdir())) == 13
+    assert len(list((tmp_path / "hub" / "plugins").iterdir())) == 19
     again.close()
 
 
@@ -120,9 +120,11 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     again = Hub(tmp_path / "hub")
     assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.6.1", "agents-claude-code": "0.2.2",
                                                                      "app-android": "0.1.0", "battery": "0.2.0",
-                                                                     "clipboard-android": "0.1.0", "file": "0.2.0",
+                                                                     "calendar": "0.1.0", "call": "0.1.0",
+                                                                     "clipboard-android": "0.1.0", "clock": "0.1.0",
+                                                                     "contact": "0.1.0", "file": "0.2.0", "location": "0.1.0",
                                                                      "media-android": "0.1.0", "net": "0.1.0", "notification-android": "0.1.0",
-                                                                     "phone": "0.1.1", "shell": "9.0.0",
+                                                                     "phone": "0.1.1", "shell": "9.0.0", "sms": "0.1.0",
                                                                      "sound-android": "0.1.0", "worker": "0.1.0"}
     again.close()
 
@@ -132,7 +134,7 @@ def test_a_data_directory_made_before_the_default_plugins_gets_them_on_its_next_
     (tmp_path / "hub").mkdir()
     sqlite3.connect(tmp_path / "hub" / "hub.db").close()
     hub = Hub(tmp_path / "hub")
-    assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "app-android", "battery", "clipboard-android", "file", "media-android", "net", "notification-android", "phone", "shell", "sound-android", "worker"]
+    assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "location", "media-android", "net", "notification-android", "phone", "shell", "sms", "sound-android", "worker"]
     hub.close()
 
 
@@ -195,7 +197,7 @@ async def serves(tmp_path):
                 assert record[cap_name]["description"] == cap.description
                 assert record[cap_name]["schema"] == cap.schema
                 assert record[cap_name]["returns"] == ("stream" if cap.opens_stream else "result")
-        assert {p["name"] for p in rig.hub.get_worker(rig.guid)["plugins"]} == {"agents-claude-code", "app-android", "battery", "clipboard-android", "file", "media-android", "net", "notification-android", "phone", "shell", "sound-android", "worker"}
+        assert {p["name"] for p in rig.hub.get_worker(rig.guid)["plugins"]} == {"agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "location", "media-android", "net", "notification-android", "phone", "shell", "sms", "sound-android", "worker"}
 
         # shell.exec: argv with no shell; cmd in sh, with a pipe; the code; stdin; env; cwd.
         assert await rig.ok("shell.exec", argv=["echo", "a b", "$HOME"]) == \
@@ -430,13 +432,13 @@ async def older_core(tmp_path, monkeypatch):
         made = [r for r in after["records"] if r[3] == "agent"]          # the house agent, made at that start (HA2)
         assert len(made) == 1 and dict(after, records=[r for r in after["records"] if r[3] != "agent"]) == before
         rows = plugin_rows(data)
-        assert len(list((data / "plugins").iterdir())) == 13   # one copy per plugin: shell 0.1.0's is gone
+        assert len(list((data / "plugins").iterdir())) == 19   # one copy per plugin: shell 0.1.0's is gone
 
         # A second start with nothing new changes nothing.
         hub = Hub(data, vault_key_file=key)
         hub.close()
         assert plugin_rows(data) == rows and kept(data) == after
-        assert len(list((data / "plugins").iterdir())) == 13
+        assert len(list((data / "plugins").iterdir())) == 19
     finally:
         worker.stop()
         await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 30)
@@ -470,9 +472,14 @@ RECORDED = {
     "app-android": {"0.1.0": "186e318f162c98e13f358d4f3bd568c0de8923038b93a987967d3e47e16be06c"},   # the phone's apps (AP2)
     "battery": {"0.1.0": "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a",
                 "0.2.0": "51134f64c5cc2d0ec08126c0ca81b967deb2010763506f930c791f8c5e0f8a53"},   # the phone's battery (AP2)
+    "calendar": {"0.1.0": "8ed79a12329783b54e293365758b4e20bd4f652b6a5fd964d0d69b4ea27aebe5"},   # AP3
+    "call": {"0.1.0": "1d9208c5d348f7d89cbcf9531912a800ee1dd5405a1094faf18cdae87e6b3e5c"},   # AP3
     "clipboard-android": {"0.1.0": "a0f37225aa25fdca13be975ae5f9921f2cf0c4f3514a4d2fd3433922d0c2629c"},   # AP2
+    "clock": {"0.1.0": "2074128434b7fde72d85dc84cceee02da921826601ba55a4058e04037f85595e"},   # AP3
+    "contact": {"0.1.0": "75ab1e54ef8f92495ac01efdc3f1a4a4c5776e108802810480bc50ac91d83e75"},   # AP3
     "file": {"0.1.0": "fabb70ed8cd611a826a9eae004f255cf3c282f7e20fb6853990780182655d216",
              "0.2.0": "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"},
+    "location": {"0.1.0": "fc10ba4718f1d631a8a2168299c3e228549c8d87b3ff89b4d676356c2bd7f8d6"},   # AP3
     "media-android": {"0.1.0": "da73d33004317ee8de21ee0aa3a99cdbd287ea5655376560e299b0c1c33a71b8"},   # the phone's media (AP4)
     "net": {"0.1.0": "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"},
     "notification-android": {"0.1.0": "575ded1fb642196c6bcb3798002df77fa3f16d99f679d26f8bf4bfec31dc9c5f"},   # AP4
@@ -483,6 +490,7 @@ RECORDED = {
               "0.3.0": "31b456adeaa73e0063c4a8e18b19268d8a21bdba41cd5acdfd8d3770f14b09db",
               "0.4.0": "d40819a1ad1615bd82667077ebeb5ee6cc14be84684a2832b5d6ed09b157b37f",
               "0.5.0": "f57565e2f29bb6eb1ba20b4d33ab3efa329f9699bd9280d3e27b54dac8f73733"},
+    "sms": {"0.1.0": "4100a8e434df14f9f46ddd4667b37e82acc30e66e5a9b0343ab487cc62c75372"},   # AP3
     "sound-android": {"0.1.0": "bd87cf134638d18ae8e91520805709e32ad19fbdd4aa43cd15439d6c962d88e3"},   # AP2
     "worker": {"0.1.0": "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"},
 }
@@ -636,8 +644,9 @@ async def before_brief_54(tmp_path, monkeypatch):
     alice = hub.auth.create_user("Alice", "a password")["guid"]
     assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
         "agents": "0.6.1", "agents-claude-code": "0.2.2", "app-android": "0.1.0", "battery": "0.2.0",
-        "clipboard-android": "0.1.0", "file": "0.1.0", "media-android": "0.1.0", "net": "0.1.0",
-        "notification-android": "0.1.0", "phone": "0.1.1", "shell": "0.2.0",
+        "calendar": "0.1.0", "call": "0.1.0", "clipboard-android": "0.1.0", "clock": "0.1.0", "contact": "0.1.0",
+        "file": "0.1.0", "location": "0.1.0", "media-android": "0.1.0", "net": "0.1.0",
+        "notification-android": "0.1.0", "phone": "0.1.1", "shell": "0.2.0", "sms": "0.1.0",
         "sound-android": "0.1.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())
