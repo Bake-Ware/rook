@@ -11,14 +11,16 @@ shipped as a plugin installed by default. The cap names, arguments and replies a
 - notification.post and notification.update post the phone's own notifications (Cards.kt), on
   channels of their own, apart from the worker's ongoing notification. With `id` a post is a card the
   person answers with its buttons; what they do comes back to the hub as the event
-  notification-android.card (Cards.kt says how it travels).
+  notification-android.card (Cards.kt says how it travels). A No can carry the person's typed reason
+  (`reason`). A card's expires_at, the caller's own request, takes it from the shade at that time.
+- Every other app's notification is told to the hub as it is posted, as the event
+  notification-android.received {key, package, title, text, ts} (NotificationListener.kt, brief AP7).
 
 Nothing here bounds a call or filters an app (Bake, 17 November): 0.5's lengths (text 4000, title
 200, body 2000 and its six lines, a card's line cut at 140, explain 2000, source 80, options 6 of 200,
 actions 5, a reply's text 2000, message 300), notification.list's default 40 and most 200, its ring
 of the last 200 and big_text cut at 1000, the 10-15 s timeouts, and notification.act's owner switch
-in the app are all left out. A card's expires_at is taken, as 0.5's callers send it, and not kept:
-nothing expires.
+in the app are all left out. Nothing of ours expires a card: only the caller's own expires_at does.
 
 Off the app it announces nothing: CAPS is empty wherever Chaquopy's `java` module does not import,
 which is everywhere but the app."""
@@ -39,7 +41,6 @@ KINDS = ["card", "hold", "job", "ask", "alert"]
 ACTIONS = ["yes", "no", "choose", "explain", "ack"]
 STATES = ["done", "failed", "gone"]
 NOTIFY = "android.permission.POST_NOTIFICATIONS"
-UNKEPT = "expires_at is not kept: cards never expire; notification.update with state gone takes one away"
 
 
 def _check(args, cap, allowed, required=()):
@@ -123,7 +124,7 @@ def card(args):
             "body": "\n".join(line.strip() for line in _text(args, "body").splitlines() if line.strip()),
             "explain": _text(args, "explain").strip(), "urgency": _choice(args, "urgency", ["normal", "urgent"], "normal"),
             "channel": _choice(args, "channel", CHANNELS, "") or "approvals", "actions": actions or ["ack"],
-            "options": options, "source": _text(args, "source").strip()}
+            "options": options, "source": _text(args, "source").strip(), "expires_at": expires}
 
 
 def _post(args):
@@ -131,10 +132,7 @@ def _post(args):
     Cards = jclass(APP + "Cards")
     if args.get("id") is None:
         return _answer(Cards.post(_text(args, "title", "Rook"), args["text"], _choice(args, "channel", CHANNELS, "")))
-    out = _answer(Cards.card(json.dumps(card(args), ensure_ascii=False)))
-    if args.get("expires_at"):
-        out["note"] = UNKEPT
-    return out
+    return _answer(Cards.card(json.dumps(card(args), ensure_ascii=False)))
 
 
 async def post(args):
@@ -237,7 +235,8 @@ CAPS = {} if jclass is None else {
                         "description": "A card's buttons; default yes, no, explain (ack for kind alert)."},
             "options": {"type": "array", "items": {"type": "string"}, "description": "A question's choices, with the choose action."},
             "source": {"type": "string", "default": "", "description": "Who asks, shown as the card's title."},
-            "expires_at": {"type": "number", "default": 0, "description": "Taken as 0.5 took it, and not kept: cards never expire."}}},
+            "expires_at": {"type": "number", "default": 0, "description": "Epoch seconds: at that time the card goes from the shade by itself. "
+                                                                  "0 or left out: it never does."}}},
         post),
     "notification.update": Cap(
         "Show what came of a card: done (a confirmation, its buttons gone), failed (shows message) or gone (taken away, no sound).",
