@@ -1,6 +1,7 @@
 /* The phone app's QR code, download button and install line (brief AP1), drawn into a container:
    on the public page /app, in Settings > Phone app, and in the dock's work pane ([[open: app]]).
-   What it shows comes from GET /app as JSON: whether the hub has the APK, and where it goes if not.
+   What it shows comes from GET /app as JSON: whether the hub has the APK, and, for a person signed in,
+   where it goes.
    The QR code is drawn here, from this page's own address, with no outside service. */
 import qrcodegen from '/site/vendor/qrcodegen.js';
 
@@ -45,8 +46,10 @@ export async function drawPhoneApp(container) {
         'The first time, Android asks to allow installs from your browser: allow it, then open the file.'),
       el('p', 'phone-app-link mono', link));
   } else {
-    const note = el('p', 'callout phone-app-missing', 'This hub has no app file yet. Put the APK at ');
-    note.append(el('b', 'mono', state.file), document.createTextNode(' and open this page again.'));
+    // Where the APK goes is told to a person signed in only: it names the server's folders (brief AP6).
+    const note = el('p', 'callout phone-app-missing', 'This hub has no app file yet.');
+    if (state.file) note.append(' Put the APK at ', el('b', 'mono', state.file), ' and open this page again.');
+    else note.append(' Whoever runs this hub can put it on: Settings > Phone app says where.');
     box.append(note);
   }
   container.replaceChildren(box);

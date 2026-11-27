@@ -53,6 +53,9 @@ class Turns:
 # Paths whose answers are data, not the site's files: never kept by a browser or a proxy (brief 66).
 # /band is the workers' carrier (a WebSocket), not a file of the site either.
 API_PATHS = ("/api/", "/mcp", "/knock", "/link", "/webhook", "/band")
+# The phone app's page and APK (brief AP6): the APK is stamped per request with the address it was asked
+# at, and Cloudflare keeps .apk files by their extension, so neither is kept anywhere.
+PHONE_APP = ("/app", "/app/rook.apk")
 
 
 def _is_api(path):
@@ -64,11 +67,12 @@ async def cache_header(request, response):
     page path, `/site/*`, a plugin's pages and files) are `no-cache`: a browser or proxy such as
     Cloudflare may keep a copy but asks the hub before each use, and the ETag answers 304 when nothing
     changed, so a deploy is seen on the next load and old modules never run against a new hub. API
-    answers are `no-store`: a revealed value or a new token is never kept anywhere.
+    answers are `no-store`: a revealed value or a new token is never kept anywhere, and so are the phone
+    app's page and APK (PHONE_APP).
 
     A site file asked for at its current version (`?v=`, house agent HA5) may be kept for good: those
     bytes never change at that address, and a changed file has a new one."""
-    if _is_api(request.path):
+    if _is_api(request.path) or request.path in PHONE_APP:
         response.headers["Cache-Control"] = "no-store"
     elif response.status in (200, 304) and request.query.get("v") and _current(request):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
