@@ -25,6 +25,10 @@ import java.util.concurrent.CountDownLatch
  *     Bridge.start(intent, cap)         open an activity: null once opened, else why not
  *     Bridge.clipboard(cap)             the clipboard's text, read from a moment in front, as JSON
  *
+ * Brief AP4 adds one more thing `ask` asks for: notification access ([NOTIFICATION_ACCESS]), the
+ * switch on Android's own settings page that lets [NotificationListener] read and act on other apps'
+ * notifications and see every app's media session.
+ *
  * Each waits for the person when it must, as long as that takes, so it is called off the worker's
  * event loop (asyncio.to_thread).
  *
@@ -51,6 +55,7 @@ object Bridge {
         Manifest.permission.SYSTEM_ALERT_WINDOW -> Settings.canDrawOverlays(app)
         Manifest.permission.ACCESS_NOTIFICATION_POLICY ->
             app.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted
+        NOTIFICATION_ACCESS -> NotificationListener.granted(app)
         else -> app.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
     }
 
@@ -145,6 +150,7 @@ object Bridge {
         Manifest.permission.SYSTEM_ALERT_WINDOW -> "to display over other apps"
         Manifest.permission.ACCESS_NOTIFICATION_POLICY -> "Do Not Disturb access"
         Manifest.permission.POST_NOTIFICATIONS -> "to show notifications"
+        NOTIFICATION_ACCESS -> "notification access"
         else -> permission.substringAfterLast('.')
     }
 
@@ -156,6 +162,11 @@ object Bridge {
         Manifest.permission.ACCESS_NOTIFICATION_POLICY ->
             "$cap needs Do Not Disturb access ($permission), and it is off. On the phone, Settings > Apps > " +
                 "Special app access > Do Not Disturb access > Rook, turn it on, then call again."
+        NOTIFICATION_ACCESS ->
+            "$cap needs notification access for Rook, and it is off. On the phone, Settings > Apps > Special app " +
+                "access > Notification access (Device & app notifications) > Rook, turn it on, then call again. If " +
+                "Android says it is a restricted setting (an app installed from a link), first Settings > Apps > Rook > " +
+                "the menu > Allow restricted settings."
         else ->
             "$cap needs the permission $permission, and it was refused. On the phone, Settings > Apps > Rook > " +
                 "Permissions, allow it, then call again."
@@ -170,4 +181,6 @@ object Bridge {
     /** Each ask a screen of its own, so one that is still closing never takes the next. */
     private const val ASK_FLAGS = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
     internal const val CLIPBOARD = "clipboard"
+    /** What `ask` takes for notification access (brief AP4): the permission Android's notification listeners are bound with. */
+    const val NOTIFICATION_ACCESS = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
 }

@@ -51,6 +51,29 @@
             </intent-filter>
         </receiver>
 
+        <!-- notification-android and media-android (brief AP4): the one notification listener, bound by Android once
+             the person gives Rook notification access; the buttons on the phone's own cards, and a tap on one. -->
+        <service
+            android:name=".NotificationListener"
+            android:exported="true"
+            android:label="Rook"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".CardReceiver"
+            android:exported="false" />
+
+        <activity
+            android:name=".CardOpened"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <activity
             android:name=".AskActivity"
             android:exported="false"

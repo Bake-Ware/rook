@@ -12,10 +12,17 @@ waiting for approval, linking, or linking again after the link was lost, with wh
 worker keeps its keys and identity in `state_dir`, the app's private files, as any worker does in
 its state directory; `join_code` is used only while it has no identity. It relinks by itself after a
 hub restart or a network change, as every Python worker does (docs/link-design.md 3.2). What it says
-also goes to logcat (Chaquopy puts stderr there)."""
+also goes to logcat (Chaquopy puts stderr there).
+
+    rook_android.emit(name, payload_json)    # brief AP4: True once the event is on the link
+
+puts an event on the hub's bus from Kotlin (a card's answer, Cards.kt), through the running worker's
+own `emit` (J2). It is False while no worker runs or it is not linked; the caller keeps the event and
+tries again at the next link."""
 
 import asyncio
 import http.client
+import json
 import logging
 import sys
 import urllib.error
@@ -26,6 +33,7 @@ import rook_worker
 from rook_protocol import ProtocolError
 
 _running = {}           # the worker and its loop, while run() runs
+_linked = []            # [True] while the worker is linked (brief AP4: emit)
 
 
 class _Told(logging.Handler):
@@ -37,8 +45,10 @@ class _Told(logging.Handler):
 
     def emit(self, record):
         if record.msg == "Linked to %s as %s.":
+            _linked[:] = [True]
             self.told.state("linked", str(record.args[1]))
         else:
+            _linked.clear()
             self.told.state("joining", record.getMessage())
 
 
@@ -76,6 +86,7 @@ def run(state_dir, hub_url, name, join_code, told):
         told.state("failed", why(e, hub_url))
     finally:
         _running.clear()
+        _linked.clear()
         loop.close()
         for handler in handlers:
             rook_worker.log.removeHandler(handler)
@@ -86,3 +97,18 @@ def stop():
     worker, loop = _running.get("worker"), _running.get("loop")
     if worker is not None:
         loop.call_soon_threadsafe(worker.stop)
+
+
+def emit(name, payload):
+    """Put event `name` with `payload` (JSON text) on the hub's bus through the running worker (brief
+    AP4). True once it is on the link; False while no worker runs or it is not linked, or if the link
+    went as it was sent: the caller keeps it for the next link. Called from a thread other than the
+    worker's, which it waits on."""
+    worker, loop = _running.get("worker"), _running.get("loop")
+    if worker is None or not _linked:
+        return False
+    try:
+        asyncio.run_coroutine_threadsafe(worker.emit(name, json.loads(payload)), loop).result()
+    except Exception:
+        return False
+    return True

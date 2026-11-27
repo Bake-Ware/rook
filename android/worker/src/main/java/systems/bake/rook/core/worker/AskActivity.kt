@@ -5,13 +5,14 @@ import android.app.Activity
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 
 /**
  * A see-through screen that is in front only for as long as an answer takes (Bridge): Android's own
- * prompt for a runtime permission; Android's settings page for displaying over other apps or for Do Not
- * Disturb access, the answer read when the person comes back; or a read of the clipboard, which Android
+ * prompt for a runtime permission; Android's settings page for displaying over other apps, for Do Not
+ * Disturb access or for notification access, the answer read when the person comes back; or a read of the clipboard, which Android
  * shows only to the app in front. Whatever ends it, the request is answered once.
  */
 class AskActivity : Activity() {
@@ -32,6 +33,13 @@ class AskActivity : Activity() {
                 startActivityForResult(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")), 1)
             Manifest.permission.ACCESS_NOTIFICATION_POLICY ->
                 startActivityForResult(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS), 1)
+            Bridge.NOTIFICATION_ACCESS ->       // Rook's own switch where Android has one (11 and later), else the list
+                startActivityForResult(if (Build.VERSION.SDK_INT >= 30) {
+                    Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS).putExtra(
+                        Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, NotificationListener.component(this).flattenToString())
+                } else {
+                    Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                }, 1)
             else -> requestPermissions(arrayOf(permission), 1)
         }
     }

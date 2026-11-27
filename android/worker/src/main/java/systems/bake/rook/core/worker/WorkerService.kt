@@ -47,6 +47,7 @@ class WorkerService : Service() {
         val channel = NotificationChannel(CHANNEL, "Rook worker", NotificationManager.IMPORTANCE_LOW)
         channel.description = "Shows that this phone is a worker on its hub"
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        NotificationListener.rebind(this)       // brief AP4: bound again if Android had let it go
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -126,6 +127,7 @@ class WorkerService : Service() {
         }
         Log.i(TAG, "$kind: $text")
         if (state is WorkerState.Linked) RookWorker.joined(this)
+        if (state is WorkerState.Linked) Cards.flush(this)          // brief AP4: card answers kept while unlinked go now
         RookWorker.told(state)
         val shown = when (state) {
             is WorkerState.Linked -> "Linked as ${state.moniker}"
