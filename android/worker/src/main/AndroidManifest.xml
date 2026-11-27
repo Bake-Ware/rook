@@ -34,6 +34,8 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <!-- clock.timer, clock.alarm, clock.alarms: the clock app's intents. -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <!-- screen.capture without the accessibility service: Android's screen capture, in a service of its own type. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <!-- app.list and app.launch: the launcher's apps; app.open_url and app.share: which app takes a link or a share. -->
     <queries>
@@ -113,6 +115,34 @@
 
         <activity
             android:name=".AskActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- The hands and eyes (brief AP5): hid.*, ui.*, screen.capture's screenshot, phone.unlock. -->
+        <service
+            android:name=".Hands"
+            android:exported="true"
+            android:label="@string/rook_hands_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/rook_hands" />
+        </service>
+
+        <!-- screen.capture's MediaProjection session. -->
+        <service
+            android:name=".CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- screen.on, phone.unlock: the screen on, over the lock screen. -->
+        <activity
+            android:name=".WakeActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:taskAffinity=""
