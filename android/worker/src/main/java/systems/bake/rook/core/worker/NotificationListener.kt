@@ -14,6 +14,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 /**
  * The phone's one notification listener (brief AP4): what notification-android reads other apps'
@@ -29,6 +30,13 @@ import org.json.JSONObject
  *
  * The caps' Python reaches it as `NotificationListener.bound()`, which waits until Android has bound it
  * and gives the listener, whose [list], [get], [dismiss] and [act] answer in JSON.
+ *
+ * It also tells the hub of every other app's notification as it is posted (brief AP7): the event
+ * `notification-android.received` ([Events]). Each post Android hands it is told, an update Android posts
+ * again under the same key included (0.5 told each post with a new time, and Android gives every post a new
+ * one). Rook's own notifications (the worker's, the bridge's asks, its cards) are not told. What was posted
+ * while it was not bound and is still in the shade is told when it connects, from where it last told; the
+ * very first time it connects it only notes the time (0.5's rule: history is not news).
  */
 class NotificationListener : NotificationListenerService() {
 
@@ -37,6 +45,43 @@ class NotificationListener : NotificationListenerService() {
             instance = this
             lock.notifyAll()
         }
+        synchronized(telling) {
+            val told = told()
+            if (told == null) keep(NoticesTold(System.currentTimeMillis(), emptySet()))
+            else tell(told, told.missed(shown().map(::posted), packageName))
+        }
+    }
+
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        if (sbn == null || sbn.packageName == packageName) return
+        synchronized(telling) { tell(told() ?: NoticesTold(0, emptySet()), listOf(posted(sbn))) }
+    }
+
+    private fun tell(from: NoticesTold, posts: List<Posted>) {
+        var told = from
+        for (p in posts) {
+            Events.tell(this, "notification-android.received", notificationReceived(p))
+            told = told.after(p)
+        }
+        if (told != from) keep(told)
+    }
+
+    private fun toldFile() = File(Events.dir(this), "notifications-told.json")
+
+    private fun told(): NoticesTold? = toldFile().takeIf { it.exists() }?.let {
+        try { NoticesTold.of(it.readText()) } catch (_: Exception) { null }
+    }
+
+    private fun keep(told: NoticesTold) {
+        val kept = toldFile()
+        File(kept.path + ".new").apply { writeText(told.json()) }.renameTo(kept)
+    }
+
+    private fun posted(sbn: StatusBarNotification): Posted {
+        val extras = sbn.notification.extras
+        return Posted(sbn.key, sbn.packageName, extras?.getCharSequence("android.title")?.toString(),
+            extras?.getCharSequence("android.text")?.toString(), extras?.getCharSequence("android.bigText")?.toString(),
+            sbn.postTime)
     }
 
     override fun onListenerDisconnected() {
@@ -138,6 +183,7 @@ class NotificationListener : NotificationListenerService() {
 
     companion object {
         private val lock = Object()
+        private val telling = Any()
         private var instance: NotificationListener? = null
 
         @JvmStatic fun component(context: Context) = ComponentName(context, NotificationListener::class.java)

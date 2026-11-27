@@ -16,9 +16,9 @@ also goes to logcat (Chaquopy puts stderr there).
 
     rook_android.emit(name, payload_json)    # brief AP4: True once the event is on the link
 
-puts an event on the hub's bus from Kotlin (a card's answer, Cards.kt), through the running worker's
-own `emit` (J2). It is False while no worker runs or it is not linked; the caller keeps the event and
-tries again at the next link."""
+puts an event on the hub's bus from Kotlin (Events.kt: a card's answer, a text or another app's
+notification as it arrives, brief AP7), through the running worker's own `emit` (J2). It is False while
+no worker runs or it is not linked; the caller keeps the event and tries again at the next link."""
 
 import asyncio
 import http.client
