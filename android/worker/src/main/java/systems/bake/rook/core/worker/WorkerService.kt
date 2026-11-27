@@ -91,7 +91,7 @@ class WorkerService : Service() {
                     RookWorker.state(this).deleteRecursively()       // the old identity, its keys and its plugins' data
                     prefs.edit().remove(RookWorker.FRESH).remove(RookWorker.JOINED).apply()
                 }
-                if (!Python.isStarted()) Python.start(AndroidPlatform(applicationContext))
+                if (!Python.isStarted()) Python.start(AndroidPlatform(Storage.python(this)))     // brief AP8: before the first unlock too
                 val entry = Python.getInstance().getModule("rook_android")
                 if (!stopping && worker === Thread.currentThread()) {
                     entry.callAttr("run", RookWorker.state(this).absolutePath, hub, deviceName(), code, Told())

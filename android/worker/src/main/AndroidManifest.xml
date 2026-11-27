@@ -71,9 +71,12 @@
         </intent>
     </queries>
 
+    <!-- directBootAware (brief AP8): the parts that run before the phone is unlocked for the first time after
+         it restarts, so the worker links and phone.unlock can unlock it. What they keep is in Storage.kt. -->
     <application>
         <service
             android:name=".WorkerService"
+            android:directBootAware="true"
             android:exported="false"
             android:foregroundServiceType="specialUse|location">
             <property
@@ -83,8 +86,10 @@
 
         <receiver
             android:name=".BootReceiver"
+            android:directBootAware="true"
             android:exported="true">
             <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
@@ -94,6 +99,7 @@
              the person gives Rook notification access; the buttons on the phone's own cards, and a tap on one. -->
         <service
             android:name=".NotificationListener"
+            android:directBootAware="true"
             android:exported="true"
             android:label="Rook"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
@@ -104,6 +110,7 @@
 
         <receiver
             android:name=".CardReceiver"
+            android:directBootAware="true"
             android:exported="false" />
 
         <activity
@@ -123,6 +130,7 @@
         <!-- The hands and eyes (brief AP5): hid.*, ui.*, screen.capture's screenshot, phone.unlock. -->
         <service
             android:name=".Hands"
+            android:directBootAware="true"
             android:exported="true"
             android:label="@string/rook_hands_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
@@ -143,6 +151,7 @@
         <!-- screen.on, phone.unlock: the screen on, over the lock screen. -->
         <activity
             android:name=".WakeActivity"
+            android:directBootAware="true"
             android:exported="false"
             android:excludeFromRecents="true"
             android:taskAffinity=""

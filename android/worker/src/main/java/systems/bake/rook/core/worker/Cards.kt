@@ -311,7 +311,7 @@ object Cards {
 
     private fun strings(a: JSONArray?) = (0 until (a?.length() ?: 0)).map { a!!.getString(it) }
 
-    private fun file(app: Context, name: String) = File(File(app.filesDir, "notification-android").apply { mkdirs() }, name)
+    private fun file(app: Context, name: String) = File(File(Storage.files(app), "notification-android").apply { mkdirs() }, name)
 
     private fun <T> read(app: Context, name: String, empty: T): T {
         val f = file(app, name)

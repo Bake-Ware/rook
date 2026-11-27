@@ -18,8 +18,9 @@ sealed interface WorkerState {
  * The phone's worker, as the app sees it: the repo's own Python worker, run by [WorkerService].
  *
  * [start] keeps the hub's address (and the join code, until the worker has joined with it) in the
- * app's private preferences and starts the service, which runs the worker until [stop]; after a
- * reboot or an app update [BootReceiver] starts it again with what was kept. [state] is what the
+ * worker's preferences and starts the service, which runs the worker until [stop]; after a reboot
+ * (before anyone unlocks the phone: both live in [Storage]) or an app update [BootReceiver] starts it
+ * again with what was kept. [state] is what the
  * worker last said: Joining while it knocks, links or links again, Linked with the moniker the hub
  * gave it, Failed with the worker's own words when it stopped on an error.
  */
@@ -57,10 +58,10 @@ object RookWorker {
         _state.value = state
     }
 
-    internal fun prefs(context: Context) = context.getSharedPreferences("rook-worker", Context.MODE_PRIVATE)
+    internal fun prefs(context: Context) = Storage.prefs(context, "rook-worker")
 
-    /** The worker's state directory: its keys and identity, in the app's private files. */
-    internal fun state(context: Context) = File(context.filesDir, "worker")
+    /** The worker's state directory: its keys and identity, and its plugins' data, readable before the first unlock. */
+    internal fun state(context: Context) = File(Storage.files(context), "worker")
 
     /** The worker linked: a join code it had is used up, and the address it joined is the identity's. */
     internal fun joined(context: Context) {
