@@ -28,6 +28,10 @@ CF3; `config.set {worker, set: {"agents-claude-code": {...}}}`), each with 0.5's
                      servers: --setting-sources project,local --strict-mcp-config (true)
     door_url         the hub's MCP door as this worker reaches it (the hub this worker links to, /mcp)
 
+A phone cannot run Claude Code (brief AP6): on the Rook Android app, where Chaquopy's `java` module
+imports, this plugin announces nothing, so a phone joining a hub is never a second engine for the house
+agent to choose between. Everywhere else it announces the turn as before.
+
 A turn has no timeout (RULES.md). A call that is stopped (its stream closed, brief 59) ends the
 claude process at once; nothing else ends it.
 
@@ -53,6 +57,12 @@ import tempfile
 from pathlib import Path
 
 from rook_worker import Cap
+
+try:
+    import java  # noqa: F401  Chaquopy's: only in the Rook Android app
+    ON_ANDROID = True
+except ImportError:
+    ON_ANDROID = False
 
 # A session id or model name, never an option: --resume takes an optional value, so
 # "--dangerously-skip-permissions" there would be read as a flag (0.5's guard).
@@ -242,3 +252,6 @@ CAPS = {
                                                             "through the door, and waits for."}}},
         turn),
 }
+
+if ON_ANDROID:
+    CAPS = {}
