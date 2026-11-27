@@ -17,7 +17,7 @@ from test_default_plugins import Rig
 ANDROID = {
     "app-android": ["app.launch", "app.list", "app.open_url", "app.settings", "app.share"],
     "clipboard-android": ["clipboard.get", "clipboard.set"],
-    "phone": ["phone.find", "phone.find_stop", "phone.torch", "phone.vibrate"],
+    "phone": ["phone.find", "phone.find_stop", "phone.torch", "phone.unlock", "phone.vibrate"],
     "sound-android": ["sound.dnd", "sound.set", "sound.status"],
     "sms": ["sms.list", "sms.send"],
     "call": ["call.dial", "call.list"],
