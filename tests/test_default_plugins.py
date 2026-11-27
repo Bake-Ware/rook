@@ -470,7 +470,8 @@ RECORDED = {
                            "0.2.0": "8ba8ef43fb7160bc68a51939eb74dd0d074349f965c6e1f52ce15caa88e784e9",   # fork, schema, precompact
                            "0.2.1": "7d348fd4df50731a87406c363072e095badb72d58b24266f9f7fa3a7e2ef0b3a",   # the hook names itself (User-Agent)
                            "0.2.2": "b1fe650c04a51b06eb8a6a1f4026f7735ece517aa122d4d1c92a870d5c0b4453"},  # announces nothing on a phone (AP6)
-    "app-android": {"0.1.0": "186e318f162c98e13f358d4f3bd568c0de8923038b93a987967d3e47e16be06c"},   # the phone's apps (AP2)
+    "app-android": {"0.1.0": "186e318f162c98e13f358d4f3bd568c0de8923038b93a987967d3e47e16be06c",   # the phone's apps (AP2)
+                    "0.2.0": "0a908a78c34f3fcf29e22e7af0b664e1482dd88ca3b53dbe6d22fdc4d1e2b0c0"},   # screen: true reads the screen (AP5)
     "battery": {"0.1.0": "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a",
                 "0.2.0": "51134f64c5cc2d0ec08126c0ca81b967deb2010763506f930c791f8c5e0f8a53"},   # the phone's battery (AP2)
     "calendar": {"0.1.0": "8ed79a12329783b54e293365758b4e20bd4f652b6a5fd964d0d69b4ea27aebe5"},   # AP3
@@ -480,12 +481,15 @@ RECORDED = {
     "contact": {"0.1.0": "75ab1e54ef8f92495ac01efdc3f1a4a4c5776e108802810480bc50ac91d83e75"},   # AP3
     "file": {"0.1.0": "fabb70ed8cd611a826a9eae004f255cf3c282f7e20fb6853990780182655d216",
              "0.2.0": "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"},
+    "hid-android": {"0.1.0": "21dd8213339d8d7493122101e5cac124ede790b66950a347e5d889aa53de3630"},   # taps, swipes, typing, keys (AP5)
     "location": {"0.1.0": "fc10ba4718f1d631a8a2168299c3e228549c8d87b3ff89b4d676356c2bd7f8d6"},   # AP3
     "media-android": {"0.1.0": "da73d33004317ee8de21ee0aa3a99cdbd287ea5655376560e299b0c1c33a71b8"},   # the phone's media (AP4)
     "net": {"0.1.0": "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"},
     "notification-android": {"0.1.0": "575ded1fb642196c6bcb3798002df77fa3f16d99f679d26f8bf4bfec31dc9c5f"},   # AP4
     "phone": {"0.1.0": "08a6199454b9e2daa784b6233e183bff6bfebda3ece190491b5198c54a009806",   # find, vibrate, torch (AP2)
-              "0.1.1": "624242a8be87a87b6d471331659841c06ed072b38f30c2ce4435bb371976dbb7"},  # vibrate without ms: 300 ms (PR 465)
+              "0.1.1": "624242a8be87a87b6d471331659841c06ed072b38f30c2ce4435bb371976dbb7",  # vibrate without ms: 300 ms (PR 465)
+              "0.2.0": "8cf00ba1582b4c29630240ac022f9171d6349b086290087e6a3df74646ee059b"},   # phone.unlock (AP5)
+    "screen-android": {"0.1.0": "ca0ed3254b118c77d3eb3b4ab28450ca4c285f629455d21f36c63264ea45b555"},   # capture, on, keep-on (AP5)
     "shell": {"0.1.0": "df540c027d5e5da20fa01465b0426033570f62fe8b59a6cc2edcc10f574817b7",
               "0.2.0": "95a8ed17f73d6d3e5baa8107031c8ff1b5ed7ed3230accb1493c37372259f633",
               "0.3.0": "31b456adeaa73e0063c4a8e18b19268d8a21bdba41cd5acdfd8d3770f14b09db",
@@ -493,6 +497,7 @@ RECORDED = {
               "0.5.0": "f57565e2f29bb6eb1ba20b4d33ab3efa329f9699bd9280d3e27b54dac8f73733"},
     "sms": {"0.1.0": "4100a8e434df14f9f46ddd4667b37e82acc30e66e5a9b0343ab487cc62c75372"},   # AP3
     "sound-android": {"0.1.0": "bd87cf134638d18ae8e91520805709e32ad19fbdd4aa43cd15439d6c962d88e3"},   # AP2
+    "ui-android": {"0.1.0": "08679bb6e1d711a96d0899a8879f850f9b8d4518067eadfaf080c91342152d9e"},   # the screen by its labels (AP5)
     "worker": {"0.1.0": "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"},
 }
 SHIPPED = {name: next(reversed(versions.items())) for name, versions in RECORDED.items()}   # each one's newest
