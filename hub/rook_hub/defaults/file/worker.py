@@ -28,6 +28,13 @@ import sys
 
 from rook_worker import LEFT_OUT, PIECE, Cap, Items, Text
 
+try:
+    from java import jclass     # Chaquopy's: only in the Rook Android app (brief AP8, _unmounted)
+except ImportError:
+    jclass = None
+
+SHARED = ("/sdcard", "/storage", "/mnt/sdcard", "/mnt/user")     # Android's shared storage
+
 
 # ------------------------------------------------------------------- arguments
 
@@ -63,8 +70,20 @@ def _count(args, name, least):
     return value
 
 
+def _unmounted(path):
+    """On the Rook Android app before the phone's first unlock since it restarted, Android has not yet opened its
+    shared storage (/sdcard), so nothing under it is found (brief AP8): what to say then, else None."""
+    if jclass is None or not os.path.abspath(path).startswith(SHARED):
+        return None
+    said = jclass("systems.bake.rook.core.worker.Bridge").locked("keeps the phone's shared storage (/sdcard) closed")
+    return None if said is None else str(said)
+
+
 def _failed(e, path):
     """An OSError on `path` as a refusal that says what to try (C3)."""
+    closed = _unmounted(path) if isinstance(e, FileNotFoundError) else None
+    if closed:
+        return ValueError(f"not found: {path}; {closed}")
     what = {FileNotFoundError: "not found", IsADirectoryError: "is a folder", NotADirectoryError: "not a folder",
             PermissionError: "permission denied for this worker's user", FileExistsError: "exists"}.get(type(e))
     hint = {FileNotFoundError: "; check the path with file.stat, or list its folder with file.list",
@@ -163,7 +182,8 @@ def write(args):
         with open(path, "ab" if append else "wb") as f:
             written = f.write(raw)
     except FileNotFoundError:
-        raise ValueError(f"not found: the folder of {path}; make it with create_parents true") from None
+        closed = _unmounted(path)
+        raise ValueError(f"not found: the folder of {path}; {closed or 'make it with create_parents true'}") from None
     except OSError as e:
         raise _failed(e, path) from None
     return {"path": str(pathlib.Path(path)), "written": written}
@@ -174,8 +194,9 @@ async def list_(args):
     path, recursive = _text(args, "path"), _flag(args, "recursive", False)
     hidden, limit = _flag(args, "hidden", True), _count(args, "limit", 1)
     if not await asyncio.to_thread(os.path.isdir, path):
+        closed = None if os.path.exists(path) else await asyncio.to_thread(_unmounted, path)
         raise ValueError(f"{'not a folder' if os.path.exists(path) else 'not found'}: {path}; "
-                         "give a folder's path; describe a file with file.stat")
+                         + (closed or "give a folder's path; describe a file with file.stat"))
     first = await _folder(path, path)       # the folder itself is read now, so a refusal comes as ever
     cut = asyncio.get_running_loop().create_future()      # whether limit cut it: known at the end
     return {"entries": Items(_entries(path, first, recursive, hidden, limit, cut)), "truncated": cut}
@@ -234,7 +255,8 @@ def stat(args):
     try:
         return {"exists": True, **_meta(os.lstat(path))}
     except FileNotFoundError:
-        return {"exists": False}
+        closed = _unmounted(path)
+        return {"exists": False, **({"note": closed} if closed else {})}
     except OSError as e:
         raise _failed(e, path) from None
 
@@ -281,7 +303,8 @@ async def search(args):
     except re.error as e:
         raise ValueError(f"bad pattern: {e}; give a Python regular expression") from None
     if not os.path.exists(job["path"]):
-        raise ValueError(f"not found: {job['path']}; give a folder or a file to search")
+        closed = await asyncio.to_thread(_unmounted, job["path"])
+        raise ValueError(f"not found: {job['path']}; {closed or 'give a folder or a file to search'}")
     child = await asyncio.create_subprocess_exec(sys.executable, "-I", "-c", SCAN, stdin=asyncio.subprocess.PIPE,
                                                  stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     child.stdin.write(json.dumps(job).encode("utf-8"))

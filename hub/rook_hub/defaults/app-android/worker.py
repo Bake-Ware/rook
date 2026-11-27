@@ -142,7 +142,9 @@ def launcher_apps():
     intent = Intent(Intent.ACTION_MAIN)
     intent.addCategory(Intent.CATEGORY_LAUNCHER)
     packages = _bridge().context().getPackageManager()
-    found = packages.queryIntentActivities(intent, 0)
+    # Every app, also before the phone's first unlock since it restarted, when Android otherwise lists only those that run then (brief AP8).
+    PackageManager = jclass("android.content.pm.PackageManager")
+    found = packages.queryIntentActivities(intent, PackageManager.MATCH_DIRECT_BOOT_AWARE | PackageManager.MATCH_DIRECT_BOOT_UNAWARE)
     apps = [{"label": str(info.loadLabel(packages)), "package": str(info.packageName)}
             for info in (found.get(k).activityInfo for k in range(int(found.size())))]
     return sorted(apps, key=lambda a: (a["label"].lower(), a["package"]))
@@ -191,7 +193,9 @@ def _launch(app, params, show):
         package = found["package"]
         intent = packages.getLaunchIntentForPackage(package)
         if intent is None:
-            raise ValueError(f"{package} can't be launched")
+            raise ValueError(str(_bridge().locked(f"opens only the apps that run before then (such as the clock, the phone and "
+                                                  f"settings), and {found['label']} is not one")
+                                 or f"{package} can't be launched"))
     for name, value in params.items():
         intent.putExtra(str(name), value if isinstance(value, (str, bool)) else jint(value))
     return _start("app.launch", intent, {"package": package}, show)
