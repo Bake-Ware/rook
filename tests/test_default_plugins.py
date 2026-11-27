@@ -119,13 +119,13 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
     hub.close()
     again = Hub(tmp_path / "hub")
     assert {p["name"]: p["version"] for p in again.plugins.list()} == {"agents": "0.6.1", "agents-claude-code": "0.2.2",
-                                                                     "app-android": "0.2.0", "battery": "0.2.0",
-                                                                     "calendar": "0.1.0", "call": "0.1.0",
+                                                                     "app-android": "0.2.1", "battery": "0.2.0",
+                                                                     "calendar": "0.1.1", "call": "0.1.1",
                                                                      "clipboard-android": "0.1.0", "clock": "0.1.0",
-                                                                     "contact": "0.1.0", "file": "0.2.0", "hid-android": "0.1.0",
+                                                                     "contact": "0.1.1", "file": "0.2.1", "hid-android": "0.1.0",
                                                                      "location": "0.1.0",
                                                                      "media-android": "0.1.0", "net": "0.1.0", "notification-android": "0.2.0",
-                                                                     "phone": "0.2.0", "screen-android": "0.1.0", "shell": "9.0.0", "sms": "0.1.1",
+                                                                     "phone": "0.2.0", "screen-android": "0.1.0", "shell": "9.0.0", "sms": "0.1.2",
                                                                      "sound-android": "0.1.0", "ui-android": "0.1.0", "worker": "0.1.0"}
     again.close()
 
@@ -471,16 +471,21 @@ RECORDED = {
                            "0.2.1": "7d348fd4df50731a87406c363072e095badb72d58b24266f9f7fa3a7e2ef0b3a",   # the hook names itself (User-Agent)
                            "0.2.2": "b1fe650c04a51b06eb8a6a1f4026f7735ece517aa122d4d1c92a870d5c0b4453"},  # announces nothing on a phone (AP6)
     "app-android": {"0.1.0": "186e318f162c98e13f358d4f3bd568c0de8923038b93a987967d3e47e16be06c",   # the phone's apps (AP2)
-                    "0.2.0": "0a908a78c34f3fcf29e22e7af0b664e1482dd88ca3b53dbe6d22fdc4d1e2b0c0"},   # screen: true reads the screen (AP5)
+                    "0.2.0": "0a908a78c34f3fcf29e22e7af0b664e1482dd88ca3b53dbe6d22fdc4d1e2b0c0",   # screen: true reads the screen (AP5)
+                    "0.2.1": "07e43ed16a9d61ec5370afa8ed7487b7536219f5bfb18fc43f35ab7e66823cfc"},   # every app, and why one cannot open, before the first unlock (AP8)
     "battery": {"0.1.0": "eb0cab1ebe8c526ac06b274905516c07cff649a18cf65c61f7708e31641cdd5a",
                 "0.2.0": "51134f64c5cc2d0ec08126c0ca81b967deb2010763506f930c791f8c5e0f8a53"},   # the phone's battery (AP2)
-    "calendar": {"0.1.0": "8ed79a12329783b54e293365758b4e20bd4f652b6a5fd964d0d69b4ea27aebe5"},   # AP3
-    "call": {"0.1.0": "1d9208c5d348f7d89cbcf9531912a800ee1dd5405a1094faf18cdae87e6b3e5c"},   # AP3
+    "calendar": {"0.1.0": "8ed79a12329783b54e293365758b4e20bd4f652b6a5fd964d0d69b4ea27aebe5",   # AP3
+                 "0.1.1": "92bf977ba8a86ca9f21d83be5d97d20e92b2b346536d1829d6efc7d3cf6154c7"},   # says so before the first unlock (AP8)
+    "call": {"0.1.0": "1d9208c5d348f7d89cbcf9531912a800ee1dd5405a1094faf18cdae87e6b3e5c",   # AP3
+             "0.1.1": "995712e1f542eb9c8cbaddc1e391516f4deaa702375427dc59fd5bac04d96045"},   # says so before the first unlock (AP8)
     "clipboard-android": {"0.1.0": "a0f37225aa25fdca13be975ae5f9921f2cf0c4f3514a4d2fd3433922d0c2629c"},   # AP2
     "clock": {"0.1.0": "2074128434b7fde72d85dc84cceee02da921826601ba55a4058e04037f85595e"},   # AP3
-    "contact": {"0.1.0": "75ab1e54ef8f92495ac01efdc3f1a4a4c5776e108802810480bc50ac91d83e75"},   # AP3
+    "contact": {"0.1.0": "75ab1e54ef8f92495ac01efdc3f1a4a4c5776e108802810480bc50ac91d83e75",   # AP3
+                "0.1.1": "9cdd4237d5d481388465bfa9fd7df17cce1755917e8d4d91f80b2a1fdcfe11e1"},   # says so before the first unlock (AP8)
     "file": {"0.1.0": "fabb70ed8cd611a826a9eae004f255cf3c282f7e20fb6853990780182655d216",
-             "0.2.0": "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca"},
+             "0.2.0": "be10d9d7242587b70941b096d90b21b8ea498ca0befa0c1f873dd5ec8b770bca",
+             "0.2.1": "66be639ea10e4c21cdf6bd5d47f0e478ac8f9600e1046e429c63f0c6d9590b5b"},   # /sdcard before the phone's first unlock (AP8)
     "hid-android": {"0.1.0": "21dd8213339d8d7493122101e5cac124ede790b66950a347e5d889aa53de3630"},   # taps, swipes, typing, keys (AP5)
     "location": {"0.1.0": "fc10ba4718f1d631a8a2168299c3e228549c8d87b3ff89b4d676356c2bd7f8d6"},   # AP3
     "media-android": {"0.1.0": "da73d33004317ee8de21ee0aa3a99cdbd287ea5655376560e299b0c1c33a71b8"},   # the phone's media (AP4)
@@ -497,7 +502,8 @@ RECORDED = {
               "0.4.0": "d40819a1ad1615bd82667077ebeb5ee6cc14be84684a2832b5d6ed09b157b37f",
               "0.5.0": "f57565e2f29bb6eb1ba20b4d33ab3efa329f9699bd9280d3e27b54dac8f73733"},
     "sms": {"0.1.0": "4100a8e434df14f9f46ddd4667b37e82acc30e66e5a9b0343ab487cc62c75372",   # AP3
-            "0.1.1": "1fc3002fcc08228936cf2862a9fcdcdc0de43118ad3daabb5e014c5d8684c027"},   # names sms.received (AP7)
+            "0.1.1": "1fc3002fcc08228936cf2862a9fcdcdc0de43118ad3daabb5e014c5d8684c027",   # names sms.received (AP7)
+            "0.1.2": "f0c5c56e3497bd15f9f8aac68c9eb7eecf5c377c838453a05c832df4f772c92f"},   # says so before the first unlock (AP8)
     "sound-android": {"0.1.0": "bd87cf134638d18ae8e91520805709e32ad19fbdd4aa43cd15439d6c962d88e3"},   # AP2
     "ui-android": {"0.1.0": "08679bb6e1d711a96d0899a8879f850f9b8d4518067eadfaf080c91342152d9e"},   # the screen by its labels (AP5)
     "worker": {"0.1.0": "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"},
@@ -651,10 +657,10 @@ async def before_brief_54(tmp_path, monkeypatch):
     host, port = await hub.serve("127.0.0.1", 0)
     alice = hub.auth.create_user("Alice", "a password")["guid"]
     assert {p["name"]: p["version"] for p in hub.plugins.list()} == {
-        "agents": "0.6.1", "agents-claude-code": "0.2.2", "app-android": "0.2.0", "battery": "0.2.0",
-        "calendar": "0.1.0", "call": "0.1.0", "clipboard-android": "0.1.0", "clock": "0.1.0", "contact": "0.1.0",
+        "agents": "0.6.1", "agents-claude-code": "0.2.2", "app-android": "0.2.1", "battery": "0.2.0",
+        "calendar": "0.1.1", "call": "0.1.1", "clipboard-android": "0.1.0", "clock": "0.1.0", "contact": "0.1.1",
         "file": "0.1.0", "hid-android": "0.1.0", "location": "0.1.0", "media-android": "0.1.0", "net": "0.1.0",
-        "notification-android": "0.2.0", "phone": "0.2.0", "screen-android": "0.1.0", "shell": "0.2.0", "sms": "0.1.1",
+        "notification-android": "0.2.0", "phone": "0.2.0", "screen-android": "0.1.0", "shell": "0.2.0", "sms": "0.1.2",
         "sound-android": "0.1.0", "ui-android": "0.1.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())

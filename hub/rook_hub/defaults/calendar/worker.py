@@ -63,11 +63,23 @@ def _need(cap, *permissions):
         raise ValueError(str(refused))
 
 
+def _locked():
+    """Before the phone's first unlock since it restarted, Android keeps the calendar closed (brief AP8): say so."""
+    said = _bridge().locked("keeps the calendar closed")
+    if said is not None:
+        raise ValueError(str(said))
+
+
 def _query(uri, columns, where=None, args=None, order=None, limit=None):
     """Rows from a content provider, each column as str, int, float or None; `limit` stops after that many."""
-    cursor = _bridge().context().getContentResolver().query(
-        jclass("android.net.Uri").parse(uri), columns, where, args, order)
+    try:
+        cursor = _bridge().context().getContentResolver().query(
+            jclass("android.net.Uri").parse(uri), columns, where, args, order)
+    except Exception:
+        _locked()
+        raise
     if cursor is None:
+        _locked()
         raise ValueError(f"{uri}: the phone gave no answer")
     rows = []
     try:

@@ -26,7 +26,8 @@ import java.util.concurrent.Executors
  *   ([NotificationListener.onNotificationPosted]).
  * - `notification-android.card` {id, type, decision, choice, reason, ts}: what the person did with a card ([Cards]).
  *
- * Every one goes the same way: [tell] writes it at the end of one file in the app's private files, and a
+ * Every one goes the same way: [tell] writes it at the end of one file in [Storage] (readable before the
+ * phone's first unlock after a restart, brief AP8, so one made then is kept too), and a
  * thread of its own hands the file's events, oldest first, to the running worker (rook_android.emit -> the
  * worker's own emit). One the worker cannot take yet (not linked) stays, with every one after it, and goes
  * at the next link ([WorkerService] calls [flush] whenever the worker links). Nothing is dropped for being old
@@ -40,7 +41,7 @@ object Events {
     private val sender = Executors.newSingleThreadExecutor { Thread(it, "rook-events").apply { isDaemon = true } }
 
     /** Where every event and every "last told" is kept. One place, so it can move as one (AP8). */
-    @JvmStatic fun dir(context: Context): File = File(context.applicationContext.filesDir, "events").apply { mkdirs() }
+    @JvmStatic fun dir(context: Context): File = File(Storage.files(context), "events").apply { mkdirs() }
 
     /** Event `name` with `payload`: kept, then sent once every one before it has gone. */
     fun tell(context: Context, name: String, payload: JSONObject) {

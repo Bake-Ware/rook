@@ -9,8 +9,9 @@ WorkerService.kt calls, on a thread of its own:
 `told.state(kind, text)` hears where the worker is, in the worker's own words: "joining" (knocking,
 waiting for approval, linking, or linking again after the link was lost, with what it said),
 "linked" (text: the moniker the hub gave it), "stopped", or "failed" (text: why it stopped). The
-worker keeps its keys and identity in `state_dir`, the app's private files, as any worker does in
-its state directory; `join_code` is used only while it has no identity. It relinks by itself after a
+worker keeps its keys and identity in `state_dir`, as any worker does in its state directory; on the
+phone that is storage Android reads before the first unlock after a restart (Storage.kt, brief AP8),
+and so is this Python. `join_code` is used only while it has no identity. It relinks by itself after a
 hub restart or a network change, as every Python worker does (docs/link-design.md 3.2). What it says
 also goes to logcat (Chaquopy puts stderr there).
 
