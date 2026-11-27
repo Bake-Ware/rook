@@ -379,7 +379,11 @@ object Screen {
         return out.toList()
     }
 
-    /** The lock screen's PIN pad: digit -> its key, found by view id (key0 ... key9), else by a digit as a clickable's text. */
+    /**
+     * The lock screen's PIN pad: digit -> its key, found by view id (key0 ... key9), else by a digit as a clickable's
+     * text. Found by text, it is a pad only when every digit is there: a lock screen's notifications show single
+     * digits too (a group's count, a timer's), and those are not keys (brief AP8: after a reboot they are common).
+     */
     fun pinKeys(roots: List<SNode>): Map<Char, SNode> {
         val out = HashMap<Char, SNode>()
         val all = flatten(roots).filter { it.visible }
@@ -388,10 +392,12 @@ object Screen {
             if (short.length == 4 && short.startsWith("key") && short[3].isDigit()) out.putIfAbsent(short[3], n)
         }
         if (out.size < 10) {
+            val byText = HashMap(out)
             for (n in all) {
                 val t = n.text?.trim() ?: n.desc?.trim() ?: continue
-                if (t.length == 1 && t[0].isDigit() && clickTarget(n, false) != null) out.putIfAbsent(t[0], n)
+                if (t.length == 1 && t[0].isDigit() && clickTarget(n, false) != null) byText.putIfAbsent(t[0], n)
             }
+            if (byText.size == 10) return byText
         }
         return out
     }

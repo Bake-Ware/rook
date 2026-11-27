@@ -142,6 +142,22 @@ class ScreenTest {
         assertTrue(Screen.pinKeys(settings()).isEmpty())
     }
 
+    @Test fun aLockScreensNotificationsAreNoPinPad() {
+        // After a reboot (brief AP8): the lock screen before its pad comes up, a notification group showing its count
+        // ("3", clickable through its expand button) and a timer's notification. No digit key is there.
+        val shade = Screen.link(listOf(SNode(id = "com.android.systemui:id/notification_stack_scroller", children = listOf(
+            SNode(clickable = true, id = "com.android.systemui:id/expand_button", children = listOf(SNode(text = "3"))),
+            SNode(clickable = true, id = "com.android.systemui:id/expandableNotificationRow", children = listOf(
+                SNode(text = "Timer"), SNode(text = "\u221203:38"))),
+            SNode(clickable = true, id = "com.android.systemui:id/device_entry_icon_view", desc = "Device locked")))))
+        assertTrue(Screen.pinKeys(shade).isEmpty())
+        // The pad then comes up beside them: found by its ids, the count is not taken for a key.
+        val keys = (0..9).map { d -> SNode(clickable = true, id = "com.android.systemui:id/key$d", children = listOf(SNode(text = "$d"))) }
+        val withPad = Screen.link(listOf(SNode(children = listOf(
+            SNode(clickable = true, id = "com.android.systemui:id/expand_button", children = listOf(SNode(text = "3")))) + keys)))
+        assertEquals("com.android.systemui:id/key3", Screen.pinKeys(withPad).getValue('3').id)
+    }
+
     @Test fun theLockScreensIconAndThePinFieldsLength() {
         val lock = Screen.link(listOf(SNode(children = listOf(
             SNode(text = "08 47"), SNode(id = "com.android.systemui:id/device_entry_icon_fg", desc = "Device locked")))))
