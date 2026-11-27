@@ -307,7 +307,7 @@ def test_a_moved_hub_keeps_its_plugins(tmp_path):
             found = await hub.call("hub", "note.search", {"text": "boxes"}, "after the move", user=alice)
             assert [n["note"] for n in found["result"]["notes"]] == [made["result"]["note"]]
             hub.plugins.install(str(NOTES), {"user": alice, "token": None})      # a reinstall still swaps folders
-            assert sorted(p.name.split(".")[0] for p in (after / "plugins").iterdir()) == ["agents", "agents-claude-code", "battery", "file", "net", "notes", "shell", "worker"]   # PL7
+            assert sorted(p.name.split(".")[0] for p in (after / "plugins").iterdir()) == ["agents", "agents-claude-code", "app-android", "battery", "clipboard-android", "file", "net", "notes", "phone", "shell", "sound-android", "worker"]   # PL7
         finally:
             hub.close()
     asyncio.run(go())
