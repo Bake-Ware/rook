@@ -182,6 +182,11 @@ async def start_command(tmp_path):
                 await asyncio.sleep(0.05)
             assert status == 200, opened
             stream = opened["stream"]
+            # The stream's "ready" comes in a stream_data message after the stream_open that answered the call,
+            # and anything else on the link (a heartbeat) can come between: read it first, so the waiting read
+            # below is past it.
+            status, first = await get(site, f"{hub.base}/api/streams/{stream}/read?from=0&wait=40")
+            assert status == 200 and first["next"] == 1, first
             reading = asyncio.create_task(get(site, f"{hub.base}/api/streams/{stream}/read?from=1&wait=40"))
             await asyncio.sleep(0.5)
             assert not reading.done()
