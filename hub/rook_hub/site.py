@@ -104,14 +104,20 @@ def shell_page(hub, request):
     imports = site_versions()
     if _signed_in(hub, request) or hub.auth.unclaimed_owner() is not None:
         imports.update(plugin_versions(hub))
-    html = re.sub(r'(src|href)="(/site/[^"?]+)"', lambda m: f'{m[1]}="{imports.get(m[2], m[2])}"',
-                  (FILES / "index.html").read_text("utf-8"))
-    table = json.dumps({"imports": imports}).replace("</", "<\\/")
-    html = html.replace("</head>", f'<script type="importmap">{table}</script>\n</head>', 1).encode("utf-8")
+    html = versioned_page(FILES / "index.html", imports)
     etag = f'"{hashlib.sha256(html).hexdigest()[:16]}"'
     if etag in request.headers.get("If-None-Match", ""):
         return web.Response(status=304, headers={"ETag": etag})
     return web.Response(body=html, content_type="text/html", charset="utf-8", headers={"ETag": etag})
+
+
+def versioned_page(file, imports):
+    """A page's HTML with its /site/ files at their versioned addresses, and the import map (HA5)."""
+    html = re.sub(r'(src|href)="(/site/[^"?]+)"', lambda m: f'{m[1]}="{imports.get(m[2], m[2])}"',
+                  file.read_text("utf-8"))
+    table = json.dumps({"imports": imports}).replace("</", "<\\/")
+    return html.replace("</head>", f'<script type="importmap">{table}</script>\n</head>', 1).encode("utf-8")
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pins (           -- saved views in a user's Pinned strip (P6)
@@ -648,6 +654,7 @@ def add_routes(app, hub):
     jobs_secrets_auth_routes(app, hub, logged_in)
     settings_routes(app, hub, logged_in)
     plugin_site_routes(app, hub, logged_in, session)
+    phone_app_routes(app, hub)
 
 
 # ------------------------------------------------- the Jobs, Secrets and Auth pages
@@ -887,6 +894,7 @@ def install_settings_section(section, label, script):
 
 install_settings_section("hub", "Hub", "/site/sections/hub.js")
 install_settings_section("plugins", "Plugins", "/site/sections/plugins.js")
+install_settings_section("phone", "Phone app", "/site/sections/phone.js")       # brief AP1
 
 
 def settings_routes(app, hub, logged_in):
@@ -1067,3 +1075,86 @@ def plugin_site_routes(app, hub, logged_in, session):
     app.router.add_get("/plugins/{plugin}/{page}", page)
     app.router.add_get("/plugin-files/{plugin}/{file:.+}", plugin_file)
     app.router.add_post("/api/call", call)
+
+
+# ------------------------------------------------- the phone app, public (brief AP1)
+# `/app`: a page with a QR code and a button for `/app/rook.apk`, and how to allow the install.
+# `/app/rook.apk`: the APK at <data>/app/rook.apk with this hub's public address stamped into it,
+# so the app opens the hub that handed it out with nothing typed. Neither needs a login.
+#
+# The stamp is one ID-value pair added to the APK Signing Block, the block that sits just before
+# the zip's central directory. The v2 and v3 signatures cover the zip's entries, its central
+# directory and its end record, never that block, so adding to it keeps every signature good;
+# only the end record's pointer to the central directory moves, and the verifier puts the
+# block's own offset there before it checks. The app reads the pair back (HubStamp.kt).
+
+APK_SIG_MAGIC = b"APK Sig Block 42"
+HUB_ADDRESS_ID = 0x6b6f6f72       # the pair the address goes in: "rook" as a little-endian uint32
+VERITY_PADDING_ID = 0x42726577    # apksigner's padding pair, which keeps the block a multiple of 4096 bytes
+APP_TYPE = "application/vnd.android.package-archive"
+
+
+def apk_file(hub):
+    return hub.state_dir / "app" / "rook.apk"
+
+
+def public_address(request):
+    """This hub's address as the asker reached it: scheme from X-Forwarded-Proto when a proxy says,
+    host (with any port) from Host."""
+    scheme = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() or request.scheme
+    return f"{scheme}://{request.host}"
+
+
+def _signing_block(pairs):
+    body = b"".join((4 + len(value)).to_bytes(8, "little") + key.to_bytes(4, "little") + value
+                    for key, value in pairs)
+    size = (len(body) + 24).to_bytes(8, "little")
+    return size + body + size + APK_SIG_MAGIC
+
+
+def stamp_apk(apk, address):
+    """`apk` (bytes) with `address` in its signing block, in place of any address stamped before.
+    An APK with no signing block (signed with v1 only, or not at all) comes back as it was."""
+    end = apk.rfind(b"PK\x05\x06")
+    if end < 0:
+        return apk
+    directory = int.from_bytes(apk[end + 16:end + 20], "little")
+    if directory < 32 or apk[directory - 16:directory] != APK_SIG_MAGIC:
+        return apk
+    start = directory - 8 - int.from_bytes(apk[directory - 24:directory - 16], "little")
+    pairs, at = [], start + 8
+    while at < directory - 24:
+        length = int.from_bytes(apk[at:at + 8], "little")
+        pairs.append((int.from_bytes(apk[at + 8:at + 12], "little"), apk[at + 12:at + 8 + length]))
+        at += 8 + length
+    padded = any(key == VERITY_PADDING_ID for key, _ in pairs)
+    pairs = [(key, value) for key, value in pairs if key not in (HUB_ADDRESS_ID, VERITY_PADDING_ID)]
+    pairs.append((HUB_ADDRESS_ID, address.encode("utf-8")))
+    block = _signing_block(pairs)
+    if padded:
+        block = _signing_block(pairs + [(VERITY_PADDING_ID, bytes(-(len(block) + 12) % 4096))])
+    moved = (start + len(block)).to_bytes(4, "little")
+    return apk[:start] + block + apk[directory:end + 16] + moved + apk[end + 20:]
+
+
+def phone_app_routes(app, hub):
+    async def page(request):
+        """The page, or for `Accept: application/json` what it shows: whether the hub has the APK,
+        and the file it would be."""
+        if "application/json" in request.headers.get("Accept", ""):
+            return web.json_response({"apk": apk_file(hub).is_file(), "file": str(apk_file(hub))})
+        return web.Response(body=versioned_page(FILES / "app.html", site_versions()), content_type="text/html",
+                            charset="utf-8")
+
+    async def apk(request):
+        try:
+            data = await asyncio.to_thread(apk_file(hub).read_bytes)
+        except FileNotFoundError:
+            return web.json_response({"code": "no_app", "message": "This hub has no app file.",
+                                      "next": f"Put the APK at {apk_file(hub)}."}, status=404)
+        stamped = await asyncio.to_thread(stamp_apk, data, public_address(request))
+        return web.Response(body=stamped, content_type=APP_TYPE,
+                            headers={"Content-Disposition": 'attachment; filename="rook.apk"'})
+
+    app.router.add_get("/app", page)
+    app.router.add_get("/app/rook.apk", apk)

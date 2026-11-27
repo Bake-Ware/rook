@@ -152,8 +152,19 @@ body.setup #dock { display: flex; width: min(460px, 42vw); }
 body.setup #dock-head { padding: 14px 18px; font-size: 12px; }
 body.setup .msg .text { font-size: 14px; }
 
+/* a phone's one control between the chat and the hub's pages (brief AP1): over the chat, where its X is on a wide screen */
+#dock-phone { display: none; position: fixed; z-index: 40; top: 10px; right: 10px; height: 34px; padding: 0 12px;
+  background: var(--panel2); border: 1px solid var(--line2); color: var(--accent); cursor: pointer;
+  font: 500 11px var(--mono); letter-spacing: 1.5px; text-transform: uppercase; }
+#dock-phone:hover { border-color: var(--accent-line); }
+
 @media (max-width: 760px) {
-  #dock { position: fixed; z-index: 35; inset: auto 0 0 0; width: 100%; height: 70vh; border-left: 0; border-top: 1px solid var(--line2); }
+  /* a phone: the chat is the whole screen, and #dock-phone goes to the pages and back */
+  #dock { position: fixed; z-index: 35; inset: 0; width: 100%; height: 100%; border: 0; }
+  #dock[hidden] ~ #dock-phone, body.setup #dock-phone { display: none; }
+  body:not(.setup) #dock-close { display: none; }
+  #dock-phone { display: block; }
+  body:not(.dock-open) #dock-phone { top: auto; bottom: 22px; right: 92px; }   /* on a page: beside Rookie's corner, clear of the header */
   body.setup .layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: 45% 55%; }
   body.setup .main { min-height: 0; }
   body.setup #dock { position: static; width: 100%; height: auto; min-height: 0; }

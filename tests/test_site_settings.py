@@ -111,13 +111,14 @@ async def scenario(tmp_path):
             session = hub.auth.list_tokens()[-1]["moniker"]
 
             # 1. The nav ends with Settings (P2, P4); its sections are installed like pages: core's are
-            #    the hub's name and Plugins; the agents plugin adds Your account (HA3).
+            #    the hub's name, Plugins and the Phone app (AP1); the agents plugin adds Your account (HA3).
             status, reply = await ask(client, "GET", base + "/api/session")
             assert reply["nav"][0]["pages"][-1] == {"id": "settings", "label": "Settings", "path": "/settings",
                                                     "script": "/site/pages/settings.js"}
             assert await ask(client, "GET", base + "/api/settings") == (200, {"sections": [
                 {"id": "hub", "label": "Hub", "script": "/site/sections/hub.js"},
                 {"id": "plugins", "label": "Plugins", "script": "/site/sections/plugins.js"},
+                {"id": "phone", "label": "Phone app", "script": "/site/sections/phone.js"},        # brief AP1
                 {"id": "agents/your-account", "label": "Your account", "plugin": "agents",
                  "script": "/plugin-files/agents/shell/settings-account.js"           # at its version (HA5)
                            f"?v={version(AGENTS / 'shell' / 'settings-account.js')}"}]})

@@ -3,7 +3,7 @@ plugins {
     id "org.jetbrains.kotlin.android"
 }
 
-// The release key lives outside the repo (docs: android/README.md).
+// The release key lives outside the repo, at ~/.rook-android (README.md, Layout: android/).
 // With no key there, the release build signs with the debug key and says so.
 def signingFile = new File(System.getProperty("user.home"), ".rook-android/signing.properties")
 def signing = new Properties()
@@ -55,4 +55,7 @@ android {
 
 dependencies {
     implementation project(":worker")
+    // The address screen's QR scanner (a build carrying no hub address): ZXing, Apache 2.0.
+    implementation "com.journeyapps:zxing-android-embedded:4.3.0"
+    testImplementation "junit:junit:4.13.2"
 }

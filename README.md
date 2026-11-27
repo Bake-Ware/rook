@@ -13,7 +13,7 @@ The earlier code (0.4 on `master`, the 0.5 rework on `castling`) is reference on
 - `core/python/`: the worker core written in Python (U1), and its start command (`rook_start.py`).
 - `deploy/install/install.sh`: the installer: a hub and a worker as systemd user units, in one command.
 - `tests/`: the tests for all of the above.
-- `android/`: the Android app (`systems.bake.rook.core`). Build it with JDK 17 or newer and the Android SDK (platform 35): `cd android && ANDROID_HOME=~/Android/Sdk ./gradlew :app:assembleRelease`, which writes `app/build/outputs/apk/release/app-release.apk`. It signs with the key named in `~/.rook-android/signing.properties` (`storeFile`, relative to that folder, `storePassword`, `keyAlias`, `keyPassword`), or with the debug key, saying so, when that file is missing.
+- `android/`: the Android app (`systems.bake.rook.core`). Build it with JDK 17 or newer and the Android SDK (platform 35): `cd android && ANDROID_HOME=~/Android/Sdk ./gradlew :app:assembleRelease`, which writes `app/build/outputs/apk/release/app-release.apk`. It signs with the key named in `~/.rook-android/signing.properties` (`storeFile`, relative to that folder, `storePassword`, `keyAlias`, `keyPassword`), or with the debug key, saying so, when that file is missing. A hub hands the app out: put the APK at `<data>/app/rook.apk` and open `<hub>/app` (no login), which shows a QR code and a download button; each copy it hands out carries the hub's address, so the app opens that hub with nothing typed.
 
 ## Tests
 
