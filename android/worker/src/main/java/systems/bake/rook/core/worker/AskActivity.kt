@@ -40,7 +40,7 @@ class AskActivity : Activity() {
                 } else {
                     Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
                 }, 1)
-            else -> requestPermissions(arrayOf(permission), 1)
+            else -> requestPermissions(permission.split(',').toTypedArray(), 1)     // askAll's several, comma-joined
         }
     }
 
