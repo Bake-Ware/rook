@@ -16,7 +16,6 @@ import android.provider.Settings
 import android.util.Log
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
-import java.io.File
 import kotlin.concurrent.thread
 
 /**
@@ -37,7 +36,8 @@ import kotlin.concurrent.thread
  */
 class WorkerService : Service() {
     @Volatile private var stopping = false
-    private var worker: Thread? = null
+    @Volatile private var worker: Thread? = null
+    private var running: Pair<String, String?>? = null      // the hub and join code the worker was started with
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -62,24 +62,53 @@ class WorkerService : Service() {
             startForeground(NOTIFICATION, notification("Starting"))
         }
         hold()
-        if (worker?.isAlive != true) run(hub, prefs.getString(RookWorker.CODE, null))
+        ensure(hub, prefs.getString(RookWorker.CODE, null))
         return START_STICKY
     }
 
-    private fun run(hub: String, code: String?) {
+    /**
+     * Have the worker run for `hub` with `code`. One already running for that hub goes on, unless a new
+     * code came; one running for anything else (RookWorker.start with another address or a new join
+     * code) is stopped first, and the new one starts once it has. A fresh identity due (RookWorker.FRESH) is made by dropping the old
+     * state before the new worker starts.
+     */
+    private fun ensure(hub: String, code: String?) {
+        val now = running
+        // Running for this hub: a code adds nothing unless it is a new one (a running worker has joined).
+        if (worker?.isAlive == true && now != null && now.first == hub && (code == null || code == now.second)) return
+        val previous = worker
+        running = hub to code
         stopping = false
         worker = thread(name = "rook-worker", isDaemon = true) {
             try {
+                if (previous != null) end(previous)
+                val prefs = RookWorker.prefs(this)
+                if (prefs.getBoolean(RookWorker.FRESH, false)) {
+                    RookWorker.state(this).deleteRecursively()       // the old identity, its keys and its plugins' data
+                    prefs.edit().remove(RookWorker.FRESH).remove(RookWorker.JOINED).apply()
+                }
                 if (!Python.isStarted()) Python.start(AndroidPlatform(applicationContext))
                 val entry = Python.getInstance().getModule("rook_android")
-                if (!stopping) {
-                    entry.callAttr("run", File(filesDir, "worker").absolutePath, hub, deviceName(), code, Told())
+                if (!stopping && worker === Thread.currentThread()) {
+                    entry.callAttr("run", RookWorker.state(this).absolutePath, hub, deviceName(), code, Told())
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "the worker stopped", t)
                 told("failed", "${t.javaClass.simpleName}: ${t.message}")
             }
-            if (!stopping) stopSelf()      // it stopped on its own: refused, or an error it says
+            // It stopped on its own (refused, or an error it says), not for a newer worker or onDestroy.
+            if (!stopping && worker === Thread.currentThread()) stopSelf()
+        }
+    }
+
+    /** Stop the worker `thread` runs and wait until it has ended. A stop asked before the worker is
+     *  running reaches nothing, so it is asked again until the thread ends. */
+    private fun end(thread: Thread) {
+        while (thread.isAlive) {
+            if (Python.isStarted()) {
+                try { Python.getInstance().getModule("rook_android").callAttr("stop") } catch (t: Throwable) { Log.w(TAG, "stop", t) }
+            }
+            thread.join(100)
         }
     }
 
@@ -95,7 +124,8 @@ class WorkerService : Service() {
             "failed" -> WorkerState.Failed(text)
             else -> WorkerState.Stopped
         }
-        if (state is WorkerState.Linked) RookWorker.prefs(this).edit().remove(RookWorker.CODE).apply()   // joined
+        Log.i(TAG, "$kind: $text")
+        if (state is WorkerState.Linked) RookWorker.joined(this)
         RookWorker.told(state)
         val shown = when (state) {
             is WorkerState.Linked -> "Linked as ${state.moniker}"
@@ -120,9 +150,7 @@ class WorkerService : Service() {
 
     override fun onDestroy() {
         stopping = true
-        if (Python.isStarted()) {
-            try { Python.getInstance().getModule("rook_android").callAttr("stop") } catch (t: Throwable) { Log.w(TAG, "stop", t) }
-        }
+        worker?.let { thread(isDaemon = true) { end(it) } }
         wakeLock?.release()
         wifiLock?.release()
         RookWorker.told(WorkerState.Stopped)

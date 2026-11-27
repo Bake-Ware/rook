@@ -1,6 +1,7 @@
 package systems.bake.rook.core.worker
 
 import android.content.Context
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,11 +28,21 @@ object RookWorker {
 
     val state: StateFlow<WorkerState> = _state.asStateFlow()
 
-    /** Start the worker for this hub; joinCode only the first time (null afterwards). */
+    /**
+     * Start the worker for this hub; joinCode only the first time (null afterwards).
+     *
+     * A join code with another hub address than the one the kept identity was made with makes a fresh
+     * identity for that hub: the old one is dropped (its keys, its identity and its plugins' data). With
+     * no code, another address keeps the identity and links to that address (the same hub, moved).
+     */
     fun start(context: Context, hubUrl: String, joinCode: String?) {
         val prefs = prefs(context)
+        val made = prefs.getString(JOINED, null) ?: prefs.getString(HUB, null)
+        val fresh = joinCode != null && made != null && made.trimEnd('/') != hubUrl.trimEnd('/') &&
+            File(state(context), "identity.json").exists()
         prefs.edit().putString(HUB, hubUrl).putBoolean(ON, true).apply {
             if (joinCode != null) putString(CODE, joinCode)
+            if (fresh) putBoolean(FRESH, true)
         }.apply()
         WorkerService.start(context)
         Bridge.askToNotify(context)
@@ -48,7 +59,20 @@ object RookWorker {
 
     internal fun prefs(context: Context) = context.getSharedPreferences("rook-worker", Context.MODE_PRIVATE)
 
+    /** The worker's state directory: its keys and identity, in the app's private files. */
+    internal fun state(context: Context) = File(context.filesDir, "worker")
+
+    /** The worker linked: a join code it had is used up, and the address it joined is the identity's. */
+    internal fun joined(context: Context) {
+        val prefs = prefs(context)
+        if (prefs.contains(CODE) || !prefs.contains(JOINED)) {
+            prefs.edit().putString(JOINED, prefs.getString(HUB, null)).remove(CODE).apply()
+        }
+    }
+
     internal const val HUB = "hub"
     internal const val CODE = "code"
     internal const val ON = "on"
+    internal const val JOINED = "joined"        // the hub address the kept identity was made with
+    internal const val FRESH = "fresh"          // drop the kept identity before the next start
 }
