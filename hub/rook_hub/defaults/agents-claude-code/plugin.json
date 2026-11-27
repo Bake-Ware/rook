@@ -1,5 +1,5 @@
 {
   "name": "agents-claude-code",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "worker": {"python": {"module": "worker.py"}}
 }

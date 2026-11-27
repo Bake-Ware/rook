@@ -169,7 +169,7 @@ class WorkerService : Service() {
             .setContentTitle("Rook worker")
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
-            .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+            .setSmallIcon(R.drawable.ic_stat_rook)
             .setOngoing(true)
             .apply { if (open != null) setContentIntent(PendingIntent.getActivity(this@WorkerService, 0, open, PendingIntent.FLAG_IMMUTABLE)) }
             .build()

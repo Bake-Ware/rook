@@ -101,6 +101,8 @@ class MainActivity : Activity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun showSite(at: String, saved: Bundle?) {
+        Hub.watch(this)
+        Hub.again()
         Hub.startWorker(this)
         CookieManager.getInstance().setAcceptCookie(true)
         val view = WebView(this)

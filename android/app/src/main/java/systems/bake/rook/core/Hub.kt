@@ -1,12 +1,21 @@
 package systems.bake.rook.core
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.webkit.CookieManager
+import android.widget.Toast
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import systems.bake.rook.core.worker.RookWorker
+import systems.bake.rook.core.worker.WorkerState
 
 /** The hub this app opens, and joining the phone to it as a worker (brief AP1). */
 object Hub {
@@ -32,20 +41,61 @@ object Hub {
 
     fun save(context: Context, hub: String) = prefs(context).edit().putString("hub", hub).apply()
 
+    /**
+     * Whether the phone has joined: its worker has linked to the hub at least once (brief AP6). A join
+     * code alone is not enough: had the hub refused it, or had the worker never used it, a launch
+     * that took the phone for joined would start the worker with that code again for good. Until the
+     * worker links, each launch mints a fresh code once the person is signed in.
+     */
     fun joined(context: Context): Boolean = prefs(context).getBoolean("joined", false)
 
-    /** On every launch and after boot, once the phone has joined: the worker, with no code. */
+    private val minted = AtomicBoolean(false)       // a code was minted in this process: one is enough
+    private val watching = AtomicBoolean(false)
+
+    /**
+     * Once per process: the first time the worker says it is linked, the phone has joined. Should it
+     * stop on an error before it ever has (the hub refused its join code), the person is told, in the
+     * worker's own words: its notification goes with it, so nothing else would say so.
+     */
+    fun watch(context: Context) {
+        if (!watching.compareAndSet(false, true)) return
+        val app = context.applicationContext
+        // Unconfined: each state is seen in the thread that sets it. The worker's service says Failed and,
+        // as it stops, Stopped at once after; a collector on another thread could miss the first.
+        CoroutineScope(SupervisorJob() + Dispatchers.Unconfined).launch {
+            RookWorker.state.collect {
+                if (it is WorkerState.Linked) markJoined(app)
+                if (it is WorkerState.Failed && !joined(app)) Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(app, "This phone could not join the hub. Open Rook again to try again. The hub said: ${it.message}",
+                        Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** The app opened again: until the phone has joined, it may mint a code again. */
+    fun again() = minted.set(false)
+
+    private fun markJoined(context: Context) = prefs(context).edit().putBoolean("joined", true).apply()
+
+    /** On every launch (and, by the worker's own receiver, after boot), once the phone has joined: the worker, with no code. */
     fun startWorker(context: Context) {
         val hub = saved(context) ?: return
         if (joined(context)) RookWorker.start(context.applicationContext, hub, null)
     }
 
     /**
-     * The first time only, once the person is signed in: a join token minted with their session
+     * Until the phone has joined, once the person is signed in: a join token minted with their session
      * (token.create, purpose join, through /api/call with the web view's cookie), and the worker
-     * started with it. False while nobody is signed in (the hub answers 401). Runs off the main thread.
+     * started with it, once in this process. False while nobody is signed in (the hub answers 401) or
+     * the hub cannot be reached: the next request to the hub tries again. Runs off the main thread.
      */
     fun join(context: Context, hub: String): Boolean {
+        if (RookWorker.state.value is WorkerState.Linked) {     // it linked while nothing here was watching
+            markJoined(context)
+            return true
+        }
+        if (minted.get()) return false
         val cookie = CookieManager.getInstance().getCookie(hub) ?: return false
         val body = JSONObject()
             .put("worker", "hub").put("cap", "token.create")
@@ -61,7 +111,7 @@ object Hub {
             if (http.responseCode != 200) return false
             val reply = JSONObject(http.inputStream.bufferedReader().readText())
             val token = reply.getJSONObject("result").getString("token")
-            prefs(context).edit().putBoolean("joined", true).apply()
+            minted.set(true)
             RookWorker.start(context.applicationContext, hub, token)
             return true
         } finally {

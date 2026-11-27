@@ -1138,11 +1138,20 @@ def stamp_apk(apk, address):
 
 
 def phone_app_routes(app, hub):
+    def shown_where(request):
+        """The APK's place on this server, for a person signed in (or any visitor while the hub is open
+        until claimed, as the site signs them in): it names the server's folders, the OS user's among
+        them, so someone not signed in is not told it (brief AP6)."""
+        return _signed_in(hub, request) or hub.auth.unclaimed_owner() is not None
+
     async def page(request):
         """The page, or for `Accept: application/json` what it shows: whether the hub has the APK,
-        and the file it would be."""
+        and, for a person signed in, the file it would be."""
         if "application/json" in request.headers.get("Accept", ""):
-            return web.json_response({"apk": apk_file(hub).is_file(), "file": str(apk_file(hub))})
+            state = {"apk": apk_file(hub).is_file()}
+            if shown_where(request):
+                state["file"] = str(apk_file(hub))
+            return web.json_response(state)
         return web.Response(body=versioned_page(FILES / "app.html", site_versions()), content_type="text/html",
                             charset="utf-8")
 
@@ -1150,8 +1159,10 @@ def phone_app_routes(app, hub):
         try:
             data = await asyncio.to_thread(apk_file(hub).read_bytes)
         except FileNotFoundError:
-            return web.json_response({"code": "no_app", "message": "This hub has no app file.",
-                                      "next": f"Put the APK at {apk_file(hub)}."}, status=404)
+            where = (f"Put the APK at {apk_file(hub)}." if shown_where(request)
+                     else "Whoever runs this hub can put the app on it; Settings > Phone app says where.")
+            return web.json_response({"code": "no_app", "message": "This hub has no app file yet.", "next": where},
+                                     status=404)
         stamped = await asyncio.to_thread(stamp_apk, data, public_address(request))
         return web.Response(body=stamped, content_type=APP_TYPE,
                             headers={"Content-Disposition": 'attachment; filename="rook.apk"'})

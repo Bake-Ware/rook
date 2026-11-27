@@ -14,6 +14,7 @@ import zipfile
 import aiohttp
 
 from rook_hub import Hub, site
+from test_site import browser, login
 
 FIXTURES = pathlib.Path(__file__).parent.parent / "android" / "app" / "src" / "test" / "resources" / "stamp"
 ADDRESS = "http://10.0.2.2:8123"            # what the emulator calls the machine it runs on
@@ -93,22 +94,34 @@ async def public(tmp_path):
             async with client.get(base + "/app") as response:
                 page = await response.text()
                 assert response.status == 200 and response.content_type == "text/html"
+                assert response.headers["Cache-Control"] == "no-store"         # kept nowhere (AP6)
                 assert "/site/phone-app.js" in page and '<script type="importmap">' in page
                 assert "/site/style.css?v=" in page                     # its files at their versions (HA5)
-            # 2. With no APK at <data>/app/rook.apk, the page and the file say so, and where it goes.
+            # 2. With no APK at <data>/app/rook.apk, the page and the file say so. Where it goes names
+            #    the server's folders, so only a person signed in is told (AP6).
             async with client.get(base + "/app", headers={"Accept": "application/json"}) as response:
-                assert response.status == 200 and await response.json() == {"apk": False, "file": str(file)}
+                assert response.status == 200 and await response.json() == {"apk": False}
+                assert response.headers["Cache-Control"] == "no-store"
             async with client.get(base + "/app/rook.apk") as response:
-                assert response.status == 404
-                assert await response.json() == {"code": "no_app", "message": "This hub has no app file.",
-                                                 "next": f"Put the APK at {file}."}
+                assert response.status == 404 and response.headers["Cache-Control"] == "no-store"
+                assert await response.json() == {"code": "no_app", "message": "This hub has no app file yet.",
+                                                 "next": "Whoever runs this hub can put the app on it; "
+                                                         "Settings > Phone app says where."}
+                assert str(tmp_path) not in await response.text()
+            async with browser() as signed:
+                assert (await login(signed, base, "Alice", "correct horse"))[0] == 200
+                async with signed.get(base + "/app", headers={"Accept": "application/json"}) as response:
+                    assert await response.json() == {"apk": False, "file": str(file)}
+                async with signed.get(base + "/app/rook.apk") as response:
+                    assert response.status == 404 and (await response.json())["next"] == f"Put the APK at {file}."
             # 3. With one there: it is handed out with this hub's address, as the asker reached it.
             file.parent.mkdir()
             file.write_bytes(fake_apk())
             async with client.get(base + "/app", headers={"Accept": "application/json"}) as response:
-                assert (await response.json())["apk"] is True
+                assert await response.json() == {"apk": True}
             async with client.get(base + "/app/rook.apk") as response:
                 assert response.status == 200 and response.content_type == "application/vnd.android.package-archive"
+                assert response.headers["Cache-Control"] == "no-store"      # Cloudflare keeps .apk files otherwise
                 assert response.headers["Content-Disposition"] == 'attachment; filename="rook.apk"'
                 assert await response.read() == site.stamp_apk(fake_apk(), base)
             # Behind a proxy: the scheme from X-Forwarded-Proto, the host from Host.

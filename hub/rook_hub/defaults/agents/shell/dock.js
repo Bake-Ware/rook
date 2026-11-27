@@ -80,7 +80,9 @@ const READ_WAIT = 40;
 const SITE = "[site]";      // a line the site adds for the agent: where the person is
 const SHOWN = "[shown]";    // after a site note: the person's own words for it, shown as theirs
 const SETUP_KICKOFF = "First visit to a new hub";
-const dock = { agent: null, next: 0, shown: 0, replies: 0, kicking: false, kicked: false };
+// chose: open or closed as the person last chose it with a control (null: not yet), which startDock
+// keeps over the choice it read before the conversation loaded (brief AP6).
+const dock = { agent: null, next: 0, shown: 0, replies: 0, kicking: false, kicked: false, chose: null };
 // A turn that failed because no worker serves the agent's backend yet (the
 // worker joins a few seconds after an install): not a message; wait and retry.
 const NOT_READY = /no single worker serves|nothing provides agent\.backend/i;
@@ -94,6 +96,12 @@ const phone = () => matchMedia(PHONE).matches;
 // Bake, Nov 9: "I want to have like an X at the top right, and move the rookie
 // avatar to the bottom right corner when closed. Remove the chat button from
 // the like top nav on pages. Clicking rookie opens the chat sidebar."
+// The person opens or closes the chat with a control: that choice stands, also against a load under way.
+function choose(open) {
+  dock.chose = open;
+  dockOpen(open);
+}
+
 function dockOpen(open) {
   const was = document.body.classList.contains("dock-open");
   if (!open && was && rookie.holder && !document.body.classList.contains("setup")) liftOff();   // he walks out before the chat goes
@@ -743,11 +751,14 @@ async function startDock(agent) {
   $("#dock-name").textContent = agent === "house" ? rookie.look.name : agent;
   rookieInit();
   $("#dock").hidden = false;
-  let open = true;
-  try {
-    open = phone() ? sessionStorage.getItem("rook.dock.phone") !== "0" : localStorage.getItem("rook.dock") !== "0";
-  } catch (x) { /* private mode */ }
-  if (open && phone()) dockOpen(true);     // a phone opens on the chat at once, not on the page while it reads
+  // The chat open or closed as last kept for this screen: for the tab on a phone, for good on a wide one.
+  const kept = () => {
+    try {
+      return phone() ? sessionStorage.getItem("rook.dock.phone") !== "0" : localStorage.getItem("rook.dock") !== "0";
+    } catch (x) { return true; /* private mode */ }
+  };
+  let open = false;                 // true: setup or a first visit, where the chat opens whatever was kept
+  if (kept() && phone()) dockOpen(true);   // a phone opens on the chat at once, not on the page while it reads
   try {
     while ((await read(0)) >= 500) { /* catch up on a long conversation */ }
   } catch (x) {                     // not someone who may talk to it: no dock
@@ -773,6 +784,10 @@ async function startDock(agent) {
     // page caps, so that part is left out.
     await say("First visit to the hub site. Welcome the person and ask how they want to use the site.", true);
   }
+  // Decided now the load is done, not from what was read before it (brief AP6): what the person chose
+  // meanwhile (a tap on Chat, on Rookie or on the X) wins; then setup or a first visit; then what is
+  // kept for the screen the page has now, which may have turned or been resized while it loaded.
+  open = dock.chose !== null ? dock.chose : open || kept();
   if (!open) document.body.classList.remove("dock-open");
   if (rookie.holder && !open) placeRookie();
   dockOpen(open);
@@ -827,11 +842,11 @@ function mountDock() {
     }
   };
   $("#dock-skip").onclick = () => $("#dock-close").onclick();
-  $("#dock-btn").onclick = () => dockOpen(true);          // never shown: the desktop app's "ask about this page"
-  $("#dock-phone").onclick = () => dockOpen(!document.body.classList.contains("dock-open"));   // a phone's one control
+  $("#dock-btn").onclick = () => choose(true);          // never shown: the desktop app's "ask about this page"
+  $("#dock-phone").onclick = () => choose(!document.body.classList.contains("dock-open"));   // a phone's one control
   $("#rookie-say").onclick = () => {                       // the chat, at that message
     $("#rookie-say").hidden = true;
-    dockOpen(true);
+    choose(true);
     const row = bubbleState.seq != null && document.querySelector(`#dock-log [data-seq="${bubbleState.seq}"]`);
     if (row) setTimeout(() => {
       row.scrollIntoView({ block: "center" });
@@ -840,7 +855,7 @@ function mountDock() {
     }, 50);
   };
   document.addEventListener("click", (e) => {               // Rookie in his corner: open the chat
-    if (rookie.holder && rookie.holder.classList.contains("parked") && rookie.holder.contains(e.target)) dockOpen(true);
+    if (rookie.holder && rookie.holder.classList.contains("parked") && rookie.holder.contains(e.target)) choose(true);
   });
   $("#dock-close").onclick = () => {
     if (document.body.classList.contains("setup")) {
@@ -849,7 +864,7 @@ function mountDock() {
       if (!current) hideWork();       // core: back to the page this load shows
       return;
     }
-    dockOpen(false);
+    choose(false);
   };
 }
 
