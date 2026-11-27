@@ -30,13 +30,16 @@ class StorageTest {
         write(ordinary, "worker/key", "k")
         write(ordinary, "worker/link_key", "l")
         write(ordinary, "worker/plugins/phone/kept.json", "{}")
-        write(ordinary, "notification-android/answers.json", "[]")
+        write(ordinary, "notification-android/cards.json", "{}")
+        write(ordinary, "events/unsent.jsonl", "{\"name\": \"sms.received\"}\n")
+        write(ordinary, "events/sms-told.json", "{}")
 
         Storage.moveFolders(ordinary, device, Storage.FOLDERS)
 
         assertEquals(mapOf(
             "worker/identity.json" to """{"moniker": "honest-witty-badger"}""", "worker/key" to "k", "worker/link_key" to "l",
-            "worker/plugins/phone/kept.json" to "{}", "notification-android/answers.json" to "[]"), tree(device))
+            "worker/plugins/phone/kept.json" to "{}", "notification-android/cards.json" to "{}",
+            "events/unsent.jsonl" to "{\"name\": \"sms.received\"}\n", "events/sms-told.json" to "{}"), tree(device))
         assertEquals(emptyMap<String, String>(), tree(ordinary))
         assertFalse(File(ordinary, "worker").exists())
     }
@@ -76,8 +79,8 @@ class StorageTest {
         assertEquals(mapOf("something-else/kept.txt" to "stays"), tree(ordinary))
     }
 
-    @Test fun the_worker_keeps_its_state_and_its_cards_in_the_storage_read_before_unlock() {
-        assertEquals(listOf("worker", "notification-android"), Storage.FOLDERS)
+    @Test fun the_worker_keeps_its_state_its_cards_and_its_events_in_the_storage_read_before_unlock() {
+        assertEquals(listOf("worker", "notification-android", "events"), Storage.FOLDERS)
         assertEquals(listOf("rook-worker"), Storage.PREFERENCES)
     }
 

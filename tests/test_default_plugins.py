@@ -125,7 +125,7 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
                                                                      "contact": "0.1.1", "file": "0.2.1", "hid-android": "0.1.0",
                                                                      "location": "0.1.0",
                                                                      "media-android": "0.1.0", "net": "0.1.0", "notification-android": "0.2.0",
-                                                                     "phone": "0.2.0", "screen-android": "0.1.0", "shell": "9.0.0", "sms": "0.1.1",
+                                                                     "phone": "0.2.0", "screen-android": "0.1.0", "shell": "9.0.0", "sms": "0.1.2",
                                                                      "sound-android": "0.1.0", "ui-android": "0.1.0", "worker": "0.1.0"}
     again.close()
 
@@ -502,7 +502,8 @@ RECORDED = {
               "0.4.0": "d40819a1ad1615bd82667077ebeb5ee6cc14be84684a2832b5d6ed09b157b37f",
               "0.5.0": "f57565e2f29bb6eb1ba20b4d33ab3efa329f9699bd9280d3e27b54dac8f73733"},
     "sms": {"0.1.0": "4100a8e434df14f9f46ddd4667b37e82acc30e66e5a9b0343ab487cc62c75372",   # AP3
-            "0.1.1": "1fc3002fcc08228936cf2862a9fcdcdc0de43118ad3daabb5e014c5d8684c027"},   # names sms.received (AP7)
+            "0.1.1": "1fc3002fcc08228936cf2862a9fcdcdc0de43118ad3daabb5e014c5d8684c027",   # names sms.received (AP7)
+            "0.1.2": "f0c5c56e3497bd15f9f8aac68c9eb7eecf5c377c838453a05c832df4f772c92f"},   # says so before the first unlock (AP8)
     "sound-android": {"0.1.0": "bd87cf134638d18ae8e91520805709e32ad19fbdd4aa43cd15439d6c962d88e3"},   # AP2
     "ui-android": {"0.1.0": "08679bb6e1d711a96d0899a8879f850f9b8d4518067eadfaf080c91342152d9e"},   # the screen by its labels (AP5)
     "worker": {"0.1.0": "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"},
@@ -659,7 +660,7 @@ async def before_brief_54(tmp_path, monkeypatch):
         "agents": "0.6.1", "agents-claude-code": "0.2.2", "app-android": "0.2.1", "battery": "0.2.0",
         "calendar": "0.1.1", "call": "0.1.1", "clipboard-android": "0.1.0", "clock": "0.1.0", "contact": "0.1.1",
         "file": "0.1.0", "hid-android": "0.1.0", "location": "0.1.0", "media-android": "0.1.0", "net": "0.1.0",
-        "notification-android": "0.2.0", "phone": "0.2.0", "screen-android": "0.1.0", "shell": "0.2.0", "sms": "0.1.1",
+        "notification-android": "0.2.0", "phone": "0.2.0", "screen-android": "0.1.0", "shell": "0.2.0", "sms": "0.1.2",
         "sound-android": "0.1.0", "ui-android": "0.1.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())
