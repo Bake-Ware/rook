@@ -38,6 +38,15 @@ import java.util.concurrent.CountDownLatch
  *     Bridge.awake(cap)                 before a screen-driving cap: note it, and turn the screen on if it is off
  *     Bridge.capture(cap)               null once a screen capture session is up (Capture), asking first, else why not
  *
+ * and, for the time before the phone's first unlock after it restarts (brief AP8):
+ *
+ *     Bridge.locked(what)               null once the phone has been unlocked since it restarted, else what
+ *                                       to tell the caller: `what` Android keeps closed until then
+ *
+ * Before that first unlock, Android shows none of Rook's own screens but the ones that run then
+ * ([WakeActivity]) and opens only the apps that run then, so an ask, the clipboard and opening any
+ * other app answer with [locked] rather than failing on a screen Android cannot find.
+ *
  * Brief AP4 adds one more thing `ask` asks for: notification access ([NOTIFICATION_ACCESS]), the
  * switch on Android's own settings page that lets [NotificationListener] read and act on other apps'
  * notifications and see every app's media session.
@@ -67,6 +76,9 @@ object Bridge {
 
     @JvmStatic fun context(): Context = app
 
+    /** Null once the phone has been unlocked since it restarted; before, what to tell a caller whose cap needs what Android `what` until then. */
+    @JvmStatic fun locked(what: String): String? = if (Storage.unlocked(app)) null else Storage.locked(what)
+
     @JvmStatic fun granted(permission: String): Boolean = when (permission) {
         Manifest.permission.SYSTEM_ALERT_WINDOW -> Settings.canDrawOverlays(app)
         Manifest.permission.ACCESS_NOTIFICATION_POLICY ->
@@ -84,6 +96,7 @@ object Bridge {
     @JvmStatic fun askAll(permissions: Array<String>, cap: String): String? {
         val missing = permissions.filter { !granted(it) }
         if (missing.isEmpty()) return null
+        locked("shows none of Rook's own screens, so Rook cannot ask for ${label(missing[0])}")?.let { return it }
         val key = missing.joinToString(",")
         val asked = request(key, Intent(app, AskActivity::class.java).putExtra(AskActivity.PERMISSION, key),
             "Rook needs ${label(missing[0])}", "For $cap. Tap to answer.", app)
@@ -101,12 +114,15 @@ object Bridge {
             app.startActivity(intent)
             null
         } catch (e: ActivityNotFoundException) {
-            "no app on this phone handles that"
+            locked("opens only the apps that run before then (such as the clock, the phone and settings), and not the one this needs")
+                ?: "no app on this phone handles that"
         }
     }
 
     /** The clipboard's text as {"text": ...} (null when empty), or {"error": ...}: read by a see-through screen while it is in front. */
     @JvmStatic fun clipboard(cap: String): String {
+        locked("shows none of Rook's own screens, and Rook reads the clipboard from one")
+            ?.let { return JSONObject().put("error", it).toString() }
         if (!mayOpen()) ask(Manifest.permission.SYSTEM_ALERT_WINDOW, cap)?.let { return JSONObject().put("error", it).toString() }
         val read = synchronized(waiting) {
             waiting[CLIPBOARD] ?: CountDownLatch(1).also {
@@ -215,6 +231,8 @@ object Bridge {
      */
     @JvmStatic fun capture(cap: String): String? {
         if (Capture.live()) return null
+        locked("shows none of Rook's own screens, so Rook cannot ask to capture the screen (with Rook's accessibility " +
+            "service on, screen.capture asks nothing)")?.let { return it }
         val asked = request(CAPTURE, Intent(app, AskActivity::class.java).putExtra(AskActivity.CAPTURE, true),
             "Rook asks to capture the screen", "For $cap. Tap to answer.", app)
             ?: return notShown("to capture the screen", cap)
