@@ -124,8 +124,8 @@ def test_a_plugin_a_person_installed_in_a_defaults_place_is_kept(tmp_path):
                                                                      "clipboard-android": "0.1.0", "clock": "0.1.0",
                                                                      "contact": "0.1.0", "file": "0.2.0", "hid-android": "0.1.0",
                                                                      "location": "0.1.0",
-                                                                     "media-android": "0.1.0", "net": "0.1.0", "notification-android": "0.1.0",
-                                                                     "phone": "0.2.0", "screen-android": "0.1.0", "shell": "9.0.0", "sms": "0.1.0",
+                                                                     "media-android": "0.1.0", "net": "0.1.0", "notification-android": "0.2.0",
+                                                                     "phone": "0.2.0", "screen-android": "0.1.0", "shell": "9.0.0", "sms": "0.1.1",
                                                                      "sound-android": "0.1.0", "ui-android": "0.1.0", "worker": "0.1.0"}
     again.close()
 
@@ -485,7 +485,8 @@ RECORDED = {
     "location": {"0.1.0": "fc10ba4718f1d631a8a2168299c3e228549c8d87b3ff89b4d676356c2bd7f8d6"},   # AP3
     "media-android": {"0.1.0": "da73d33004317ee8de21ee0aa3a99cdbd287ea5655376560e299b0c1c33a71b8"},   # the phone's media (AP4)
     "net": {"0.1.0": "34e3b171d08b20d38388157725989321aa6ddd2131356eba1ef9421c4eada8f7"},
-    "notification-android": {"0.1.0": "575ded1fb642196c6bcb3798002df77fa3f16d99f679d26f8bf4bfec31dc9c5f"},   # AP4
+    "notification-android": {"0.1.0": "575ded1fb642196c6bcb3798002df77fa3f16d99f679d26f8bf4bfec31dc9c5f",   # AP4
+                             "0.2.0": "640d6d737433e7eb4dd82848ab14580ad0f7cae2ad90c9dbc4c165a4cf97c817"},   # expires_at kept, notification-android.received (AP7)
     "phone": {"0.1.0": "08a6199454b9e2daa784b6233e183bff6bfebda3ece190491b5198c54a009806",   # find, vibrate, torch (AP2)
               "0.1.1": "624242a8be87a87b6d471331659841c06ed072b38f30c2ce4435bb371976dbb7",  # vibrate without ms: 300 ms (PR 465)
               "0.2.0": "8cf00ba1582b4c29630240ac022f9171d6349b086290087e6a3df74646ee059b"},   # phone.unlock (AP5)
@@ -495,7 +496,8 @@ RECORDED = {
               "0.3.0": "31b456adeaa73e0063c4a8e18b19268d8a21bdba41cd5acdfd8d3770f14b09db",
               "0.4.0": "d40819a1ad1615bd82667077ebeb5ee6cc14be84684a2832b5d6ed09b157b37f",
               "0.5.0": "f57565e2f29bb6eb1ba20b4d33ab3efa329f9699bd9280d3e27b54dac8f73733"},
-    "sms": {"0.1.0": "4100a8e434df14f9f46ddd4667b37e82acc30e66e5a9b0343ab487cc62c75372"},   # AP3
+    "sms": {"0.1.0": "4100a8e434df14f9f46ddd4667b37e82acc30e66e5a9b0343ab487cc62c75372",   # AP3
+            "0.1.1": "1fc3002fcc08228936cf2862a9fcdcdc0de43118ad3daabb5e014c5d8684c027"},   # names sms.received (AP7)
     "sound-android": {"0.1.0": "bd87cf134638d18ae8e91520805709e32ad19fbdd4aa43cd15439d6c962d88e3"},   # AP2
     "ui-android": {"0.1.0": "08679bb6e1d711a96d0899a8879f850f9b8d4518067eadfaf080c91342152d9e"},   # the screen by its labels (AP5)
     "worker": {"0.1.0": "451d156a0e1d8df3db76493f3626f89bba69e4cff287ccab8ad84abac1444dc0"},
@@ -652,7 +654,7 @@ async def before_brief_54(tmp_path, monkeypatch):
         "agents": "0.6.1", "agents-claude-code": "0.2.2", "app-android": "0.2.0", "battery": "0.2.0",
         "calendar": "0.1.0", "call": "0.1.0", "clipboard-android": "0.1.0", "clock": "0.1.0", "contact": "0.1.0",
         "file": "0.1.0", "hid-android": "0.1.0", "location": "0.1.0", "media-android": "0.1.0", "net": "0.1.0",
-        "notification-android": "0.1.0", "phone": "0.2.0", "screen-android": "0.1.0", "shell": "0.2.0", "sms": "0.1.0",
+        "notification-android": "0.2.0", "phone": "0.2.0", "screen-android": "0.1.0", "shell": "0.2.0", "sms": "0.1.1",
         "sound-android": "0.1.0", "ui-android": "0.1.0", "worker": "0.1.0"}
     worker = Worker(tmp_path / "box", f"http://{host}:{port}", name="box", macs=[], knock_every=0.02)
     task = asyncio.create_task(worker.run())
