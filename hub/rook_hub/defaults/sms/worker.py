@@ -9,6 +9,9 @@ sms.send sends: nothing of ours stands in front of it.
 The first call asks for the permission it needs (READ_SMS, SEND_SMS) through the app's bridge
 (systems.bake.rook.core.worker.Bridge), as Android's own prompt; refused, the error says where to allow it.
 
+Each text that comes in is also told to the hub as the event sms.received {from, body, ts}, 0.5's (brief
+AP7). That is the app's own (Events.kt, SmsWatch), not this module's: it starts once READ_SMS is granted.
+
 Off the app it announces nothing: CAPS is empty wherever Chaquopy's `java` module does not import,
 which is everywhere but the app."""
 
@@ -128,7 +131,7 @@ async def send(args):
 CAPS = {} if jclass is None else {
     "sms.list": Cap(
         "The phone's texts, newest first: {messages: [{from, body, ts, box, read}]}; box is inbox, sent or all, "
-        "since (epoch seconds) leaves out older ones, limit gives only that many.",
+        "since (epoch seconds) leaves out older ones, limit gives only that many. Each new text also comes as the event sms.received.",
         {"type": "object", "additionalProperties": False, "properties": {
             "box": {"type": "string", "enum": list(BOXES), "default": "inbox"},
             "limit": {"type": "integer", "minimum": 1},

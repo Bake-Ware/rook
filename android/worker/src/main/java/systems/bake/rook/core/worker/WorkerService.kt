@@ -54,6 +54,7 @@ class WorkerService : Service() {
         channel.description = "Shows that this phone is a worker on its hub"
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         NotificationListener.rebind(this)       // brief AP4: bound again if Android had let it go
+        SmsWatch.start(this)                    // brief AP7: once READ_SMS is granted
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -129,7 +130,8 @@ class WorkerService : Service() {
         }
         Log.i(TAG, "$kind: $text")
         if (state is WorkerState.Linked) RookWorker.joined(this)
-        if (state is WorkerState.Linked) Cards.flush(this)          // brief AP4: card answers kept while unlinked go now
+        if (state is WorkerState.Linked) Events.flush(this)         // briefs AP4, AP7: events kept while unlinked go now
+        if (state is WorkerState.Linked) SmsWatch.start(this)       // brief AP7: READ_SMS may have been given in Settings
         RookWorker.told(state)
         shown = when (state) {
             is WorkerState.Linked -> "Linked as ${state.moniker}"
@@ -206,9 +208,10 @@ class WorkerService : Service() {
 
         @Volatile private var current: WorkerService? = null
 
-        /** What Rook may do changed (a permission was given): be the foreground service again, with the types that allows. */
+        /** What Rook may do changed (a permission was given): be the foreground service again, with the types that allows,
+         *  and watch the inbox if READ_SMS is now given (brief AP7). */
         internal fun permitted() {
-            current?.let { service -> Handler(Looper.getMainLooper()).post { service.foreground() } }
+            current?.let { service -> Handler(Looper.getMainLooper()).post { service.foreground(); SmsWatch.start(service) } }
         }
 
         fun start(context: Context) {

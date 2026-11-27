@@ -7,6 +7,7 @@ they check before reaching Android refuses as it should; 0.5's rules for picking
 notification's action hold; and none of 0.5's bounds is kept."""
 
 import asyncio
+import json
 
 import pytest
 
@@ -83,7 +84,7 @@ def test_a_card_is_0_5s_card():
     card = part("notification-android", fake_java())["card"]
     assert card({"id": " c1 ", "text": " Restart? "}) == {
         "id": "c1", "kind": "card", "text": "Restart?", "body": "", "explain": "", "urgency": "normal",
-        "channel": "approvals", "actions": ["yes", "no", "explain"], "options": [], "source": ""}
+        "channel": "approvals", "actions": ["yes", "no", "explain"], "options": [], "source": "", "expires_at": 0}
     assert card({"id": "a", "text": "Door open", "kind": "alert"})["actions"] == ["ack"]
     assert card({"id": "a", "text": "t", "actions": []})["actions"] == ["ack"]
     assert card({"id": "a", "text": "t", "actions": ["ack", "no", "yes"]})["actions"] == ["yes", "no", "ack"]   # 0.5's order
@@ -91,6 +92,29 @@ def test_a_card_is_0_5s_card():
     assert chosen["options"] == ["Den", "Porch"]
     assert card({"id": "a", "text": "t", "body": "For: x\n\n  Who: y  \n"})["body"] == "For: x\nWho: y"
     assert card({"id": "a", "text": "t", "channel": "digest"})["channel"] == "digest"
+
+
+def test_a_cards_expires_at_goes_to_the_phone_and_no_note_says_it_is_not_kept():
+    """Brief AP7: expires_at is the caller's own request, honoured on the phone (Cards.kt); AP4's note goes."""
+    sent = []
+
+    class Cards:
+        @staticmethod
+        def card(text):
+            sent.append(text)
+            return '{"id": "a1", "new": true}'
+
+    java = fake_java()
+    java.jclass = {"systems.bake.rook.core.worker.Cards": Cards,
+                   "android.os.Build$VERSION": type("V", (), {"SDK_INT": 30})}.__getitem__
+    plugin = part("notification-android", java)
+    assert plugin["card"]({"id": "a", "text": "t", "expires_at": 1900000000.5})["expires_at"] == 1900000000.5
+    assert "expires_at must be" in refusal("notification-android", "notification.post",
+                                           {"text": "t", "id": "a", "expires_at": -1})
+    reply = asyncio.run(plugin["post"]({"id": "a1", "text": "Front door left open", "kind": "alert", "expires_at": 1900000000}))
+    assert reply == {"id": "a1", "new": True}
+    assert json.loads(sent[0])["expires_at"] == 1900000000
+    assert "not kept" not in plugin["CAPS"]["notification.post"].schema["properties"]["expires_at"]["description"]
 
 
 def test_picking_a_notifications_action_and_a_media_session():
