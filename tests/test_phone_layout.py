@@ -16,10 +16,17 @@ from test_phone_app import fake_apk
 from test_site import browser, login
 from test_site_dock import Chrome, StandIn, pytestmark  # noqa: F401  (skipped without Chrome)
 
-PHONE = {"width": 412, "height": 860, "deviceScaleFactor": 2, "mobile": True}
-WIDE = {"width": 1360, "height": 850, "deviceScaleFactor": 1, "mobile": False}
+PHONE = {"width": 412, "height": 860, "deviceScaleFactor": 2, "mobile": True, "screenWidth": 412, "screenHeight": 860}
+WIDE = {"width": 1360, "height": 850, "deviceScaleFactor": 1, "mobile": False, "screenWidth": 1360, "screenHeight": 850}
 BOX = "(s => JSON.stringify(document.querySelector(s).getBoundingClientRect()))"
 SHOWN = "(s => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0; })"
+
+
+async def screen(page, metrics):
+    """The page's screen becomes `metrics`, and the test goes on once the page has its width: a page
+    loaded before that (on a busy machine) reads the screen it had, a phone's or a wide one."""
+    await page.cmd("Emulation.setDeviceMetricsOverride", **metrics)
+    await page.until(f"screen.width === {metrics['width']}")
 
 
 def test_the_chat_is_the_phone_and_the_dock_is_beside_the_page_on_a_wide_screen(tmp_path):
@@ -45,7 +52,7 @@ async def layout(tmp_path):
             cookie = client.cookie_jar.filter_cookies(yarl.URL(base))["rook_session"].value
         async with Chrome() as page:
             await page.cmd("Network.setCookie", name="rook_session", value=cookie, url=base)
-            await page.cmd("Emulation.setDeviceMetricsOverride", **PHONE)
+            await screen(page, PHONE)
 
             # 1. A phone: the chat fills the screen, with "Pages" at the top right and no X.
             await page.cmd("Page.navigate", url=base + "/workers")
@@ -104,7 +111,7 @@ async def layout(tmp_path):
             await page.until("!!document.querySelector('main.main .phone-app-qr svg path')")
 
             # 6. A wide screen is as before: the dock beside the page, its X, and no #dock-phone.
-            await page.cmd("Emulation.setDeviceMetricsOverride", **WIDE)
+            await screen(page, WIDE)
             await page.cmd("Page.navigate", url=base + "/workers")
             await page.until("document.body.classList.contains('dock-open') && !document.querySelector('#dock').hidden")
             chat = json.loads(await page.js(f"{BOX}('#dock')"))
@@ -161,7 +168,7 @@ async def tap_while_loading(tmp_path):
             cookie = client.cookie_jar.filter_cookies(yarl.URL(base))["rook_session"].value
         async with Chrome() as page:
             await page.cmd("Network.setCookie", name="rook_session", value=cookie, url=base)
-            await page.cmd("Emulation.setDeviceMetricsOverride", **PHONE)
+            await screen(page, PHONE)
             # On the pages, as the person left it.
             await page.cmd("Page.navigate", url=base + "/workers")
             await page.until("document.body.classList.contains('dock-open')")
@@ -182,6 +189,20 @@ async def tap_while_loading(tmp_path):
             await asyncio.wait_for(agent.read_again.wait(), 20)
             assert await page.js("document.body.classList.contains('dock-open')")
             assert await page.js("document.querySelector('#dock-phone').textContent") == "Pages"
+
+            # The screen turns wide while a page loads, with the phone on the pages: what the phone kept is
+            # not written over a wide screen's choice; the wide screen's own (never closed) holds.
+            await page.js("document.querySelector('#dock-phone').click(); true")
+            await page.until("!document.body.classList.contains('dock-open')")
+            agent.hold, agent.read_again = asyncio.Event(), asyncio.Event()
+            await page.cmd("Page.navigate", url=base + "/data")
+            await page.until("location.pathname === '/data' && !!document.querySelector('#dock-phone') && "
+                             "!document.querySelector('#dock').hidden")
+            await screen(page, WIDE)
+            agent.hold.set()
+            await asyncio.wait_for(agent.read_again.wait(), 20)
+            assert await page.js("document.body.classList.contains('dock-open')")
+            assert await page.js("localStorage.getItem('rook.dock')") != "0"
             assert [e for e in page.errors if "WebGL" not in e] == []
     finally:
         await hub.stop_serving()

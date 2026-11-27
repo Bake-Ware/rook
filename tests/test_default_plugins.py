@@ -461,7 +461,7 @@ RECORDED = {
                "0.4.0": "ba113ee293f5b629cf888c673a9a96cb217841b75a9d7b1bee0106ae68527618",    # memory (MEM5)
                "0.5.0": "b162812e1d3a8d05545d7ce41bc0629cea66ae28d30ae5719a6a0c8b7871b996",    # the dock's read let go of on pagehide (HA7)
                "0.6.0": "054d95158063f1b1cb7748a9c5e15c063b82c79dc123e8863e53e609b55fe130",    # the chat is a phone's whole screen; [[open: app]] (AP1)
-               "0.6.1": "81b5e5b1f6533e9b856056303b23f121561b71cc8fba6fcb18a843f239517c81"},   # a choice made while the chat loads is kept (AP6)
+               "0.6.1": "3c6304ec5676565f422aef981aac0cfca6825c4c3612d5b892ae63228c8c9cbe"},   # the chat open or closed is decided once it has loaded (AP6)
     "agents-claude-code": {"0.1.0": "79653aecb79c275eb65a7f1d5d88081c22f33e3f31767d3ef963aa47c26b8eeb",
                            "0.2.0": "8ba8ef43fb7160bc68a51939eb74dd0d074349f965c6e1f52ce15caa88e784e9",   # fork, schema, precompact
                            "0.2.1": "7d348fd4df50731a87406c363072e095badb72d58b24266f9f7fa3a7e2ef0b3a",   # the hook names itself (User-Agent)

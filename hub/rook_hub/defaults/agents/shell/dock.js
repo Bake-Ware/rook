@@ -751,11 +751,14 @@ async function startDock(agent) {
   $("#dock-name").textContent = agent === "house" ? rookie.look.name : agent;
   rookieInit();
   $("#dock").hidden = false;
-  let open = true;
-  try {
-    open = phone() ? sessionStorage.getItem("rook.dock.phone") !== "0" : localStorage.getItem("rook.dock") !== "0";
-  } catch (x) { /* private mode */ }
-  if (open && phone()) dockOpen(true);     // a phone opens on the chat at once, not on the page while it reads
+  // The chat open or closed as last kept for this screen: for the tab on a phone, for good on a wide one.
+  const kept = () => {
+    try {
+      return phone() ? sessionStorage.getItem("rook.dock.phone") !== "0" : localStorage.getItem("rook.dock") !== "0";
+    } catch (x) { return true; /* private mode */ }
+  };
+  let open = false;                 // true: setup or a first visit, where the chat opens whatever was kept
+  if (kept() && phone()) dockOpen(true);   // a phone opens on the chat at once, not on the page while it reads
   try {
     while ((await read(0)) >= 500) { /* catch up on a long conversation */ }
   } catch (x) {                     // not someone who may talk to it: no dock
@@ -781,9 +784,10 @@ async function startDock(agent) {
     // page caps, so that part is left out.
     await say("First visit to the hub site. Welcome the person and ask how they want to use the site.", true);
   }
-  // What the person chose while the conversation loaded wins over what was read before it (brief AP6):
-  // a tap on Chat, on Rookie or on the X during the load is never undone here.
-  if (dock.chose !== null) open = dock.chose;
+  // Decided now the load is done, not from what was read before it (brief AP6): what the person chose
+  // meanwhile (a tap on Chat, on Rookie or on the X) wins; then setup or a first visit; then what is
+  // kept for the screen the page has now, which may have turned or been resized while it loaded.
+  open = dock.chose !== null ? dock.chose : open || kept();
   if (!open) document.body.classList.remove("dock-open");
   if (rookie.holder && !open) placeRookie();
   dockOpen(open);
