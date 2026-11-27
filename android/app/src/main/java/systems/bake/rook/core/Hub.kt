@@ -1,7 +1,10 @@
 package systems.bake.rook.core
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.webkit.CookieManager
+import android.widget.Toast
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -49,14 +52,29 @@ object Hub {
     private val minted = AtomicBoolean(false)       // a code was minted in this process: one is enough
     private val watching = AtomicBoolean(false)
 
-    /** Once per process: the first time the worker says it is linked, the phone has joined. */
+    /**
+     * Once per process: the first time the worker says it is linked, the phone has joined. Should it
+     * stop on an error before it ever has (the hub refused its join code), the person is told, in the
+     * worker's own words: its notification goes with it, so nothing else would say so.
+     */
     fun watch(context: Context) {
         if (!watching.compareAndSet(false, true)) return
         val app = context.applicationContext
-        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-            RookWorker.state.collect { if (it is WorkerState.Linked) markJoined(app) }
+        // Unconfined: each state is seen in the thread that sets it. The worker's service says Failed and,
+        // as it stops, Stopped at once after; a collector on another thread could miss the first.
+        CoroutineScope(SupervisorJob() + Dispatchers.Unconfined).launch {
+            RookWorker.state.collect {
+                if (it is WorkerState.Linked) markJoined(app)
+                if (it is WorkerState.Failed && !joined(app)) Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(app, "This phone could not join the hub. Open Rook again to try again. The hub said: ${it.message}",
+                        Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
+
+    /** The app opened again: until the phone has joined, it may mint a code again. */
+    fun again() = minted.set(false)
 
     private fun markJoined(context: Context) = prefs(context).edit().putBoolean("joined", true).apply()
 
