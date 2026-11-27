@@ -10,14 +10,17 @@ Android 10 and later let an app in the background open a screen only once the pe
 display over other apps. The app's bridge (systems.bake.rook.core.worker.Bridge) asks for that the
 first time a cap needs it, waits for the person, and then opens the screen; refused, the error says
 how to allow it. 0.5 opened it anyway and said Android might not have shown it (`may_be_blocked`);
-that cannot happen now, so the field never comes. `screen: true` (the screen once the app is up)
-needs the screen-reading caps, which come with brief AP5: until then the reply's `screen` says so,
-as 0.5's did when it could not read the screen.
+that cannot happen now, so the field never comes. Each opens the screen first if it is off (brief
+AP5, 0.5's keep-awake wake). `screen: true` gives, as `screen`, what is on screen once the opened app
+is in front and has settled: ui.screen's reply, read by the app's accessibility service (brief AP5;
+asked for the first time it is needed). Refused, `screen` is {"error": ...} saying where to turn it on,
+and the app is opened all the same, as 0.5 did.
 
 Off the app it announces nothing: CAPS is empty wherever Chaquopy's `java` module does not import,
 which is everywhere but the app."""
 
 import asyncio
+import json
 
 from rook_worker import Cap
 
@@ -50,7 +53,6 @@ PAGES = {
     "security": "android.settings.SECURITY_SETTINGS",
     "developer": "android.settings.APPLICATION_DEVELOPMENT_SETTINGS",
 }
-NO_SCREEN = "reading the screen comes with the ui caps, which this app does not have yet"
 
 
 def _check(args, cap, allowed, required=()):
@@ -108,16 +110,30 @@ def _handler(intent):
 
 
 def _start(cap, intent, out=None, show=False):
-    """Open `intent`'s screen; `app` says who took it, and with `show`, `screen` says why it is not read."""
+    """Open `intent`'s screen; `app` says who took it, and with `show`, `screen` is the screen once it is up."""
     out = dict(out or {})
     app = _handler(intent)
     if app and app != out.get("package"):
         out["app"] = app
+    hands = None
+    if show:
+        refused = _bridge().hands(cap)
+        if refused is not None:
+            out["screen"] = {"error": str(refused)}
+        else:
+            hands = jclass("systems.bake.rook.core.worker.Hands")
+            before = json.loads(str(hands.front())).get("package")
+            rev, since = str(hands.rev()), hands.now()
+    _bridge().awake(cap)
     refused = _bridge().start(intent, cap)
     if refused is not None:
         raise ValueError(str(refused))
-    if show:
-        out["screen"] = {"error": NO_SCREEN}
+    if hands is not None:
+        opened = out.get("package") or app
+        try:            # wait for the opened app to be in front, unless it already was, then for it to settle
+            out["screen"] = json.loads(str(hands.after(rev, None if opened in (None, before) else before, since, -1, -1)))
+        except Exception as e:
+            out["screen"] = {"error": f"{type(e).__name__}: {e}"}
     return out
 
 
@@ -202,6 +218,7 @@ async def open_url(args):
 def _share(text, subject):
     extras = {"android.intent.extra.TEXT": text, **({"android.intent.extra.SUBJECT": subject} if subject else {})}
     intent = _intent("android.intent.action.SEND", mime="text/plain", extras=extras)
+    _bridge().awake("app.share")
     refused = _bridge().start(jclass("android.content.Intent").createChooser(intent, "Share"), "app.share")
     if refused is not None:
         raise ValueError(str(refused))

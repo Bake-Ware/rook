@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rook_hands_label">Rook</string>
+    <string name="rook_hands_description">Lets the agents on your Rook hub see this phone\'s screen and use it as you would: read what is shown, tap, swipe, type, press back, home and recents, take screenshots, and type your PIN on the lock screen when asked to unlock.</string>
+</resources>

@@ -126,7 +126,7 @@ async def scenario(tmp_path):
             # 2. The installed plugins and what each added (PL1, PL3).
             status, reply = await ask(client, "GET", base + "/api/plugins")
             listed = {p["name"]: p for p in reply["plugins"]}
-            assert list(listed) == ["agents", "agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "location", "media-android", "net", "notification-android", "phone", "shell", "sms", "sound-android", "worker", "notes", "lamp"]      # the defaults first (PL7)
+            assert list(listed) == ["agents", "agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "hid-android", "location", "media-android", "net", "notification-android", "phone", "screen-android", "shell", "sms", "sound-android", "ui-android", "worker", "notes", "lamp"]      # the defaults first (PL7)
             assert listed["notes"]["caps"] == ["note.create", "note.search"]
             assert listed["notes"]["record_types"] == ["note"] and listed["notes"]["drivers"] == []
             assert listed["lamp"]["drivers"] == ["lamp"] and listed["lamp"]["caps"] == []
@@ -137,7 +137,7 @@ async def scenario(tmp_path):
             #    through plugin.install as a call under the user (PL4, L1).
             status, reply = await ask(client, "POST", base + "/api/plugins/check", {"path": str(greet)})
             assert status == 200 and reply == {"plugin": {"name": "greet", "version": "1.0.0"}, "replaces": None}
-            assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "location", "media-android", "net", "notification-android", "phone", "shell", "sms", "sound-android", "worker", "notes", "lamp"]   # checking installs nothing
+            assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "hid-android", "location", "media-android", "net", "notification-android", "phone", "screen-android", "shell", "sms", "sound-android", "ui-android", "worker", "notes", "lamp"]   # checking installs nothing
             status, reply = await ask(client, "POST", base + "/api/plugins", {"path": str(greet)})
             assert status == 200 and reply["installed"]["name"] == "greet" and reply["installed"]["caps"] == ["greet.hello"]
             assert (reply["installed"]["site"], reply["installed"]["skill"]) == (True, True)
@@ -145,7 +145,7 @@ async def scenario(tmp_path):
             assert (call["user"], call["token"], call["why"]) == (alice["moniker"], session, "Installed on the Settings page.")
             assert (await hub.call("hub", "greet.hello", {}, "try", user=alice["guid"]))["result"] == {"text": "hello"}
             status, reply = await ask(client, "GET", base + "/api/plugins")
-            assert [p["name"] for p in reply["plugins"]] == ["agents", "agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "location", "media-android", "net", "notification-android", "phone", "shell", "sms", "sound-android", "worker", "notes", "lamp", "greet"]
+            assert [p["name"] for p in reply["plugins"]] == ["agents", "agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "hid-android", "location", "media-android", "net", "notification-android", "phone", "screen-android", "shell", "sms", "sound-android", "ui-android", "worker", "notes", "lamp", "greet"]
 
             # 4. A reinstall: the check says it replaces the installed one; the install swaps the code at once (PL3).
             write_plugin(greet, "1.1.0", "hi there")
@@ -174,7 +174,7 @@ async def scenario(tmp_path):
             assert status == 400 and reply["code"] == "bad_plugin" and reply["next"]
             status, reply = await ask(client, "POST", base + "/api/plugins", {})
             assert status == 400 and reply["code"] == "bad_message"
-            assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "location", "media-android", "net", "notification-android", "phone", "shell", "sms", "sound-android", "worker", "notes", "lamp", "greet"]
+            assert [p["name"] for p in hub.plugins.list()] == ["agents", "agents-claude-code", "app-android", "battery", "calendar", "call", "clipboard-android", "clock", "contact", "file", "hid-android", "location", "media-android", "net", "notification-android", "phone", "screen-android", "shell", "sms", "sound-android", "ui-android", "worker", "notes", "lamp", "greet"]
 
             # 6. A job whose call opens a stream: its run step names the stream (P8), and the
             #    stream reads through the site, its bytes as the worker sent them.

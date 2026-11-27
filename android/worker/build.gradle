@@ -51,4 +51,7 @@ chaquopy {
 
 dependencies {
     api "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+    // The screen model's tests (brief AP5) run on the JVM, where Android's org.json is only a stub.
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20240303"
 }
